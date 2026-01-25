@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+data/
+*.db
+*.db-journal
+
+node_modules/
+.DS_Store
+dist-ssr
+*.local
+.mise.toml

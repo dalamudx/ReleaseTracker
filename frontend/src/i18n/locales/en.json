@@ -1,0 +1,221 @@
+{
+    "common": {
+        "save": "Save",
+        "cancel": "Cancel",
+        "delete": "Delete",
+        "edit": "Edit",
+        "add": "Add",
+        "search": "Search",
+        "loading": "Loading...",
+        "noData": "No data available",
+        "confirm": "Confirm",
+        "back": "Back",
+        "close": "Close",
+        "saved": "Saved successfully",
+        "deleted": "Deleted successfully",
+        "deleteFailed": "Failed to delete",
+        "checkStarted": "Check started successfully",
+        "checkFailed": "Check failed",
+        "unexpectedError": "An unexpected error occurred"
+    },
+    "sidebar": {
+        "dashboard": "Dashboard",
+        "history": "History",
+        "trackers": "Trackers",
+        "credentials": "Credentials",
+        "settings": "Settings"
+    },
+    "dashboard": {
+        "title": "Dashboard",
+        "description": "Release monitoring overview",
+        "stats": {
+            "totalReleases": "Total Releases",
+            "activeTrackers": "Active Trackers",
+            "lastUpdate": "Last Update",
+            "recentInLast7Days": "in last 7 days",
+            "currentlyTracking": "currently tracking",
+            "releaseTypeStats": "Release Type Statistics",
+            "channelStats": "Channel Version Statistics"
+        },
+        "releaseTrend": {
+            "title": "Release Trend",
+            "description": "Showing daily release activity for the last 7 days"
+        },
+        "recentReleases": {
+            "title": "Recent Releases",
+            "description": "The latest 5 releases across all trackers",
+            "noReleases": "No releases found",
+            "viewNotes": "View Release Notes"
+        },
+        "releaseNotes": {
+            "viewSource": "View Source",
+            "releasedAt": "Released on {{date}}",
+            "noNotes": "No release notes provided."
+        }
+    },
+    "history": {
+        "title": "Release History",
+        "description": "View and search release history across all trackers.",
+        "searchPlaceholder": "Search by version or body content...",
+        "noResults": "No results found.",
+        "table": {
+            "tracker": "Tracker",
+            "version": "Version",
+            "channel": "Channel",
+            "published": "Published At",
+            "link": "Link"
+        }
+    },
+    "trackers": {
+        "title": "Tracker Management",
+        "description": "Configure and manage release trackers",
+        "addNew": "Add Tracker",
+        "table": {
+            "name": "Name",
+            "type": "Type",
+            "repo": "Repository",
+            "status": "Status",
+            "lastCheck": "Last Check",
+            "lastVersion": "Latest Version",
+            "actions": "Actions"
+        },
+        "status": {
+            "enabled": "Enabled",
+            "disabled": "Disabled",
+            "error": "Error"
+        },
+        "dialog": {
+            "addTitle": "Add Tracker",
+            "editTitle": "Edit Tracker",
+            "basicInfo": "Basic Information",
+            "name": "Tracker Name",
+            "namePlaceholder": "e.g., My Project",
+            "type": "Type",
+            "selectType": "Select type",
+            "repo": "Repository",
+            "repoPlaceholder": "e.g., owner/repo",
+            "project": "Project",
+            "projectPlaceholder": "e.g., group/project",
+            "instance": "Instance URL",
+            "instancePlaceholder": "e.g., https://gitlab.example.com",
+            "chart": "Chart Name",
+            "chartPlaceholder": "e.g., nginx",
+            "credential": "Credential",
+            "selectCredential": "Select credential (optional)",
+            "interval": "Check Interval",
+            "channels": {
+                "title": "Channel Configuration",
+                "add": "Add Channel",
+                "type": "Channel Type",
+                "includePattern": "Include Pattern (regex)",
+                "includePatternPlaceholder": "Leave empty to include all",
+                "excludePattern": "Exclude Pattern (regex)",
+                "excludePatternPlaceholder": "Leave empty to exclude none",
+                "enabled": "Enabled"
+            }
+        }
+    },
+    "credentials": {
+        "title": "Credential Management",
+        "description": "Manage API access credentials",
+        "addNew": "Add Credential",
+        "table": {
+            "name": "Name",
+            "type": "Type",
+            "token": "Token",
+            "description": "Description",
+            "createdAt": "Created At",
+            "actions": "Actions"
+        },
+        "dialog": {
+            "addTitle": "Add Credential",
+            "editTitle": "Edit Credential",
+            "name": "Credential Name",
+            "namePlaceholder": "e.g., GitHub Token",
+            "type": "Type",
+            "selectType": "Select type",
+            "token": "Access Token",
+            "tokenPlaceholder": "Enter access token",
+            "description": "Description",
+            "descriptionPlaceholder": "Optional description"
+        }
+    },
+    "tracker": {
+        "addTitle": "Add Tracker",
+        "editTitle": "Edit Tracker",
+        "description": "Configure the tracker source, credentials, and release channels.",
+        "fields": {
+            "name": "Name",
+            "nameDesc": "Unique identifier for this tracker.",
+            "type": "Type",
+            "selectType": "Select type",
+            "repo": "Repository (Owner/Repo)",
+            "instanceUrl": "Instance URL",
+            "projectId": "Project ID/Path",
+            "chartRepo": "Chart Repo URL",
+            "chartName": "Chart Name",
+            "credential": "Credential",
+            "optional": "(Optional)",
+            "none": "None",
+            "interval": "Check Interval (Minutes)",
+            "channels": "Channels",
+            "addChannel": "Add Channel",
+            "channelName": "Channel Name",
+            "channelNameDesc": "Select the display category for this channel",
+            "platformType": "Platform Type",
+            "platformTypeDesc": "Filter versions by release status (Release/Pre-release)",
+            "all": "All",
+            "release": "Release",
+            "preRelease": "Pre-release",
+            "includeRegex": "Include Regex",
+            "includeRegexDesc": "Only include versions matching this regex pattern",
+            "excludeRegex": "Exclude Regex",
+            "excludeRegexDesc": "Exclude versions matching this regex pattern"
+        },
+        "errors": {
+            "nameExists": "Tracker name already exists"
+        },
+        "save": "Save Tracker"
+    },
+    "credential": {
+        "editTitle": "Edit Credential",
+        "addTitle": "Add Credential",
+        "description": "Store API tokens securely for accessing private repositories.",
+        "fields": {
+            "name": "Name",
+            "namePlaceholder": "e.g. My GitHub Token",
+            "type": "Type",
+            "selectType": "Select type",
+            "token": "Token",
+            "tokenPlaceholder": "e.g. ghp_... or glpat-...",
+            "tokenUnchanged": "(Unchanged)",
+            "description": "Description",
+            "descriptionPlaceholder": "Optional notes used to describe the usage of this credential"
+        },
+        "save": "Save"
+    },
+    "channel": {
+        "stable": "Stable",
+        "prerelease": "Pre-Release",
+        "beta": "Beta",
+        "canary": "Canary",
+        "unclassified": "Unclassified"
+    },
+    "language": {
+        "switch": "Switch Language",
+        "zh": "中文",
+        "en": "English"
+    },
+    "pagination": {
+        "previous": "Previous",
+        "next": "Next",
+        "previousPage": "Go to previous page",
+        "nextPage": "Go to next page",
+        "morePages": "More pages",
+        "firstPage": "Go to first page",
+        "lastPage": "Go to last page",
+        "totalItems": "Total {{count}} items",
+        "rowsPerPage": "Rows per page",
+        "pageOf": "Page {{page}} of {{total}}"
+    }
+}

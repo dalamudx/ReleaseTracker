@@ -1,0 +1,221 @@
+{
+  "common": {
+    "save": "保存",
+    "cancel": "取消",
+    "delete": "删除",
+    "edit": "编辑",
+    "add": "添加",
+    "search": "搜索",
+    "loading": "加载中...",
+    "noData": "暂无数据",
+    "confirm": "确认",
+    "back": "返回",
+    "close": "关闭",
+    "saved": "保存成功",
+    "deleted": "删除成功",
+    "deleteFailed": "删除失败",
+    "checkStarted": "检查已开始",
+    "checkFailed": "检查失败",
+    "unexpectedError": "发生意外错误"
+  },
+  "sidebar": {
+    "dashboard": "仪表盘",
+    "history": "历史记录",
+    "trackers": "追踪器",
+    "credentials": "凭证管理",
+    "settings": "设置"
+  },
+  "dashboard": {
+    "title": "仪表盘",
+    "description": "版本发布监控概览",
+    "stats": {
+      "totalReleases": "总发布数",
+      "activeTrackers": "活跃追踪器",
+      "lastUpdate": "最后更新",
+      "recentInLast7Days": "最近 7 天",
+      "currentlyTracking": "当前追踪中",
+      "releaseTypeStats": "发布类型统计",
+      "channelStats": "渠道版本统计"
+    },
+    "releaseTrend": {
+      "title": "发布趋势",
+      "description": "最近 7 天的每日发布活动"
+    },
+    "recentReleases": {
+      "title": "最近发布",
+      "description": "所有追踪器的最新 5 个发布版本",
+      "noReleases": "未找到发布版本",
+      "viewNotes": "查看发布说明"
+    },
+    "releaseNotes": {
+      "viewSource": "去源站查看",
+      "releasedAt": "发布于 {{date}}",
+      "noNotes": "暂无发布说明。"
+    }
+  },
+  "history": {
+    "title": "版本历史",
+    "description": "查看所有追踪器的版本历史记录。",
+    "searchPlaceholder": "搜索版本号或内容...",
+    "noResults": "暂无数据。",
+    "table": {
+      "tracker": "追踪器",
+      "version": "版本",
+      "channel": "渠道",
+      "published": "发布时间",
+      "link": "链接"
+    }
+  },
+  "trackers": {
+    "title": "追踪器管理",
+    "description": "配置和管理版本追踪器",
+    "addNew": "添加追踪器",
+    "table": {
+      "name": "名称",
+      "type": "类型",
+      "repo": "仓库",
+      "status": "状态",
+      "lastCheck": "最后检查",
+      "lastVersion": "最新版本",
+      "actions": "操作"
+    },
+    "status": {
+      "enabled": "启用",
+      "disabled": "禁用",
+      "error": "错误"
+    },
+    "dialog": {
+      "addTitle": "添加追踪器",
+      "editTitle": "编辑追踪器",
+      "basicInfo": "基本信息",
+      "name": "追踪器名称",
+      "namePlaceholder": "例如：My Project",
+      "type": "类型",
+      "selectType": "选择类型",
+      "repo": "仓库",
+      "repoPlaceholder": "例如：owner/repo",
+      "project": "项目",
+      "projectPlaceholder": "例如：group/project",
+      "instance": "实例地址",
+      "instancePlaceholder": "例如：https://gitlab.example.com",
+      "chart": "Chart 名称",
+      "chartPlaceholder": "例如：nginx",
+      "credential": "凭证",
+      "selectCredential": "选择凭证（可选）",
+      "interval": "检查间隔",
+      "channels": {
+        "title": "渠道配置",
+        "add": "添加渠道",
+        "type": "渠道类型",
+        "includePattern": "包含模式（正则）",
+        "includePatternPlaceholder": "留空则包含所有",
+        "excludePattern": "排除模式（正则）",
+        "excludePatternPlaceholder": "留空则不排除",
+        "enabled": "启用"
+      }
+    }
+  },
+  "credentials": {
+    "title": "凭证管理",
+    "description": "管理 API 访问凭证",
+    "addNew": "添加凭证",
+    "table": {
+      "name": "名称",
+      "type": "类型",
+      "token": "令牌",
+      "description": "描述",
+      "createdAt": "创建时间",
+      "actions": "操作"
+    },
+    "dialog": {
+      "addTitle": "添加凭证",
+      "editTitle": "编辑凭证",
+      "name": "凭证名称",
+      "namePlaceholder": "例如：GitHub Token",
+      "type": "类型",
+      "selectType": "选择类型",
+      "token": "访问令牌",
+      "tokenPlaceholder": "输入访问令牌",
+      "description": "描述",
+      "descriptionPlaceholder": "可选描述"
+    }
+  },
+  "tracker": {
+    "addTitle": "添加追踪器",
+    "editTitle": "编辑追踪器",
+    "description": "配置追踪器来源、凭证和发布渠道。",
+    "fields": {
+      "name": "名称",
+      "nameDesc": "追踪器的唯一标识符。",
+      "type": "类型",
+      "selectType": "选择类型",
+      "repo": "仓库 (拥有者/仓库名)",
+      "instanceUrl": "实例 URL",
+      "projectId": "项目 ID/路径",
+      "chartRepo": "Chart 仓库 URL",
+      "chartName": "Chart 名称",
+      "credential": "凭证",
+      "optional": "(可选)",
+      "none": "无",
+      "interval": "检查间隔 (分钟)",
+      "channels": "渠道",
+      "addChannel": "添加渠道",
+      "channelName": "渠道名称",
+      "channelNameDesc": "选择此渠道的显示分类",
+      "platformType": "平台类型",
+      "platformTypeDesc": "根据发布状态（正式版/预发布版）过滤版本",
+      "all": "全部",
+      "release": "发布版",
+      "preRelease": "预发布版",
+      "includeRegex": "包含正则",
+      "includeRegexDesc": "仅包含匹配此正则模式的版本",
+      "excludeRegex": "排除正则",
+      "excludeRegexDesc": "排除匹配此正则模式的版本"
+    },
+    "errors": {
+      "nameExists": "追踪器名称已存在"
+    },
+    "save": "保存追踪器"
+  },
+  "credential": {
+    "editTitle": "编辑凭证",
+    "addTitle": "添加凭证",
+    "description": "安全存储 API Token 以访问私有仓库。",
+    "fields": {
+      "name": "名称",
+      "namePlaceholder": "例如：我的 GitHub Token",
+      "type": "类型",
+      "selectType": "选择类型",
+      "token": "令牌 (Token)",
+      "tokenPlaceholder": "例如：ghp_... 或 glpat-...",
+      "tokenUnchanged": "(未修改)",
+      "description": "描述",
+      "descriptionPlaceholder": "可选备注，用于描述凭证用途"
+    },
+    "save": "保存"
+  },
+  "channel": {
+    "stable": "正式版",
+    "prerelease": "预发布版",
+    "beta": "测试版",
+    "canary": "金丝雀版",
+    "unclassified": "未分类"
+  },
+  "language": {
+    "switch": "切换语言",
+    "zh": "中文",
+    "en": "English"
+  },
+  "pagination": {
+    "previous": "上一页",
+    "next": "下一页",
+    "previousPage": "前往上一页",
+    "nextPage": "前往下一页",
+    "morePages": "更多页",
+    "firstPage": "前往第一页",
+    "lastPage": "前往最后一页",
+    "totalItems": "共 {{count}} 条",
+    "rowsPerPage": "每页行数",
+    "pageOf": "第 {{page}} 页 / 共 {{total}} 页"
+  }
+}
