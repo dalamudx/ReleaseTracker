@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 import aiosqlite
 
-from ..models import Release, ReleaseStats, TrackerStatus
+from ..models import Release, ReleaseStats, TrackerStatus, User, Session
 
 
 
@@ -144,6 +144,39 @@ class SQLiteStorage:
             if 'channel_name' not in hist_column_names:
                 await db.execute("ALTER TABLE release_history ADD COLUMN channel_name TEXT")
             
+            # 用户表
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL UNIQUE,
+                    email TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    role TEXT DEFAULT 'user',
+                    status TEXT DEFAULT 'active',
+                    created_at TEXT NOT NULL,
+                    last_login_at TEXT
+                )
+                """
+            )
+
+            # 会话表
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    refresh_token_hash TEXT,
+                    user_agent TEXT,
+                    ip_address TEXT,
+                    expires_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+                """
+            )
+            
             await db.commit()
 
     async def save_tracker_config(self, config) -> None:
@@ -194,6 +227,24 @@ class SQLiteStorage:
             cursor = await db.execute("SELECT * FROM trackers")
             rows = await cursor.fetchall()
             return [self._row_to_tracker_config(row) for row in rows]
+
+    async def get_tracker_configs_paginated(self, skip: int = 0, limit: int = 20) -> list:
+        """分页获取追踪器配置"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM trackers ORDER BY name ASC LIMIT ? OFFSET ?",
+                (limit, skip)
+            )
+            rows = await cursor.fetchall()
+            return [self._row_to_tracker_config(row) for row in rows]
+
+    async def get_total_tracker_configs_count(self) -> int:
+        """获取追踪器配置总数"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("SELECT COUNT(*) FROM trackers")
+            row = await cursor.fetchone()
+            return row[0] if row else 0
 
     async def get_tracker_config(self, name: str):
         """Get tracker config."""
@@ -966,6 +1017,24 @@ class SQLiteStorage:
             rows = await cursor.fetchall()
             return [self._row_to_credential(row) for row in rows]
 
+    async def get_credentials_paginated(self, skip: int = 0, limit: int = 20) -> list:
+        """分页获取凭证"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM credentials ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (limit, skip)
+            )
+            rows = await cursor.fetchall()
+            return [self._row_to_credential(row) for row in rows]
+
+    async def get_total_credentials_count(self) -> int:
+        """获取凭证总数"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("SELECT COUNT(*) FROM credentials")
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
     async def get_credential(self, credential_id: int):
         """Get credential by ID."""
         async with aiosqlite.connect(self.db_path) as db:
@@ -1026,4 +1095,140 @@ class SQLiteStorage:
             description=row["description"],
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+
+    # ==================== Auth Methods ====================
+
+    async def create_user(self, user: User) -> User:
+        """创建用户"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO users 
+                (username, email, password_hash, role, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user.username,
+                    user.email,
+                    user.password_hash,
+                    user.role,
+                    user.status,
+                    user.created_at.isoformat(),
+                ),
+            )
+            user_id = cursor.lastrowid
+            await db.commit()
+            
+            # 返回带有 ID 的用户对象
+            created_user = user.model_copy()
+            created_user.id = user_id
+            return created_user
+
+    async def get_user_by_username(self, username: str) -> User | None:
+        """根据用户名获取用户"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM users WHERE username = ?", (username,)
+            )
+            row = await cursor.fetchone()
+            return self._row_to_user(row) if row else None
+
+    async def get_user_by_id(self, user_id: int) -> User | None:
+        """根据 ID 获取用户"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM users WHERE id = ?", (user_id,)
+            )
+            row = await cursor.fetchone()
+            return self._row_to_user(row) if row else None
+
+    async def update_user_password(self, user_id: int, password_hash: str) -> bool:
+        """更新用户密码"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (password_hash, user_id),
+            )
+            await db.commit()
+            return True
+    
+    async def create_session(self, session: Session) -> Session:
+        """创建会话"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO sessions 
+                (user_id, token_hash, refresh_token_hash, user_agent, ip_address, expires_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session.user_id,
+                    session.token_hash,
+                    session.refresh_token_hash,
+                    session.user_agent,
+                    session.ip_address,
+                    session.expires_at.isoformat(),
+                    session.created_at.isoformat(),
+                ),
+            )
+            session_id = cursor.lastrowid
+            await db.commit()
+            
+            created_session = session.model_copy()
+            created_session.id = session_id
+            return created_session
+
+    async def get_session(self, token_hash: str) -> Session | None:
+        """根据令牌哈希获取会话"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM sessions WHERE token_hash = ?", (token_hash,)
+            )
+            row = await cursor.fetchone()
+            return self._row_to_session(row) if row else None
+
+    async def delete_session(self, token_hash: str) -> None:
+        """删除会话（登出）"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+            await db.commit()
+            
+    async def delete_expired_sessions(self) -> None:
+        """删除过期会话"""
+        now = datetime.now().isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
+            await db.commit()
+
+    @staticmethod
+    def _row_to_user(row) -> User:
+        """Convert row to User."""
+        return User(
+            id=row["id"],
+            username=row["username"],
+            email=row["email"],
+            password_hash=row["password_hash"],
+            role=row["role"] or "user",
+            status=row["status"] or "active",
+            created_at=datetime.fromisoformat(row["created_at"]),
+            last_login_at=datetime.fromisoformat(row["last_login_at"]) if row["last_login_at"] else None,
+        )
+
+    @staticmethod
+    def _row_to_session(row) -> Session:
+        """Convert row to Session."""
+        return Session(
+            id=row["id"],
+            user_id=row["user_id"],
+            token_hash=row["token_hash"],
+            refresh_token_hash=row["refresh_token_hash"],
+            user_agent=row["user_agent"],
+            ip_address=row["ip_address"],
+            expires_at=datetime.fromisoformat(row["expires_at"]),
+            created_at=datetime.fromisoformat(row["created_at"]),
         )

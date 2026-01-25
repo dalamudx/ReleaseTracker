@@ -112,7 +112,7 @@ export default function HistoryPage() {
             </div>
 
             <div className="rounded-md border mt-6 overflow-auto max-h-[calc(100vh-16rem)]">
-                <Table>
+                <table className="w-full caption-bottom text-sm">
                     <TableHeader className="sticky top-0 bg-background z-10">
                         <TableRow>
                             <TableHead>{t('history.table.tracker')}</TableHead>
@@ -184,7 +184,7 @@ export default function HistoryPage() {
                             ))
                         )}
                     </TableBody>
-                </Table>
+                </table>
             </div>
 
             <div className="flex items-center justify-between mt-3 flex-shrink-0">
@@ -214,7 +214,7 @@ export default function HistoryPage() {
 
                     {totalPages > 1 && (
                         <div className="flex items-center space-x-2">
-                            <div className="flex w-[100px] items-center justify-center text-sm font-medium">
+                            <div className="flex w-auto min-w-[100px] items-center justify-center text-sm font-medium whitespace-nowrap">
                                 {t('pagination.pageOf', { page, total: totalPages })}
                             </div>
                             <div className="flex items-center space-x-2">

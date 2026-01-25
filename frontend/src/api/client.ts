@@ -10,9 +10,19 @@ export const apiClient = axios.create({
     },
 })
 
+// Request interceptor to add token
+apiClient.interceptors.request.use((config) => {
+    const token = localStorage.getItem('token')
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
+})
+
 export const api = {
     getStats: () => apiClient.get<ReleaseStats>('/api/stats').then(res => res.data),
-    getTrackers: () => apiClient.get<TrackerStatus[]>('/api/trackers').then(res => res.data),
+    getTrackers: (params?: { skip?: number, limit?: number }) =>
+        apiClient.get<{ items: TrackerStatus[], total: number }>('/api/trackers', { params }).then(res => res.data),
     getLatestReleases: () => apiClient.get<Release[]>('/api/releases/latest').then(res => res.data),
     getReleases: (params?: any) => apiClient.get<{ items: Release[], total: number }>('/api/releases', { params }).then(res => res.data),
 
@@ -24,8 +34,17 @@ export const api = {
     getTrackerConfig: (name: string) => apiClient.get(`/api/trackers/${name}/config`).then(res => res.data),
 
     // Credentials
-    getCredentials: () => apiClient.get<ApiCredential[]>('/api/credentials').then(res => res.data),
+    getCredentials: (params?: { skip?: number, limit?: number }) =>
+        apiClient.get<{ items: ApiCredential[], total: number }>('/api/credentials', { params }).then(res => res.data),
     createCredential: (data: any) => apiClient.post('/api/credentials', data).then(res => res.data),
     updateCredential: (id: number, data: any) => apiClient.put(`/api/credentials/${id}`, data).then(res => res.data),
     deleteCredential: (id: number) => apiClient.delete(`/api/credentials/${id}`).then(res => res.data),
+
+    // Auth
+    login: (data: any) => apiClient.post('/api/auth/login', data).then(res => res.data),
+    register: (data: any) => apiClient.post('/api/auth/register', data).then(res => res.data),
+    getCurrentUser: () => apiClient.get<User>('/api/auth/me').then(res => res.data),
+    changePassword: (data: any) => apiClient.post('/api/auth/change-password', data).then(res => res.data),
 }
+
+import type { User } from './types'

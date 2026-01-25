@@ -12,8 +12,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import AppConfig, StorageConfig
 from .models import Release, ReleaseStats, TrackerStatus
 from .scheduler import ReleaseScheduler
+from .services.auth import AuthService
+from .storage.sqlite import SQLiteStorage
 from .storage.sqlite import SQLiteStorage
 from .logger import LogConfig, DEFAULT_LOG_FORMAT
+from .routers import auth
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +51,14 @@ async def lifespan(app: FastAPI):
         notifiers=[]
     )
     app_config = current_config 
+    
+    # 将全局变量也绑定到 app.state 以供路由使用（避免循环依赖）
+    app.state.storage = storage
+    app.state.config = app_config
+    
+    # 确保存在管理员用户
+    auth_service = AuthService(storage, app_config)
+    await auth_service.ensure_admin_user()
 
     # 初始化调度器
     scheduler = ReleaseScheduler(current_config, storage)
@@ -80,6 +91,11 @@ app.add_middleware(
 )
 
 
+
+
+app.include_router(auth.router)
+
+
 # ==================== API 路由 ====================
 
 
@@ -97,17 +113,26 @@ async def get_stats():
     return await storage.get_stats()
 
 
-@app.get("/api/trackers", response_model=list[TrackerStatus])
-async def get_trackers():
-    """获取所有追踪器状态"""
+@app.get("/api/trackers")
+async def get_trackers(
+    skip: int = 0,
+    limit: int = 20,
+    search: str | None = None
+):
+    """获取追踪器列表（分页）"""
     if not storage:
         raise HTTPException(status_code=503, detail="服务未初始化")
     
-    # 从数据库获取最新配置和状态
-    configs = await storage.get_all_tracker_configs()
-    statuses = await storage.get_all_tracker_status()
+    # 获取总数
+    total = await storage.get_total_tracker_configs_count()
+
+    # 分页获取配置
+    configs = await storage.get_tracker_configs_paginated(skip, limit)
     
+    # 获取所有状态 (优化：后续可改为批量获取指定列表的状态)
+    statuses = await storage.get_all_tracker_status()
     status_map = {s.name: s for s in statuses}
+    
     result = []
     
     for config in configs:
@@ -115,23 +140,19 @@ async def get_trackers():
         latest_release = await storage.get_latest_release_for_channels(config.name, config.channels)
         latest_version = latest_release.version if latest_release else None
         
-        # 计算启用状态：只要有一个渠道启用，则追踪器视为启用
+        # 计算启用状态
         calculated_enabled = False
         if config.channels:
             calculated_enabled = any(c.enabled for c in config.channels)
 
         if config.name in status_map:
             status = status_map[config.name]
-            # 确保 enabled 状态基于渠道计算
             status.enabled = calculated_enabled
-            # 添加渠道数量
             status.channel_count = len(config.channels) if config.channels else 0
-            # 更新为跨渠道的最新版本
             if latest_version:
                 status.last_version = latest_version
             result.append(status)
         else:
-            # 只有配置没有状态（从未检查过）
             result.append(TrackerStatus(
                 name=config.name,
                 type=config.type,
@@ -142,7 +163,12 @@ async def get_trackers():
                 channel_count=len(config.channels) if config.channels else 0
             ))
             
-    return result
+    return {
+        "items": result,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
 
 
 @app.get("/api/trackers/{tracker_name}", response_model=TrackerStatus)
@@ -364,21 +390,33 @@ async def get_tracker_config(tracker_name: str):
 
 # ==================== 凭证管理 API ====================
 
-@app.get("/api/credentials", response_model=list)
-async def get_credentials():
-    """获取所有凭证（返回时隐藏 token）"""
+@app.get("/api/credentials")
+async def get_credentials(
+    skip: int = 0,
+    limit: int = 20
+):
+    """获取凭证列表（分页）"""
     if not storage:
         raise HTTPException(status_code=503, detail="存储服务未初始化")
     
-    credentials = await storage.get_all_credentials()
+    total = await storage.get_total_credentials_count()
+    credentials = await storage.get_credentials_paginated(skip, limit)
     
     # 隐藏 token 的完整内容，仅显示部分用于识别
+    result = []
     for cred in credentials:
+        cred_dict = cred.model_dump()
         if cred.token:
             # 显示前4位和后4位
-            cred.token = f"{cred.token[:4]}...{cred.token[-4:]}" if len(cred.token) > 8 else "****"
+            cred_dict["token"] = f"{cred.token[:4]}...{cred.token[-4:]}" if len(cred.token) > 8 else "****"
+        result.append(cred_dict)
     
-    return [c.model_dump() for c in credentials]
+    return {
+        "items": result,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
 
 
 @app.get("/api/credentials/{credential_id}")

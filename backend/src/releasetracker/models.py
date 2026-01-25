@@ -70,3 +70,63 @@ class ReleaseHistory(BaseModel):
     body: str | None = None
     channel_name: str | None = None
     recorded_at: datetime = Field(default_factory=datetime.now)
+
+
+# ==================== Auth Models ====================
+
+class User(BaseModel):
+    """用户模型"""
+    
+    id: int | None = None
+    username: str
+    email: str
+    password_hash: str
+    role: str = "user"  # user, admin
+    status: str = "active"  # active, inactive
+    created_at: datetime = Field(default_factory=datetime.now)
+    last_login_at: datetime | None = None
+
+
+class Session(BaseModel):
+    """会话模型"""
+    
+    id: int | None = None
+    user_id: int
+    token_hash: str
+    refresh_token_hash: str | None = None
+    user_agent: str | None = None
+    ip_address: str | None = None
+    expires_at: datetime
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class TokenPair(BaseModel):
+    """令牌对"""
+    
+    access_token: str
+    refresh_token: str
+    token_type: str = "Bearer"
+    expires_in: int
+
+
+class LoginRequest(BaseModel):
+    """登录请求"""
+    
+    username: str
+    password: str
+
+
+class RegisterRequest(BaseModel):
+    """注册请求"""
+    
+    username: str
+    email: str
+    password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    """修改密码请求"""
+    
+    old_password: str
+    new_password: str
+

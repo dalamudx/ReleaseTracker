@@ -12,7 +12,9 @@ import {
     SidebarGroup,
     SidebarGroupContent,
     SidebarRail,
+    SidebarFooter,
 } from "@/components/ui/sidebar"
+import { UserNav } from "./UserNav"
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     const location = useLocation()
@@ -65,6 +67,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                     </SidebarGroupContent>
                 </SidebarGroup>
             </SidebarContent>
+            <SidebarFooter>
+                <UserNav />
+            </SidebarFooter>
             <SidebarRail />
         </Sidebar>
     )

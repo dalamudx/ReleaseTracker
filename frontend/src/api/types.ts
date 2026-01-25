@@ -65,3 +65,23 @@ export interface ApiCredential {
     description?: string | null
     created_at: string
 }
+
+export interface User {
+    id: number
+    username: string
+    email: string
+    role: string
+    avatar_url?: string
+}
+
+export interface TokenPair {
+    access_token: string
+    refresh_token: string
+    token_type: string
+    expires_in: number
+}
+
+export interface LoginResponse {
+    user: User
+    token: TokenPair
+}

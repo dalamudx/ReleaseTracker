@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Plus } from "lucide-react"
+import { Plus, ChevronLeft, ChevronRight, ChevronFirst, ChevronLast } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
 import { Button } from "@/components/ui/button"
@@ -18,6 +18,13 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select"
 
 export default function TrackersPage() {
     const { t } = useTranslation()
@@ -26,11 +33,21 @@ export default function TrackersPage() {
     const [dialogOpen, setDialogOpen] = useState(false)
     const [editingTracker, setEditingTracker] = useState<string | null>(null)
 
+    // Pagination state
+    const [total, setTotal] = useState(0)
+    const [page, setPage] = useState(1)
+    const [pageSize, setPageSize] = useState(() => {
+        const saved = localStorage.getItem('settings.trackers.pageSize')
+        return saved ? Number(saved) : 15
+    })
+
     const loadTrackers = async () => {
         setLoading(true)
         try {
-            const data = await api.getTrackers()
-            setTrackers(data)
+            const skip = (page - 1) * pageSize
+            const data = await api.getTrackers({ skip, limit: pageSize })
+            setTrackers(data.items)
+            setTotal(data.total)
         } catch (error) {
             console.error("Failed to load trackers", error)
         } finally {
@@ -40,7 +57,14 @@ export default function TrackersPage() {
 
     useEffect(() => {
         loadTrackers()
-    }, [])
+    }, [page, pageSize])
+
+    const handlePageSizeChange = (value: string) => {
+        const newSize = Number(value)
+        setPageSize(newSize)
+        setPage(1)
+        localStorage.setItem('settings.trackers.pageSize', String(newSize))
+    }
 
     const handleAdd = () => {
         setEditingTracker(null)
@@ -74,9 +98,8 @@ export default function TrackersPage() {
 
     const handleCheck = async (name: string) => {
         try {
-            // Ideally set separate loading state or optimistic update
             await api.checkTracker(name)
-            await loadTrackers() // Refresh to see new status
+            await loadTrackers()
             toast.success(t('common.checkStarted'))
         } catch (error) {
             console.error("Failed to check tracker", error)
@@ -84,9 +107,11 @@ export default function TrackersPage() {
         }
     }
 
+    const totalPages = Math.ceil(total / pageSize)
+
     return (
-        <div className="space-y-6 h-full overflow-y-auto pr-1">
-            <div className="flex items-center justify-between space-y-2">
+        <div className="flex flex-col h-full space-y-6 pr-1">
+            <div className="flex items-center justify-between space-y-2 flex-shrink-0">
                 <div>
                     <h2 className="text-3xl font-bold tracking-tight">{t('trackers.title')}</h2>
                     <p className="text-muted-foreground">
@@ -100,13 +125,85 @@ export default function TrackersPage() {
                 </div>
             </div>
 
-            <TrackerList
-                trackers={trackers}
-                loading={loading}
-                onEdit={handleEdit}
-                onDelete={handleDeleteClick}
-                onCheck={handleCheck}
-            />
+            <div className="space-y-4">
+                <TrackerList
+                    trackers={trackers}
+                    loading={loading}
+                    onEdit={handleEdit}
+                    onDelete={handleDeleteClick}
+                    onCheck={handleCheck}
+                />
+
+                {/* Pagination Controls */}
+                <div className="flex items-center justify-between">
+                    <div className="text-sm text-muted-foreground">
+                        {t('pagination.totalItems', { count: total })}
+                    </div>
+
+                    <div className="flex items-center space-x-6 lg:space-x-8">
+                        <div className="flex items-center space-x-2">
+                            <p className="text-sm font-medium">{t('pagination.rowsPerPage')}</p>
+                            <Select
+                                value={`${pageSize}`}
+                                onValueChange={handlePageSizeChange}
+                            >
+                                <SelectTrigger className="h-8 w-[70px]">
+                                    <SelectValue placeholder={pageSize} />
+                                </SelectTrigger>
+                                <SelectContent side="top">
+                                    {[10, 15, 20, 30, 40, 50].map((size) => (
+                                        <SelectItem key={size} value={`${size}`}>
+                                            {size}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        {totalPages > 1 && (
+                            <div className="flex items-center space-x-2">
+                                <div className="flex w-auto min-w-[100px] items-center justify-center text-sm font-medium whitespace-nowrap">
+                                    {t('pagination.pageOf', { page, total: totalPages })}
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                    <Button
+                                        variant="outline"
+                                        className="hidden h-8 w-8 p-0 lg:flex"
+                                        onClick={() => setPage(1)}
+                                        disabled={page === 1}
+                                    >
+                                        <ChevronFirst className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        className="h-8 w-8 p-0"
+                                        onClick={() => setPage(p => Math.max(1, p - 1))}
+                                        disabled={page === 1}
+                                    >
+                                        <ChevronLeft className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        className="h-8 w-8 p-0"
+                                        onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                                        disabled={page === totalPages}
+                                    >
+                                        <ChevronRight className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        className="hidden h-8 w-8 p-0 lg:flex"
+                                        onClick={() => setPage(totalPages)}
+                                        disabled={page === totalPages}
+                                    >
+                                        <ChevronLast className="h-4 w-4" />
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
 
             <TrackerDialog
                 open={dialogOpen}

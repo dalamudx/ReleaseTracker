@@ -143,7 +143,7 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="sm:max-w-[50vw] max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle>{trackerName ? t('tracker.editTitle') : t('tracker.addTitle')}</DialogTitle>
                     <DialogDescription>
