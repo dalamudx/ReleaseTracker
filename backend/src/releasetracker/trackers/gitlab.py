@@ -63,7 +63,7 @@ class GitLabTracker(BaseTracker):
             tracker_name=self.name,
             name=data.get("name") or tag_name,
             tag_name=tag_name,
-            version=tag_name.lstrip("v"),
+            version=tag_name,
             published_at=datetime.fromisoformat(
                 data["released_at"].replace("Z", "+00:00")
                 if data.get("released_at")

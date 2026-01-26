@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useForm, useFieldArray } from "react-hook-form"
 import { Plus, Trash2, Save, ChevronDown, ChevronRight } from "lucide-react"
 import { useTranslation } from "react-i18next"
@@ -75,11 +75,37 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
         name: "channels",
     });
 
+    const type = form.watch("type")
+
+    // Auto-select credential logic
+    const prevTypeRef = useRef(type)
+
+    useEffect(() => {
+        const typeChanged = prevTypeRef.current !== type
+
+        // Only run logic if we are NOT in edit mode (trackerName is null)
+        // And either type changed OR it's the first load (typeChanged is false but maybe credentials just loaded)
+        // We check credentials.length > 0 to ensure we have data to select from.
+        if (!trackerName && (typeChanged || credentials.length > 0)) {
+            // If type changed, OR if we have no value set yet
+            const currentValue = form.getValues("credential_name")
+            if (typeChanged || !currentValue) {
+                const matches = credentials.filter(c => c.type === type)
+                if (matches.length > 0) {
+                    form.setValue("credential_name", matches[0].name)
+                } else {
+                    form.setValue("credential_name", "none")
+                }
+            }
+        }
+        prevTypeRef.current = type
+    }, [type, credentials, trackerName, form])
+
     // Load credentials and tracker data (if editing)
     useEffect(() => {
         if (open) {
             setExpandedChannel(trackerName ? null : 0)
-            api.getCredentials().then(setCredentials).catch(console.error)
+            api.getCredentials({ limit: 1000 }).then(data => setCredentials(data.items)).catch(console.error)
 
             if (trackerName) {
                 api.getTrackerConfig(trackerName).then((data) => {
@@ -99,11 +125,13 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
                     interval: "360m",
                     description: ""
                 })
+                // Reset prevTypeRef on open to trigger auto-select if needed? 
+                // Actually the effect above handles 'type' change or initial load.
+                // When dialog opens, 'type' is 'github'. prevTypeRef might be stale?
+                // It's safer to not reset here, but rely on the effect.
             }
         }
     }, [open, trackerName, form])
-
-    const type = form.watch("type")
 
     const onSubmit = async (data: TrackerConfig) => {
         setLoading(true)

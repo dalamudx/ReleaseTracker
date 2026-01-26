@@ -473,6 +473,9 @@ async def update_credential(credential_id: int, credential_data: dict):
         if not existing:
             raise HTTPException(status_code=404, detail="凭证不存在")
         
+        if "name" in credential_data:
+            del credential_data["name"]
+
         # 更新：保持 name 不变，只更新其他字段
         credential = Credential(
             name=existing.name,  # 名称不允许修改

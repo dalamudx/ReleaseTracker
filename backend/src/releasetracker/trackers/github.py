@@ -111,7 +111,7 @@ class GitHubTracker(BaseTracker):
                         tracker_type="github",
                         name=item.get("name") or item.get("tagName"),
                         tag_name=item["tagName"],
-                        version=item["tagName"].lstrip("v"),
+                        version=item["tagName"],
                         url=item["url"],
                         prerelease=item["isPrerelease"],
                         published_at=datetime.fromisoformat(item["publishedAt"].replace("Z", "+00:00")),

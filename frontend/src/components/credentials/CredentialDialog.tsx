@@ -83,7 +83,8 @@ export function CredentialDialog({ open, onOpenChange, onSuccess, credential }: 
         setLoading(true)
         try {
             if (credential) {
-                await api.updateCredential(credential.id, data)
+                const { name, ...updateData } = data
+                await api.updateCredential(credential.id, updateData)
             } else {
                 await api.createCredential(data)
             }
