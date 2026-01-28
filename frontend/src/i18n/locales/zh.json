@@ -14,7 +14,7 @@
     "color": {
       "title": "颜色主题",
       "description": "选择主色调",
-      "zinc": "默认",
+      "neutral": "默认",
       "red": "红色",
       "rose": "玫瑰",
       "orange": "橙色",
@@ -76,6 +76,7 @@
     "checkStarted": "检查已开始",
     "checkFailed": "检查失败",
     "check": "检查",
+    "never": "从未",
     "unexpectedError": "发生意外错误"
   },
   "sidebar": {

@@ -47,7 +47,7 @@ export function ThemeCustomizer() {
     ]
 
     const COLOR_THEMES = [
-        { name: t('theme.color.zinc'), value: "zinc", color: "oklch(0.45 0.008 264)" },
+        { name: t('theme.color.neutral'), value: "neutral", color: "oklch(0.45 0.008 264)" },
         { name: t('theme.color.red'), value: "red", color: "oklch(0.645 0.246 16.439)" },
         { name: t('theme.color.rose'), value: "rose", color: "oklch(0.645 0.246 350)" },
         { name: t('theme.color.orange'), value: "orange", color: "oklch(0.769 0.188 45)" },
@@ -101,7 +101,7 @@ export function ThemeCustomizer() {
                     <div className="relative">
                         <ModeIcon className="h-4 w-4" />
                         {/* 颜色主题指示器 - 只在非默认主题时显示 */}
-                        {color !== "zinc" && (
+                        {color !== "neutral" && (
                             <div
                                 className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border border-background"
                                 style={{ backgroundColor: currentColorTheme?.color }}

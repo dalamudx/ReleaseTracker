@@ -98,12 +98,20 @@ export interface Notifier {
 
 export interface SettingItem {
     key: string
-    value: string
+    value: any
+    description?: string
     updated_at?: string
 }
 
 export interface EnvInfo {
     key: string
     value: string
+    description?: string
 }
 
+export interface PaginatedResponse<T> {
+    items: T[]
+    total: number
+    skip?: number
+    limit?: number
+}

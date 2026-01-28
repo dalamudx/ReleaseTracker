@@ -34,7 +34,7 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
 
     return (
         <>
-            <Card className="col-span-1 lg:col-span-3 glass-card bg-transparent border-0 shadow-none h-full flex flex-col">
+            <Card className="col-span-1 lg:col-span-3 glass-card h-full flex flex-col">
                 <CardHeader>
                     <CardTitle>{t('dashboard.recentReleases.title')}</CardTitle>
                     <CardDescription>

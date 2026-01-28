@@ -14,7 +14,7 @@
         "color": {
             "title": "Color Scheme",
             "description": "Select primary color",
-            "zinc": "Default",
+            "neutral": "Default",
             "red": "Red",
             "rose": "Rose",
             "orange": "Orange",
@@ -76,6 +76,7 @@
         "checkStarted": "Check started successfully",
         "checkFailed": "Check failed",
         "check": "Check",
+        "never": "Never",
         "unexpectedError": "An unexpected error occurred"
     },
     "sidebar": {

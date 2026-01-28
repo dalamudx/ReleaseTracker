@@ -59,7 +59,7 @@ async def get_trackers(
                 enabled=calculated_enabled,
                 last_check=None,
                 last_version=latest_version,
-                error="Pending check",
+                error=None,  # 初始无错误，等待首次检查
                 channel_count=len(config.channels) if config.channels else 0
             ))
             

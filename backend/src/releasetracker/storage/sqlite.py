@@ -1407,6 +1407,24 @@ class SQLiteStorage:
                 rows = await cursor.fetchall()
                 return [self._row_to_notifier(row) for row in rows]
 
+    async def get_total_notifiers_count(self) -> int:
+        """获取通知器总数"""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT COUNT(*) FROM notifiers") as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else 0
+
+    async def get_notifiers_paginated(self, skip: int = 0, limit: int = 20) -> list[Notifier]:
+        """分页获取通知器"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM notifiers ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (limit, skip)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [self._row_to_notifier(row) for row in rows]
+
     async def get_notifier(self, notifier_id: int) -> Notifier | None:
         """获取单个通知器"""
         async with aiosqlite.connect(self.db_path) as db:

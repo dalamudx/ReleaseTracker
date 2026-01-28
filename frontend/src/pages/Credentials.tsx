@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Plus, ChevronLeft, ChevronRight, ChevronFirst, ChevronLast } from "lucide-react"
+import { Plus, ChevronLeft, ChevronRight } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
 import { Button } from "@/components/ui/button"
@@ -59,12 +59,7 @@ export default function CredentialsPage() {
         loadCredentials()
     }, [page, pageSize])
 
-    const handlePageSizeChange = (value: string) => {
-        const newSize = Number(value)
-        setPageSize(newSize)
-        setPage(1)
-        localStorage.setItem('settings.credentials.pageSize', String(newSize))
-    }
+
 
     const handleAdd = () => {
         setEditingCredential(null)
@@ -100,13 +95,7 @@ export default function CredentialsPage() {
 
     return (
         <div className="flex flex-col h-full space-y-6 pr-1">
-            <div className="flex items-center justify-between space-y-2 flex-shrink-0">
-                <div>
-                    <h2 className="text-3xl font-bold tracking-tight">{t('credentials.title')}</h2>
-                    <p className="text-muted-foreground">
-                        {t('credentials.description')}
-                    </p>
-                </div>
+            <div className="flex items-center justify-end space-y-2 flex-shrink-0">
                 <div className="flex items-center space-x-2">
                     <Button onClick={handleAdd}>
                         <Plus className="mr-2 h-4 w-4" /> {t('credentials.addNew')}
@@ -123,17 +112,21 @@ export default function CredentialsPage() {
                 />
 
                 {/* Pagination Controls */}
-                <div className="flex items-center justify-between">
-                    <div className="text-sm text-muted-foreground">
+                <div className="flex items-center justify-between mt-3 flex-shrink-0">
+                    <div className="flex-1 text-sm text-muted-foreground">
                         {t('pagination.totalItems', { count: total })}
                     </div>
 
                     <div className="flex items-center space-x-6 lg:space-x-8">
+                        {/* Rows per page */}
                         <div className="flex items-center space-x-2">
                             <p className="text-sm font-medium">{t('pagination.rowsPerPage')}</p>
                             <Select
                                 value={`${pageSize}`}
-                                onValueChange={handlePageSizeChange}
+                                onValueChange={(value) => {
+                                    setPageSize(Number(value))
+                                    setPage(1)
+                                }}
                             >
                                 <SelectTrigger className="h-8 w-[70px]">
                                     <SelectValue placeholder={pageSize} />
@@ -148,47 +141,32 @@ export default function CredentialsPage() {
                             </Select>
                         </div>
 
-                        {totalPages > 1 && (
-                            <div className="flex items-center space-x-2">
-                                <div className="flex w-auto min-w-[100px] items-center justify-center text-sm font-medium whitespace-nowrap">
-                                    {t('pagination.pageOf', { page, total: totalPages })}
-                                </div>
-                                <div className="flex items-center space-x-2">
-                                    <Button
-                                        variant="outline"
-                                        className="hidden h-8 w-8 p-0 lg:flex"
-                                        onClick={() => setPage(1)}
-                                        disabled={page === 1}
-                                    >
-                                        <ChevronFirst className="h-4 w-4" />
-                                    </Button>
-                                    <Button
-                                        variant="outline"
-                                        className="h-8 w-8 p-0"
-                                        onClick={() => setPage(p => Math.max(1, p - 1))}
-                                        disabled={page === 1}
-                                    >
-                                        <ChevronLeft className="h-4 w-4" />
-                                    </Button>
-                                    <Button
-                                        variant="outline"
-                                        className="h-8 w-8 p-0"
-                                        onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                                        disabled={page === totalPages}
-                                    >
-                                        <ChevronRight className="h-4 w-4" />
-                                    </Button>
-                                    <Button
-                                        variant="outline"
-                                        className="hidden h-8 w-8 p-0 lg:flex"
-                                        onClick={() => setPage(totalPages)}
-                                        disabled={page === totalPages}
-                                    >
-                                        <ChevronLast className="h-4 w-4" />
-                                    </Button>
-                                </div>
-                            </div>
-                        )}
+                        {/* Page X of Y */}
+                        <div className="flex w-[100px] items-center justify-center text-sm font-medium">
+                            {t('pagination.pageOf', { page, total: totalPages || 1 })}
+                        </div>
+
+                        {/* Navigation Buttons */}
+                        <div className="flex items-center space-x-2">
+                            <Button
+                                variant="outline"
+                                className="h-8 w-8 p-0"
+                                onClick={() => setPage(page - 1)}
+                                disabled={page <= 1}
+                            >
+                                <span className="sr-only">Go to previous page</span>
+                                <ChevronLeft className="h-4 w-4" />
+                            </Button>
+                            <Button
+                                variant="outline"
+                                className="h-8 w-8 p-0"
+                                onClick={() => setPage(page + 1)}
+                                disabled={page >= totalPages}
+                            >
+                                <span className="sr-only">Go to next page</span>
+                                <ChevronRight className="h-4 w-4" />
+                            </Button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -214,6 +192,6 @@ export default function CredentialsPage() {
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
-        </div>
+        </div >
     )
 }

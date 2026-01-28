@@ -92,13 +92,7 @@ export default function HistoryPage() {
 
     return (
         <div className="flex flex-col flex-1 min-h-0">
-            <div className="flex items-center justify-between space-y-2 flex-shrink-0">
-                <div>
-                    <h2 className="text-3xl font-bold tracking-tight">{t('history.title')}</h2>
-                    <p className="text-muted-foreground">
-                        {t('history.description')}
-                    </p>
-                </div>
+            <div className="flex items-center justify-end space-y-2 flex-shrink-0">
                 <div className="flex items-center gap-2 w-[300px]">
                     <Search className="h-4 w-4 text-muted-foreground" />
                     <Input

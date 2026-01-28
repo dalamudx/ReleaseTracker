@@ -70,13 +70,13 @@ export function TrackerList({ trackers, loading, onEdit, onDelete, onCheck }: Tr
                     ) : (
                         trackers.map((tracker) => (
                             <TableRow key={tracker.name} className="hover:bg-muted/50 transition-colors">
-                                <TableCell className="font-medium">{tracker.name}</TableCell>
-                                <TableCell>
+                                <TableCell className="font-medium py-2.5">{tracker.name}</TableCell>
+                                <TableCell className="py-2.5">
                                     <Badge variant="outline" className="uppercase text-[10px]">
                                         {tracker.type}
                                     </Badge>
                                 </TableCell>
-                                <TableCell>
+                                <TableCell className="py-2.5">
                                     {tracker.error ? (
                                         <TooltipProvider>
                                             <Tooltip>
@@ -102,12 +102,12 @@ export function TrackerList({ trackers, loading, onEdit, onDelete, onCheck }: Tr
                                         </div>
                                     )}
                                 </TableCell>
-                                <TableCell>{tracker.channel_count ?? "-"}</TableCell>
-                                <TableCell className="font-mono text-sm">{tracker.last_version || "-"}</TableCell>
-                                <TableCell className="text-muted-foreground text-sm">
-                                    {tracker.last_check ? formatDistanceToNow(new Date(tracker.last_check), { addSuffix: true, locale: i18n.language === 'zh' ? zhCN : enUS }) : "Never"}
+                                <TableCell className="py-2.5">{tracker.channel_count ?? "-"}</TableCell>
+                                <TableCell className="font-mono text-sm py-2.5">{tracker.last_version || "-"}</TableCell>
+                                <TableCell className="text-muted-foreground text-sm py-2.5">
+                                    {tracker.last_check ? formatDistanceToNow(new Date(tracker.last_check), { addSuffix: true, locale: i18n.language === 'zh' ? zhCN : enUS }) : t('common.never')}
                                 </TableCell>
-                                <TableCell className="text-right">
+                                <TableCell className="text-right py-2.5">
                                     <DropdownMenu>
                                         <DropdownMenuTrigger asChild>
                                             <Button variant="ghost" className="h-8 w-8 p-0">

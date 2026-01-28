@@ -60,19 +60,19 @@ export function CredentialList({ credentials, loading, onEdit, onDelete }: Crede
                     ) : (
                         credentials.map((cred) => (
                             <TableRow key={cred.id} className="hover:bg-muted/50 transition-colors">
-                                <TableCell className="font-medium">{cred.name}</TableCell>
-                                <TableCell>
+                                <TableCell className="font-medium py-2.5">{cred.name}</TableCell>
+                                <TableCell className="py-2.5">
                                     <Badge variant="outline" className="uppercase text-[10px]">
                                         {cred.type}
                                     </Badge>
                                 </TableCell>
-                                <TableCell className="text-muted-foreground text-sm max-w-[300px] truncate">
+                                <TableCell className="text-muted-foreground text-sm max-w-[300px] truncate py-2.5">
                                     {cred.description || "-"}
                                 </TableCell>
-                                <TableCell className="text-muted-foreground text-sm">
+                                <TableCell className="text-muted-foreground text-sm py-2.5">
                                     {formatDate(cred.created_at)}
                                 </TableCell>
-                                <TableCell className="text-right">
+                                <TableCell className="text-right py-2.5">
                                     <DropdownMenu>
                                         <DropdownMenuTrigger asChild>
                                             <Button variant="ghost" className="h-8 w-8 p-0">

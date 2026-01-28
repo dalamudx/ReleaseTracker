@@ -59,8 +59,14 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
             name: "",
             type: "github",
             enabled: true,
+            repo: "",
+            project: "",
+            instance: "",
+            chart: "",
+            credential_name: "none",
             channels: defaultChannels as any,
             interval: 60,
+            description: "",
         },
     })
 

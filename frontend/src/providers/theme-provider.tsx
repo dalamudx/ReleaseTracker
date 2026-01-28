@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react"
 
 export type Theme = "dark" | "light" | "system"
-export type Color = "zinc" | "red" | "rose" | "orange" | "green" | "blue" | "yellow" | "violet"
+export type Color = "neutral" | "red" | "rose" | "orange" | "green" | "blue" | "yellow" | "violet"
 export type Radius = number
 export type Zoom = "default" | "scaled" | "mono"
 
@@ -38,7 +38,7 @@ type ThemeProviderState = {
 export const COLOR_THEMES = [
     {
         name: "默认",
-        value: "zinc" as Color,
+        value: "neutral" as Color,
         color: "oklch(0.45 0.008 264)",
         foreground: "oklch(0.985 0 0)",
     },
@@ -88,7 +88,7 @@ export const COLOR_THEMES = [
 
 const DEFAULT_THEME_CONFIG: ThemeConfig = {
     mode: "system",
-    color: "zinc",
+    color: "neutral",
     zoom: "default",
     radius: 0.5,
 }
@@ -96,7 +96,7 @@ const DEFAULT_THEME_CONFIG: ThemeConfig = {
 const initialState: ThemeProviderState = {
     theme: "system",
     setTheme: () => null,
-    color: "zinc",
+    color: "neutral",
     setColor: () => null,
     radius: 0.5,
     setRadius: () => null,
@@ -111,7 +111,7 @@ const ThemeProviderContext = createContext<ThemeProviderState>(initialState)
 export function ThemeProvider({
     children,
     defaultTheme = "system",
-    defaultColor = "zinc",
+    defaultColor = "neutral",
     defaultRadius = 0.5,
     defaultZoom = "default",
     storageKey = "vite-ui-theme",
@@ -163,12 +163,16 @@ export function ThemeProvider({
 
         // 5. 【关键】动态设置 CSS 变量
         const colorTheme = COLOR_THEMES.find((t) => t.value === config.color)
-        if (colorTheme && config.color !== "zinc") {
-            // 非默认主题：覆盖 CSS 变量
+        if (colorTheme && config.color !== "neutral") {
+            document.documentElement.setAttribute("data-theme", config.color)
+            // Assuming applyAllColorTheme is a defined function elsewhere or needs to be added.
+            // For now, we'll replicate the original logic for setting CSS variables.
             root.style.setProperty("--primary", colorTheme.color)
             root.style.setProperty("--primary-foreground", colorTheme.foreground)
             root.style.setProperty("--ring", colorTheme.color)
-        } else if (config.color === "zinc") {
+        } else {
+            // 移除自定义主题，使用默认 neutral
+            document.documentElement.removeAttribute("data-theme")
             // 默认主题：移除覆盖，恢复原始 CSS 定义
             root.style.removeProperty("--primary")
             root.style.removeProperty("--primary-foreground")

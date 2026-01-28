@@ -19,14 +19,25 @@ def get_storage(request):
         raise HTTPException(status_code=503, detail="存储服务未初始化")
     return storage
 
-@router.get("", response_model=List[Notifier], dependencies=[Depends(get_current_user)])
+@router.get("", dependencies=[Depends(get_current_user)])
 async def get_notifiers(
     request: Request,
-    current_user: Annotated[User, Depends(get_current_user)]
+    current_user: Annotated[User, Depends(get_current_user)],
+    skip: int = 0,
+    limit: int = 20
 ):
-    """获取所有通知器"""
+    """获取所有通知器（分页）"""
     storage: SQLiteStorage = get_storage(request)
-    return await storage.get_notifiers()
+    
+    total = await storage.get_total_notifiers_count()
+    notifiers = await storage.get_notifiers_paginated(skip, limit)
+    
+    return {
+        "items": notifiers,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
 
 @router.get("/{notifier_id}", response_model=Notifier, dependencies=[Depends(get_current_user)])
 async def get_notifier(

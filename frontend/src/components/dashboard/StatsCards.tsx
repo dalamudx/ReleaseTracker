@@ -61,7 +61,7 @@ export function StatsCards({ stats, loading }: StatsCardsProps) {
     return (
         <div className="grid gap-4 md:grid-cols-2">
             {items.map((item) => (
-                <Card key={item.label} className="overflow-hidden h-32 glass-card bg-transparent border-0 shadow-none">
+                <Card key={item.label} className="overflow-hidden h-32 glass-card">
                     <CardContent className="p-0 flex h-full">
                         {/* Left Side - Stats (Approx 30%) */}
                         <div className="w-[30%] min-w-[140px] flex flex-col justify-center items-center p-4 text-center border-r border-border/10">
@@ -121,7 +121,7 @@ export function StatsCards({ stats, loading }: StatsCardsProps) {
                                         </ResponsiveContainer>
                                     ) : (
                                         <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-                                            No data
+                                            {t('common.noData')}
                                         </div>
                                     )
                                 )}

@@ -1,5 +1,15 @@
 import axios from 'axios'
-import type { Release, ReleaseStats, TrackerStatus, ApiCredential, Notifier, SettingItem, EnvInfo, User } from './types'
+import type {
+    Release,
+    TrackerStatus,
+    ReleaseStats,
+    ApiCredential,
+    Notifier,
+    SettingItem,
+    EnvInfo,
+    PaginatedResponse,
+    User
+} from "./types"
 
 const API_BASE = '' // Vite proxy will handle /api
 
@@ -41,11 +51,13 @@ export const api = {
     deleteCredential: (id: number) => apiClient.delete(`/api/credentials/${id}`).then(res => res.data),
 
     // Notifiers
-    getNotifiers: () => apiClient.get<Notifier[]>('/api/notifiers').then(res => res.data),
-    createNotifier: (data: any) => apiClient.post('/api/notifiers', data).then(res => res.data),
-    updateNotifier: (id: number, data: any) => apiClient.put(`/api/notifiers/${id}`, data).then(res => res.data),
+    getNotifiers: (params?: { skip?: number, limit?: number }) =>
+        apiClient.get<PaginatedResponse<Notifier>>('/api/notifiers', { params }).then(res => res.data),
+    getNotifier: (id: number) => apiClient.get<Notifier>(`/api/notifiers/${id}`).then(res => res.data),
+    createNotifier: (data: Partial<Notifier>) => apiClient.post<Notifier>('/api/notifiers', data).then(res => res.data),
+    updateNotifier: (id: number, data: Partial<Notifier>) => apiClient.put<Notifier>(`/api/notifiers/${id}`, data).then(res => res.data),
     deleteNotifier: (id: number) => apiClient.delete(`/api/notifiers/${id}`).then(res => res.data),
-    testNotifier: (id: number) => apiClient.post(`/api/notifiers/${id}/test`).then(res => res.data),
+    testNotifier: (id: number) => apiClient.post<boolean>(`/api/notifiers/${id}/test`).then(res => res.data),
 
     // Auth
     login: (data: any) => apiClient.post('/api/auth/login', data).then(res => res.data),
