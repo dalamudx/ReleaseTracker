@@ -1,5 +1,6 @@
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import remarkEmoji from "remark-emoji"
 import { ExternalLink } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { CHANNEL_LABELS } from "@/lib/channel"
@@ -63,7 +64,7 @@ export function ReleaseNotesModal({ release, open, onOpenChange }: ReleaseNotesM
                     <div className="flex-1 overflow-y-auto p-4">
                         <div className="text-sm leading-relaxed break-words">
                             <ReactMarkdown
-                                remarkPlugins={[remarkGfm]}
+                                remarkPlugins={[remarkGfm, remarkEmoji]}
                                 components={{
                                     h1: ({ node, ...props }) => <h1 className="text-xl font-bold mt-6 mb-4 pb-2 border-b" {...props} />,
                                     h2: ({ node, ...props }) => <h2 className="text-lg font-semibold mt-6 mb-3" {...props} />,
@@ -100,7 +101,12 @@ export function ReleaseNotesModal({ release, open, onOpenChange }: ReleaseNotesM
                                                 // Invalid URL, ignore
                                             }
                                         }
-                                        return <a href={href} className="text-blue-500 hover:underline font-medium" target="_blank" rel="noopener noreferrer" {...props}>{content}</a>
+                                        const isMention = typeof content === 'string' && content.startsWith('@');
+                                        const className = isMention
+                                            ? "font-bold text-foreground hover:underline"
+                                            : "text-blue-500 hover:underline font-medium";
+
+                                        return <a href={href} className={className} target="_blank" rel="noopener noreferrer" {...props}>{content}</a>
                                     },
                                     blockquote: ({ node, ...props }) => <blockquote className="border-l-4 border-muted pl-4 italic text-muted-foreground my-4" {...props} />,
                                     code: ({ node, className, children, ...props }: any) => {

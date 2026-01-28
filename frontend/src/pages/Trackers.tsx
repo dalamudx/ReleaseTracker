@@ -98,12 +98,18 @@ export default function TrackersPage() {
 
     const handleCheck = async (name: string) => {
         try {
-            await api.checkTracker(name)
+            const status = await api.checkTracker(name)
             await loadTrackers()
-            toast.success(t('common.checkStarted'))
-        } catch (error) {
+
+            if (status.error) {
+                toast.error(`${t('common.checkFailed')}: ${status.error}`)
+            } else {
+                toast.success(t('common.checkStarted'))
+            }
+        } catch (error: any) {
             console.error("Failed to check tracker", error)
-            toast.error(t('common.checkFailed'))
+            const detail = error.response?.data?.detail || error.message || t('common.checkFailed')
+            toast.error(`${t('common.checkFailed')}: ${detail}`)
         }
     }
 

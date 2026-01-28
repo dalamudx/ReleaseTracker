@@ -52,7 +52,6 @@ class AuthService:
             username=req.username,
             email=req.email,
             password_hash=password_hash,
-            role="user",
             status="active"
         )
         
@@ -160,7 +159,6 @@ class AuthService:
         """生成令牌对"""
         claims = {
             "sub": user.username,
-            "role": user.role
         }
         
         access_token = self._create_access_token(data=claims)
@@ -204,7 +202,6 @@ class AuthService:
                 username="admin",
                 email="admin@example.com",
                 password_hash=password_hash,
-                role="admin",
                 status="active"
             )
             await self.storage.create_user(admin_user)

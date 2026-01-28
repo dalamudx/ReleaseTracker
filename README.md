@@ -5,17 +5,23 @@
 ![Python](https://img.shields.io/badge/Python-3.10+-blue)
 ![Vue](https://img.shields.io/badge/Vue-3.x-green)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-teal)
-![License](https://img.shields.io/badge/License-MIT-yellow)
+![License](https://img.shields.io/badge/License-GPL%20v3-blue)
 
 ## ✨ 特性
 
 - 📦 **多源支持**：GitHub、GitLab（含自托管）、Helm Chart
-- ⚙️  **灵活配置**：YAML 配置文件，支持过滤规则
+- 🔐 **安全认证**：
+    - JWT 用户认证（登录/注册/修改密码）
+    - 🔒 **凭证加密**：Token 等敏感信息使用 AES/Fernet 透明加密存储
+- 🌍 **国际化**：完整支持中英文切换
+- 🎨 **现代化 UI**：
+    - Vue 3 + TailwindCSS
+    - 🌓 **个性化主题**：支持深色模式、多种主题色配置
+    - 📱 **响应式设计**：完美适配移动端
+- ⚙️  **灵活配置**：YAML 配置文件，支持正则过滤规则
 - 🔔 **通知推送**：Webhook 通知（支持扩展更多渠道）
 - 🎯 **定时追踪**：自动定期检查版本更新
 - 💾 **本地存储**：SQLite 数据库，轻量无依赖
-- 🌐 **Web 界面**：Vue 3 现代化前端
-- 🌓 **深色模式**：支持亮色/暗色主题
 
 ## 🏗️ 架构
 
@@ -24,7 +30,7 @@
 │  Vue 3 前端  │
 │  (端口 5173) │
 └──────┬──────┘
-       │ REST API
+       │ REST API (JWT Auth)
        ▼
 ┌─────────────────┐
 │  FastAPI 后端    │
@@ -63,9 +69,19 @@ pip install -e .
 cp config.example.yaml config.yaml
 # 编辑 config.yaml 添加你要追踪的仓库
 
+# 设置加密密钥（可选，生产环境推荐设置）
+# 生成密钥: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+export ENCRYPTION_KEY="your-generated-key"
+
 # 启动服务
 uvicorn releasetracker.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+> ⚠️ **注意**：首次启动会自动创建默认管理员账户：
+> - 用户名：`admin`
+> - 密码：`admin`
+> 
+> 请登录后立即修改密码！
 
 ### 3. 启动前端
 
@@ -81,44 +97,19 @@ npm run dev
 
 访问 http://localhost:5173 即可使用！
 
-## 📝 配置示例
+## 📝 配置说明
 
-```yaml
-# config.yaml
-storage:
-  type: sqlite
-  path: ./data/releases.db
+| 环境变量 | 描述 | 默认值 |
+|----------|------|--------|
+| `ENCRYPTION_KEY` | 用于加密敏感凭证的密钥 (AES) | 自动生成的开发密钥 |
+| `TZ` | 系统时区设置 | `UTC` |
 
-trackers:
-  # GitHub 仓库
-  - name: kubernetes
-    type: github
-    repo: kubernetes/kubernetes
-    interval: 1h
-    filter:
-      include_prerelease: false
-      pattern: "^v1\\."
+## 🔐 安全说明
 
-  # GitLab 仓库
-  - name: gitlab-runner
-    type: gitlab
-    instance: https://gitlab.com
-    project: gitlab-org/gitlab-runner
-    interval: 2h
-
-  # Helm Chart
-  - name: nginx-ingress
-    type: helm
-    repo: https://kubernetes.github.io/ingress-nginx
-    chart: ingress-nginx
-    interval: 4h
-
-notifiers:
-  - name: webhook
-    type: webhook
-    url: https://example.com/webhook
-    events: [new_release]
-```
+### 凭证加密
+所有敏感凭证（如 GitHub Token、GitLab Token）在写入数据库前都会使用 Fernet 算法进行加密。
+- 密钥通过环境变量 `ENCRYPTION_KEY` 配置。
+- 如果未配置密钥，将使用默认开发密钥（并在日志中输出警告）。
 
 ## 📚 API 文档
 
@@ -131,33 +122,12 @@ notifiers:
 
 | 方法 | 路径 | 描述 |
 |------|------|------|
+| POST | `/api/auth/login` | 用户登录 |
+| GET | `/api/auth/me` | 获取当前用户信息 |
 | GET | `/api/stats` | 获取统计信息 |
 | GET | `/api/trackers` | 获取所有追踪器 |
-| POST | `/api/trackers/{name}/check` | 手动触发检查 |
+| GET | `/api/credentials` | 获取所有凭证 |
 | GET | `/api/releases` | 获取版本列表 |
-| GET | `/api/releases/latest` | 获取最新版本 |
-
-## 🎨 界面预览
-
-- **仪表盘**：统计卡片 + 最新版本列表
-- **追踪器管理**：查看所有追踪器状态、手动触发检查
-- **版本历史**：完整的版本更新记录
-
-## 🔧 开发
-
-### 后端测试
-
-```bash
-cd backend
-pytest tests/ -v
-```
-
-### 前端构建
-
-```bash
-cd frontend
-npm run build
-```
 
 ## 📦 部署
 
@@ -175,6 +145,7 @@ docker-compose up -d
 
 后端：
 ```bash
+export ENCRYPTION_KEY="<production-key>"
 uvicorn releasetracker.main:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
@@ -186,18 +157,16 @@ npm run build
 
 ## 🗺️ 路线图
 
-- [ ] Docker 镜像和 docker-compose
-- [ ] 更多通知渠道（邮件、钉钉、飞书、Slack）
-- [ ] 版本更新对比功能
-- [ ] Prometheus metrics
 - [ ] 更多版本源（npm、PyPI、Docker Hub）
+- [ ] 版本更新管理功能
 
 ## 📄 许可证
 
-MIT License
+GPL-3.0 License
 
 ## 🙏 致谢
 
 - [FastAPI](https://fastapi.tiangolo.com/)
 - [Vue 3](https://vuejs.org/)
 - [Tailwind CSS](https://tailwindcss.com/)
+- [shadcn/ui](https://ui.shadcn.com/)

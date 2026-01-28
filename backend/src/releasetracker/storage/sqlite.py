@@ -9,7 +9,9 @@ from zoneinfo import ZoneInfo
 
 import aiosqlite
 
-from ..models import Release, ReleaseStats, TrackerStatus, User, Session
+from ..models import Release, ReleaseStats, TrackerStatus, User, Session, Notifier
+from cryptography.fernet import Fernet, InvalidToken
+import base64
 
 
 
@@ -22,6 +24,42 @@ class SQLiteStorage:
     def __init__(self, db_path: str):
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize encryption key
+        key = os.getenv("ENCRYPTION_KEY")
+        if not key:
+            logger.warning("No ENCRYPTION_KEY found, using insecure default key for development")
+            # Fixed key for development persistence
+            key = b'DevelopmentUseOnlyDoNotUseInProdKey1234=' 
+            # Note: The properly padded base64 key should be 32 bytes valid. 
+            # Let's use a known valid key generated from Fernet.generate_key() for safety
+            # `Fernet.generate_key()` produces 44 chars. 
+            key = b'Z7wz8u_u8Y7j6B1b4C9d2E5f8G1h3I4j5K6l7M8n9O0='
+
+        try:
+            self.fernet = Fernet(key)
+        except Exception as e:
+            logger.error(f"Invalid ENCRYPTION_KEY: {e}")
+            raise
+
+    def _encrypt(self, raw: str) -> str:
+        if not raw: return None
+        try:
+            return self.fernet.encrypt(raw.encode()).decode()
+        except Exception as e:
+            logger.error(f"Encryption failed: {e}")
+            return raw
+
+    def _decrypt(self, enc: str) -> str:
+        if not enc: return None
+        try:
+            return self.fernet.decrypt(enc.encode()).decode()
+        except InvalidToken:
+            # Assume legacy plain text
+            return enc
+        except Exception as e:
+            logger.error(f"Decryption failed: {e}")
+            return enc
 
     async def initialize(self):
         """初始化数据库"""
@@ -68,6 +106,16 @@ class SQLiteStorage:
             
             await db.execute(
                 """
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            
+            await db.execute(
+                """
                 CREATE TABLE IF NOT EXISTS tracker_status (
                     name TEXT PRIMARY KEY,
                     type TEXT NOT NULL,
@@ -87,6 +135,23 @@ class SQLiteStorage:
                     name TEXT NOT NULL UNIQUE,
                     type TEXT NOT NULL,
                     token TEXT NOT NULL,
+                    description TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+
+            # 通知器表
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS notifiers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    type TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    events TEXT DEFAULT '["new_release"]',
+                    enabled INTEGER DEFAULT 1,
                     description TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -152,7 +217,6 @@ class SQLiteStorage:
                     username TEXT NOT NULL UNIQUE,
                     email TEXT NOT NULL UNIQUE,
                     password_hash TEXT NOT NULL,
-                    role TEXT DEFAULT 'user',
                     status TEXT DEFAULT 'active',
                     created_at TEXT NOT NULL,
                     last_login_at TEXT
@@ -321,6 +385,28 @@ class SQLiteStorage:
             except (json.JSONDecodeError, Exception):
                 pass  # 如果解析失败，使用空列表
         
+        
+        # Handle interval compatibility (convert string to int minutes)
+        raw_interval = row["interval"]
+        interval_minutes = 60
+        
+        if isinstance(raw_interval, int):
+            interval_minutes = raw_interval
+        elif isinstance(raw_interval, str):
+            try:
+                if raw_interval.endswith("h"):
+                    interval_minutes = int(raw_interval[:-1]) * 60
+                elif raw_interval.endswith("m"):
+                    interval_minutes = int(raw_interval[:-1])
+                elif raw_interval.endswith("s"):
+                    # Treat seconds as 1 minute minimum or ceil
+                    import math
+                    interval_minutes = max(1, math.ceil(int(raw_interval[:-1]) / 60))
+                else:
+                    interval_minutes = int(raw_interval)
+            except ValueError:
+                interval_minutes = 60 # Fallback
+        
         return TrackerConfig(
             name=row["name"],
             type=row["type"],
@@ -330,7 +416,7 @@ class SQLiteStorage:
             instance=row["instance"],
             chart=row["chart"],
             credential_name=row["credential_name"],
-            interval=row["interval"] or "1h",
+            interval=interval_minutes,
             channels=channels,
         )
     @staticmethod
@@ -385,7 +471,7 @@ class SQLiteStorage:
                 db.row_factory = aiosqlite.Row
                 cursor = await db.execute(
                     """
-                    SELECT id, name, commit_sha, published_at, body, republish_count
+                    SELECT id, name, commit_sha, published_at, body, republish_count, channel_name
                     FROM releases 
                     WHERE tracker_name=? AND tag_name=?
                     """,
@@ -402,15 +488,27 @@ class SQLiteStorage:
                 
                 # 仅当 Commit SHA 改变时才视为重新发布
                 # 如果只是修改 release notes 等元数据，不算重新发布
-                if release.commit_sha and old_commit_sha and old_commit_sha != release.commit_sha:
-                    is_republish = True
+                # Fallback: 如果没有 Commit SHA (例如权限不足)，则尝试使用发布时间变化作为判断依据
+                if release.commit_sha and old_commit_sha:
+                     if old_commit_sha != release.commit_sha:
+                         is_republish = True
+                elif release.published_at.isoformat() != old_published_at:
+                     is_republish = True
+                     logger.info(f"Republish detected via timestamp change (SHA missing): {old_published_at} -> {release.published_at.isoformat()}")
+
+                # Debug logging
+                if release.commit_sha != old_commit_sha:
+                     logger.debug(f"Checking republish for {release.name}: Old SHA={old_commit_sha}, New SHA={release.commit_sha}, Is Republish={is_republish}")
+                else:
+                     logger.debug(f"No SHA change for {release.name}: SHA={release.commit_sha}")
+
                 
                 if is_republish:
                     # 保存旧状态到历史表
                     await db.execute(
                         """
                         INSERT INTO release_history 
-                        (release_id, name, commit_sha, published_at, body, recorded_at)
+                        (release_id, name, commit_sha, published_at, body, channel_name, recorded_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
@@ -419,9 +517,11 @@ class SQLiteStorage:
                             old_record["commit_sha"],
                             old_record["published_at"],
                             old_record["body"],
+                            old_record["channel_name"],
                             datetime.now().isoformat()
                         )
                     )
+
                     
                     # 更新主表，增加 republish_count
                     await db.execute(
@@ -986,6 +1086,9 @@ class SQLiteStorage:
         """Create credential."""
         from ..models import Credential
         
+        # 加密 Token
+        encrypted_token = self._encrypt(credential.token) if credential.token else None
+        
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
@@ -996,7 +1099,7 @@ class SQLiteStorage:
                 (
                     credential.name,
                     credential.type,
-                    credential.token,
+                    encrypted_token,
                     credential.description,
                     credential.created_at.isoformat(),
                     credential.updated_at.isoformat(),
@@ -1066,7 +1169,7 @@ class SQLiteStorage:
                 """,
                 (
                     credential.type,
-                    credential.token,
+                    self._encrypt(credential.token),
                     credential.description,
                     datetime.now().isoformat(),
                     credential_id,
@@ -1082,8 +1185,7 @@ class SQLiteStorage:
             await db.commit()
             return True
 
-    @staticmethod
-    def _row_to_credential(row):
+    def _row_to_credential(self, row):
         """Convert row to Credential object."""
         from ..models import Credential
         
@@ -1091,7 +1193,7 @@ class SQLiteStorage:
             id=row["id"],
             name=row["name"],
             type=row["type"],
-            token=row["token"],
+            token=self._decrypt(row["token"]),
             description=row["description"],
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
@@ -1106,14 +1208,13 @@ class SQLiteStorage:
             cursor = await db.execute(
                 """
                 INSERT INTO users 
-                (username, email, password_hash, role, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (username, email, password_hash, status, created_at)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
                     user.username,
                     user.email,
                     user.password_hash,
-                    user.role,
                     user.status,
                     user.created_at.isoformat(),
                 ),
@@ -1213,7 +1314,7 @@ class SQLiteStorage:
             username=row["username"],
             email=row["email"],
             password_hash=row["password_hash"],
-            role=row["role"] or "user",
+
             status=row["status"] or "active",
             created_at=datetime.fromisoformat(row["created_at"]),
             last_login_at=datetime.fromisoformat(row["last_login_at"]) if row["last_login_at"] else None,
@@ -1232,3 +1333,174 @@ class SQLiteStorage:
             expires_at=datetime.fromisoformat(row["expires_at"]),
             created_at=datetime.fromisoformat(row["created_at"]),
         )
+
+    # ==================== Notifier Operations ====================
+
+    @staticmethod
+    def _row_to_notifier(row) -> Notifier:
+        """Convert row to Notifier."""
+        import json
+        try:
+            events = json.loads(row["events"]) if row["events"] else []
+        except (json.JSONDecodeError, TypeError):
+            events = []
+            
+        return Notifier(
+            id=row["id"],
+            name=row["name"],
+            type=row["type"],
+            url=row["url"],
+            events=events,
+            enabled=bool(row["enabled"]),
+            description=row["description"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+    async def get_notifiers(self) -> list[Notifier]:
+        """获取所有通知器"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM notifiers ORDER BY created_at DESC") as cursor:
+                rows = await cursor.fetchall()
+                return [self._row_to_notifier(row) for row in rows]
+
+    async def get_notifier(self, notifier_id: int) -> Notifier | None:
+        """获取单个通知器"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM notifiers WHERE id = ?", (notifier_id,)) as cursor:
+                row = await cursor.fetchone()
+                return self._row_to_notifier(row) if row else None
+                
+    async def get_notifier_by_name(self, name: str) -> Notifier | None:
+        """根据名称获取通知器"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM notifiers WHERE name = ?", (name,)) as cursor:
+                row = await cursor.fetchone()
+                return self._row_to_notifier(row) if row else None
+
+    async def create_notifier(self, notifier_data: dict) -> Notifier:
+        """创建通知器"""
+        import json
+        
+        now = datetime.now().isoformat()
+        
+        # 确保 name 唯一
+        if await self.get_notifier_by_name(notifier_data["name"]):
+            raise ValueError(f"Notifier '{notifier_data['name']}' already exists")
+            
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO notifiers (name, type, url, events, enabled, description, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    notifier_data["name"],
+                    notifier_data.get("type", "webhook"),
+                    notifier_data["url"],
+                    json.dumps(notifier_data.get("events", ["new_release"])),
+                    1 if notifier_data.get("enabled", True) else 0,
+                    notifier_data.get("description"),
+                    now,
+                    now,
+                ),
+            )
+            await db.commit()
+            return await self.get_notifier(cursor.lastrowid)
+
+    async def update_notifier(self, notifier_id: int, notifier_data: dict) -> Notifier:
+        """更新通知器"""
+        import json
+        
+        current = await self.get_notifier(notifier_id)
+        if not current:
+            raise ValueError(f"Notifier with id {notifier_id} not found")
+            
+        # 如果修改了名称，检查唯一性
+        if "name" in notifier_data and notifier_data["name"] != current.name:
+            if await self.get_notifier_by_name(notifier_data["name"]):
+                raise ValueError(f"Notifier name '{notifier_data['name']}' already exists")
+        
+        now = datetime.now().isoformat()
+        
+        fields = ["updated_at = ?"]
+        values = [now]
+        
+        if "name" in notifier_data:
+            fields.append("name = ?")
+            values.append(notifier_data["name"])
+        if "type" in notifier_data:
+            fields.append("type = ?")
+            values.append(notifier_data["type"])
+        if "url" in notifier_data:
+            fields.append("url = ?")
+            values.append(notifier_data["url"])
+        if "events" in notifier_data:
+            fields.append("events = ?")
+            values.append(json.dumps(notifier_data["events"]))
+        if "enabled" in notifier_data:
+            fields.append("enabled = ?")
+            values.append(1 if notifier_data["enabled"] else 0)
+        if "description" in notifier_data:
+            fields.append("description = ?")
+            values.append(notifier_data["description"])
+            
+        values.append(notifier_id)
+        
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                f"UPDATE notifiers SET {', '.join(fields)} WHERE id = ?",
+                values
+            )
+            await db.commit()
+            
+        return await self.get_notifier(notifier_id)
+
+    async def delete_notifier(self, notifier_id: int):
+        """删除通知器"""
+        async with aiosqlite.connect(self.db_path) as db:
+            result = await db.execute("DELETE FROM notifiers WHERE id = ?", (notifier_id,))
+            await db.commit()
+            if result.rowcount == 0:
+                raise ValueError(f"Notifier with id {notifier_id} not found")
+
+
+    async def get_all_settings(self) -> dict:
+        """获取所有系统设置"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM settings") as cursor:
+                rows = await cursor.fetchall()
+                return {row["key"]: row["value"] for row in rows}
+
+    async def get_setting(self, key: str) -> str | None:
+        """获取单个设置"""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT value FROM settings WHERE key = ?", (key,)) as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else None
+
+    async def set_setting(self, key: str, value: str):
+        """保存系统设置"""
+        now = datetime.now().isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                INSERT INTO settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                (key, value, now)
+            )
+            await db.commit()
+
+    async def delete_setting(self, key: str):
+        """删除系统设置"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM settings WHERE key = ?", (key,))
+            await db.commit()

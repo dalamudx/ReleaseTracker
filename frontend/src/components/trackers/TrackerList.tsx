@@ -5,6 +5,12 @@ import { useTranslation } from "react-i18next"
 
 import { Button } from "@/components/ui/button"
 import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
+} from "@/components/ui/tooltip"
+import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
@@ -36,7 +42,7 @@ export function TrackerList({ trackers, loading, onEdit, onDelete, onCheck }: Tr
 
     return (
         <div className="rounded-md border overflow-auto max-h-[calc(100vh-16rem)]">
-            <table className="w-full caption-bottom text-sm">
+            <Table>
                 <TableHeader className="sticky top-0 bg-background z-10">
                     <TableRow>
                         <TableHead>{t('trackers.table.name')}</TableHead>
@@ -71,16 +77,30 @@ export function TrackerList({ trackers, loading, onEdit, onDelete, onCheck }: Tr
                                     </Badge>
                                 </TableCell>
                                 <TableCell>
-                                    <div className="flex items-center gap-2">
-                                        {tracker.error ? (
-                                            <XCircle className="h-4 w-4 text-destructive" />
-                                        ) : (
+                                    {tracker.error ? (
+                                        <TooltipProvider>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <div className="flex items-center gap-2 cursor-help text-destructive">
+                                                        <XCircle className="h-4 w-4" />
+                                                        <span className="text-xs font-medium">
+                                                            {t('trackers.status.error')}
+                                                        </span>
+                                                    </div>
+                                                </TooltipTrigger>
+                                                <TooltipContent>
+                                                    <p className="max-w-[300px] break-words text-xs">{tracker.error}</p>
+                                                </TooltipContent>
+                                            </Tooltip>
+                                        </TooltipProvider>
+                                    ) : (
+                                        <div className="flex items-center gap-2">
                                             <CheckCircle2 className={`h-4 w-4 ${tracker.enabled ? 'text-green-500' : 'text-muted-foreground'}`} />
-                                        )}
-                                        <span className="text-xs text-muted-foreground">
-                                            {tracker.error ? t('trackers.status.error') : (tracker.enabled ? t('trackers.status.enabled') : t('trackers.status.disabled'))}
-                                        </span>
-                                    </div>
+                                            <span className="text-xs text-muted-foreground">
+                                                {tracker.enabled ? t('trackers.status.enabled') : t('trackers.status.disabled')}
+                                            </span>
+                                        </div>
+                                    )}
                                 </TableCell>
                                 <TableCell>{tracker.channel_count ?? "-"}</TableCell>
                                 <TableCell className="font-mono text-sm">{tracker.last_version || "-"}</TableCell>
@@ -98,7 +118,7 @@ export function TrackerList({ trackers, loading, onEdit, onDelete, onCheck }: Tr
                                         <DropdownMenuContent align="end">
                                             <DropdownMenuLabel>{t('trackers.table.actions')}</DropdownMenuLabel>
                                             <DropdownMenuItem onClick={() => onCheck(tracker.name)}>
-                                                <Play className="mr-2 h-4 w-4" /> Check Now
+                                                <Play className="mr-2 h-4 w-4" /> {t('common.check')}
                                             </DropdownMenuItem>
                                             <DropdownMenuItem onClick={() => onEdit(tracker.name)}>
                                                 <Edit className="mr-2 h-4 w-4" /> {t('common.edit')}
@@ -114,7 +134,7 @@ export function TrackerList({ trackers, loading, onEdit, onDelete, onCheck }: Tr
                         ))
                     )}
                 </TableBody>
-            </table>
+            </Table>
         </div>
     )
 }

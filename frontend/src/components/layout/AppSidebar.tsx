@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom"
-import { LayoutDashboard, Boxes, Key, History, Package } from "lucide-react"
+import { LayoutDashboard, Boxes, Key, Package, Bell } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
 import {
@@ -23,8 +23,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     const navItems = [
         { title: t('sidebar.dashboard'), url: "/", icon: LayoutDashboard },
         { title: t('sidebar.trackers'), url: "/trackers", icon: Boxes },
+        { title: t('sidebar.history'), url: "/history", icon: Package },
         { title: t('sidebar.credentials'), url: "/credentials", icon: Key },
-        { title: t('sidebar.history'), url: "/history", icon: History },
+        { title: t('sidebar.notifications'), url: "/notifications", icon: Bell },
     ]
 
     return (

@@ -84,6 +84,9 @@ export function CredentialDialog({ open, onOpenChange, onSuccess, credential }: 
         try {
             if (credential) {
                 const { name, ...updateData } = data
+                if (!updateData.token) {
+                    delete (updateData as any).token
+                }
                 await api.updateCredential(credential.id, updateData)
             } else {
                 await api.createCredential(data)

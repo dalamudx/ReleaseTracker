@@ -97,23 +97,25 @@ export function LoginPage() {
                                 />
                             </div>
 
-                            <Button
-                                type="submit"
-                                className="w-full h-11 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
-                                disabled={isSubmitting || isLoading}
-                            >
-                                {isSubmitting ? (
-                                    <>
-                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                        登录中...
-                                    </>
-                                ) : (
-                                    <>
-                                        登录
-                                        <ArrowRight className="ml-2 h-4 w-4" />
-                                    </>
-                                )}
-                            </Button>
+                            <div className="flex justify-center">
+                                <Button
+                                    type="submit"
+                                    className="w-1/2 h-11 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                                    disabled={isSubmitting || isLoading}
+                                >
+                                    {isSubmitting ? (
+                                        <>
+                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                            登录中...
+                                        </>
+                                    ) : (
+                                        <>
+                                            登录
+                                            <ArrowRight className="ml-2 h-4 w-4" />
+                                        </>
+                                    )}
+                                </Button>
+                            </div>
                         </form>
                     </div>
                 </div>

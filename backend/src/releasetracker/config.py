@@ -48,21 +48,11 @@ class TrackerConfig(BaseModel):
     instance: str | None = None  # GitLab 实例地址
     project: str | None = None  # GitLab: "group/project"
     chart: str | None = None  # Helm chart 名称
-    interval: str = "1h"  # 检查间隔
+    interval: int = 360  # 检查间隔 (分钟)
     credential_name: str | None = None  # 凭证名称引用 (替代直接存储 token)
     
     # 多渠道配置
     channels: list[Channel] = Field(default_factory=list)
-
-    @field_validator("interval")
-    @classmethod
-    def validate_interval(cls, v: str) -> str:
-        """验证时间间隔格式"""
-        import re
-
-        if not re.match(r"^\d+[smh]$", v):
-            raise ValueError("间隔格式必须为: <数字><单位>, 单位: s(秒), m(分), h(小时)")
-        return v
 
 
 class NotifierConfig(BaseModel):

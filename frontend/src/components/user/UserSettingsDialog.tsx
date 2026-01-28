@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useTranslation } from "react-i18next"
 import {
     Dialog,
     DialogContent,
@@ -21,6 +22,7 @@ interface UserSettingsDialogProps {
 }
 
 export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogProps) {
+    const { t } = useTranslation()
     const { user } = useAuth()
     const [isLoading, setIsLoading] = useState(false)
 
@@ -38,11 +40,11 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
     const handleUpdatePassword = async (e: React.FormEvent) => {
         e.preventDefault()
         if (passwords.new !== passwords.confirm) {
-            toast.error("新密码与确认密码不匹配")
+            toast.error(t('user.messages.passwordMismatch'))
             return
         }
         if (passwords.new.length < 6) {
-            toast.error("新密码至少需要 6 个字符")
+            toast.error(t('user.messages.passwordTooShort'))
             return
         }
 
@@ -52,12 +54,12 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                 old_password: passwords.current,
                 new_password: passwords.new
             })
-            toast.success("密码修改成功")
+            toast.success(t('user.messages.passwordUpdated'))
             setPasswords({ current: "", new: "", confirm: "" })
             onOpenChange(false)
         } catch (error: any) {
             console.error(error)
-            toast.error(error.response?.data?.detail || "密码修改失败，请检查当前密码")
+            toast.error(error.response?.data?.detail || t('user.messages.passwordUpdateFailed'))
         } finally {
             setIsLoading(false)
         }
@@ -69,15 +71,15 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="sm:max-w-[425px]">
                 <DialogHeader>
-                    <DialogTitle>用户设置</DialogTitle>
+                    <DialogTitle>{t('user.settings')}</DialogTitle>
                     <DialogDescription>
-                        管理您的账户设置和安全选项
+                        {t('user.description')}
                     </DialogDescription>
                 </DialogHeader>
                 <Tabs defaultValue="account" className="w-full">
                     <TabsList className="grid w-full grid-cols-2">
-                        <TabsTrigger value="account">账户信息</TabsTrigger>
-                        <TabsTrigger value="security">安全设置</TabsTrigger>
+                        <TabsTrigger value="account">{t('user.tabs.account')}</TabsTrigger>
+                        <TabsTrigger value="security">{t('user.tabs.security')}</TabsTrigger>
                     </TabsList>
 
                     <TabsContent value="account" className="space-y-4 pt-4">
@@ -92,10 +94,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                 </div>
                             </div>
                         </div>
-                        <div className="grid gap-2">
-                            <Label htmlFor="role">角色权限</Label>
-                            <Input id="role" value={user.role} disabled className="bg-muted" />
-                        </div>
+
                     </TabsContent>
 
                     <TabsContent value="security" className="space-y-4 pt-4">
@@ -110,7 +109,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                 readOnly
                             />
                             <div className="space-y-2">
-                                <Label htmlFor="current">当前密码</Label>
+                                <Label htmlFor="current">{t('user.fields.currentPassword')}</Label>
                                 <div className="relative">
                                     <Lock className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                                     <Input
@@ -126,7 +125,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                 </div>
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="new">新密码</Label>
+                                <Label htmlFor="new">{t('user.fields.newPassword')}</Label>
                                 <div className="relative">
                                     <Lock className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                                     <Input
@@ -142,7 +141,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                 </div>
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="confirm">确认新密码</Label>
+                                <Label htmlFor="confirm">{t('user.fields.confirmPassword')}</Label>
                                 <div className="relative">
                                     <Lock className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                                     <Input
@@ -160,7 +159,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                             <div className="flex justify-end pt-2">
                                 <Button type="submit" disabled={isLoading}>
                                     {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                    更新密码
+                                    {t('user.actions.updatePassword')}
                                 </Button>
                             </div>
                         </form>

@@ -68,7 +68,8 @@ class ReleaseScheduler:
         self.trackers[tracker_config.name] = tracker
 
         # 添加或更新定时任务
-        interval_seconds = self._parse_interval(tracker_config.interval)
+        # interval 单位为分钟，转换为秒
+        interval_seconds = tracker_config.interval * 60
         
         job_id = f"tracker_{tracker_config.name}"
         # 如果任务已存在，先移除
@@ -213,8 +214,41 @@ class ReleaseScheduler:
 
     async def _send_notifications(self, event: str, release):
         """发送通知"""
-        tasks = [notifier.notify(event, release) for notifier in self.notifiers]
+        logger.info(f"Preparing to send notifications for event: {event}, release: {release.version}")
+        
+        active_notifiers = []
+        
+        # 1. Add file-based notifiers (legacy)
+        active_notifiers.extend(self.notifiers)
+        
+        # 2. Add DB-based notifiers
+        try:
+            db_notifiers = await self.storage.get_notifiers()
+            logger.debug(f"Found {len(db_notifiers)} notifiers in DB")
+            
+            for n in db_notifiers:
+                logger.debug(f"Checking notifier: {n.name}, enabled: {n.enabled}, type: {n.type}, events: {n.events}")
+                if n.enabled:
+                    # Created WebhookNotifier instance
+                    if n.type == "webhook":
+                         notifier = WebhookNotifier(
+                            name=n.name,
+                            url=n.url,
+                            events=n.events,
+                        )
+                         active_notifiers.append(notifier)
+        except Exception as e:
+            logger.error(f"Failed to load notifiers from DB: {e}")
+
+        logger.info(f"Active notifiers count: {len(active_notifiers)}")
+        
+        if not active_notifiers:
+            logger.warning("No active notifiers found to send notification")
+            return
+
+        tasks = [notifier.notify(event, release) for notifier in active_notifiers]
         await asyncio.gather(*tasks, return_exceptions=True)
+
 
     async def _create_tracker(self, config: TrackerConfig) -> BaseTracker:
         """创建追踪器实例"""
@@ -268,20 +302,7 @@ class ReleaseScheduler:
         else:
             raise ValueError(f"不支持的追踪器类型: {config.type}")
 
-    @staticmethod
-    def _parse_interval(interval: str) -> int:
-        """解析时间间隔为秒数"""
-        unit = interval[-1]
-        value = int(interval[:-1])
 
-        if unit == "s":
-            return value
-        elif unit == "m":
-            return value * 60
-        elif unit == "h":
-            return value * 3600
-        else:
-            raise ValueError(f"无效的时间单位: {unit}")
     
 
     async def check_tracker_now_v2(self, name: str) -> TrackerStatus:
@@ -290,75 +311,98 @@ class ReleaseScheduler:
         if not config:
             raise ValueError(f"Tracker {name} not found")
             
-        tracker = await self._create_tracker(config)
-        
-        # 使用 fetch_all 获取一批数据，以便支持多渠道和历史版本回溯
-        # limit=30 是为了覆盖 k8s 这种高频发布场景
-        releases = await tracker.fetch_all(limit=30)
-        
-        # 如果 fetch_all 为空，尝试降级策略
-        if not releases:
-            single_latest = await tracker.fetch_latest()
-            if single_latest:
-                releases = [single_latest]
-        
-        latest_version = None
-        
-        if releases:
-            releases_to_save = []
+        try:
+            tracker = await self._create_tracker(config)
             
-            # 这里的逻辑是：只保存"对用户有意义"的版本
-            # 即每个渠道的"最新"版本。
-            # 避免将列表中的几十个历史版本全部入库。
+            # 使用 fetch_all 获取一批数据，以便支持多渠道和历史版本回溯
+            # limit=30 是为了覆盖 k8s 这种高频发布场景
+            releases = await tracker.fetch_all(limit=30)
             
-            if config.channels:
-                for channel in config.channels:
-                    # 假定 releases 已经是倒序（API通常如此，或 fetch_all 里可排个序确保）
-                    # 找到该渠道下的第一个（也就是最新的）匹配项
-                    match = next((r for r in releases if tracker.should_include_in_channel(r, channel)), None)
-                    if match:
-                        # 设置渠道名称
-                        match.channel_name = channel.name
-                        releases_to_save.append(match)
-            else:
-                 # 无渠道配置时的回退逻辑：只存一个最新的
-                 match = next((r for r in releases if tracker._should_include(r)), None)
-                 if match:
-                     # 根据 prerelease 推断渠道名称
-                     match.channel_name = "prerelease" if match.prerelease else "stable"
-                     releases_to_save.append(match)
+            # 如果 fetch_all 为空，尝试降级策略
+            if not releases:
+                single_latest = await tracker.fetch_latest()
+                if single_latest:
+                    releases = [single_latest]
             
-            # 去重（因为Stable版本可能同时也满足Pre-release规则，或者反之）
-            unique_releases = {r.version: r for r in releases_to_save}.values()
-
-            # 保存精选出的版本
-            for release in unique_releases:
-                result = await self.storage.save_release(release)
+            # 获取当前状态以保留 last_version
+            current_status = await self.storage.get_tracker_status(name)
+            latest_version = current_status.last_version if current_status else None
+            
+            if releases:
+                releases_to_save = []
                 
-                if result["is_new"]:
-                    logger.info(f"New release found: {name} -> {release.version}")
-                    await self._send_notifications(NotificationEvent.NEW_RELEASE, release)
-                elif result["is_republish"]:
-                    old_commit_short = result["old_commit"][:7] if result["old_commit"] else "unknown"
-                    new_commit_short = release.commit_sha[:7] if release.commit_sha else "unknown"
-                    logger.info(f"Republish detected: {name} -> {release.version} (commit: {old_commit_short} → {new_commit_short})")
-                    await self._send_notifications(NotificationEvent.REPUBLISH, release)
+                # 这里的逻辑是：只保存"对用户有意义"的版本
+                # 即每个渠道的"最新"版本。
+                # 避免将列表中的几十个历史版本全部入库。
+                
+                if config.channels:
+                    for channel in config.channels:
+                        # 假定 releases 已经是倒序（API通常如此，或 fetch_all 里可排个序确保）
+                        # 找到该渠道下的第一个（也就是最新的）匹配项
+                        match = next((r for r in releases if tracker.should_include_in_channel(r, channel)), None)
+                        if match:
+                            # 设置渠道名称
+                            match.channel_name = channel.name
+                            releases_to_save.append(match)
+                else:
+                     # 无渠道配置时的回退逻辑：只存一个最新的
+                     match = next((r for r in releases if tracker._should_include(r)), None)
+                     if match:
+                         # 根据 prerelease 推断渠道名称
+                         match.channel_name = "prerelease" if match.prerelease else "stable"
+                         releases_to_save.append(match)
+                
+                # 去重（因为Stable版本可能同时也满足Pre-release规则，或者反之）
+                unique_releases = {r.version: r for r in releases_to_save}.values()
+
+                # 保存精选出的版本
+                for release in unique_releases:
+                    result = await self.storage.save_release(release)
+                    
+                    if result["is_new"]:
+                        logger.info(f"New release found: {name} -> {release.version}")
+                        await self._send_notifications(NotificationEvent.NEW_RELEASE, release)
+                    elif result["is_republish"]:
+                        old_commit_short = result["old_commit"][:7] if result["old_commit"] else "unknown"
+                        new_commit_short = release.commit_sha[:7] if release.commit_sha else "unknown"
+                        logger.info(f"Republish detected: {name} -> {release.version} (commit: {old_commit_short} → {new_commit_short})")
+                        await self._send_notifications(NotificationEvent.REPUBLISH, release)
+                
+                # 选出最新版本展示 (timestamp 比较)
+                valid_releases = [r for r in releases if r.published_at]
+                if valid_releases:
+                    best_release = max(valid_releases, key=lambda r: r.published_at.timestamp())
+                    latest_version = best_release.version
+                
+            status = TrackerStatus(
+                name=name,
+                type=config.type,
+                enabled=config.enabled,
+                last_check=datetime.now(),
+                last_version=latest_version,
+                error=None,
+                channel_count=len(config.channels) if config.channels else 0
+            )
+            await self.storage.update_tracker_status(status)
             
-            # 选出最新版本展示 (timestamp 比较)
-            valid_releases = [r for r in releases if r.published_at]
-            if valid_releases:
-                best_release = max(valid_releases, key=lambda r: r.published_at.timestamp())
-                latest_version = best_release.version
+            return status
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Manual check failed for {name}: {error_msg}")
             
-        status = TrackerStatus(
-            name=name,
-            type=config.type,
-            enabled=config.enabled,
-            last_check=datetime.now(),
-            last_version=latest_version,
-            error=None,
-            channel_count=len(config.channels) if config.channels else 0
-        )
-        await self.storage.update_tracker_status(status)
-        
-        return status
+            # 更新错误状态到数据库
+            status = TrackerStatus(
+                name=name,
+                type=config.type,
+                enabled=config.enabled,
+                last_check=datetime.now(),
+                # 保留上一次的版本号，不应该因为检查失败而清空
+                last_version=None, 
+                error=error_msg,
+                channel_count=len(config.channels) if config.channels else 0
+            )
+            await self.storage.update_tracker_status(status)
+            
+            # 返回带有错误信息的 status，而不是抛出异常
+            return status

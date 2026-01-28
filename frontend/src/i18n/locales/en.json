@@ -1,4 +1,63 @@
 {
+    "theme": {
+        "toggle": "Toggle Theme",
+        "mode": {
+            "title": "Theme Mode",
+            "description": "Select light/dark theme",
+            "light": "Light",
+            "lightDesc": "Light theme",
+            "dark": "Dark",
+            "darkDesc": "Dark theme",
+            "system": "System",
+            "systemDesc": "Follow system settings"
+        },
+        "color": {
+            "title": "Color Scheme",
+            "description": "Select primary color",
+            "zinc": "Default",
+            "red": "Red",
+            "rose": "Rose",
+            "orange": "Orange",
+            "green": "Green",
+            "blue": "Blue",
+            "yellow": "Yellow",
+            "violet": "Violet"
+        },
+        "scale": {
+            "title": "Scale Mode",
+            "description": "Select interface scale",
+            "default": "Default",
+            "scaled": "Scaled",
+            "mono": "Mono"
+        },
+        "radius": {
+            "title": "Radius",
+            "description": "Adjust corner radius"
+        }
+    },
+    "user": {
+        "settings": "User Settings",
+        "description": "Manage your account settings and security options",
+        "tabs": {
+            "account": "Account",
+            "security": "Security"
+        },
+        "fields": {
+            "currentPassword": "Current Password",
+            "newPassword": "New Password",
+            "confirmPassword": "Confirm Password"
+        },
+        "actions": {
+            "updatePassword": "Update Password",
+            "logout": "Log out"
+        },
+        "messages": {
+            "passwordMismatch": "New password and confirmation do not match",
+            "passwordTooShort": "New password must be at least 6 characters",
+            "passwordUpdated": "Password updated successfully",
+            "passwordUpdateFailed": "Failed to update password, please check current password"
+        }
+    },
     "common": {
         "save": "Save",
         "cancel": "Cancel",
@@ -16,6 +75,7 @@
         "deleteFailed": "Failed to delete",
         "checkStarted": "Check started successfully",
         "checkFailed": "Check failed",
+        "check": "Check",
         "unexpectedError": "An unexpected error occurred"
     },
     "sidebar": {
@@ -23,7 +83,8 @@
         "history": "History",
         "trackers": "Trackers",
         "credentials": "Credentials",
-        "settings": "Settings"
+        "settings": "Settings",
+        "notifications": "Notifications"
     },
     "dashboard": {
         "title": "Dashboard",
@@ -116,7 +177,7 @@
         }
     },
     "credentials": {
-        "title": "Credential Management",
+        "title": "Credentials",
         "description": "Manage API access credentials",
         "addNew": "Add Credential",
         "table": {
@@ -155,7 +216,7 @@
             "chartRepo": "Chart Repo URL",
             "chartName": "Chart Name",
             "credential": "Credential",
-            "optional": "(Optional)",
+            "optional": "Optional",
             "none": "None",
             "interval": "Check Interval (Minutes)",
             "channels": "Channels",
@@ -217,5 +278,33 @@
         "totalItems": "Total {{count}} items",
         "rowsPerPage": "Rows per page",
         "pageOf": "Page {{page}} of {{total}}"
+    },
+    "settings": {
+        "title": "Notification Settings",
+        "description": "Manage message push notification channels",
+        "notifications": {
+            "title": "Notifications",
+            "description": "Configure webhooks to receive release update notifications",
+            "add": "Add Notification Channel",
+            "table": {
+                "name": "Name",
+                "url": "Webhook URL",
+                "events": "Trigger Events",
+                "status": "Status",
+                "enabled": "Enabled",
+                "disabled": "Disabled",
+                "actions": "Actions"
+            },
+            "dialog": {
+                "addTitle": "Add Notification Channel",
+                "editTitle": "Edit Notification Channel",
+                "name": "Name",
+                "url": "Webhook URL",
+                "events": "Trigger Events",
+                "eventsDesc": "Select event types to trigger notifications",
+                "description": "Description",
+                "test": "Send Test Message"
+            }
+        }
     }
 }

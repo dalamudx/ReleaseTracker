@@ -28,9 +28,11 @@ import {
 } from "@/components/ui/sidebar"
 import { useAuth } from "@/providers/AuthProvider"
 import { useState } from "react"
+import { useTranslation } from "react-i18next"
 import { UserSettingsDialog } from "../user/UserSettingsDialog"
 
 export function UserNav() {
+    const { t } = useTranslation()
     const { isMobile } = useSidebar()
     const { user, logout } = useAuth()
     const [showSettings, setShowSettings] = useState(false)
@@ -81,13 +83,13 @@ export function UserNav() {
                             <DropdownMenuGroup>
                                 <DropdownMenuItem onClick={() => setShowSettings(true)}>
                                     <Settings />
-                                    用户设置
+                                    {t('user.settings')}
                                 </DropdownMenuItem>
                             </DropdownMenuGroup>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem onClick={logout}>
                                 <LogOut />
-                                Log out
+                                {t('user.actions.logout')}
                             </DropdownMenuItem>
                         </DropdownMenuContent>
                     </DropdownMenu>

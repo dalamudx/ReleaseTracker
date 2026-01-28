@@ -1,41 +1,16 @@
 """认证路由"""
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from typing import Annotated
 
 from ..models import LoginRequest, RegisterRequest, User, TokenPair, Session, ChangePasswordRequest
 from ..services.auth import AuthService
 from ..storage.sqlite import SQLiteStorage
 
+from ..dependencies import get_auth_service, get_current_user, oauth2_scheme
+
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
-
-# 依赖项：获取 AuthService
-# 依赖项：获取 AuthService
-def get_auth_service(request: Request):
-    storage = getattr(request.app.state, "storage", None)
-    app_config = getattr(request.app.state, "config", None)
-    
-    if not storage or not app_config:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-    return AuthService(storage, app_config)
-
-# 依赖项：获取当前用户
-async def get_current_user(
-    token: Annotated[str, Depends(oauth2_scheme)],
-    auth_service: Annotated[AuthService, Depends(get_auth_service)]
-):
-    try:
-        user = await auth_service.get_current_user(token)
-        return user
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e),
-            headers={"WWW-Authenticate": "Bearer"},
-        )
 
 @router.post("/register", response_model=User, status_code=status.HTTP_201_CREATED)
 async def register(
@@ -67,6 +42,23 @@ async def login(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(e)
+        )
+
+@router.post("/token", response_model=TokenPair)
+async def login_for_access_token(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)]
+):
+    """OAuth2 兼容的登录接口 (供 Swagger UI 使用)"""
+    req = LoginRequest(username=form_data.username, password=form_data.password)
+    try:
+        user, token_pair = await auth_service.login(req, user_agent="Swagger UI", ip_address="127.0.0.1")
+        return token_pair
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
 @router.post("/logout")

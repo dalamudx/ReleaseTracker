@@ -6,6 +6,7 @@ import DashboardPage from "@/pages/Dashboard"
 import TrackersPage from "@/pages/Trackers"
 import HistoryPage from "@/pages/History"
 import CredentialsPage from "@/pages/Credentials"
+import NotificationsPage from "@/pages/Notifications"
 import { Navigate, Outlet } from "react-router-dom"
 import { useAuth } from "@/providers/AuthProvider"
 import { LoginPage } from "@/pages/Login"
@@ -37,6 +38,7 @@ function App() {
               <Route path="/trackers" element={<TrackersPage />} />
               <Route path="/history" element={<HistoryPage />} />
               <Route path="/credentials" element={<CredentialsPage />} />
+              <Route path="/notifications" element={<NotificationsPage />} />
             </Route>
           </Route>
         </Routes>

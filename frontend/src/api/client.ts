@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { Release, ReleaseStats, TrackerStatus, ApiCredential } from './types'
+import type { Release, ReleaseStats, TrackerStatus, ApiCredential, Notifier, SettingItem, EnvInfo, User } from './types'
 
 const API_BASE = '' // Vite proxy will handle /api
 
@@ -40,11 +40,22 @@ export const api = {
     updateCredential: (id: number, data: any) => apiClient.put(`/api/credentials/${id}`, data).then(res => res.data),
     deleteCredential: (id: number) => apiClient.delete(`/api/credentials/${id}`).then(res => res.data),
 
+    // Notifiers
+    getNotifiers: () => apiClient.get<Notifier[]>('/api/notifiers').then(res => res.data),
+    createNotifier: (data: any) => apiClient.post('/api/notifiers', data).then(res => res.data),
+    updateNotifier: (id: number, data: any) => apiClient.put(`/api/notifiers/${id}`, data).then(res => res.data),
+    deleteNotifier: (id: number) => apiClient.delete(`/api/notifiers/${id}`).then(res => res.data),
+    testNotifier: (id: number) => apiClient.post(`/api/notifiers/${id}/test`).then(res => res.data),
+
     // Auth
     login: (data: any) => apiClient.post('/api/auth/login', data).then(res => res.data),
     register: (data: any) => apiClient.post('/api/auth/register', data).then(res => res.data),
     getCurrentUser: () => apiClient.get<User>('/api/auth/me').then(res => res.data),
     changePassword: (data: any) => apiClient.post('/api/auth/change-password', data).then(res => res.data),
-}
 
-import type { User } from './types'
+    // Settings
+    getSettings: () => apiClient.get<SettingItem[]>('/api/settings').then(res => res.data),
+    updateSetting: (data: any) => apiClient.post<SettingItem>('/api/settings', data).then(res => res.data),
+    deleteSetting: (key: string) => apiClient.delete(`/api/settings/${key}`).then(res => res.data),
+    getEnvInfo: () => apiClient.get<EnvInfo[]>('/api/settings/env').then(res => res.data),
+}

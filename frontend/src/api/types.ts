@@ -43,7 +43,7 @@ export interface TrackerConfig {
     chart?: string
     credential_name?: string
     channels?: Channel[]
-    interval?: string
+    interval?: number
     description?: string
 }
 
@@ -70,7 +70,6 @@ export interface User {
     id: number
     username: string
     email: string
-    role: string
     avatar_url?: string
 }
 
@@ -85,3 +84,26 @@ export interface LoginResponse {
     user: User
     token: TokenPair
 }
+
+export interface Notifier {
+    id: number
+    name: string
+    type: string
+    url: string
+    events: string[]
+    enabled: boolean
+    description?: string
+    created_at: string
+}
+
+export interface SettingItem {
+    key: string
+    value: string
+    updated_at?: string
+}
+
+export interface EnvInfo {
+    key: string
+    value: string
+}
+

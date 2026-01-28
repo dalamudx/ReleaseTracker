@@ -60,6 +60,20 @@ class Credential(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.now)
 
 
+class Notifier(BaseModel):
+    """通知器配置模型"""
+    
+    id: int | None = None
+    name: str
+    type: str = "webhook"  # 目前仅支持 webhook
+    url: str
+    events: list[str] = Field(default_factory=lambda: ["new_release"])
+    enabled: bool = True
+    description: str | None = None
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
 class ReleaseHistory(BaseModel):
     """版本历史记录模型"""
     
@@ -81,7 +95,6 @@ class User(BaseModel):
     username: str
     email: str
     password_hash: str
-    role: str = "user"  # user, admin
     status: str = "active"  # active, inactive
     created_at: datetime = Field(default_factory=datetime.now)
     last_login_at: datetime | None = None

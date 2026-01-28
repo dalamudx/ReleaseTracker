@@ -46,13 +46,7 @@ const defaultChannels = [
     { name: "stable", type: "release", enabled: true },
 ]
 
-const parseIntervalToMinutes = (interval: string | undefined): number => {
-    if (!interval) return 360
-    if (interval.endsWith('h')) return parseInt(interval) * 60
-    if (interval.endsWith('m')) return parseInt(interval)
-    if (interval.endsWith('s')) return Math.ceil(parseInt(interval) / 60)
-    return parseInt(interval) || 360
-}
+
 
 export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: TrackerDialogProps) {
     const { t } = useTranslation()
@@ -66,7 +60,7 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
             type: "github",
             enabled: true,
             channels: defaultChannels as any,
-            interval: "360m",
+            interval: 60,
         },
     })
 
@@ -105,42 +99,60 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
     useEffect(() => {
         if (open) {
             setExpandedChannel(trackerName ? null : 0)
-            api.getCredentials({ limit: 1000 }).then(data => setCredentials(data.items)).catch(console.error)
 
-            if (trackerName) {
-                api.getTrackerConfig(trackerName).then((data) => {
-                    form.reset(data)
-                }).catch(console.error)
-            } else {
-                form.reset({
-                    name: "",
-                    type: "github",
-                    enabled: true,
-                    repo: "",
-                    project: "",
-                    instance: "",
-                    chart: "",
-                    credential_name: "",
-                    channels: defaultChannels as any,
-                    interval: "360m",
-                    description: ""
-                })
-                // Reset prevTypeRef on open to trigger auto-select if needed? 
-                // Actually the effect above handles 'type' change or initial load.
-                // When dialog opens, 'type' is 'github'. prevTypeRef might be stale?
-                // It's safer to not reset here, but rely on the effect.
+            const loadData = async () => {
+                try {
+                    const [credentialsData, trackerData] = await Promise.all([
+                        api.getCredentials({ limit: 1000 }),
+                        trackerName ? api.getTrackerConfig(trackerName) : Promise.resolve(null)
+                    ])
+
+                    setCredentials(credentialsData.items)
+
+                    if (trackerData) {
+                        form.reset({
+                            ...trackerData,
+                            credential_name: trackerData.credential_name || "none"
+                        })
+                    } else {
+                        form.reset({
+                            name: "",
+                            type: "github",
+                            enabled: true,
+                            repo: "",
+                            project: "",
+                            instance: "",
+                            chart: "",
+                            credential_name: "none",
+                            channels: defaultChannels as any,
+                            interval: 60,
+                            description: ""
+                        })
+                    }
+                } catch (e) {
+                    console.error("Failed to load data", e)
+                    toast.error(String(e))
+                }
             }
+
+            loadData()
         }
     }, [open, trackerName, form])
 
     const onSubmit = async (data: TrackerConfig) => {
         setLoading(true)
         try {
+            // Map "none" back to null for API
+            const payload = {
+                ...data,
+                credential_name: (data.credential_name === "none" || !data.credential_name) ? null : data.credential_name
+            }
+
             if (trackerName) {
-                await api.updateTracker(trackerName, data)
+                await api.updateTracker(trackerName, payload)
                 toast.success(t('common.saved'))
             } else {
-                await api.createTracker(data)
+                await api.createTracker(payload)
                 toast.success(t('common.saved'))
             }
             onSuccess()
@@ -182,7 +194,8 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
                 <Form {...form}>
                     <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
 
-                        <div className="grid grid-cols-6 gap-4">
+                        {/* Top Row: Name, Type, Credential, Interval */}
+                        <div className="grid grid-cols-12 gap-4">
                             <FormField
                                 control={form.control}
                                 name="name"
@@ -192,7 +205,6 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
                                         <FormControl>
                                             <Input placeholder="my-app" {...field} disabled={!!trackerName} />
                                         </FormControl>
-                                        <FormDescription>{t('tracker.fields.nameDesc')}</FormDescription>
                                         <FormMessage />
                                     </FormItem>
                                 )}
@@ -204,7 +216,7 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
                                 render={({ field }) => (
                                     <FormItem className="col-span-2">
                                         <FormLabel>{t('tracker.fields.type')}</FormLabel>
-                                        <Select onValueChange={field.onChange} defaultValue={field.value} disabled={!!trackerName}>
+                                        <Select onValueChange={field.onChange} value={field.value} disabled={!!trackerName}>
                                             <FormControl>
                                                 <SelectTrigger>
                                                     <SelectValue placeholder={t('tracker.fields.selectType')} />
@@ -220,9 +232,56 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
                                     </FormItem>
                                 )}
                             />
+
+                            <FormField
+                                control={form.control}
+                                name="credential_name"
+                                render={({ field }) => (
+                                    <FormItem className="col-span-4">
+                                        <FormLabel>{t('tracker.fields.credential')} <span className="text-muted-foreground font-normal text-xs">({t('tracker.fields.optional')})</span></FormLabel>
+                                        <Select
+                                            key={`${type}-${credentials.length}`}
+                                            onValueChange={field.onChange}
+                                            value={field.value || "none"}
+                                        >
+                                            <FormControl>
+                                                <SelectTrigger>
+                                                    <SelectValue placeholder={t('tracker.fields.none')} />
+                                                </SelectTrigger>
+                                            </FormControl>
+                                            <SelectContent>
+                                                <SelectItem value="none">{t('tracker.fields.none')}</SelectItem>
+                                                {credentials.filter(c => c.type === type).map(c => (
+                                                    <SelectItem key={c.id} value={c.name}>{c.name} ({c.type})</SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+
+                            <FormField
+                                control={form.control}
+                                name="interval"
+                                render={({ field }) => (
+                                    <FormItem className="col-span-2">
+                                        <FormLabel>{t('tracker.fields.interval')}</FormLabel>
+                                        <FormControl>
+                                            <Input
+                                                type="number"
+                                                min={1}
+                                                value={field.value}
+                                                onChange={e => field.onChange(parseInt(e.target.value) || 60)}
+                                            />
+                                        </FormControl>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
                         </div>
 
-                        {/* Type Specific Fields - Compact Grid */}
+                        {/* Type Specific Fields */}
                         <div className="grid grid-cols-2 gap-4 p-4 border rounded-lg bg-muted/40">
                             {type === 'github' && (
                                 <FormField
@@ -232,7 +291,7 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
                                         <FormItem className="col-span-2">
                                             <FormLabel>{t('tracker.fields.repo')}</FormLabel>
                                             <FormControl>
-                                                <Input placeholder="facebook/react" {...field} className="bg-background" />
+                                                <Input placeholder="traefik/traefik" {...field} className="bg-background" />
                                             </FormControl>
                                             <FormMessage />
                                         </FormItem>
@@ -301,52 +360,6 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
                                     />
                                 </>
                             )}
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            <FormField
-                                control={form.control}
-                                name="credential_name"
-                                render={({ field }) => (
-                                    <FormItem>
-                                        <FormLabel>{t('tracker.fields.credential')} <span className="text-muted-foreground font-normal">{t('tracker.fields.optional')}</span></FormLabel>
-                                        <Select onValueChange={field.onChange} value={field.value || undefined}>
-                                            <FormControl>
-                                                <SelectTrigger>
-                                                    <SelectValue placeholder={t('tracker.fields.none')} />
-                                                </SelectTrigger>
-                                            </FormControl>
-                                            <SelectContent>
-                                                <SelectItem value="none">{t('tracker.fields.none')}</SelectItem>
-                                                {credentials.filter(c => c.type === type).map(c => (
-                                                    <SelectItem key={c.id} value={c.name}>{c.name} ({c.type})</SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                        <FormMessage />
-                                    </FormItem>
-                                )}
-                            />
-
-                            <FormField
-                                control={form.control}
-                                name="interval"
-                                render={({ field }) => (
-                                    <FormItem>
-                                        <FormLabel>{t('tracker.fields.interval')}</FormLabel>
-                                        <FormControl>
-                                            <Input
-                                                type="number"
-                                                min={1}
-                                                placeholder="360"
-                                                value={parseIntervalToMinutes(field.value)}
-                                                onChange={e => field.onChange(`${e.target.value}m`)}
-                                            />
-                                        </FormControl>
-                                        <FormMessage />
-                                    </FormItem>
-                                )}
-                            />
                         </div>
 
                         <div className="space-y-3">

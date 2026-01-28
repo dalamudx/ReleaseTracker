@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import { Sun, Moon, Laptop, Check, Palette } from "lucide-react"
 import { useTheme } from "@/providers/theme-provider"
+import { useTranslation } from "react-i18next"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -15,51 +16,52 @@ import { Slider } from "@/components/ui/slider"
 
 type Theme = "light" | "dark" | "system"
 
-const THEME_MODES = [
-    {
-        name: "浅色",
-        value: "light" as Theme,
-        icon: Sun,
-        description: "浅色主题"
-    },
-    {
-        name: "深色",
-        value: "dark" as Theme,
-        icon: Moon,
-        description: "深色主题"
-    },
-    {
-        name: "跟随系统",
-        value: "system" as Theme,
-        icon: Laptop,
-        description: "跟随系统设置"
-    }
-]
-
-const COLOR_THEMES = [
-    { name: "默认", value: "zinc", color: "oklch(0.45 0.008 264)" },
-    { name: "红色", value: "red", color: "oklch(0.645 0.246 16.439)" },
-    { name: "玫瑰", value: "rose", color: "oklch(0.645 0.246 350)" },
-    { name: "橙色", value: "orange", color: "oklch(0.769 0.188 45)" },
-    { name: "绿色", value: "green", color: "oklch(0.6 0.118 184.704)" },
-    { name: "蓝色", value: "blue", color: "oklch(0.488 0.243 264.376)" },
-    { name: "黄色", value: "yellow", color: "oklch(0.828 0.189 85)" },
-    { name: "紫罗兰", value: "violet", color: "oklch(0.627 0.265 280)" },
-] as const
-
-const SCALE_MODES = [
-    { name: "默认", value: "default" },
-    { name: "缩放", value: "scaled" },
-    { name: "等宽", value: "mono" },
-]
-
 export function ThemeCustomizer() {
+    const { t } = useTranslation()
     const { theme, setTheme, color, setColor, radius, setRadius, zoom, setZoom } = useTheme()
     const [mounted, setMounted] = useState(false)
 
     useEffect(() => {
         setMounted(true)
     }, [])
+
+    const THEME_MODES = [
+        {
+            name: t('theme.mode.light'),
+            value: "light" as Theme,
+            icon: Sun,
+            description: t('theme.mode.lightDesc')
+        },
+        {
+            name: t('theme.mode.dark'),
+            value: "dark" as Theme,
+            icon: Moon,
+            description: t('theme.mode.darkDesc')
+        },
+        {
+            name: t('theme.mode.system'),
+            value: "system" as Theme,
+            icon: Laptop,
+            description: t('theme.mode.systemDesc')
+        }
+    ]
+
+    const COLOR_THEMES = [
+        { name: t('theme.color.zinc'), value: "zinc", color: "oklch(0.45 0.008 264)" },
+        { name: t('theme.color.red'), value: "red", color: "oklch(0.645 0.246 16.439)" },
+        { name: t('theme.color.rose'), value: "rose", color: "oklch(0.645 0.246 350)" },
+        { name: t('theme.color.orange'), value: "orange", color: "oklch(0.769 0.188 45)" },
+        { name: t('theme.color.green'), value: "green", color: "oklch(0.6 0.118 184.704)" },
+        { name: t('theme.color.blue'), value: "blue", color: "oklch(0.488 0.243 264.376)" },
+        { name: t('theme.color.yellow'), value: "yellow", color: "oklch(0.828 0.189 85)" },
+        { name: t('theme.color.violet'), value: "violet", color: "oklch(0.627 0.265 280)" },
+    ] as const
+
+    const SCALE_MODES = [
+        { name: t('theme.scale.default'), value: "default" },
+        { name: t('theme.scale.scaled'), value: "scaled" },
+        { name: t('theme.scale.mono'), value: "mono" },
+    ]
 
     const handleThemeModeChange = (mode: string) => {
         if (mode) {
@@ -71,7 +73,7 @@ export function ThemeCustomizer() {
         return (
             <Button variant="ghost" size="icon" className="h-7 w-7">
                 <Palette className="h-4 w-4" />
-                <span className="sr-only">切换主题</span>
+                <span className="sr-only">{t('theme.toggle')}</span>
             </Button>
         )
     }
@@ -106,14 +108,14 @@ export function ThemeCustomizer() {
                             />
                         )}
                     </div>
-                    <span className="sr-only">切换主题</span>
+                    <span className="sr-only">{t('theme.toggle')}</span>
                 </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
                 {/* 主题模式 */}
                 <div className="px-2 py-1.5">
-                    <div className="text-sm font-medium">主题模式</div>
-                    <div className="text-xs text-muted-foreground">选择明暗主题</div>
+                    <div className="text-sm font-medium">{t('theme.mode.title')}</div>
+                    <div className="text-xs text-muted-foreground">{t('theme.mode.description')}</div>
                 </div>
                 <div className="px-2 py-2">
                     <ToggleGroup
@@ -143,8 +145,8 @@ export function ThemeCustomizer() {
 
                 {/* 颜色主题 */}
                 <div className="px-2 py-1.5">
-                    <div className="text-sm font-medium">颜色主题</div>
-                    <div className="text-xs text-muted-foreground">选择主色调</div>
+                    <div className="text-sm font-medium">{t('theme.color.title')}</div>
+                    <div className="text-xs text-muted-foreground">{t('theme.color.description')}</div>
                 </div>
                 <div className="px-2 py-2">
                     <div className="grid grid-cols-3 gap-2">
@@ -172,8 +174,8 @@ export function ThemeCustomizer() {
 
                 {/* 缩放模式 */}
                 <div className="px-2 py-1.5">
-                    <div className="text-sm font-medium">缩放模式</div>
-                    <div className="text-xs text-muted-foreground">选择界面缩放</div>
+                    <div className="text-sm font-medium">{t('theme.scale.title')}</div>
+                    <div className="text-xs text-muted-foreground">{t('theme.scale.description')}</div>
                 </div>
                 <div className="px-2 py-2">
                     <ToggleGroup
@@ -199,8 +201,8 @@ export function ThemeCustomizer() {
 
                 {/* 圆角大小 */}
                 <div className="px-2 py-1.5">
-                    <div className="text-sm font-medium">圆角大小</div>
-                    <div className="text-xs text-muted-foreground">调整界面圆角</div>
+                    <div className="text-sm font-medium">{t('theme.radius.title')}</div>
+                    <div className="text-xs text-muted-foreground">{t('theme.radius.description')}</div>
                 </div>
                 <div className="px-2 py-2">
                     <div className="flex items-center gap-3">

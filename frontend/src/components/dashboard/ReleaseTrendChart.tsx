@@ -27,7 +27,7 @@ interface ReleaseTrendChartProps {
 }
 
 export function ReleaseTrendChart({ stats, loading }: ReleaseTrendChartProps) {
-    const { t } = useTranslation()
+    const { t, i18n } = useTranslation()
     const formatDate = useDateFormatter()
     const { chartData, chartConfig, channels } = useMemo(() => {
         if (!stats?.daily_stats) return { chartData: [], chartConfig: {}, channels: [] }
@@ -90,7 +90,7 @@ export function ReleaseTrendChart({ stats, loading }: ReleaseTrendChartProps) {
         }))
 
         return { chartData: data, chartConfig: config, channels: mappedChannels }
-    }, [stats])
+    }, [stats, i18n.language])
 
     if (loading) {
         return (

@@ -3,6 +3,7 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 import logging
+from datetime import datetime
 
 
 from fastapi import FastAPI, HTTPException
@@ -14,9 +15,10 @@ from .models import Release, ReleaseStats, TrackerStatus
 from .scheduler import ReleaseScheduler
 from .services.auth import AuthService
 from .storage.sqlite import SQLiteStorage
-from .storage.sqlite import SQLiteStorage
 from .logger import LogConfig, DEFAULT_LOG_FORMAT
-from .routers import auth
+from .routers import auth, notifiers, settings
+from .dependencies import get_current_user
+from fastapi import Depends
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +96,8 @@ app.add_middleware(
 
 
 app.include_router(auth.router)
+app.include_router(notifiers.router)
+app.include_router(settings.router)
 
 
 # ==================== API 路由 ====================
@@ -105,7 +109,7 @@ async def root():
     return {"message": "ReleaseTracker API", "version": "0.1.0"}
 
 
-@app.get("/api/stats", response_model=ReleaseStats)
+@app.get("/api/stats", response_model=ReleaseStats, dependencies=[Depends(get_current_user)])
 async def get_stats():
     """获取统计信息"""
     if not storage:
@@ -113,7 +117,7 @@ async def get_stats():
     return await storage.get_stats()
 
 
-@app.get("/api/trackers")
+@app.get("/api/trackers", dependencies=[Depends(get_current_user)])
 async def get_trackers(
     skip: int = 0,
     limit: int = 20,
@@ -171,7 +175,7 @@ async def get_trackers(
     }
 
 
-@app.get("/api/trackers/{tracker_name}", response_model=TrackerStatus)
+@app.get("/api/trackers/{tracker_name}", response_model=TrackerStatus, dependencies=[Depends(get_current_user)])
 async def get_tracker(tracker_name: str):
     """获取单个追踪器状态"""
     if not storage or not app_config:
@@ -179,8 +183,8 @@ async def get_tracker(tracker_name: str):
 
     status = await storage.get_tracker_status(tracker_name)
     
-    # 查找配置
-    tracker_config = next((t for t in app_config.trackers if t.name == tracker_name), None)
+    # 查找配置 (从数据库获取)
+    tracker_config = await storage.get_tracker_config(tracker_name)
     if not tracker_config:
         # 如果配置里没有，即使数据库有，也视为不存在（或残留）
         raise HTTPException(status_code=404, detail="追踪器配置不存在")
@@ -206,7 +210,7 @@ async def get_tracker(tracker_name: str):
 
 
 
-@app.post("/api/trackers/{tracker_name}/check")
+@app.post("/api/trackers/{tracker_name}/check", dependencies=[Depends(get_current_user)])
 async def check_tracker(tracker_name: str):
     """手动触发追踪器检查"""
     if not scheduler:
@@ -224,7 +228,7 @@ async def check_tracker(tracker_name: str):
         raise HTTPException(status_code=500, detail=f"检查失败: {str(e)}")
 
 
-@app.get("/api/releases")
+@app.get("/api/releases", dependencies=[Depends(get_current_user)])
 async def get_releases(
     tracker: str | None = None,
     skip: int = 0,
@@ -264,7 +268,7 @@ async def get_releases(
     }
 
 
-@app.get("/api/releases/latest", response_model=list[Release])
+@app.get("/api/releases/latest", response_model=list[Release], dependencies=[Depends(get_current_user)])
 async def get_latest_releases():
     """获取最近更新的版本列表（全局最近5个）"""
     if not storage:
@@ -273,7 +277,7 @@ async def get_latest_releases():
     return await storage.get_releases(limit=5)
 
 
-@app.get("/api/config")
+@app.get("/api/config", dependencies=[Depends(get_current_user)])
 async def get_config():
     """获取当前配置（部分模拟，主要返回追踪器列表）"""
     if not storage:
@@ -293,7 +297,7 @@ async def get_config():
     }
 
 
-@app.post("/api/trackers")
+@app.post("/api/trackers", dependencies=[Depends(get_current_user)])
 async def create_tracker(tracker_data: dict):
     """创建新追踪器"""
     if not storage or not scheduler:
@@ -320,7 +324,7 @@ async def create_tracker(tracker_data: dict):
         raise HTTPException(status_code=400, detail=f"创建失败: {str(e)}")
 
 
-@app.put("/api/trackers/{tracker_name}")
+@app.put("/api/trackers/{tracker_name}", dependencies=[Depends(get_current_user)])
 async def update_tracker(tracker_name: str, tracker_data: dict):
     """更新追踪器配置"""
     if not storage or not scheduler:
@@ -350,7 +354,7 @@ async def update_tracker(tracker_name: str, tracker_data: dict):
         raise HTTPException(status_code=400, detail=f"更新失败: {str(e)}")
 
 
-@app.delete("/api/trackers/{tracker_name}")
+@app.delete("/api/trackers/{tracker_name}", dependencies=[Depends(get_current_user)])
 async def delete_tracker(tracker_name: str):
     """删除追踪器"""
     if not storage or not scheduler:
@@ -375,7 +379,7 @@ async def delete_tracker(tracker_name: str):
     
     return {"message": f"追踪器 {tracker_name} 已删除"}
 
-@app.get("/api/trackers/{tracker_name}/config")
+@app.get("/api/trackers/{tracker_name}/config", dependencies=[Depends(get_current_user)])
 async def get_tracker_config(tracker_name: str):
     """获取单个追踪器配置详情"""
     if not storage:
@@ -390,7 +394,7 @@ async def get_tracker_config(tracker_name: str):
 
 # ==================== 凭证管理 API ====================
 
-@app.get("/api/credentials")
+@app.get("/api/credentials", dependencies=[Depends(get_current_user)])
 async def get_credentials(
     skip: int = 0,
     limit: int = 20
@@ -419,7 +423,7 @@ async def get_credentials(
     }
 
 
-@app.get("/api/credentials/{credential_id}")
+@app.get("/api/credentials/{credential_id}", dependencies=[Depends(get_current_user)])
 async def get_credential(credential_id: int):
     """获取单个凭证（不包含 token）"""
     if not storage:
@@ -437,7 +441,7 @@ async def get_credential(credential_id: int):
     return cred_dict
 
 
-@app.post("/api/credentials")
+@app.post("/api/credentials", dependencies=[Depends(get_current_user)])
 async def create_credential(credential_data: dict):
     """创建新凭证"""
     if not storage:
@@ -460,7 +464,7 @@ async def create_credential(credential_data: dict):
         raise HTTPException(status_code=400, detail=f"创建失败: {str(e)}")
 
 
-@app.put("/api/credentials/{credential_id}")
+@app.put("/api/credentials/{credential_id}", dependencies=[Depends(get_current_user)])
 async def update_credential(credential_id: int, credential_data: dict):
     """更新凭证"""
     if not storage:
@@ -477,9 +481,18 @@ async def update_credential(credential_id: int, credential_data: dict):
             del credential_data["name"]
 
         # 更新：保持 name 不变，只更新其他字段
+        # 如果前端传来的 token 为空或不存在，则保持原样
+        new_token = credential_data.get("token")
+        if not new_token:
+             new_token = existing.token
+             
         credential = Credential(
             name=existing.name,  # 名称不允许修改
-            **credential_data
+            type=credential_data.get("type", existing.type),
+            token=new_token,
+            description=credential_data.get("description", existing.description),
+            created_at=existing.created_at,
+            updated_at=datetime.now()
         )
         
         await storage.update_credential(credential_id, credential)
@@ -490,7 +503,7 @@ async def update_credential(credential_id: int, credential_data: dict):
         raise HTTPException(status_code=400, detail=f"更新失败: {str(e)}")
 
 
-@app.delete("/api/credentials/{credential_id}")
+@app.delete("/api/credentials/{credential_id}", dependencies=[Depends(get_current_user)])
 async def delete_credential(credential_id: int):
     """删除凭证"""
     if not storage:

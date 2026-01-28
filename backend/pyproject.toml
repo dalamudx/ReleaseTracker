@@ -1,6 +1,7 @@
 [project]
 name = "releasetracker"
 version = "0.1.0"
+license = {text = "GPL-3.0"}
 description = "轻量级版本追踪软件"
 requires-python = ">=3.10"
 dependencies = [
@@ -15,7 +16,9 @@ dependencies = [
     "python-multipart>=0.0.6",
     "PyJWT>=2.8.0",
     "passlib>=1.7.4",
-    "bcrypt==3.2.2", 
+    "bcrypt==3.2.2",
+    "cryptography>=41.0.0",
+    "emoji>=2.10.0",
 ]
 
 [project.optional-dependencies]
