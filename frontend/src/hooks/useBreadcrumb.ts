@@ -16,6 +16,7 @@ export function useBreadcrumb(): BreadcrumbItem[] {
         "/trackers": t("sidebar.trackers"),
         "/history": t("sidebar.history"),
         "/credentials": t("sidebar.credentials"),
+        "/notifications": t("sidebar.notifications"),
     }
 
     const items: BreadcrumbItem[] = []

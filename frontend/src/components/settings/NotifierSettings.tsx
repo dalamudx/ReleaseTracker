@@ -85,9 +85,9 @@ export function NotifierSettings() {
     const handleTest = async (id: number) => {
         try {
             const res = await api.testNotifier(id)
-            toast.success(res.message || "Test sent")
+            toast.success(res.message || t('settings.notifications.dialog.testSuccess'))
         } catch (error: any) {
-            toast.error(error.response?.data?.detail || "Test failed")
+            toast.error(error.response?.data?.detail || t('settings.notifications.dialog.testFailed'))
         }
     }
 
@@ -259,8 +259,8 @@ function NotifierDialog({ open, onOpenChange, notifier, onSuccess }: NotifierDia
     }
 
     const availableEvents = [
-        { id: "new_release", label: "New Release" },
-        { id: "republish", label: "Republish" },
+        { id: "new_release", label: t('settings.notifications.eventTypes.new_release') },
+        { id: "republish", label: t('settings.notifications.eventTypes.republish') },
     ]
 
     return (
@@ -282,7 +282,7 @@ function NotifierDialog({ open, onOpenChange, notifier, onSuccess }: NotifierDia
                                 <FormItem>
                                     <FormLabel>{t('settings.notifications.dialog.name')}</FormLabel>
                                     <FormControl>
-                                        <Input placeholder="Discord Webhook" {...field} />
+                                        <Input placeholder={t('settings.notifications.dialog.placeholder.name')} {...field} />
                                     </FormControl>
                                     <FormMessage />
                                 </FormItem>
@@ -295,7 +295,7 @@ function NotifierDialog({ open, onOpenChange, notifier, onSuccess }: NotifierDia
                                 <FormItem>
                                     <FormLabel>{t('settings.notifications.dialog.url')}</FormLabel>
                                     <FormControl>
-                                        <Input placeholder="https://..." {...field} />
+                                        <Input placeholder={t('settings.notifications.dialog.placeholder.url')} {...field} />
                                     </FormControl>
                                     <FormMessage />
                                 </FormItem>

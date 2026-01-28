@@ -29,7 +29,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     ]
 
     return (
-        <Sidebar collapsible="icon" {...props}>
+        <Sidebar collapsible="icon" className="border-r border-border/50 bg-background/60 backdrop-blur-xl" {...props}>
             <SidebarHeader>
                 <SidebarMenu>
                     <SidebarMenuItem>
@@ -54,6 +54,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                                         asChild
                                         isActive={location.pathname === item.url || (item.url !== "/" && location.pathname.startsWith(item.url))}
                                         tooltip={item.title}
+                                        className="data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:font-medium transition-all duration-200"
                                     >
                                         <Link to={item.url}>
                                             <item.icon />

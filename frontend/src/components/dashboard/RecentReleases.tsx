@@ -49,49 +49,51 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
 
     return (
         <>
-            <Card className="col-span-1 lg:col-span-3">
+            <Card className="col-span-1 lg:col-span-3 glass-card bg-transparent border-0 shadow-none h-full flex flex-col">
                 <CardHeader>
                     <CardTitle>{t('dashboard.recentReleases.title')}</CardTitle>
                     <CardDescription>
                         {t('dashboard.recentReleases.description')}
                     </CardDescription>
                 </CardHeader>
-                <CardContent>
-                    <div className="space-y-8">
+                <CardContent className="flex-1 overflow-hidden p-0 px-6 pb-6">
+                    <div className="h-full overflow-y-auto overflow-x-hidden pr-2 space-y-2">
                         {releases.map((release) => (
-                            <div key={`${release.id}-${release.published_at}`} className="flex items-center">
-                                <div className="space-y-1 min-w-0 flex-1 mr-2">
-                                    <p className="text-sm font-medium leading-none truncate">
+                            <div key={`${release.id}-${release.published_at}`} className="flex items-center gap-4 p-3 -mx-3 rounded-lg hover:bg-muted/50 transition-colors group">
+                                <div className="flex items-center gap-2 min-w-0 flex-1">
+                                    <span className="text-sm font-medium truncate text-foreground/90">
                                         {release.tracker_name}
-                                        <span className="text-muted-foreground ml-2 font-mono text-xs">
-                                            {release.tag_name}
-                                        </span>
-                                    </p>
-                                    <div className="flex items-center pt-1 gap-2">
-                                        <Badge
-                                            variant="outline"
-                                            className={`px-1.5 py-0 text-[10px] h-5 ${release.prerelease
-                                                ? "border-amber-500 text-amber-500"
-                                                : "border-emerald-500 text-emerald-500"
-                                                }`}
-                                        >
-                                            {getChannelLabel(release.channel_name || (release.prerelease ? "prerelease" : "stable"))}
-                                        </Badge>
-                                        <span className="text-xs text-muted-foreground">
-                                            {formatDate(release.published_at)}
-                                        </span>
-                                    </div>
+                                    </span>
+                                    <Badge variant="secondary" className="font-mono text-[10px] px-1.5 h-5 shrink-0 bg-secondary/50 text-secondary-foreground/80 hover:bg-secondary/70">
+                                        {release.tag_name}
+                                    </Badge>
                                 </div>
-                                <div className="ml-auto font-medium">
-                                    <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        disabled={!release.body}
-                                        onClick={() => handleViewNotes(release)}
-                                        title="View Release Notes"
+
+                                <div className="flex items-center gap-3 shrink-0">
+                                    <Badge
+                                        variant="outline"
+                                        className={`px-2 py-0 text-[10px] h-5 font-normal ${release.prerelease
+                                            ? "border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/5 group-hover:bg-amber-500/10"
+                                            : "border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5 group-hover:bg-emerald-500/10"
+                                            }`}
                                     >
-                                        <FileText className="h-4 w-4" />
-                                    </Button>
+                                        {getChannelLabel(release.channel_name || (release.prerelease ? "prerelease" : "stable"))}
+                                    </Badge>
+                                    <span className="text-xs text-muted-foreground w-20 text-right tabular-nums">
+                                        {formatDate(release.published_at)}
+                                    </span>
+                                    <div className="w-8 flex justify-end">
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            disabled={!release.body}
+                                            onClick={() => handleViewNotes(release)}
+                                            title="View Release Notes"
+                                            className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-all focus:opacity-100 hover:bg-background/80 hover:shadow-sm"
+                                        >
+                                            <FileText className="h-3.5 w-3.5" />
+                                        </Button>
+                                    </div>
                                 </div>
                             </div>
                         ))}

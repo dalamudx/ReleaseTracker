@@ -48,7 +48,7 @@ export function TrackerList({ trackers, loading, onEdit, onDelete, onCheck }: Tr
                         <TableHead>{t('trackers.table.name')}</TableHead>
                         <TableHead>{t('trackers.table.type')}</TableHead>
                         <TableHead>{t('trackers.table.status')}</TableHead>
-                        <TableHead>Channels</TableHead>
+                        <TableHead>{t('trackers.table.channelCount')}</TableHead>
                         <TableHead>{t('trackers.table.lastVersion')}</TableHead>
                         <TableHead>{t('trackers.table.lastCheck')}</TableHead>
                         <TableHead className="text-right">{t('trackers.table.actions')}</TableHead>

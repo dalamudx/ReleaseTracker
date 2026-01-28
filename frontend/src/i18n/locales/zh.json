@@ -83,8 +83,7 @@
     "history": "历史记录",
     "trackers": "追踪器",
     "credentials": "凭证",
-    "settings": "系统配置",
-    "notifications": "通知"
+    "notifications": "消息通知"
   },
   "dashboard": {
     "title": "仪表盘",
@@ -138,6 +137,7 @@
       "status": "状态",
       "lastCheck": "最后检查",
       "lastVersion": "最新版本",
+      "channelCount": "渠道数量",
       "actions": "操作"
     },
     "status": {
@@ -308,7 +308,17 @@
         "events": "触发事件",
         "eventsDesc": "选择触发通知的事件类型",
         "description": "描述",
-        "test": "发送测试消息"
+        "test": "发送测试消息",
+        "testSuccess": "测试消息发送成功",
+        "testFailed": "测试消息发送失败",
+        "placeholder": {
+          "name": "例如：Discord Webhook",
+          "url": "https://..."
+        }
+      },
+      "eventTypes": {
+        "new_release": "新版本发布",
+        "republish": "重新发布"
       }
     }
   }

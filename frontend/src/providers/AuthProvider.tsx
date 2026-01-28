@@ -73,7 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null)
         // 可以调用后端 logout 接口
         // client.logout() 
-        toast.info("已退出登录")
+        toast.info("已退出登录", { id: 'auth-logout' })
     }
 
     return (

@@ -83,7 +83,6 @@
         "history": "History",
         "trackers": "Trackers",
         "credentials": "Credentials",
-        "settings": "Settings",
         "notifications": "Notifications"
     },
     "dashboard": {
@@ -138,6 +137,7 @@
             "status": "Status",
             "lastCheck": "Last Check",
             "lastVersion": "Latest Version",
+            "channelCount": "Channel Count",
             "actions": "Actions"
         },
         "status": {
@@ -303,7 +303,17 @@
                 "events": "Trigger Events",
                 "eventsDesc": "Select event types to trigger notifications",
                 "description": "Description",
-                "test": "Send Test Message"
+                "test": "Send Test Message",
+                "testSuccess": "Test message sent",
+                "testFailed": "Test message failed",
+                "placeholder": {
+                    "name": "e.g., Discord Webhook",
+                    "url": "https://..."
+                }
+            },
+            "eventTypes": {
+                "new_release": "New Release",
+                "republish": "Republish"
             }
         }
     }

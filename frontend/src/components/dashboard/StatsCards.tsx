@@ -81,10 +81,10 @@ export function StatsCards({ stats, loading }: StatsCardsProps) {
     return (
         <div className="grid gap-4 md:grid-cols-2">
             {items.map((item, index) => (
-                <Card key={item.label} className="overflow-hidden h-32">
+                <Card key={item.label} className="overflow-hidden h-32 glass-card bg-transparent border-0 shadow-none">
                     <CardContent className="p-0 flex h-full">
                         {/* Left Side - Stats (Approx 30%) */}
-                        <div className="w-[30%] min-w-[140px] flex flex-col justify-center items-center p-4 text-center">
+                        <div className="w-[30%] min-w-[140px] flex flex-col justify-center items-center p-4 text-center border-r border-border/10">
                             <div>
                                 <p className="text-xs font-medium text-muted-foreground">{item.label}</p>
                                 <div className="text-2xl font-bold mt-1.5">{item.value}</div>

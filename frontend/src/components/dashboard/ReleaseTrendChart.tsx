@@ -103,7 +103,7 @@ export function ReleaseTrendChart({ stats, loading }: ReleaseTrendChartProps) {
     }
 
     return (
-        <Card className="col-span-1 lg:col-span-4">
+        <Card className="col-span-1 lg:col-span-4 glass-card bg-transparent border-0 shadow-none h-full">
             <CardHeader>
                 <CardTitle>{t('dashboard.releaseTrend.title')}</CardTitle>
                 <CardDescription>
