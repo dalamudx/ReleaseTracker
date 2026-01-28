@@ -143,7 +143,9 @@ export function NotifierSettings() {
                                     <TableCell>
                                         <div className="flex gap-1 flex-wrap">
                                             {notifier.events.map(e => (
-                                                <Badge key={e} variant="secondary" className="text-xs">{e}</Badge>
+                                                <Badge key={e} variant="secondary" className="text-xs">
+                                                    {t(`settings.notifications.eventTypes.${e}`, { defaultValue: e })}
+                                                </Badge>
                                             ))}
                                         </div>
                                     </TableCell>

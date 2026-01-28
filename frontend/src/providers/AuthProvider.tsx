@@ -7,7 +7,8 @@ interface User {
     id: number
     username: string
     email: string
-    role: string
+    // role: string // Removed: Backwards compatibility fix
+    is_admin?: boolean
     avatar_url?: string
 }
 

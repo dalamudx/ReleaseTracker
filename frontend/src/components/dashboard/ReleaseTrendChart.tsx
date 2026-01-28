@@ -92,16 +92,6 @@ export function ReleaseTrendChart({ stats, loading }: ReleaseTrendChartProps) {
         return { chartData: data, chartConfig: config, channels: mappedChannels }
     }, [stats, i18n.language])
 
-    if (loading) {
-        return (
-            <Card className="col-span-1 lg:col-span-4 h-[400px] animate-pulse bg-muted/20">
-                <CardHeader>
-                    <CardTitle>Release Trend</CardTitle>
-                </CardHeader>
-            </Card>
-        )
-    }
-
     return (
         <Card className="col-span-1 lg:col-span-4 glass-card bg-transparent border-0 shadow-none h-full">
             <CardHeader>
@@ -111,50 +101,54 @@ export function ReleaseTrendChart({ stats, loading }: ReleaseTrendChartProps) {
                 </CardDescription>
             </CardHeader>
             <CardContent>
-                <ChartContainer config={chartConfig} className="h-[300px] w-full">
-                    <AreaChart
-                        accessibilityLayer
-                        data={chartData}
-                        margin={{
-                            left: 12,
-                            right: 12,
-                            top: 12,
-                        }}
-                    >
-                        <CartesianGrid vertical={false} />
-                        <XAxis
-                            dataKey="date"
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                            tickFormatter={(value) => formatDate(value, "MM/dd")}
-                        />
-                        <YAxis
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                            width={30}
-                        />
-                        <ChartTooltip
-                            cursor={false}
-                            content={<ChartTooltipContent indicator="dot" />}
-                        />
-
-                        {channels.map((channel) => (
-                            <Area
-                                key={channel.key}
-                                dataKey={channel.key}
-                                name={channel.name} // Set name for tooltip fallback
-                                type="monotone"
-                                fill={`var(--color-${channel.key})`}
-                                fillOpacity={0.15}
-                                stroke={`var(--color-${channel.key})`}
-                                strokeWidth={3}
+                {loading ? (
+                    <div className="h-[300px] w-full bg-muted/10 animate-pulse rounded-lg" />
+                ) : (
+                    <ChartContainer config={chartConfig} className="h-[300px] w-full">
+                        <AreaChart
+                            accessibilityLayer
+                            data={chartData}
+                            margin={{
+                                left: 12,
+                                right: 12,
+                                top: 12,
+                            }}
+                        >
+                            <CartesianGrid vertical={false} />
+                            <XAxis
+                                dataKey="date"
+                                tickLine={false}
+                                axisLine={false}
+                                tickMargin={8}
+                                tickFormatter={(value) => formatDate(value, "MM/dd")}
                             />
-                        ))}
-                        <ChartLegend content={<ChartLegendContent />} />
-                    </AreaChart>
-                </ChartContainer>
+                            <YAxis
+                                tickLine={false}
+                                axisLine={false}
+                                tickMargin={8}
+                                width={30}
+                            />
+                            <ChartTooltip
+                                cursor={false}
+                                content={<ChartTooltipContent indicator="dot" />}
+                            />
+
+                            {channels.map((channel) => (
+                                <Area
+                                    key={channel.key}
+                                    dataKey={channel.key}
+                                    name={channel.name} // Set name for tooltip fallback
+                                    type="monotone"
+                                    fill={`var(--color-${channel.key})`}
+                                    fillOpacity={0.15}
+                                    stroke={`var(--color-${channel.key})`}
+                                    strokeWidth={3}
+                                />
+                            ))}
+                            <ChartLegend content={<ChartLegendContent />} />
+                        </AreaChart>
+                    </ChartContainer>
+                )}
             </CardContent>
         </Card>
     )
