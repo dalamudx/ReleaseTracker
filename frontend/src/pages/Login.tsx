@@ -4,7 +4,7 @@ import { useAuth } from "@/providers/AuthProvider"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Rocket, ArrowRight, Loader2 } from "lucide-react"
+import { ArrowRight, Loader2 } from "lucide-react"
 import { motion } from "framer-motion"
 
 export function LoginPage() {
@@ -61,7 +61,7 @@ export function LoginPage() {
                                 transition={{ type: "spring", stiffness: 260, damping: 20, delay: 0.1 }}
                                 className="p-3 bg-primary/10 rounded-xl shadow-sm"
                             >
-                                <Rocket className="h-8 w-8 text-primary" />
+                                <img src="/logo.svg" alt="App Logo" className="h-10 w-10" />
                             </motion.div>
                             <h1 className="text-3xl font-bold tracking-tight text-foreground">Release Tracker</h1>
                             <p className="text-sm text-muted-foreground">管理和追踪您的软件发布版本</p>
