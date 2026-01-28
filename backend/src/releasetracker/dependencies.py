@@ -5,17 +5,44 @@ from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 
 from .services.auth import AuthService
+# Use TYPE_CHECKING to avoid circular imports if necessary, 
+# but here imports should be fine if main.py is not importing dependencies at top level eagerly 
+# (it does, but get_storage/etc rely on app state populated at runtime)
+from .storage.sqlite import SQLiteStorage
+from .scheduler import ReleaseScheduler
+from .config import AppConfig
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/token")
 
-def get_auth_service(request: Request):
-    """获取 AuthService 实例"""
+
+def get_storage(request: Request) -> SQLiteStorage:
+    """从 app.state 获取 Storage 实例"""
     storage = getattr(request.app.state, "storage", None)
-    app_config = getattr(request.app.state, "config", None)
-    
-    if not storage or not app_config:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-    return AuthService(storage, app_config)
+    if not storage:
+        raise HTTPException(status_code=503, detail="Storage service is not initialized")
+    return storage
+
+def get_scheduler(request: Request) -> ReleaseScheduler:
+    """从 app.state 获取 Scheduler 实例"""
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if not scheduler:
+        raise HTTPException(status_code=503, detail="Scheduler service is not initialized")
+    return scheduler
+
+def get_app_config(request: Request) -> AppConfig:
+    """从 app.state 获取 Config 实例"""
+    config = getattr(request.app.state, "config", None)
+    if not config:
+        # Fallback empty config if strictly needed, or 503
+        raise HTTPException(status_code=503, detail="App config is not initialized")
+    return config
+
+def get_auth_service(
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    config: Annotated[AppConfig, Depends(get_app_config)]
+) -> AuthService:
+    """获取 AuthService 实例"""
+    return AuthService(storage, config)
 
 async def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],

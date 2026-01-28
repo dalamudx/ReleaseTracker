@@ -73,7 +73,7 @@ async def get_env_info(
     current_user: Annotated[User, Depends(get_current_user)]
 ):
     """获取允许查看的环境变量"""
-    allowed_keys = ["ENCRYPTION_KEY", "LOG_LEVEL", "TZ", "HOST", "PORT", "N8N_ENTERPRISE"]
+    allowed_keys = ["ENCRYPTION_KEY", "LOG_LEVEL", "TZ"]
     
     info = []
     for key in allowed_keys:

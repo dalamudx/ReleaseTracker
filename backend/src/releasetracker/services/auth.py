@@ -17,8 +17,10 @@ logger = logging.getLogger(__name__)
 # 密码哈希配置
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# JWT 配置 (默认值，实际应从配置获取)
-SECRET_KEY = "your-secret-key-change-it-in-production"
+import os
+
+# JWT 配置
+SECRET_KEY = os.getenv("JWT_SECRET")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
@@ -31,11 +33,13 @@ class AuthService:
         self.storage = storage
         self.config = config
         
-        # 从环境变量或配置获取密钥
-        if hasattr(self.config, 'jwt_secret'):
+        if hasattr(self.config, 'jwt_secret') and self.config.jwt_secret:
             self.secret_key = self.config.jwt_secret
-        else:
+        elif SECRET_KEY:
             self.secret_key = SECRET_KEY
+        else:
+            logger.warning("No JWT_SECRET set. Using insecure default key for development only!")
+            self.secret_key = "dev-insecure-secret-key-do-not-use-in-prod"
 
     async def register(self, req: RegisterRequest) -> User:
         """注册用户"""

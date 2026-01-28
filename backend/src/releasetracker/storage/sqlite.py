@@ -29,11 +29,7 @@ class SQLiteStorage:
         key = os.getenv("ENCRYPTION_KEY")
         if not key:
             logger.warning("No ENCRYPTION_KEY found, using insecure default key for development")
-            # Fixed key for development persistence
-            key = b'DevelopmentUseOnlyDoNotUseInProdKey1234=' 
-            # Note: The properly padded base64 key should be 32 bytes valid. 
-            # Let's use a known valid key generated from Fernet.generate_key() for safety
-            # `Fernet.generate_key()` produces 44 chars. 
+            # Fixed key for development persistence (INSECURE)
             key = b'Z7wz8u_u8Y7j6B1b4C9d2E5f8G1h3I4j5K6l7M8n9O0='
 
         try:
@@ -741,6 +737,42 @@ class SQLiteStorage:
             result = await cursor.fetchone()
             return result[0] if result else 0
 
+    async def get_releases_for_trackers_bulk(self, tracker_names: list[str], limit_per_tracker: int = 20) -> dict[str, list[Release]]:
+        """
+        一次性获取多个追踪器的最近版本记录
+        
+        Using Window Function to optimize N+1 query.
+        Returns: {tracker_name: [Release, ...]}
+        """
+        if not tracker_names:
+            return {}
+
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            
+            placeholders = ",".join(["?"] * len(tracker_names))
+            
+            query = f"""
+            SELECT * FROM (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY tracker_name ORDER BY published_at DESC) as rn 
+                FROM releases 
+                WHERE tracker_name IN ({placeholders})
+            ) 
+            WHERE rn <= ?
+            """
+            
+            params = tracker_names + [limit_per_tracker]
+            
+            cursor = await db.execute(query, tuple(params))
+            rows = await cursor.fetchall()
+            
+            result = {name: [] for name in tracker_names}
+            for row in rows:
+                release = self._row_to_release(row)
+                result[release.tracker_name].append(release)
+                
+            return result
+
     async def get_latest_release(self, tracker_name: str) -> Release | None:
         """Get latest release for a tracker."""
         releases = await self.get_releases(tracker_name, limit=1)
@@ -748,35 +780,47 @@ class SQLiteStorage:
 
     async def get_latest_release_for_channels(self, tracker_name: str, channels: list) -> Release | None:
         """Get latest release across all enabled channels for a tracker."""
-        import re
-        
         if not channels:
             return await self.get_latest_release(tracker_name)
+            
+        # 获取所有版本
+        all_releases = await self.get_releases(tracker_name, limit=100)
+        return self.select_best_release(all_releases, channels)
+
+    @staticmethod
+    def select_best_release(releases: list[Release], channels: list) -> Release | None:
+        """
+        根据渠道规则从版本列表中选出最新的版本
+        Refactored for Memory/Bulk usage.
+        """
+        import re
         
+        if not releases:
+            return None
+        
+        if not channels:
+            # 如果没有渠道定义，直接返回列表里的第一个（假设已按时间排序）
+            return releases[0]
+
         # 只考虑启用的渠道
         enabled_channels = [ch for ch in channels if ch.enabled]
         if not enabled_channels:
-            return await self.get_latest_release(tracker_name)
-        
-        # 获取所有版本
-        all_releases = await self.get_releases(tracker_name, limit=100)
-        if not all_releases:
-            return None
+            # 如果有渠道但都没启用，视作无有效渠道 -> 或者返回 None? 
+            # 原逻辑是: return await self.get_latest_release(tracker_name)
+            # 这里如果 list 不为空，返回第一个
+            return releases[0]
+            
         
         # 对每个渠道，找到符合规则的最新版本
         channel_latest_releases = []
         
         for channel in enabled_channels:
-            # 根据渠道类型过滤
-            filtered_releases = []
-            
-            for release in all_releases:
+            for release in releases:
                 # 1. 根据渠道类型过滤
                 if channel.type == "stable" and release.prerelease:
                     continue
                 elif channel.type == "prerelease" and not release.prerelease:
                     continue
-                # custom 类型不根据 prerelease 过滤
                 
                 # 2. 应用 include_pattern
                 if channel.include_pattern:
@@ -784,7 +828,7 @@ class SQLiteStorage:
                         if not re.search(channel.include_pattern, release.tag_name):
                             continue
                     except re.error:
-                        pass  # 正则表达式错误，跳过该规则
+                        pass
                 
                 # 3. 应用 exclude_pattern
                 if channel.exclude_pattern:
@@ -792,21 +836,19 @@ class SQLiteStorage:
                         if re.search(channel.exclude_pattern, release.tag_name):
                             continue
                     except re.error:
-                        pass  # 正则表达式错误，跳过该规则
+                        pass
                 
-                filtered_releases.append(release)
-            
-            # 获取该渠道的最新版本（已按 published_at 降序排列）
-            if filtered_releases:
-                channel_latest_releases.append(filtered_releases[0])
+                # 找到该渠道的第一个匹配项（最新）即停止
+                channel_latest_releases.append(release)
+                break
         
         # 如果没有找到任何符合条件的版本
         if not channel_latest_releases:
             return None
         
         # 在所有渠道的最新版本中，选择发布日期最近的
-        # 为了避免时区比较问题，使用时间戳进行比较
         return max(channel_latest_releases, key=lambda r: r.published_at.timestamp())
+
 
 
     async def update_tracker_status(self, status: TrackerStatus):

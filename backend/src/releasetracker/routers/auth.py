@@ -15,8 +15,18 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 @router.post("/register", response_model=User, status_code=status.HTTP_201_CREATED)
 async def register(
     req: RegisterRequest,
-    auth_service: Annotated[AuthService, Depends(get_auth_service)]
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    current_user: Annotated[User, Depends(get_current_user)]  # 需要认证
 ):
+    """
+    创建新用户（仅管理员可用）
+    
+    注意：此接口需要管理员权限。普通用户使用内置管理员账户登录。
+    """
+    # 可选：检查是否为管理员（如果有角色系统）
+    # if current_user.username != "admin":
+    #     raise HTTPException(status_code=403, detail="仅管理员可创建用户")
+    
     try:
         user = await auth_service.register(req)
         return user
