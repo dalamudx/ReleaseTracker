@@ -6,7 +6,7 @@ from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from .config import AppConfig, TrackerConfig
+from .config import TrackerConfig
 from .models import TrackerStatus
 from .notifiers import WebhookNotifier
 from .notifiers.base import BaseNotifier, NotificationEvent
@@ -21,8 +21,7 @@ logger = logging.getLogger(__name__)
 class ReleaseScheduler:
     """版本检查调度器"""
 
-    def __init__(self, config: AppConfig, storage: SQLiteStorage):
-        self.config = config
+    def __init__(self, storage: SQLiteStorage):
         self.storage = storage
         self.scheduler = AsyncIOScheduler()
         self.trackers: dict[str, BaseTracker] = {}
@@ -36,16 +35,24 @@ class ReleaseScheduler:
         for tracker_config in tracker_configs:
             await self._add_or_update_tracker_job(tracker_config)
 
-        # 创建通知器 (暂时仍从 config 获取，后续也可迁移)
-        if self.config:
-            for notifier_config in self.config.notifiers:
-                if notifier_config.type == "webhook":
-                    notifier = WebhookNotifier(
-                        name=notifier_config.name,
-                        url=notifier_config.url,
-                        events=notifier_config.events,
+        # 从数据库加载通知器
+        await self._refresh_notifiers()
+            
+    async def _refresh_notifiers(self):
+        """刷新通知器列表"""
+        self.notifiers = []
+        try:
+            db_notifiers = await self.storage.get_notifiers()
+            for n in db_notifiers:
+                if n.enabled and n.type == "webhook":
+                     notifier = WebhookNotifier(
+                        name=n.name,
+                        url=n.url,
+                        events=n.events,
                     )
-                    self.notifiers.append(notifier)
+                     self.notifiers.append(notifier)
+        except Exception as e:
+            logger.error(f"Failed to load notifiers: {e}")
                     
     async def refresh_tracker(self, name: str):
         """刷新单个追踪器（用于配置更新后）"""
@@ -218,10 +225,10 @@ class ReleaseScheduler:
         
         active_notifiers = []
         
-        # 1. Add file-based notifiers (legacy)
+        # 1. 添加基于文件的通知器（旧版兼容）
         active_notifiers.extend(self.notifiers)
         
-        # 2. Add DB-based notifiers
+        # 2. 添加基于数据库的通知器
         try:
             db_notifiers = await self.storage.get_notifiers()
             logger.debug(f"Found {len(db_notifiers)} notifiers in DB")
@@ -229,7 +236,7 @@ class ReleaseScheduler:
             for n in db_notifiers:
                 logger.debug(f"Checking notifier: {n.name}, enabled: {n.enabled}, type: {n.type}, events: {n.events}")
                 if n.enabled:
-                    # Created WebhookNotifier instance
+                    # 创建 WebhookNotifier 实例
                     if n.type == "webhook":
                          notifier = WebhookNotifier(
                             name=n.name,
@@ -397,7 +404,7 @@ class ReleaseScheduler:
                 type=config.type,
                 enabled=config.enabled,
                 last_check=datetime.now(),
-                # 保留上一次的版本号，不应该因为检查失败而清空
+
                 last_version=None, 
                 error=error_msg,
                 channel_count=len(config.channels) if config.channels else 0

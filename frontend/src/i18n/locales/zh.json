@@ -77,7 +77,11 @@
     "checkFailed": "检查失败",
     "check": "检查",
     "never": "从未",
-    "unexpectedError": "发生意外错误"
+    "unexpectedError": "发生意外错误",
+    "description": "描述",
+    "enabled": "启用",
+    "disabled": "禁用",
+    "actions": "操作"
   },
   "sidebar": {
     "dashboard": "仪表盘",
@@ -308,10 +312,12 @@
         "url": "Webhook URL",
         "events": "触发事件",
         "eventsDesc": "选择触发通知的事件类型",
-        "description": "描述",
+        "description": "配置通知渠道的详细信息。",
         "test": "发送测试消息",
         "testSuccess": "测试消息发送成功",
         "testFailed": "测试消息发送失败",
+        "createSuccess": "通知渠道已创建",
+        "updateSuccess": "通知渠道已更新",
         "placeholder": {
           "name": "例如：Discord Webhook",
           "url": "https://..."
@@ -320,6 +326,10 @@
       "eventTypes": {
         "new_release": "新版本发布",
         "republish": "重新发布"
+      },
+      "eventDescriptions": {
+        "new_release": "当检测到新版本时触发",
+        "republish": "当版本重新发布时触发"
       }
     }
   }

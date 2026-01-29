@@ -60,7 +60,7 @@ export function NotifierSettings() {
     const [dialogOpen, setDialogOpen] = useState(false)
     const [editingNotifier, setEditingNotifier] = useState<Notifier | null>(null)
 
-    // Pagination state
+    // 分页状态
     const [total, setTotal] = useState(0)
     const [page, setPage] = useState(1)
     const [pageSize, setPageSize] = useState(() => {
@@ -103,7 +103,7 @@ export function NotifierSettings() {
     const handleTest = async (id: number) => {
         try {
             const res = await api.testNotifier(id)
-            toast.success(res ? t('settings.notifications.dialog.testSuccess') : "Test failed")
+            toast.success(res ? t('settings.notifications.dialog.testSuccess') : t('settings.notifications.dialog.testFailed'))
         } catch (error: any) {
             toast.error(error.response?.data?.detail || t('settings.notifications.dialog.testFailed'))
         }
@@ -309,11 +309,17 @@ function NotifierDialog({ open, onOpenChange, notifier, onSuccess }: NotifierDia
 
     const onSubmit = async (data: Partial<Notifier>) => {
         try {
+            // Include description in the payload
+            const payload = {
+                ...data,
+                description: data.description || ""
+            }
+
             if (notifier) {
-                await api.updateNotifier(notifier.id, data)
+                await api.updateNotifier(notifier.id, payload)
                 toast.success(t('settings.notifications.dialog.updateSuccess'))
             } else {
-                await api.createNotifier(data)
+                await api.createNotifier(payload)
                 toast.success(t('settings.notifications.dialog.createSuccess'))
             }
             onSuccess()
@@ -322,6 +328,11 @@ function NotifierDialog({ open, onOpenChange, notifier, onSuccess }: NotifierDia
             toast.error(error.response?.data?.detail || t('common.unexpectedError'))
         }
     }
+
+    const availableEvents = [
+        { id: "new_release", label: t('settings.notifications.eventTypes.new_release') },
+        { id: "republish", label: t('settings.notifications.eventTypes.republish') },
+    ]
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -342,7 +353,7 @@ function NotifierDialog({ open, onOpenChange, notifier, onSuccess }: NotifierDia
                                 <FormItem>
                                     <FormLabel>{t('settings.notifications.dialog.name')}</FormLabel>
                                     <FormControl>
-                                        <Input placeholder="Discord Webhook" {...field} />
+                                        <Input placeholder={t('settings.notifications.dialog.placeholder.name')} {...field} />
                                     </FormControl>
                                     <FormMessage />
                                 </FormItem>
@@ -355,7 +366,7 @@ function NotifierDialog({ open, onOpenChange, notifier, onSuccess }: NotifierDia
                                 <FormItem>
                                     <FormLabel>{t('settings.notifications.dialog.url')}</FormLabel>
                                     <FormControl>
-                                        <Input placeholder="https://..." {...field} />
+                                        <Input placeholder={t('settings.notifications.dialog.placeholder.url')} {...field} />
                                     </FormControl>
                                     <FormMessage />
                                 </FormItem>
@@ -374,60 +385,81 @@ function NotifierDialog({ open, onOpenChange, notifier, onSuccess }: NotifierDia
                                 </FormItem>
                             )}
                         />
-                        <div className="grid grid-cols-2 gap-4">
-                            <FormField
-                                control={form.control}
-                                name="events"
-                                render={({ field }) => (
-                                    <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md p-4 shadow-sm border">
-                                        <FormControl>
-                                            <Checkbox
-                                                checked={field.value?.includes("Release")}
-                                                onCheckedChange={(checked) => {
-                                                    return checked
-                                                        ? field.onChange([...(field.value || []), "Release"])
-                                                        : field.onChange(field.value?.filter((value) => value !== "Release"))
+
+                        <FormField
+                            control={form.control}
+                            name="events"
+                            render={() => (
+                                <FormItem>
+                                    <div className="mb-4">
+                                        <FormLabel className="text-base">{t('settings.notifications.dialog.events')}</FormLabel>
+                                        <FormDescription>
+                                            {t('settings.notifications.dialog.eventsDesc')}
+                                        </FormDescription>
+                                    </div>
+                                    <div className="flex flex-row gap-4">
+                                        {availableEvents.map((item) => (
+                                            <FormField
+                                                key={item.id}
+                                                control={form.control}
+                                                name="events"
+                                                render={({ field }) => {
+                                                    return (
+                                                        <FormItem
+                                                            key={item.id}
+                                                            className="flex flex-row items-start space-x-3 space-y-0"
+                                                        >
+                                                            <FormControl>
+                                                                <Checkbox
+                                                                    checked={field.value?.includes(item.id)}
+                                                                    onCheckedChange={(checked) => {
+                                                                        return checked
+                                                                            ? field.onChange([...(field.value || []), item.id])
+                                                                            : field.onChange(
+                                                                                field.value?.filter(
+                                                                                    (value: string) => value !== item.id
+                                                                                )
+                                                                            )
+                                                                    }}
+                                                                />
+                                                            </FormControl>
+                                                            <FormLabel className="font-normal cursor-pointer">
+                                                                {item.label}
+                                                            </FormLabel>
+                                                        </FormItem>
+                                                    )
                                                 }}
                                             />
-                                        </FormControl>
-                                        <div className="space-y-1 leading-none">
-                                            <FormLabel>
-                                                {t('settings.notifications.eventTypes.Release')}
-                                            </FormLabel>
-                                            <FormDescription>
-                                                New release published
-                                            </FormDescription>
-                                        </div>
-                                    </FormItem>
-                                )}
-                            />
+                                        ))}
+                                    </div>
+                                    <FormMessage />
+                                </FormItem>
+                            )}
+                        />
+
+                        <DialogFooter className="sm:justify-end gap-4">
                             <FormField
                                 control={form.control}
                                 name="enabled"
                                 render={({ field }) => (
-                                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4 shadow-sm">
-                                        <div className="space-y-0.5">
-                                            <FormLabel className="text-base">
-                                                {t('common.enabled')}
-                                            </FormLabel>
-                                        </div>
+                                    <FormItem className="flex flex-row items-center space-x-2 space-y-0">
                                         <FormControl>
                                             <Switch
                                                 checked={field.value}
                                                 onCheckedChange={field.onChange}
                                             />
                                         </FormControl>
+                                        <FormLabel className="cursor-pointer text-sm font-normal text-muted-foreground">
+                                            {t('common.enabled')}
+                                        </FormLabel>
                                     </FormItem>
                                 )}
                             />
-                        </div>
-
-                        <DialogFooter>
                             <Button type="submit">{t('common.save')}</Button>
                         </DialogFooter>
                     </form>
                 </Form>
             </DialogContent>
-        </Dialog>
+        </Dialog >
     )
 }

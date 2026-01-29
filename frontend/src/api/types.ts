@@ -61,7 +61,7 @@ export interface ApiCredential {
     id: number
     name: string
     type: string
-    token: string // Masked usually
+    token: string // 通常已脱敏
     description?: string | null
     created_at: string
 }

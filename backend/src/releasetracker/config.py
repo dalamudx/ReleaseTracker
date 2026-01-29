@@ -7,11 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 
-class StorageConfig(BaseModel):
-    """存储配置"""
 
-    type: Literal["sqlite"] = "sqlite"
-    path: str = "./data/releases.db"
 
 
 
@@ -64,11 +60,6 @@ class NotifierConfig(BaseModel):
     events: list[str] = Field(default_factory=lambda: ["new_release"])
 
 
-class AppConfig(BaseModel):
-    """应用配置"""
 
-    storage: StorageConfig
-    trackers: list[TrackerConfig]
-    notifiers: list[NotifierConfig] = Field(default_factory=list)
 
 

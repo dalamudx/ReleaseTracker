@@ -18,7 +18,7 @@
     - Vue 3 + TailwindCSS
     - 🌓 **个性化主题**：支持深色模式、多种主题色配置
     - 📱 **响应式设计**：完美适配移动端
-- ⚙️  **灵活配置**：YAML 配置文件，支持正则过滤规则
+- ⚙️  **灵活配置**：Web UI 可视化管理，支持正则过滤规则
 - 🔔 **通知推送**：Webhook 通知（支持扩展更多渠道）
 - 🎯 **定时追踪**：自动定期检查版本更新
 - 💾 **本地存储**：SQLite 数据库，轻量无依赖
@@ -65,10 +65,6 @@ cd backend
 # 安装依赖
 pip install -e .
 
-# 复制配置文件
-cp config.example.yaml config.yaml
-# 编辑 config.yaml 添加你要追踪的仓库
-
 # 设置加密密钥（可选，生产环境推荐设置）
 # 生成密钥: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 export ENCRYPTION_KEY="your-generated-key"
@@ -102,6 +98,7 @@ npm run dev
 | 环境变量 | 描述 | 默认值 |
 |----------|------|--------|
 | `ENCRYPTION_KEY` | 用于加密敏感凭证的密钥 (AES) | 自动生成的开发密钥 |
+| `JWT_SECRET` | 用于签名认证令牌的密钥 (JWT) | 自动生成的开发密钥 |
 | `TZ` | 系统时区设置 | `UTC` |
 
 ## 🔐 安全说明
@@ -130,16 +127,6 @@ npm run dev
 | GET | `/api/releases` | 获取版本列表 |
 
 ## 📦 部署
-
-### Docker 部署（推荐）
-
-```bash
-# 构建镜像
-docker-compose build
-
-# 启动服务
-docker-compose up -d
-```
 
 ### 生产部署
 

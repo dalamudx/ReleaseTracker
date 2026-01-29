@@ -44,7 +44,7 @@ export default function HistoryPage() {
 
     const [debouncedSearch, setDebouncedSearch] = useState("")
 
-    // Debounce search input
+    // 防抖搜索输入
     useEffect(() => {
         const timer = setTimeout(() => {
             setDebouncedSearch(search)

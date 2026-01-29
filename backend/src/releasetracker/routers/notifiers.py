@@ -123,8 +123,8 @@ async def test_notifier(
     payload = {
         "event": "test",
         "message": message,
-        "content": message, # For Discord compatibility
-        "text": message,    # For Slack compatibility
+        "content": message, # 兼容 Discord
+        "text": message,    # 兼容 Slack
         "timestamp": datetime.now().isoformat()
     }
     

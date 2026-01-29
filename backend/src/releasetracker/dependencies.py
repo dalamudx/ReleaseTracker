@@ -10,7 +10,7 @@ from .services.auth import AuthService
 # (it does, but get_storage/etc rely on app state populated at runtime)
 from .storage.sqlite import SQLiteStorage
 from .scheduler import ReleaseScheduler
-from .config import AppConfig
+
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/token")
 
@@ -29,20 +29,13 @@ def get_scheduler(request: Request) -> ReleaseScheduler:
         raise HTTPException(status_code=503, detail="Scheduler service is not initialized")
     return scheduler
 
-def get_app_config(request: Request) -> AppConfig:
-    """从 app.state 获取 Config 实例"""
-    config = getattr(request.app.state, "config", None)
-    if not config:
-        # Fallback empty config if strictly needed, or 503
-        raise HTTPException(status_code=503, detail="App config is not initialized")
-    return config
+
 
 def get_auth_service(
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
-    config: Annotated[AppConfig, Depends(get_app_config)]
 ) -> AuthService:
     """获取 AuthService 实例"""
-    return AuthService(storage, config)
+    return AuthService(storage)
 
 async def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],

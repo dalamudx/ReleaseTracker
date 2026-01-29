@@ -11,7 +11,7 @@ import type {
     User
 } from "./types"
 
-const API_BASE = '' // Vite proxy will handle /api
+const API_BASE = '' // Vite 代理处理 /api
 
 export const apiClient = axios.create({
     baseURL: API_BASE,
@@ -20,7 +20,7 @@ export const apiClient = axios.create({
     },
 })
 
-// Request interceptor to add token
+// 请求拦截器：添加 Token
 apiClient.interceptors.request.use((config) => {
     const token = localStorage.getItem('token')
     if (token) {

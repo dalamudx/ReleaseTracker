@@ -81,7 +81,7 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
                                                 disabled={!release.body}
                                                 onClick={() => handleViewNotes(release)}
                                                 title="View Release Notes"
-                                                className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-all focus:opacity-100 hover:bg-background/80 hover:shadow-sm"
+                                                className="h-7 w-7 transition-all hover:bg-background/80 hover:shadow-sm"
                                             >
                                                 <FileText className="h-3.5 w-3.5" />
                                             </Button>

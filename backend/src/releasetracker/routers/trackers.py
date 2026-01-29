@@ -132,7 +132,7 @@ async def check_tracker(
         # 常见错误如 Token 缺失
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        # logger.error(f"Check failed: {e}")
+
         raise HTTPException(status_code=500, detail=f"检查失败: {str(e)}")
 
 

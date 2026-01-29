@@ -33,7 +33,7 @@ export default function TrackersPage() {
     const [dialogOpen, setDialogOpen] = useState(false)
     const [editingTracker, setEditingTracker] = useState<string | null>(null)
 
-    // Pagination state
+    // 分页状态
     const [total, setTotal] = useState(0)
     const [page, setPage] = useState(1)
     const [pageSize, setPageSize] = useState(() => {

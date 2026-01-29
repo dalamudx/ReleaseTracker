@@ -82,23 +82,23 @@ export function ReleaseNotesModal({ release, open, onOpenChange }: ReleaseNotesM
                                     td: ({ node, ...props }) => <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 border-r border-muted last:border-r-0" {...props} />,
                                     a: ({ node, href, children, ...props }) => {
                                         let content = children;
-                                        // Only shorten if the link text looks like a URL (i.e. it wasn't a custom named link like [Link](url))
+                                        // 仅当链接文本看起来像 URL 时才缩短（即不是 [Link](url) 这种自定义名称）
                                         if (href && (typeof children === 'string' && children.trim() === href)) {
                                             try {
                                                 const url = new URL(href);
                                                 if (url.hostname === 'github.com') {
                                                     const path = url.pathname.split('/').filter(Boolean);
-                                                    // Handle PRs and Issues: /owner/repo/pull/123 or /owner/repo/issues/123
+                                                    // 处理 PR 和 Issue: /owner/repo/pull/123 或 /owner/repo/issues/123
                                                     if (path.length >= 4 && (path[2] === 'pull' || path[2] === 'issues')) {
                                                         content = `#${path[3]}`;
                                                     }
-                                                    // Handle Users: /username (exclude reserved paths)
+                                                    // 处理用户: /username (排除保留路径)
                                                     else if (path.length === 1 && !['login', 'pricing', 'join', 'explore'].includes(path[0])) {
                                                         content = `@${path[0]}`;
                                                     }
                                                 }
                                             } catch (e) {
-                                                // Invalid URL, ignore
+                                                // 无效 URL，忽略
                                             }
                                         }
                                         const isMention = typeof content === 'string' && content.startsWith('@');
@@ -111,23 +111,21 @@ export function ReleaseNotesModal({ release, open, onOpenChange }: ReleaseNotesM
                                     blockquote: ({ node, ...props }) => <blockquote className="border-l-4 border-muted pl-4 italic text-muted-foreground my-4" {...props} />,
                                     code: ({ node, className, children, ...props }: any) => {
                                         const match = /language-(\w+)/.exec(className || '')
-                                        // Inline code
+                                        // 行内代码
                                         if (!match) {
                                             return <code className="bg-muted px-1.5 py-0.5 rounded font-mono text-xs" {...props}>{children}</code>
                                         }
-                                        // Block code (simplified)
+                                        // 代码块 (简化版)
                                         return <pre className="bg-muted p-4 rounded-lg overflow-x-auto my-4 text-xs font-mono">{children}</pre>
                                     },
                                 }}
                             >
                                 {(release.body || t('dashboard.releaseNotes.noNotes'))
-                                    // Auto-link mentions @username -> [@username](https://github.com/username)
-                                    // but simple regex replacement is usually safe enough for release notes unless inside code blocks.
-                                    // A safer approach is assuming standard markdown.
-                                    // Modified: Use callback to check next character to prevent partial matches on scoped packages
+                                    // 自动链接提及 @username -> [@username](https://github.com/username)
+                                    // 修改：使用回调检查下一个字符，防止匹配到 @scope/pkg
                                     .replace(/(^|\s)(@[a-zA-Z0-9-]+)/g, (match, prefix, username, offset, string) => {
                                         const nextChar = string[offset + match.length];
-                                        if (nextChar === '/') return match; // Is scoped package @scope/pkg, ignore
+                                        if (nextChar === '/') return match; // 如果是 @scope/pkg，忽略
                                         return `${prefix}[${username}](https://github.com/${username.slice(1)})`;
                                     })
                                 }

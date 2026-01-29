@@ -5,16 +5,7 @@ from ..models import Release, ReleaseStats
 from ..storage.sqlite import SQLiteStorage
 from ..dependencies import get_current_user, get_storage
 
-router = APIRouter(prefix="/api", tags=["releases"]) 
-# Note: prefix is /api because endpoints are /api/releases and /api/stats. 
-# Wait, standard convention is router prefix includes resource.
-# But here we have /api/stats (singular) and /api/releases (plural).
-# I will use prefix="" and explicit paths, or group them.
-
-# Let's use prefix="/api/releases" for releases and a separate one for stats?
-# Or just put stats in this router with path "/stats" (resulting in /api/releases/stats)?
-# Current API is /api/stats. Changing it to /api/releases/stats might break frontend.
-# I will use `router = APIRouter(prefix="/api")` and specify full paths relative to that like "/stats" and "/releases".
+router = APIRouter(prefix="/api", tags=["releases"])
 
 @router.get("/stats", response_model=ReleaseStats, dependencies=[Depends(get_current_user)])
 async def get_stats(storage: Annotated[SQLiteStorage, Depends(get_storage)]):

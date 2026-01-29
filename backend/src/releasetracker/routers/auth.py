@@ -24,7 +24,7 @@ async def register(
     注意：此接口需要管理员权限。普通用户使用内置管理员账户登录。
     """
     # 可选：检查是否为管理员（如果有角色系统）
-    # if current_user.username != "admin":
+
     #     raise HTTPException(status_code=403, detail="仅管理员可创建用户")
     
     try:

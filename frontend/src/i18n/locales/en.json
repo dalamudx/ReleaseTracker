@@ -77,7 +77,11 @@
         "checkFailed": "Check failed",
         "check": "Check",
         "never": "Never",
-        "unexpectedError": "An unexpected error occurred"
+        "unexpectedError": "An unexpected error occurred",
+        "description": "Description",
+        "enabled": "Enabled",
+        "disabled": "Disabled",
+        "actions": "Actions"
     },
     "sidebar": {
         "dashboard": "Dashboard",
@@ -303,10 +307,11 @@
                 "url": "Webhook URL",
                 "events": "Trigger Events",
                 "eventsDesc": "Select event types to trigger notifications",
-                "description": "Description",
+                "description": "Configure the details for your notification channel.",
                 "test": "Send Test Message",
-                "testSuccess": "Test message sent",
                 "testFailed": "Test message failed",
+                "createSuccess": "Notification channel created",
+                "updateSuccess": "Notification channel updated",
                 "placeholder": {
                     "name": "e.g., Discord Webhook",
                     "url": "https://..."
@@ -315,6 +320,10 @@
             "eventTypes": {
                 "new_release": "New Release",
                 "republish": "Republish"
+            },
+            "eventDescriptions": {
+                "new_release": "Triggered when a new version is detected",
+                "republish": "Triggered when a version is republished"
             }
         }
     }

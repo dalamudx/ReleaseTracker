@@ -29,7 +29,7 @@ class SQLiteStorage:
         key = os.getenv("ENCRYPTION_KEY")
         if not key:
             logger.warning("No ENCRYPTION_KEY found, using insecure default key for development")
-            # Fixed key for development persistence (INSECURE)
+            # 开发环境固定密钥（不安全）
             key = b'Z7wz8u_u8Y7j6B1b4C9d2E5f8G1h3I4j5K6l7M8n9O0='
 
         try:
@@ -51,7 +51,7 @@ class SQLiteStorage:
         try:
             return self.fernet.decrypt(enc.encode()).decode()
         except InvalidToken:
-            # Assume legacy plain text
+            # 假设为旧的明文数据
             return enc
         except Exception as e:
             logger.error(f"Decryption failed: {e}")
@@ -279,7 +279,7 @@ class SQLiteStorage:
 
             
     async def get_all_tracker_configs(self) -> list:
-        """Get all tracker configs."""
+        """获取所有追踪器配置"""
         from ..config import TrackerConfig, Channel
         
         async with aiosqlite.connect(self.db_path) as db:
@@ -307,7 +307,7 @@ class SQLiteStorage:
             return row[0] if row else 0
 
     async def get_tracker_config(self, name: str):
-        """Get tracker config."""
+        """获取单个追踪器配置"""
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("SELECT * FROM trackers WHERE name = ?", (name,))
@@ -315,14 +315,14 @@ class SQLiteStorage:
             return self._row_to_tracker_config(row) if row else None
 
     async def delete_tracker_config(self, name: str) -> None:
-        """Delete tracker config."""
+        """删除追踪器配置"""
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("DELETE FROM trackers WHERE name = ?", (name,))
             await db.commit()
 
     @staticmethod
     def _row_to_tracker_config(row):
-        """Convert row to TrackerConfig."""
+        """将数据库行转换为 TrackerConfig 对象"""
         from ..config import TrackerConfig, Channel
         import json
         
@@ -338,7 +338,7 @@ class SQLiteStorage:
                     old_type = ch.get("type")
                     if old_type in ["stable", "prerelease", "beta", "canary"]:
                         ch["name"] = old_type
-                        # 推断新的 type
+                        # 根据旧类型推断新类型
                         if old_type == "stable":
                             ch["type"] = "release"
                         elif old_type == "prerelease":
@@ -382,7 +382,7 @@ class SQLiteStorage:
                 pass  # 如果解析失败，使用空列表
         
         
-        # Handle interval compatibility (convert string to int minutes)
+        # 处理检查间隔兼容性（将字符串转换为分钟数）
         raw_interval = row["interval"]
         interval_minutes = 60
         
@@ -395,7 +395,7 @@ class SQLiteStorage:
                 elif raw_interval.endswith("m"):
                     interval_minutes = int(raw_interval[:-1])
                 elif raw_interval.endswith("s"):
-                    # Treat seconds as 1 minute minimum or ceil
+                    # 秒级间隔至少为1分钟
                     import math
                     interval_minutes = max(1, math.ceil(int(raw_interval[:-1]) / 60))
                 else:
@@ -417,7 +417,7 @@ class SQLiteStorage:
         )
     @staticmethod
     def _row_to_tracker_status(row) -> TrackerStatus:
-        """Convert row to TrackerStatus."""
+        """将数据库行转换为 TrackerStatus 对象"""
         return TrackerStatus(
             name=row["name"],
             type=row["type"],
@@ -579,7 +579,7 @@ class SQLiteStorage:
         prerelease: bool | None = None,
         include_history: bool = True
     ) -> list[Release]:
-        """Get release list with optional history."""
+        """获取版本列表（可选包含历史记录）"""
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
 
@@ -678,7 +678,8 @@ class SQLiteStorage:
         prerelease: bool | None = None,
         include_history: bool = True
     ) -> int:
-        """Get total count of records matching criteria."""
+
+        """获取符合条件的记录总数"""
         async with aiosqlite.connect(self.db_path) as db:
             # 构建查询条件
             current_conditions = []
@@ -741,8 +742,8 @@ class SQLiteStorage:
         """
         一次性获取多个追踪器的最近版本记录
         
-        Using Window Function to optimize N+1 query.
-        Returns: {tracker_name: [Release, ...]}
+        使用窗口函数优化 N+1 查询
+        返回值：{tracker_name: [Release, ...]}
         """
         if not tracker_names:
             return {}
@@ -774,12 +775,12 @@ class SQLiteStorage:
             return result
 
     async def get_latest_release(self, tracker_name: str) -> Release | None:
-        """Get latest release for a tracker."""
+        """获取指定追踪器的最新版本"""
         releases = await self.get_releases(tracker_name, limit=1)
         return releases[0] if releases else None
 
     async def get_latest_release_for_channels(self, tracker_name: str, channels: list) -> Release | None:
-        """Get latest release across all enabled channels for a tracker."""
+        """获取指定追踪器所有启用渠道中的最新版本"""
         if not channels:
             return await self.get_latest_release(tracker_name)
             
@@ -791,7 +792,6 @@ class SQLiteStorage:
     def select_best_release(releases: list[Release], channels: list) -> Release | None:
         """
         根据渠道规则从版本列表中选出最新的版本
-        Refactored for Memory/Bulk usage.
         """
         import re
         
@@ -799,19 +799,11 @@ class SQLiteStorage:
             return None
         
         if not channels:
-            # 如果没有渠道定义，直接返回列表里的第一个（假设已按时间排序）
             return releases[0]
 
-        # 只考虑启用的渠道
         enabled_channels = [ch for ch in channels if ch.enabled]
         if not enabled_channels:
-            # 如果有渠道但都没启用，视作无有效渠道 -> 或者返回 None? 
-            # 原逻辑是: return await self.get_latest_release(tracker_name)
-            # 这里如果 list 不为空，返回第一个
             return releases[0]
-            
-        
-        # 对每个渠道，找到符合规则的最新版本
         channel_latest_releases = []
         
         for channel in enabled_channels:
@@ -837,22 +829,16 @@ class SQLiteStorage:
                             continue
                     except re.error:
                         pass
-                
-                # 找到该渠道的第一个匹配项（最新）即停止
                 channel_latest_releases.append(release)
-                break
-        
-        # 如果没有找到任何符合条件的版本
+                break     
         if not channel_latest_releases:
             return None
-        
-        # 在所有渠道的最新版本中，选择发布日期最近的
         return max(channel_latest_releases, key=lambda r: r.published_at.timestamp())
 
 
 
     async def update_tracker_status(self, status: TrackerStatus):
-        """Update tracker status."""
+        """更新追踪器状态"""
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 """
@@ -872,7 +858,7 @@ class SQLiteStorage:
             await db.commit()
 
     async def get_tracker_status(self, name: str) -> TrackerStatus | None:
-        """Get tracker status."""
+        """获取追踪器状态"""
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
@@ -882,7 +868,7 @@ class SQLiteStorage:
             return self._row_to_tracker_status(row) if row else None
 
     async def get_all_tracker_status(self) -> list[TrackerStatus]:
-        """Get all tracker statuses."""
+        """获取所有追踪器状态"""
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("SELECT * FROM tracker_status")
@@ -890,19 +876,19 @@ class SQLiteStorage:
             return [self._row_to_tracker_status(row) for row in rows]
 
     async def delete_tracker_status(self, name: str):
-        """Delete tracker status."""
+        """删除追踪器状态"""
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("DELETE FROM tracker_status WHERE name = ?", (name,))
             await db.commit()
 
     async def delete_releases_by_tracker(self, tracker_name: str):
-        """Delete all releases associated with a tracker."""
+        """删除指定追踪器的所有版本记录"""
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("DELETE FROM releases WHERE tracker_name = ?", (tracker_name,))
             await db.commit()
 
     async def get_stats(self) -> ReleaseStats:
-        """Get statistics."""
+        """获取统计信息"""
         async with aiosqlite.connect(self.db_path) as db:
             # 总追踪器数
             cursor = await db.execute("SELECT COUNT(*) FROM tracker_status")
@@ -938,7 +924,6 @@ class SQLiteStorage:
             )
 
             # 每日发布统计（过去7天，包括当前版本和历史版本的发布日期）
-            # 每日发布统计 - Python 处理版 (支持时区转换)
             # 获取目标时区
             target_tz_name = os.getenv("TZ", "UTC")
             try:
@@ -1105,7 +1090,7 @@ class SQLiteStorage:
 
     @staticmethod
     def _row_to_release(row) -> Release:
-        """Convert row to Release."""
+        """将数据库行转换为 Release 对象"""
         return Release(
             id=row["id"],
             tracker_name=row["tracker_name"],
@@ -1125,7 +1110,7 @@ class SQLiteStorage:
     # ==================== 凭证管理 ====================
     
     async def create_credential(self, credential) -> int:
-        """Create credential."""
+        """创建凭证"""
         from ..models import Credential
         
         # 加密 Token
@@ -1151,7 +1136,7 @@ class SQLiteStorage:
             return cursor.lastrowid
 
     async def get_all_credentials(self) -> list:
-        """Get all credentials."""
+        """获取所有凭证"""
         from ..models import Credential
         
         async with aiosqlite.connect(self.db_path) as db:
@@ -1181,7 +1166,7 @@ class SQLiteStorage:
             return row[0] if row else 0
 
     async def get_credential(self, credential_id: int):
-        """Get credential by ID."""
+        """根据 ID 获取凭证"""
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
@@ -1191,7 +1176,7 @@ class SQLiteStorage:
             return self._row_to_credential(row) if row else None
 
     async def get_credential_by_name(self, name: str):
-        """Get credential by name."""
+        """根据名称获取凭证"""
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
@@ -1201,7 +1186,7 @@ class SQLiteStorage:
             return self._row_to_credential(row) if row else None
 
     async def update_credential(self, credential_id: int, credential) -> bool:
-        """Update credential."""
+        """更新凭证"""
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 """
@@ -1221,14 +1206,14 @@ class SQLiteStorage:
             return True
 
     async def delete_credential(self, credential_id: int) -> bool:
-        """Delete credential."""
+        """删除凭证"""
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("DELETE FROM credentials WHERE id = ?", (credential_id,))
             await db.commit()
             return True
 
     def _row_to_credential(self, row):
-        """Convert row to Credential object."""
+        """将数据库行转换为 Credential 对象"""
         from ..models import Credential
         
         return Credential(
@@ -1350,7 +1335,7 @@ class SQLiteStorage:
 
     @staticmethod
     def _row_to_user(row) -> User:
-        """Convert row to User."""
+        """将数据库行转换为 User 对象"""
         return User(
             id=row["id"],
             username=row["username"],
@@ -1364,7 +1349,7 @@ class SQLiteStorage:
 
     @staticmethod
     def _row_to_session(row) -> Session:
-        """Convert row to Session."""
+        """将数据库行转换为 Session 对象"""
         return Session(
             id=row["id"],
             user_id=row["user_id"],
@@ -1380,7 +1365,7 @@ class SQLiteStorage:
 
     @staticmethod
     def _row_to_notifier(row) -> Notifier:
-        """Convert row to Notifier."""
+        """将数据库行转换为 Notifier 对象"""
         import json
         try:
             events = json.loads(row["events"]) if row["events"] else []

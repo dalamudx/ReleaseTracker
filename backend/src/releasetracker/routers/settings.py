@@ -80,7 +80,7 @@ async def get_env_info(
         val = os.getenv(key)
         if val:
             if key == "ENCRYPTION_KEY":
-                # Mask sensitive key
+                # 对敏感密钥进行脱敏处理
                 if len(val) > 8:
                     val = f"{val[:4]}...{val[-4:]}"
                 else:

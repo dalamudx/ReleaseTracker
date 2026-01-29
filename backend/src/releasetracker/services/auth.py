@@ -10,7 +10,7 @@ from passlib.context import CryptContext
 
 from ..models import User, Session, LoginRequest, RegisterRequest, TokenPair, ChangePasswordRequest
 from ..storage.sqlite import SQLiteStorage
-from ..config import AppConfig
+
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +29,10 @@ REFRESH_TOKEN_EXPIRE_DAYS = 7
 class AuthService:
     """认证服务"""
 
-    def __init__(self, storage: SQLiteStorage, config: AppConfig):
+    def __init__(self, storage: SQLiteStorage):
         self.storage = storage
-        self.config = config
         
-        if hasattr(self.config, 'jwt_secret') and self.config.jwt_secret:
-            self.secret_key = self.config.jwt_secret
-        elif SECRET_KEY:
+        if SECRET_KEY:
             self.secret_key = SECRET_KEY
         else:
             logger.warning("No JWT_SECRET set. Using insecure default key for development only!")

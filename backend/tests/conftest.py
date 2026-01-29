@@ -11,18 +11,12 @@ os.environ["ENCRYPTION_KEY"] = "Z7wz8u_u8Y7j6B1b4C9d2E5f8G1h3I4j5K6l7M8n9O0="
 
 from releasetracker.main import app
 from releasetracker.storage.sqlite import SQLiteStorage
-from releasetracker.config import AppConfig, StorageConfig
-from releasetracker.dependencies import get_storage, get_app_config, get_scheduler
+from releasetracker.dependencies import get_storage, get_scheduler
 from releasetracker.services.auth import AuthService
 from unittest.mock import AsyncMock
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an instance of the default event loop for each test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+
 
 
 @pytest.fixture(scope="function")
@@ -34,19 +28,11 @@ async def storage(tmp_path):
     return storage
 
 
-@pytest.fixture(scope="function")
-def app_config(storage):
-    """Create a temporary app config."""
-    return AppConfig(
-        storage=StorageConfig(path=storage.db_path),
-        trackers=[],
-        notifiers=[],
-        jwt_secret="test-secret"
-    )
+
 
 
 @pytest.fixture(scope="function")
-def client(storage, app_config):
+def client(storage):
     """Create a TestClient with overridden dependencies."""
     
     mock_scheduler = AsyncMock()
@@ -57,9 +43,6 @@ def client(storage, app_config):
     
     def override_get_storage():
         return storage
-        
-    def override_get_app_config():
-        return app_config
         
     def override_get_scheduler():
         return mock_scheduler
@@ -72,7 +55,7 @@ def client(storage, app_config):
     @asynccontextmanager
     async def mock_lifespan(_app):
         _app.state.storage = storage
-        _app.state.config = app_config
+
         _app.state.scheduler = mock_scheduler
         yield
         
@@ -121,5 +104,5 @@ async def authed_client(client, auth_service):
 
 
 @pytest.fixture(scope="function")
-async def auth_service(storage, app_config):
-    return AuthService(storage, app_config)
+async def auth_service(storage):
+    return AuthService(storage)
