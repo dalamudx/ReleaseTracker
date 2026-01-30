@@ -151,7 +151,7 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
             // Map "none" back to null for API
             const payload = {
                 ...data,
-                credential_name: (data.credential_name === "none" || !data.credential_name) ? null : data.credential_name
+                credential_name: (data.credential_name === "none" || !data.credential_name) ? undefined : data.credential_name
             }
 
             if (trackerName) {
@@ -190,7 +190,7 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[50vw] max-h-[90vh] overflow-y-auto">
+            <DialogContent className="sm:max-w-[95vw] md:max-w-3xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle>{trackerName ? t('tracker.editTitle') : t('tracker.addTitle')}</DialogTitle>
                     <DialogDescription>
@@ -202,12 +202,12 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
                     <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
 
                         {/* Top Row: Name, Type, Credential, Interval */}
-                        <div className="grid grid-cols-12 gap-4">
+                        <div className="grid grid-cols-2 md:grid-cols-12 gap-4">
                             <FormField
                                 control={form.control}
                                 name="name"
                                 render={({ field }) => (
-                                    <FormItem className="col-span-4">
+                                    <FormItem className="col-span-2 md:col-span-4">
                                         <FormLabel>{t('tracker.fields.name')}</FormLabel>
                                         <FormControl>
                                             <Input placeholder="my-app" {...field} disabled={!!trackerName} />
@@ -221,7 +221,7 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
                                 control={form.control}
                                 name="type"
                                 render={({ field }) => (
-                                    <FormItem className="col-span-2">
+                                    <FormItem className="col-span-1 md:col-span-2">
                                         <FormLabel>{t('tracker.fields.type')}</FormLabel>
                                         <Select onValueChange={field.onChange} value={field.value} disabled={!!trackerName}>
                                             <FormControl>
@@ -244,7 +244,7 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
                                 control={form.control}
                                 name="credential_name"
                                 render={({ field }) => (
-                                    <FormItem className="col-span-4">
+                                    <FormItem className="col-span-2 md:col-span-4 order-last md:order-none">
                                         <FormLabel>{t('tracker.fields.credential')} <span className="text-muted-foreground font-normal text-xs">({t('tracker.fields.optional')})</span></FormLabel>
                                         <Select
                                             key={`${type}-${credentials.length}`}
@@ -272,7 +272,7 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
                                 control={form.control}
                                 name="interval"
                                 render={({ field }) => (
-                                    <FormItem className="col-span-2">
+                                    <FormItem className="col-span-1 md:col-span-2">
                                         <FormLabel>{t('tracker.fields.interval')}</FormLabel>
                                         <FormControl>
                                             <Input
@@ -289,13 +289,13 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
                         </div>
 
                         {/* Type Specific Fields */}
-                        <div className="grid grid-cols-2 gap-4 p-4 border rounded-lg bg-muted/40">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 border rounded-lg bg-muted/40">
                             {type === 'github' && (
                                 <FormField
                                     control={form.control}
                                     name="repo"
                                     render={({ field }) => (
-                                        <FormItem className="col-span-2">
+                                        <FormItem className="col-span-1 sm:col-span-2">
                                             <FormLabel>{t('tracker.fields.repo')}</FormLabel>
                                             <FormControl>
                                                 <Input placeholder="traefik/traefik" {...field} className="bg-background" />
