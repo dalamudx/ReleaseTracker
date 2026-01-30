@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     """应用配置"""
 
     JWT_SECRET: str | None = None
-    
+
     model_config = {"env_file": ".env"}
 
 

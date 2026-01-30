@@ -104,8 +104,9 @@ export function NotifierSettings() {
         try {
             const res = await api.testNotifier(id)
             toast.success(res ? t('settings.notifications.dialog.testSuccess') : t('settings.notifications.dialog.testFailed'))
-        } catch (error: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
-            toast.error(error.response?.data?.detail || t('settings.notifications.dialog.testFailed'))
+        } catch (error: unknown) {
+            const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+            toast.error(detail || t('settings.notifications.dialog.testFailed'))
         }
     }
 
@@ -324,8 +325,9 @@ function NotifierDialog({ open, onOpenChange, notifier, onSuccess }: NotifierDia
             }
             onSuccess()
             onOpenChange(false)
-        } catch (error: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
-            toast.error(error.response?.data?.detail || t('common.unexpectedError'))
+        } catch (error: unknown) {
+            const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+            toast.error(detail || t('common.unexpectedError'))
         }
     }
 

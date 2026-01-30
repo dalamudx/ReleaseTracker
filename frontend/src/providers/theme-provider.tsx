@@ -1,16 +1,10 @@
-import { createContext, useContext, useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
+import { THEME_COLORS } from "@/config/theme-config"
+import { ThemeProviderContext, DEFAULT_THEME_CONFIG } from "@/context/theme-context"
+import { useMounted } from "@/hooks/use-mounted"
+import type { Theme, Color, Radius, Zoom, ThemeConfig } from "@/types/theme"
 
-export type Theme = "dark" | "light" | "system"
-export type Color = "neutral" | "red" | "rose" | "orange" | "green" | "blue" | "yellow" | "violet"
-export type Radius = number
-export type Zoom = "default" | "scaled" | "mono"
 
-interface ThemeConfig {
-    mode: Theme
-    color: Color
-    zoom: Zoom
-    radius: Radius
-}
 
 type ThemeProviderProps = {
     children: React.ReactNode
@@ -20,93 +14,6 @@ type ThemeProviderProps = {
     defaultZoom?: Zoom
     storageKey?: string
 }
-
-type ThemeProviderState = {
-    theme: Theme
-    setTheme: (theme: Theme) => void
-    color: Color
-    setColor: (color: Color) => void
-    radius: Radius
-    setRadius: (radius: Radius) => void
-    zoom: Zoom
-    setZoom: (zoom: Zoom) => void
-    themeConfig: ThemeConfig
-    updateTheme: (config: Partial<ThemeConfig>) => void
-}
-
-// 颜色主题配置（使用 OKLCH 色彩空间）
-export const COLOR_THEMES = [
-    {
-        name: "默认",
-        value: "neutral" as Color,
-        color: "oklch(0.45 0.008 264)",
-        foreground: "oklch(0.985 0 0)",
-    },
-    {
-        name: "红色",
-        value: "red" as Color,
-        color: "oklch(0.645 0.246 16.439)",
-        foreground: "oklch(0.985 0 0)",
-    },
-    {
-        name: "玫瑰",
-        value: "rose" as Color,
-        color: "oklch(0.645 0.246 350)",
-        foreground: "oklch(0.985 0 0)",
-    },
-    {
-        name: "橙色",
-        value: "orange" as Color,
-        color: "oklch(0.769 0.188 45)",
-        foreground: "oklch(0.145 0 0)",
-    },
-    {
-        name: "绿色",
-        value: "green" as Color,
-        color: "oklch(0.6 0.118 184.704)",
-        foreground: "oklch(0.985 0 0)",
-    },
-    {
-        name: "蓝色",
-        value: "blue" as Color,
-        color: "oklch(0.488 0.243 264.376)",
-        foreground: "oklch(0.985 0 0)",
-    },
-    {
-        name: "黄色",
-        value: "yellow" as Color,
-        color: "oklch(0.828 0.189 85)",
-        foreground: "oklch(0.145 0 0)",
-    },
-    {
-        name: "紫罗兰",
-        value: "violet" as Color,
-        color: "oklch(0.627 0.265 280)",
-        foreground: "oklch(0.985 0 0)",
-    },
-]
-
-const DEFAULT_THEME_CONFIG: ThemeConfig = {
-    mode: "system",
-    color: "neutral",
-    zoom: "default",
-    radius: 0.5,
-}
-
-const initialState: ThemeProviderState = {
-    theme: "system",
-    setTheme: () => null,
-    color: "neutral",
-    setColor: () => null,
-    radius: 0.5,
-    setRadius: () => null,
-    zoom: "default",
-    setZoom: () => null,
-    themeConfig: DEFAULT_THEME_CONFIG,
-    updateTheme: () => null,
-}
-
-const ThemeProviderContext = createContext<ThemeProviderState>(initialState)
 
 export function ThemeProvider({
     children,
@@ -135,10 +42,10 @@ export function ThemeProvider({
         }
     })
 
-    const [mounted, setMounted] = useState(false)
+    const mounted = useMounted()
 
     // 应用主题配置到 DOM
-    const applyTheme = (config: ThemeConfig) => {
+    const applyTheme = useCallback((config: ThemeConfig) => {
         const root = window.document.documentElement
 
         // 1. 应用明暗模式
@@ -162,11 +69,9 @@ export function ThemeProvider({
         root.style.setProperty("--radius", `${config.radius}rem`)
 
         // 5. 【关键】动态设置 CSS 变量
-        const colorTheme = COLOR_THEMES.find((t) => t.value === config.color)
+        const colorTheme = THEME_COLORS.find((t) => t.value === config.color)
         if (colorTheme && config.color !== "neutral") {
             document.documentElement.setAttribute("data-theme", config.color)
-            // Assuming applyAllColorTheme is a defined function elsewhere or needs to be added.
-            // For now, we'll replicate the original logic for setting CSS variables.
             root.style.setProperty("--primary", colorTheme.color)
             root.style.setProperty("--primary-foreground", colorTheme.foreground)
             root.style.setProperty("--ring", colorTheme.color)
@@ -178,24 +83,26 @@ export function ThemeProvider({
             root.style.removeProperty("--primary-foreground")
             root.style.removeProperty("--ring")
         }
-    }
+    }, [])
 
     // 统一的更新主题方法
-    const updateTheme = (newConfig: Partial<ThemeConfig>) => {
-        const updatedConfig = { ...themeConfig, ...newConfig }
-        setThemeConfig(updatedConfig)
-        applyTheme(updatedConfig)
-        localStorage.setItem(storageKey + "-config", JSON.stringify(updatedConfig))
+    const updateTheme = useCallback((newConfig: Partial<ThemeConfig>) => {
+        setThemeConfig((prev) => {
+            const updatedConfig = { ...prev, ...newConfig }
+            applyTheme(updatedConfig)
+            localStorage.setItem(storageKey + "-config", JSON.stringify(updatedConfig))
+            // 触发自定义事件，通知其他组件
+            window.dispatchEvent(new CustomEvent("theme-change", { detail: updatedConfig }))
+            return updatedConfig
+        })
+    }, [applyTheme, storageKey])
 
-        // 触发自定义事件，通知其他组件
-        window.dispatchEvent(new CustomEvent("theme-change", { detail: updatedConfig }))
-    }
-
-    // 初始挂载时应用主题
+    // 监听配置变化应用主题
     useEffect(() => {
-        setMounted(true)
-        applyTheme(themeConfig)
-    }, [])
+        if (mounted) {
+            applyTheme(themeConfig)
+        }
+    }, [applyTheme, themeConfig, mounted])
 
     // 监听系统主题变化
     useEffect(() => {
@@ -208,7 +115,7 @@ export function ThemeProvider({
 
         mediaQuery.addEventListener("change", handleChange)
         return () => mediaQuery.removeEventListener("change", handleChange)
-    }, [themeConfig])
+    }, [themeConfig, applyTheme])
 
     if (!mounted) {
         return null
@@ -232,13 +139,4 @@ export function ThemeProvider({
             {children}
         </ThemeProviderContext.Provider>
     )
-}
-
-export const useTheme = () => {
-    const context = useContext(ThemeProviderContext)
-
-    if (context === undefined)
-        throw new Error("useTheme must be used within a ThemeProvider")
-
-    return context
 }

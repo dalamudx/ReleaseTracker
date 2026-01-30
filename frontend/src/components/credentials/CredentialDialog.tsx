@@ -84,8 +84,10 @@ export function CredentialDialog({ open, onOpenChange, onSuccess, credential }: 
         try {
             if (credential) {
                 const { name, ...updateData } = data
+                // avoid using name to satisfy linter
+                void name
                 if (!updateData.token) {
-                    delete (updateData as any).token
+                    delete (updateData as { token?: string }).token
                 }
                 await api.updateCredential(credential.id, updateData)
             } else {
@@ -94,11 +96,12 @@ export function CredentialDialog({ open, onOpenChange, onSuccess, credential }: 
             toast.success(t('common.saved'))
             onSuccess()
             onOpenChange(false)
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error("Failed to save credential", error)
             // Handle duplicate name error if we had it, or generic
-            if (error.response?.status === 400) {
-                toast.error(error.response.data?.detail || t('common.unexpectedError'));
+            const err = error as { response?: { status?: number; data?: { detail?: string } } }
+            if (err.response?.status === 400) {
+                toast.error(err.response.data?.detail || t('common.unexpectedError'));
             } else {
                 toast.error(t('common.unexpectedError'));
             }

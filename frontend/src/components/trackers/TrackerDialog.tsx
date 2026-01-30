@@ -64,7 +64,7 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
             instance: "",
             chart: "",
             credential_name: "none",
-            channels: defaultChannels as any,
+            channels: defaultChannels as unknown as TrackerConfig["channels"],
             interval: 60,
             description: "",
         },
@@ -130,7 +130,7 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
                             instance: "",
                             chart: "",
                             credential_name: "none",
-                            channels: defaultChannels as any,
+                            channels: defaultChannels as unknown as TrackerConfig["channels"],
                             interval: 60,
                             description: ""
                         })
@@ -163,12 +163,13 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
             }
             onSuccess()
             onOpenChange(false)
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error("Failed to save tracker", error)
 
             // Handle duplicate name error
-            if (error.response?.status === 400) {
-                const detail = error.response.data?.detail || "";
+            const err = error as { response?: { status?: number; data?: { detail?: string } } }
+            if (err.response?.status === 400) {
+                const detail = err.response.data?.detail || "";
                 if (detail.includes("already exists") || detail.includes("已存在") || detail.includes("exist") || detail.includes("重复")) {
                     form.setError("name", {
                         type: "manual",

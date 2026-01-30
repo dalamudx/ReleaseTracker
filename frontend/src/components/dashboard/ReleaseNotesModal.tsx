@@ -66,21 +66,22 @@ export function ReleaseNotesModal({ release, open, onOpenChange }: ReleaseNotesM
                             <ReactMarkdown
                                 remarkPlugins={[remarkGfm, remarkEmoji]}
                                 components={{
-                                    h1: ({ node, ...props }) => <h1 className="text-xl font-bold mt-6 mb-4 pb-2 border-b" {...props} />,
-                                    h2: ({ node, ...props }) => <h2 className="text-lg font-semibold mt-6 mb-3" {...props} />,
-                                    h3: ({ node, ...props }) => <h3 className="text-base font-semibold mt-4 mb-2" {...props} />,
-                                    h4: ({ node, ...props }) => <h4 className="text-sm font-semibold mt-4 mb-2" {...props} />,
-                                    p: ({ node, ...props }) => <p className="mb-4 last:mb-0" {...props} />,
-                                    ul: ({ node, ...props }) => <ul className="mb-4 list-disc pl-5 space-y-1" {...props} />,
-                                    ol: ({ node, ...props }) => <ol className="mb-4 list-decimal pl-5 space-y-1" {...props} />,
-                                    li: ({ node, ...props }) => <li className="pl-1" {...props} />,
-                                    table: ({ node, ...props }) => <div className="my-4 w-full overflow-y-auto"><table className="w-full border-collapse border border-muted text-sm" {...props} /></div>,
-                                    thead: ({ node, ...props }) => <thead className="bg-muted/50" {...props} />,
-                                    tbody: ({ node, ...props }) => <tbody {...props} />,
-                                    tr: ({ node, ...props }) => <tr className="border-b border-muted transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted" {...props} />,
-                                    th: ({ node, ...props }) => <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 border-r border-muted last:border-r-0" {...props} />,
-                                    td: ({ node, ...props }) => <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 border-r border-muted last:border-r-0" {...props} />,
+                                    h1: ({ node, ...props }) => { void node; return <h1 className="text-xl font-bold mt-6 mb-4 pb-2 border-b" {...props} /> },
+                                    h2: ({ node, ...props }) => { void node; return <h2 className="text-lg font-semibold mt-6 mb-3" {...props} /> },
+                                    h3: ({ node, ...props }) => { void node; return <h3 className="text-base font-semibold mt-4 mb-2" {...props} /> },
+                                    h4: ({ node, ...props }) => { void node; return <h4 className="text-sm font-semibold mt-4 mb-2" {...props} /> },
+                                    p: ({ node, ...props }) => { void node; return <p className="mb-4 last:mb-0" {...props} /> },
+                                    ul: ({ node, ...props }) => { void node; return <ul className="mb-4 list-disc pl-5 space-y-1" {...props} /> },
+                                    ol: ({ node, ...props }) => { void node; return <ol className="mb-4 list-decimal pl-5 space-y-1" {...props} /> },
+                                    li: ({ node, ...props }) => { void node; return <li className="pl-1" {...props} /> },
+                                    table: ({ node, ...props }) => { void node; return <div className="my-4 w-full overflow-y-auto"><table className="w-full border-collapse border border-muted text-sm" {...props} /></div> },
+                                    thead: ({ node, ...props }) => { void node; return <thead className="bg-muted/50" {...props} /> },
+                                    tbody: ({ node, ...props }) => { void node; return <tbody {...props} /> },
+                                    tr: ({ node, ...props }) => { void node; return <tr className="border-b border-muted transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted" {...props} /> },
+                                    th: ({ node, ...props }) => { void node; return <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 border-r border-muted last:border-r-0" {...props} /> },
+                                    td: ({ node, ...props }) => { void node; return <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 border-r border-muted last:border-r-0" {...props} /> },
                                     a: ({ node, href, children, ...props }) => {
+                                        void node;
                                         let content = children;
                                         // 仅当链接文本看起来像 URL 时才缩短（即不是 [Link](url) 这种自定义名称）
                                         if (href && (typeof children === 'string' && children.trim() === href)) {
@@ -97,7 +98,7 @@ export function ReleaseNotesModal({ release, open, onOpenChange }: ReleaseNotesM
                                                         content = `@${path[0]}`;
                                                     }
                                                 }
-                                            } catch (e) {
+                                            } catch {
                                                 // 无效 URL，忽略
                                             }
                                         }
@@ -108,8 +109,9 @@ export function ReleaseNotesModal({ release, open, onOpenChange }: ReleaseNotesM
 
                                         return <a href={href} className={className} target="_blank" rel="noopener noreferrer" {...props}>{content}</a>
                                     },
-                                    blockquote: ({ node, ...props }) => <blockquote className="border-l-4 border-muted pl-4 italic text-muted-foreground my-4" {...props} />,
-                                    code: ({ node, className, children, ...props }: any) => {
+                                    blockquote: ({ node, ...props }) => { void node; return <blockquote className="border-l-4 border-muted pl-4 italic text-muted-foreground my-4" {...props} /> },
+                                    code: ({ node, className, children, ...props }: React.ComponentPropsWithoutRef<'code'> & { node?: unknown }) => {
+                                        void node // Satisfy no-unused-vars
                                         const match = /language-(\w+)/.exec(className || '')
                                         // 行内代码
                                         if (!match) {

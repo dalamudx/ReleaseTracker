@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { Plus, ChevronLeft, ChevronRight } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
@@ -41,7 +41,7 @@ export default function CredentialsPage() {
         return saved ? Number(saved) : 15
     })
 
-    const loadCredentials = async () => {
+    const loadCredentials = useCallback(async () => {
         setLoading(true)
         try {
             const skip = (page - 1) * pageSize
@@ -53,11 +53,11 @@ export default function CredentialsPage() {
         } finally {
             setLoading(false)
         }
-    }
+    }, [page, pageSize])
 
     useEffect(() => {
         loadCredentials()
-    }, [page, pageSize])
+    }, [loadCredentials])
 
 
 

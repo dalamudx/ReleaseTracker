@@ -17,15 +17,12 @@ from ..models import (
     TokenPair,
     ChangePasswordRequest,
 )
-from ..config import Settings
 from ..storage.sqlite import SQLiteStorage
 
 logger = logging.getLogger(__name__)
 
 # 密码哈希配置
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-import os
 
 # JWT 配置
 SECRET_KEY = os.getenv("JWT_SECRET")

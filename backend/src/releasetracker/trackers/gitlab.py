@@ -90,7 +90,7 @@ class GitLabTracker(BaseTracker):
     def _parse_release(self, data: dict) -> Release:
         """解析 GitLab release 数据"""
         tag_name = data["tag_name"]
-        
+
         release = Release(
             tracker_name=self.name,
             name=data.get("name") or tag_name,

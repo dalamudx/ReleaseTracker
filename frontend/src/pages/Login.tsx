@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { useAuth } from "@/providers/AuthProvider"
+import { useAuth } from "@/context/auth-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -24,7 +24,7 @@ export function LoginPage() {
         try {
             await login(formData)
             navigate("/")
-        } catch (error) {
+        } catch {
             // Error handled in login function
         } finally {
             setIsSubmitting(false)

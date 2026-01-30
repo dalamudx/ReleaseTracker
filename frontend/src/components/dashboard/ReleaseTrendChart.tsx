@@ -27,7 +27,7 @@ interface ReleaseTrendChartProps {
 }
 
 export function ReleaseTrendChart({ stats, loading }: ReleaseTrendChartProps) {
-    const { t, i18n } = useTranslation()
+    const { t } = useTranslation()
     const formatDate = useDateFormatter()
     const { chartData, chartConfig, channels } = useMemo(() => {
         if (!stats?.daily_stats) return { chartData: [], chartConfig: {}, channels: [] }
@@ -63,7 +63,7 @@ export function ReleaseTrendChart({ stats, loading }: ReleaseTrendChartProps) {
 
         // 3. Aggregate Data
         const data = stats.daily_stats.map(item => {
-            const row: Record<string, any> = { date: item.date }
+            const row: Record<string, number | string> = { date: item.date }
 
             // Initialize 0
             displayList.forEach(name => {
@@ -76,7 +76,7 @@ export function ReleaseTrendChart({ stats, loading }: ReleaseTrendChartProps) {
                     const label = getChannelLabel(originalKey)
                     const safeKey = displayToSafeKey[label]
                     if (safeKey) {
-                        row[safeKey] = (row[safeKey] || 0) + count
+                        row[safeKey] = ((row[safeKey] as number) || 0) + count
                     }
                 })
             }
@@ -90,7 +90,7 @@ export function ReleaseTrendChart({ stats, loading }: ReleaseTrendChartProps) {
         }))
 
         return { chartData: data, chartConfig: config, channels: mappedChannels }
-    }, [stats, i18n.language])
+    }, [stats])
 
     return (
         <Card className="col-span-1 lg:col-span-4 glass-card h-full">

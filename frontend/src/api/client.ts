@@ -8,7 +8,15 @@ import type {
     SettingItem,
     EnvInfo,
     PaginatedResponse,
-    User
+    User,
+    CreateTrackerRequest,
+    UpdateTrackerRequest,
+    CreateCredentialRequest,
+    UpdateCredentialRequest,
+    AuthLoginRequest,
+    AuthRegisterRequest,
+    ChangePasswordRequest,
+    UpdateSettingRequest
 } from "./types"
 
 const API_BASE = '' // Vite 代理处理 /api
@@ -34,11 +42,11 @@ export const api = {
     getTrackers: (params?: { skip?: number, limit?: number }) =>
         apiClient.get<{ items: TrackerStatus[], total: number }>('/api/trackers', { params }).then(res => res.data),
     getLatestReleases: () => apiClient.get<Release[]>('/api/releases/latest').then(res => res.data),
-    getReleases: (params?: any) => apiClient.get<{ items: Release[], total: number }>('/api/releases', { params }).then(res => res.data),
+    getReleases: (params?: unknown) => apiClient.get<{ items: Release[], total: number }>('/api/releases', { params }).then(res => res.data),
 
     // Trackers
-    createTracker: (data: any) => apiClient.post('/api/trackers', data).then(res => res.data),
-    updateTracker: (name: string, data: any) => apiClient.put(`/api/trackers/${name}`, data).then(res => res.data),
+    createTracker: (data: CreateTrackerRequest) => apiClient.post('/api/trackers', data).then(res => res.data),
+    updateTracker: (name: string, data: UpdateTrackerRequest) => apiClient.put(`/api/trackers/${name}`, data).then(res => res.data),
     deleteTracker: (name: string) => apiClient.delete(`/api/trackers/${name}`).then(res => res.data),
     checkTracker: (name: string) => apiClient.post(`/api/trackers/${name}/check`).then(res => res.data),
     getTrackerConfig: (name: string) => apiClient.get(`/api/trackers/${name}/config`).then(res => res.data),
@@ -46,8 +54,8 @@ export const api = {
     // Credentials
     getCredentials: (params?: { skip?: number, limit?: number }) =>
         apiClient.get<{ items: ApiCredential[], total: number }>('/api/credentials', { params }).then(res => res.data),
-    createCredential: (data: any) => apiClient.post('/api/credentials', data).then(res => res.data),
-    updateCredential: (id: number, data: any) => apiClient.put(`/api/credentials/${id}`, data).then(res => res.data),
+    createCredential: (data: CreateCredentialRequest) => apiClient.post('/api/credentials', data).then(res => res.data),
+    updateCredential: (id: number, data: UpdateCredentialRequest) => apiClient.put(`/api/credentials/${id}`, data).then(res => res.data),
     deleteCredential: (id: number) => apiClient.delete(`/api/credentials/${id}`).then(res => res.data),
 
     // Notifiers
@@ -60,14 +68,14 @@ export const api = {
     testNotifier: (id: number) => apiClient.post<boolean>(`/api/notifiers/${id}/test`).then(res => res.data),
 
     // Auth
-    login: (data: any) => apiClient.post('/api/auth/login', data).then(res => res.data),
-    register: (data: any) => apiClient.post('/api/auth/register', data).then(res => res.data),
+    login: (data: AuthLoginRequest) => apiClient.post('/api/auth/login', data).then(res => res.data),
+    register: (data: AuthRegisterRequest) => apiClient.post('/api/auth/register', data).then(res => res.data),
     getCurrentUser: () => apiClient.get<User>('/api/auth/me').then(res => res.data),
-    changePassword: (data: any) => apiClient.post('/api/auth/change-password', data).then(res => res.data),
+    changePassword: (data: ChangePasswordRequest) => apiClient.post('/api/auth/change-password', data).then(res => res.data),
 
     // Settings
     getSettings: () => apiClient.get<SettingItem[]>('/api/settings').then(res => res.data),
-    updateSetting: (data: any) => apiClient.post<SettingItem>('/api/settings', data).then(res => res.data),
+    updateSetting: (data: UpdateSettingRequest) => apiClient.post<SettingItem>('/api/settings', data).then(res => res.data),
     deleteSetting: (key: string) => apiClient.delete(`/api/settings/${key}`).then(res => res.data),
     getEnvInfo: () => apiClient.get<EnvInfo[]>('/api/settings/env').then(res => res.data),
 }

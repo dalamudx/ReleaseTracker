@@ -8,7 +8,7 @@ import HistoryPage from "@/pages/History"
 import CredentialsPage from "@/pages/Credentials"
 import NotificationsPage from "@/pages/Notifications"
 import { Navigate, Outlet } from "react-router-dom"
-import { useAuth } from "@/providers/AuthProvider"
+import { useAuth } from "@/context/auth-context"
 import { LoginPage } from "@/pages/Login"
 
 function RequireAuth() {

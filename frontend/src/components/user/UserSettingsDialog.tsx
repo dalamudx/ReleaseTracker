@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "sonner"
 import { api } from "@/api/client"
-import { useAuth } from "@/providers/AuthProvider"
+import { useAuth } from "@/context/auth-context"
 import { User, Lock, Loader2 } from "lucide-react"
 
 interface UserSettingsDialogProps {
@@ -57,9 +57,10 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
             toast.success(t('user.messages.passwordUpdated'))
             setPasswords({ current: "", new: "", confirm: "" })
             onOpenChange(false)
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error(error)
-            toast.error(error.response?.data?.detail || t('user.messages.passwordUpdateFailed'))
+            const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+            toast.error(detail || t('user.messages.passwordUpdateFailed'))
         } finally {
             setIsLoading(false)
         }

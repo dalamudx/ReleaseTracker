@@ -1,6 +1,8 @@
-import { useState, useEffect } from "react"
+// import { useState, useEffect } from "react" // Removed unused
 import { Sun, Moon, Laptop, Check, Palette } from "lucide-react"
-import { useTheme } from "@/providers/theme-provider"
+import { useTheme } from "@/context/theme-context"
+import { type Theme, type Color, type Zoom } from "@/types/theme"
+import { useMounted } from "@/hooks/use-mounted"
 import { useTranslation } from "react-i18next"
 
 import { Button } from "@/components/ui/button"
@@ -14,16 +16,12 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Slider } from "@/components/ui/slider"
 
 
-type Theme = "light" | "dark" | "system"
+// type Theme = "light" | "dark" | "system" // Imported from provider
 
 export function ThemeCustomizer() {
     const { t } = useTranslation()
     const { theme, setTheme, color, setColor, radius, setRadius, zoom, setZoom } = useTheme()
-    const [mounted, setMounted] = useState(false)
-
-    useEffect(() => {
-        setMounted(true)
-    }, [])
+    const mounted = useMounted()
 
     const THEME_MODES = [
         {
@@ -47,20 +45,20 @@ export function ThemeCustomizer() {
     ]
 
     const COLOR_THEMES = [
-        { name: t('theme.color.neutral'), value: "neutral", color: "oklch(0.45 0.008 264)" },
-        { name: t('theme.color.red'), value: "red", color: "oklch(0.645 0.246 16.439)" },
-        { name: t('theme.color.rose'), value: "rose", color: "oklch(0.645 0.246 350)" },
-        { name: t('theme.color.orange'), value: "orange", color: "oklch(0.769 0.188 45)" },
-        { name: t('theme.color.green'), value: "green", color: "oklch(0.6 0.118 184.704)" },
-        { name: t('theme.color.blue'), value: "blue", color: "oklch(0.488 0.243 264.376)" },
-        { name: t('theme.color.yellow'), value: "yellow", color: "oklch(0.828 0.189 85)" },
-        { name: t('theme.color.violet'), value: "violet", color: "oklch(0.627 0.265 280)" },
-    ] as const
+        { name: t('theme.color.neutral'), value: "neutral" as Color, color: "oklch(0.45 0.008 264)" },
+        { name: t('theme.color.red'), value: "red" as Color, color: "oklch(0.645 0.246 16.439)" },
+        { name: t('theme.color.rose'), value: "rose" as Color, color: "oklch(0.645 0.246 350)" },
+        { name: t('theme.color.orange'), value: "orange" as Color, color: "oklch(0.769 0.188 45)" },
+        { name: t('theme.color.green'), value: "green" as Color, color: "oklch(0.6 0.118 184.704)" },
+        { name: t('theme.color.blue'), value: "blue" as Color, color: "oklch(0.488 0.243 264.376)" },
+        { name: t('theme.color.yellow'), value: "yellow" as Color, color: "oklch(0.828 0.189 85)" },
+        { name: t('theme.color.violet'), value: "violet" as Color, color: "oklch(0.627 0.265 280)" },
+    ]
 
     const SCALE_MODES = [
-        { name: t('theme.scale.default'), value: "default" },
-        { name: t('theme.scale.scaled'), value: "scaled" },
-        { name: t('theme.scale.mono'), value: "mono" },
+        { name: t('theme.scale.default'), value: "default" as Zoom },
+        { name: t('theme.scale.scaled'), value: "scaled" as Zoom },
+        { name: t('theme.scale.mono'), value: "mono" as Zoom },
     ]
 
     const handleThemeModeChange = (mode: string) => {
@@ -79,15 +77,14 @@ export function ThemeCustomizer() {
     }
 
     // 获取当前主题模式图标
-    const getCurrentModeIcon = () => {
+    const CurrentModeIcon = (() => {
         if (theme === "system") {
             return Laptop
         }
         const modeConfig = THEME_MODES.find(m => m.value === theme)
         return modeConfig?.icon || Laptop
-    }
+    })()
 
-    const ModeIcon = getCurrentModeIcon()
     const currentColorTheme = COLOR_THEMES.find(t => t.value === color)
 
     return (
@@ -99,7 +96,7 @@ export function ThemeCustomizer() {
                     className="h-7 w-7 hover:bg-accent hover:text-accent-foreground relative group-data-[collapsible=icon]:w-7 group-data-[collapsible=icon]:overflow-hidden"
                 >
                     <div className="relative">
-                        <ModeIcon className="h-4 w-4" />
+                        <CurrentModeIcon className="h-4 w-4" />
                         {/* 颜色主题指示器 - 只在非默认主题时显示 */}
                         {color !== "neutral" && (
                             <div
@@ -153,7 +150,7 @@ export function ThemeCustomizer() {
                         {COLOR_THEMES.map((colorTheme) => (
                             <button
                                 key={colorTheme.value}
-                                onClick={() => setColor(colorTheme.value as any)}
+                                onClick={() => setColor(colorTheme.value)}
                                 className="relative flex flex-col items-center gap-1 p-2 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
                                 title={colorTheme.name}
                             >
@@ -181,7 +178,7 @@ export function ThemeCustomizer() {
                     <ToggleGroup
                         type="single"
                         value={zoom}
-                        onValueChange={(value) => value && setZoom(value as any)}
+                        onValueChange={(value) => value && setZoom(value as Zoom)}
                         className="grid grid-cols-3 w-full"
                     >
                         {SCALE_MODES.map((scaleMode) => (
@@ -209,7 +206,7 @@ export function ThemeCustomizer() {
                         <div className="text-xs text-muted-foreground min-w-[20px]">0</div>
                         <Slider
                             value={[radius ?? 0.5]}
-                            onValueChange={(value) => setRadius(value[0] as any)}
+                            onValueChange={(value) => setRadius(value[0])}
                             max={1.5}
                             min={0}
                             step={0.05}

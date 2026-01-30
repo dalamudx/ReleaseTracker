@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { Plus, ChevronLeft, ChevronRight } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
@@ -41,7 +41,7 @@ export default function TrackersPage() {
         return saved ? Number(saved) : 15
     })
 
-    const loadTrackers = async () => {
+    const loadTrackers = useCallback(async () => {
         setLoading(true)
         try {
             const skip = (page - 1) * pageSize
@@ -53,11 +53,11 @@ export default function TrackersPage() {
         } finally {
             setLoading(false)
         }
-    }
+    }, [page, pageSize])
 
     useEffect(() => {
         loadTrackers()
-    }, [page, pageSize])
+    }, [loadTrackers])
 
 
 
@@ -101,9 +101,9 @@ export default function TrackersPage() {
             } else {
                 toast.success(t('common.checkStarted'))
             }
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error("Failed to check tracker", error)
-            const detail = error.response?.data?.detail || error.message || t('common.checkFailed')
+            const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail || (error as Error).message || t('common.checkFailed')
             toast.error(`${t('common.checkFailed')}: ${detail}`)
         }
     }

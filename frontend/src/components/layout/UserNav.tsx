@@ -26,7 +26,7 @@ import {
     SidebarMenuItem,
     useSidebar,
 } from "@/components/ui/sidebar"
-import { useAuth } from "@/providers/AuthProvider"
+import { useAuth } from "@/context/auth-context"
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { UserSettingsDialog } from "../user/UserSettingsDialog"

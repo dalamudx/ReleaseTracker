@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { Search, ExternalLink, FileText, ChevronLeft, ChevronRight, ChevronFirst, ChevronLast } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { useDateFormatter } from "@/hooks/use-date-formatter"
@@ -57,7 +57,7 @@ export default function HistoryPage() {
         setPage(1)
     }, [debouncedSearch])
 
-    const loadReleases = async () => {
+    const loadReleases = useCallback(async () => {
         setLoading(true)
         try {
             const skip = (page - 1) * pageSize
@@ -70,11 +70,11 @@ export default function HistoryPage() {
         } finally {
             setLoading(false)
         }
-    }
+    }, [page, pageSize, debouncedSearch])
 
     useEffect(() => {
         loadReleases()
-    }, [page, pageSize, debouncedSearch])
+    }, [loadReleases])
 
     const handlePageSizeChange = (value: string) => {
         const newSize = Number(value)

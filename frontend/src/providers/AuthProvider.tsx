@@ -1,32 +1,27 @@
-import { createContext, useContext, useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import type { ReactNode } from "react"
 import { api as client } from "@/api/client"
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
+import { AuthContext } from "@/context/auth-context"
+import type { AuthUser, LoginData } from "@/types/auth"
 
-interface User {
-    id: number
-    username: string
-    email: string
 
-    is_admin?: boolean
-    avatar_url?: string
-}
-
-interface AuthContextType {
-    user: User | null
-    isLoading: boolean
-    login: (data: any) => Promise<void>
-    logout: () => void
-    isAuthenticated: boolean
-}
-
-const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
     const { t } = useTranslation()
-    const [user, setUser] = useState<User | null>(null)
+    const [user, setUser] = useState<AuthUser | null>(null)
     const [isLoading, setIsLoading] = useState(true)
+
+    const logout = useCallback(() => {
+        localStorage.removeItem("token")
+        localStorage.removeItem("refresh_token")
+        localStorage.removeItem("user")
+        setUser(null)
+        // 可以调用后端 logout 接口
+        // 客户端登出逻辑 
+        toast.info(t('auth.logout.success'), { id: 'auth-logout' })
+    }, [t])
 
     useEffect(() => {
         // 初始化时检查本地是否有 User 信息或尝试获取当前用户
@@ -38,7 +33,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     // 暂时简单实现，如果有 token 且 localStorage 有 user，就恢复状态
                     // 实际应该:
                     const currentUser = await client.getCurrentUser()
-                    setUser(currentUser)
+                    setUser(currentUser as unknown as AuthUser) // Cast if API User type differs slightly, or update types
                 } catch (error) {
                     console.error("Session expired or invalid", error)
                     logout() //Token 无效，清理
@@ -48,9 +43,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         checkAuth()
-    }, [])
+    }, [logout])
 
-    const login = async (data: any) => {
+    const login = async (data: LoginData) => {
         try {
             const response = await client.login(data)
             // response 结构应该匹配后端: { user: User, token: { access_token: string, ... } }
@@ -60,23 +55,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             localStorage.setItem("refresh_token", token.refresh_token) // 如果有
             localStorage.setItem("user", JSON.stringify(user)) // 缓存用户信息，可选
 
-            setUser(user)
+            setUser(user as unknown as AuthUser)
             toast.success(t('auth.login.success'))
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error("Login failed", error)
-            toast.error(error.message || t('auth.login.failed'))
+            const errorMessage = error instanceof Error ? error.message : t('auth.login.failed')
+            toast.error(errorMessage)
             throw error
         }
-    }
-
-    const logout = () => {
-        localStorage.removeItem("token")
-        localStorage.removeItem("refresh_token")
-        localStorage.removeItem("user")
-        setUser(null)
-        // 可以调用后端 logout 接口
-        // 客户端登出逻辑 
-        toast.info(t('auth.logout.success'), { id: 'auth-logout' })
     }
 
     return (
@@ -92,12 +78,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             {children}
         </AuthContext.Provider>
     )
-}
-
-export function useAuth() {
-    const context = useContext(AuthContext)
-    if (context === undefined) {
-        throw new Error("useAuth must be used within an AuthProvider")
-    }
-    return context
 }

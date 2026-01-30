@@ -98,7 +98,7 @@ export interface Notifier {
 
 export interface SettingItem {
     key: string
-    value: any
+    value: unknown
     description?: string
     updated_at?: string
 }
@@ -114,4 +114,34 @@ export interface PaginatedResponse<T> {
     total: number
     skip?: number
     limit?: number
+}
+
+// Request Types
+export type CreateTrackerRequest = Partial<TrackerConfig>
+export type UpdateTrackerRequest = Partial<TrackerConfig>
+
+export type CreateCredentialRequest = Omit<ApiCredential, 'id' | 'created_at'> & { token: string }
+export type UpdateCredentialRequest = Partial<Omit<ApiCredential, 'id' | 'created_at'>> & { token?: string }
+
+export interface AuthLoginRequest {
+    username?: string
+    email?: string
+    password?: string
+}
+
+export interface AuthRegisterRequest {
+    username: string
+    email: string
+    password: string
+    code?: string
+}
+
+export interface ChangePasswordRequest {
+    old_password?: string
+    new_password: string
+}
+
+export interface UpdateSettingRequest {
+    key: string
+    value: unknown
 }
