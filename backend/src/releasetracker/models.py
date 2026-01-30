@@ -62,7 +62,7 @@ class Credential(BaseModel):
 
 class Notifier(BaseModel):
     """通知器配置模型"""
-    
+
     id: int | None = None
     name: str
     type: str = "webhook"  # 目前仅支持 webhook
@@ -76,7 +76,7 @@ class Notifier(BaseModel):
 
 class ReleaseHistory(BaseModel):
     """版本历史记录模型"""
-    
+
     id: int | None = None
     release_id: int
     commit_sha: str
@@ -88,9 +88,10 @@ class ReleaseHistory(BaseModel):
 
 # ==================== Auth Models ====================
 
+
 class User(BaseModel):
     """用户模型"""
-    
+
     id: int | None = None
     username: str
     email: str
@@ -102,7 +103,7 @@ class User(BaseModel):
 
 class Session(BaseModel):
     """会话模型"""
-    
+
     id: int | None = None
     user_id: int
     token_hash: str
@@ -115,7 +116,7 @@ class Session(BaseModel):
 
 class TokenPair(BaseModel):
     """令牌对"""
-    
+
     access_token: str
     refresh_token: str
     token_type: str = "Bearer"
@@ -124,14 +125,14 @@ class TokenPair(BaseModel):
 
 class LoginRequest(BaseModel):
     """登录请求"""
-    
+
     username: str
     password: str
 
 
 class RegisterRequest(BaseModel):
     """注册请求"""
-    
+
     username: str
     email: str
     password: str
@@ -139,7 +140,6 @@ class RegisterRequest(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     """修改密码请求"""
-    
+
     old_password: str
     new_password: str
-

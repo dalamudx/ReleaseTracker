@@ -1,5 +1,6 @@
 """认证服务模块"""
 
+import os
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -8,9 +9,16 @@ import hashlib
 import jwt
 from passlib.context import CryptContext
 
-from ..models import User, Session, LoginRequest, RegisterRequest, TokenPair, ChangePasswordRequest
+from ..models import (
+    User,
+    Session,
+    LoginRequest,
+    RegisterRequest,
+    TokenPair,
+    ChangePasswordRequest,
+)
+from ..config import Settings
 from ..storage.sqlite import SQLiteStorage
-
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +39,7 @@ class AuthService:
 
     def __init__(self, storage: SQLiteStorage):
         self.storage = storage
-        
+
         if SECRET_KEY:
             self.secret_key = SECRET_KEY
         else:
@@ -44,35 +52,34 @@ class AuthService:
         existing_user = await self.storage.get_user_by_username(req.username)
         if existing_user:
             raise ValueError("Username already exists")
-            
+
         # 哈希密码
         password_hash = pwd_context.hash(req.password)
-        
+
         # 创建用户
         user = User(
-            username=req.username,
-            email=req.email,
-            password_hash=password_hash,
-            status="active"
+            username=req.username, email=req.email, password_hash=password_hash, status="active"
         )
-        
+
         return await self.storage.create_user(user)
 
-    async def login(self, req: LoginRequest, user_agent: str = None, ip_address: str = None) -> tuple[User, TokenPair]:
+    async def login(
+        self, req: LoginRequest, user_agent: str = None, ip_address: str = None
+    ) -> tuple[User, TokenPair]:
         """用户登录"""
         user = await self.storage.get_user_by_username(req.username)
         if not user:
             raise ValueError("Invalid credentials")
-            
+
         if not pwd_context.verify(req.password, user.password_hash):
             raise ValueError("Invalid credentials")
-            
+
         if user.status != "active":
             raise ValueError("User account is not active")
-            
+
         # 生成令牌
         token_pair = self._create_token_pair(user)
-        
+
         # 创建会话
         session = Session(
             user_id=user.id,
@@ -82,11 +89,11 @@ class AuthService:
             ip_address=ip_address,
             expires_at=datetime.fromtimestamp(
                 jwt.decode(token_pair.access_token, self.secret_key, algorithms=[ALGORITHM])["exp"]
-            )
+            ),
         )
-        
+
         await self.storage.create_session(session)
-        
+
         return user, token_pair
 
     async def logout(self, token: str) -> None:
@@ -97,11 +104,11 @@ class AuthService:
     async def change_password(self, token: str, req: ChangePasswordRequest) -> None:
         """修改密码"""
         user = await self.get_current_user(token)
-        
+
         # 验证旧密码
         if not pwd_context.verify(req.old_password, user.password_hash):
             raise ValueError("Invalid old password")
-            
+
         # 更新密码
         new_password_hash = pwd_context.hash(req.new_password)
         await self.storage.update_user_password(user.id, new_password_hash)
@@ -112,21 +119,21 @@ class AuthService:
             payload = jwt.decode(refresh_token, self.secret_key, algorithms=[ALGORITHM])
             username = payload.get("sub")
             token_type = payload.get("type")
-            
+
             if token_type != "refresh":
                 raise ValueError("Invalid token type")
-                
+
             user = await self.storage.get_user_by_username(username)
             if not user:
                 raise ValueError("User not found")
-                
+
             # 验证会话
-            refresh_hash = self._hash_token(refresh_token)
+            # refresh_hash = self._hash_token(refresh_token)
             # 这里简化处理，严谨实现应该根据 refresh_hash 查会话
             # 目前 storage 只有根据 access_token_hash 查会话，暂略过数据库验证
-            
+
             return self._create_token_pair(user)
-            
+
         except jwt.PyJWTError:
             raise ValueError("Invalid refresh token")
 
@@ -137,22 +144,22 @@ class AuthService:
             username = payload.get("sub")
             if username is None:
                 raise ValueError("Invalid token")
-                
+
             token_hash = self._hash_token(token)
             session = await self.storage.get_session(token_hash)
             if not session:
                 raise ValueError("Session expired or invalid")
-                
+
             if session.expires_at < datetime.now():
                 await self.storage.delete_session(token_hash)
                 raise ValueError("Session expired")
-                
+
             user = await self.storage.get_user_by_id(session.user_id)
             if not user:
                 raise ValueError("User not found")
-                
+
             return user
-            
+
         except jwt.PyJWTError:
             raise ValueError("Invalid token")
 
@@ -161,14 +168,14 @@ class AuthService:
         claims = {
             "sub": user.username,
         }
-        
+
         access_token = self._create_access_token(data=claims)
         refresh_token = self._create_refresh_token(data=claims)
-        
+
         return TokenPair(
             access_token=access_token,
             refresh_token=refresh_token,
-            expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60
+            expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         )
 
     def _create_access_token(self, data: dict, expires_delta: Optional[timedelta] = None):
@@ -203,7 +210,7 @@ class AuthService:
                 username="admin",
                 email="admin@example.com",
                 password_hash=password_hash,
-                status="active"
+                status="active",
             )
             await self.storage.create_user(admin_user)
 

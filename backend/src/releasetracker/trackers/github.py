@@ -8,8 +8,6 @@ import logging
 from ..models import Release
 from .base import BaseTracker
 
-
-
 logger = logging.getLogger(__name__)
 
 
@@ -64,43 +62,44 @@ class GitHubTracker(BaseTracker):
           }
         }
         """
-        
+
         owner, name = self.repo.split("/")
-        variables = {
-            "owner": owner,
-            "name": name,
-            "limit": limit
-        }
+        variables = {"owner": owner, "name": name, "limit": limit}
 
         url = f"{self.base_url}/graphql"
-        
+
         logger.info(f"Fetching releases via GraphQL from {self.repo} with limit {limit}")
 
         async with httpx.AsyncClient(follow_redirects=True) as client:
             try:
                 response = await client.post(
-                    url, 
-                    headers=self._get_headers(), 
+                    url,
+                    headers=self._get_headers(),
                     json={"query": query, "variables": variables},
-                    timeout=15.0
+                    timeout=15.0,
                 )
                 response.raise_for_status()
                 result = response.json()
-                
+
                 if "errors" in result:
                     error_msg = result["errors"][0]["message"]
                     logger.error(f"GraphQL Error: {error_msg}")
                     raise ValueError(f"GitHub GraphQL Error: {error_msg}")
 
-                data = result.get("data", {}).get("repository", {}).get("releases", {}).get("nodes", [])
-                
+                data = (
+                    result.get("data", {})
+                    .get("repository", {})
+                    .get("releases", {})
+                    .get("nodes", [])
+                )
+
                 releases = []
                 for item in data:
                     # Fallback to commit message if description is empty
                     body = item.get("description")
                     if not body and item.get("tagCommit"):
                         body = item["tagCommit"]["message"]
-                    
+
                     # Extract commit SHA
                     commit_sha = None
                     if item.get("tagCommit"):
@@ -114,19 +113,19 @@ class GitHubTracker(BaseTracker):
                         version=item["tagName"],
                         url=item["url"],
                         prerelease=item["isPrerelease"],
-                        published_at=datetime.fromisoformat(item["publishedAt"].replace("Z", "+00:00")),
+                        published_at=datetime.fromisoformat(
+                            item["publishedAt"].replace("Z", "+00:00")
+                        ),
                         created_at=datetime.now(),
                         body=body,
-                        commit_sha=commit_sha
+                        commit_sha=commit_sha,
                     )
-                    
 
                     if self._should_include(release):
                         releases.append(release)
-                
+
                 return releases
 
             except Exception as e:
                 logger.error(f"Fetch Error: {e}")
                 raise e
-

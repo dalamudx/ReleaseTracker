@@ -1,10 +1,10 @@
 import logging
 import sys
-from typing import Optional
 
 # 默认日志格式
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
 DEFAULT_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
 
 class LogConfig:
     """日志统一配置"""
@@ -29,7 +29,6 @@ class LogConfig:
         logging.getLogger("httpx").setLevel(logging.WARNING)
         logging.getLogger("apscheduler").setLevel(logging.WARNING)
         logging.getLogger("aiosqlite").setLevel(logging.WARNING)
-
 
     @staticmethod
     def get_logger(name: str) -> logging.Logger:

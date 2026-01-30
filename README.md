@@ -68,6 +68,7 @@ pip install -e .
 # 设置加密密钥（可选，生产环境推荐设置）
 # 生成密钥: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 export ENCRYPTION_KEY="your-generated-key"
+export JWT_SECRET="your-generated-key"
 
 # 启动服务
 uvicorn releasetracker.main:app --reload --host 0.0.0.0 --port 8000

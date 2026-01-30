@@ -27,7 +27,7 @@ class HelmTracker(BaseTracker):
         """获取所有版本"""
         url = f"{self.repo}/index.yaml"
         headers = {}
-        
+
         if self.token:
             # 简单的 Bearer Token 认证
             # 如果需要 Basic Auth，用户可以在 Token 字段填入 "username:password" 格式

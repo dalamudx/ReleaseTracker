@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useTranslation } from "react-i18next"
 import { Plus, MoreHorizontal, Edit, Trash2, Send, ChevronLeft, ChevronRight } from "lucide-react"
 import { useForm } from "react-hook-form"
@@ -68,7 +68,7 @@ export function NotifierSettings() {
         return saved ? Number(saved) : 15
     })
 
-    const loadNotifiers = async () => {
+    const loadNotifiers = useCallback(async () => {
         setLoading(true)
         try {
             const skip = (page - 1) * pageSize
@@ -81,11 +81,11 @@ export function NotifierSettings() {
         } finally {
             setLoading(false)
         }
-    }
+    }, [page, pageSize, t])
 
     useEffect(() => {
         loadNotifiers()
-    }, [page, pageSize])
+    }, [loadNotifiers])
 
     const handleDelete = async (id: number) => {
         if (!window.confirm(t('common.confirm'))) return
@@ -95,7 +95,7 @@ export function NotifierSettings() {
             setNotifiers(notifiers.filter(n => n.id !== id))
             setTotal(total - 1)
             toast.success(t('common.deleted'))
-        } catch (error) {
+        } catch {
             toast.error(t('common.deleteFailed'))
         }
     }
@@ -104,7 +104,7 @@ export function NotifierSettings() {
         try {
             const res = await api.testNotifier(id)
             toast.success(res ? t('settings.notifications.dialog.testSuccess') : t('settings.notifications.dialog.testFailed'))
-        } catch (error: any) {
+        } catch (error: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
             toast.error(error.response?.data?.detail || t('settings.notifications.dialog.testFailed'))
         }
     }
@@ -324,7 +324,7 @@ function NotifierDialog({ open, onOpenChange, notifier, onSuccess }: NotifierDia
             }
             onSuccess()
             onOpenChange(false)
-        } catch (error: any) {
+        } catch (error: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
             toast.error(error.response?.data?.detail || t('common.unexpectedError'))
         }
     }

@@ -25,29 +25,29 @@ async def lifespan(app: FastAPI):
     # data/releases.db relative to backend root
     base_dir = Path(__file__).resolve().parent.parent.parent
     db_path = str(base_dir / "data" / "releases.db")
-    
+
     # 初始化日志
     LogConfig.setup_logging()
-    
+
     storage = SQLiteStorage(db_path)
     await storage.initialize()
 
     # 初始化配置 (无需 AppConfig)
-    
+
     # 绑定到 app.state
     app.state.storage = storage
     # app.state.config = app_config # REMOVED
-    
+
     # 确保存在管理员用户
     auth_service = AuthService(storage)
     await auth_service.ensure_admin_user()
 
     # 初始化调度器
     scheduler = ReleaseScheduler(storage)
-    
+
     # 绑定调度器到 app.state
     app.state.scheduler = scheduler
-    
+
     await scheduler.initialize()
     await scheduler.start()
 
@@ -56,7 +56,6 @@ async def lifespan(app: FastAPI):
     # 关闭时清理
     if scheduler:
         scheduler.scheduler.shutdown()
-
 
 
 # 创建 FastAPI 应用

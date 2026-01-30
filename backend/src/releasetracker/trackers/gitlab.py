@@ -58,25 +58,29 @@ class GitLabTracker(BaseTracker):
             # 检查是否有缺少 commit 信息的情况 (某些 GitLab 版本或配置可能导致 releases 接口不返回 commit)
             tasks = []
             items_to_enrich = []
-            
+
             for item in data:
                 if not item.get("commit"):
                     items_to_enrich.append(item)
                     tag_name = quote(item["tag_name"], safe="")
-                    tag_url = f"{self.instance}/api/v4/projects/{project_id}/repository/tags/{tag_name}"
+                    tag_url = (
+                        f"{self.instance}/api/v4/projects/{project_id}/repository/tags/{tag_name}"
+                    )
                     tasks.append(client.get(tag_url, headers=self._get_headers(), timeout=10.0))
-            
+
             if tasks:
                 logger.info(f"Fetching missing commit info for {len(tasks)} releases from tags API")
                 responses = await asyncio.gather(*tasks, return_exceptions=True)
-                
+
                 for i, res in enumerate(responses):
                     item = items_to_enrich[i]
                     if isinstance(res, httpx.Response) and res.status_code == 200:
                         tag_data = res.json()
                         if tag_data.get("commit"):
                             item["commit"] = tag_data["commit"]
-                            logger.debug(f"Retrieved commit info for {item['tag_name']}: {item['commit'].get('id')}")
+                            logger.debug(
+                                f"Retrieved commit info for {item['tag_name']}: {item['commit'].get('id')}"
+                            )
                     else:
                         logger.warning(f"Failed to fetch tag details for {item['tag_name']}: {res}")
 
@@ -86,8 +90,7 @@ class GitLabTracker(BaseTracker):
     def _parse_release(self, data: dict) -> Release:
         """解析 GitLab release 数据"""
         tag_name = data["tag_name"]
-        project_name = self.project.split("/")[-1]
-
+        
         release = Release(
             tracker_name=self.name,
             name=data.get("name") or tag_name,
@@ -101,12 +104,16 @@ class GitLabTracker(BaseTracker):
             url=f"{self.instance}/{self.project}/-/releases/{tag_name}",
             prerelease=False,  # GitLab 没有明确的 prerelease 标记
             body=data.get("description"),  # Release Notes
-            commit_sha=data.get("commit", {}).get("id")  # Extract commit SHA
+            commit_sha=data.get("commit", {}).get("id"),  # Extract commit SHA
         )
-        
+
         if not data.get("commit"):
-            logger.warning(f"No commit info found for GitLab release {tag_name} in {self.project}. Data keys: {data.keys()}")
+            logger.warning(
+                f"No commit info found for GitLab release {tag_name} in {self.project}. Data keys: {data.keys()}"
+            )
         else:
-            logger.debug(f"Parsed GitLab release {tag_name}: SHA={data.get('commit', {}).get('id')}")
-            
+            logger.debug(
+                f"Parsed GitLab release {tag_name}: SHA={data.get('commit', {}).get('id')}"
+            )
+
         return release

@@ -27,32 +27,44 @@ class WebhookNotifier(BaseNotifier):
         message = f"[{release.tracker_name}] {event.replace('_', ' ').title()}: {release.version}"
         if release.prerelease:
             message += " (Pre-release)"
-        
+
         # 为了兼容各类 Webhook (Discord/Slack/DingTalk等)，同时提供结构化数据和纯文本
         payload = {
             # 通用字段
             "event": event,
             "tracker": release.tracker_name,
             "version": release.version,
-            
             # Discord/Slack 兼容字段
             "content": message,  # Discord
-            "text": message,     # Slack/DingTalk
-            
+            "text": message,  # Slack/DingTalk
             # 详细数据 (Discord Embeds)
-            "embeds": [{
-                "title": f"{release.tracker_name} {release.version}",
-                "description": emoji.emojize(emoji.emojize(release.body[:2000], language='alias'), language='en') if release.body else "No release notes",
-                "url": release.url,
-                "color": 15258703 if release.prerelease else 5763719, # Orange for pre, Green for stable
-                "fields": [
-                    {"name": "Tag", "value": release.tag_name, "inline": True},
-                    {"name": "Channel", "value": release.channel_name or "N/A", "inline": True},
-                    {"name": "Published", "value": release.published_at.isoformat(), "inline": True}
-                ],
-                "footer": {"text": f"Event: {event}"},
-                "timestamp": release.published_at.isoformat()
-            }]
+            "embeds": [
+                {
+                    "title": f"{release.tracker_name} {release.version}",
+                    "description": (
+                        emoji.emojize(
+                            emoji.emojize(release.body[:2000], language="alias"), language="en"
+                        )
+                        if release.body
+                        else "No release notes"
+                    ),
+                    "url": release.url,
+                    "color": (
+                        15258703 if release.prerelease else 5763719
+                    ),  # Orange for pre, Green for stable
+                    "fields": [
+                        {"name": "Tag", "value": release.tag_name, "inline": True},
+                        {"name": "Channel", "value": release.channel_name or "N/A", "inline": True},
+                        {
+                            "name": "Published",
+                            "value": release.published_at.isoformat(),
+                            "inline": True,
+                        },
+                    ],
+                    "footer": {"text": f"Event: {event}"},
+                    "timestamp": release.published_at.isoformat(),
+                }
+            ],
         }
 
         async with httpx.AsyncClient() as client:
