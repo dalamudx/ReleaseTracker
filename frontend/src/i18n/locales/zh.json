@@ -35,6 +35,23 @@
       "description": "调整界面圆角"
     }
   },
+  "auth": {
+    "login": {
+      "title": "Release Tracker",
+      "subtitle": "管理和追踪您的软件发布版本",
+      "username": "用户名",
+      "usernamePlaceholder": "输入用户名",
+      "password": "密码",
+      "passwordPlaceholder": "输入密码",
+      "submit": "登录",
+      "submitting": "登录中...",
+      "success": "登录成功",
+      "failed": "登录失败，请检查用户名和密码"
+    },
+    "logout": {
+      "success": "已退出登录"
+    }
+  },
   "user": {
     "settings": "用户设置",
     "description": "管理您的账户设置和安全选项",

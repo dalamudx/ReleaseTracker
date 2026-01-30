@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect } from "react"
 import type { ReactNode } from "react"
 import { api as client } from "@/api/client"
 import { toast } from "sonner"
+import { useTranslation } from "react-i18next"
 
 interface User {
     id: number
@@ -23,6 +24,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+    const { t } = useTranslation()
     const [user, setUser] = useState<User | null>(null)
     const [isLoading, setIsLoading] = useState(true)
 
@@ -59,10 +61,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             localStorage.setItem("user", JSON.stringify(user)) // 缓存用户信息，可选
 
             setUser(user)
-            toast.success("登录成功")
+            toast.success(t('auth.login.success'))
         } catch (error: any) {
             console.error("Login failed", error)
-            toast.error(error.message || "登录失败，请检查用户名和密码")
+            toast.error(error.message || t('auth.login.failed'))
             throw error
         }
     }
@@ -74,7 +76,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null)
         // 可以调用后端 logout 接口
         // 客户端登出逻辑 
-        toast.info("已退出登录", { id: 'auth-logout' })
+        toast.info(t('auth.logout.success'), { id: 'auth-logout' })
     }
 
     return (

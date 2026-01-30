@@ -35,6 +35,23 @@
             "description": "Adjust corner radius"
         }
     },
+    "auth": {
+        "login": {
+            "title": "Release Tracker",
+            "subtitle": "Manage and track your software releases",
+            "username": "Username",
+            "usernamePlaceholder": "Enter username",
+            "password": "Password",
+            "passwordPlaceholder": "Enter password",
+            "submit": "Login",
+            "submitting": "Logging in...",
+            "success": "Login successful",
+            "failed": "Login failed, please check username and password"
+        },
+        "logout": {
+            "success": "Logged out successfully"
+        }
+    },
     "user": {
         "settings": "User Settings",
         "description": "Manage your account settings and security options",

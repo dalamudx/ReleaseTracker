@@ -6,8 +6,10 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ArrowRight, Loader2 } from "lucide-react"
 import { motion } from "framer-motion"
+import { useTranslation } from "react-i18next"
 
 export function LoginPage() {
+    const { t } = useTranslation()
     const navigate = useNavigate()
     const { login, isLoading } = useAuth()
     const [formData, setFormData] = useState({
@@ -63,18 +65,18 @@ export function LoginPage() {
                             >
                                 <img src="/logo.svg" alt="App Logo" className="h-10 w-10" />
                             </motion.div>
-                            <h1 className="text-3xl font-bold tracking-tight text-foreground">Release Tracker</h1>
-                            <p className="text-sm text-muted-foreground">管理和追踪您的软件发布版本</p>
+                            <h1 className="text-3xl font-bold tracking-tight text-foreground">{t('auth.login.title')}</h1>
+                            <p className="text-sm text-muted-foreground">{t('auth.login.subtitle')}</p>
                         </div>
 
                         <form onSubmit={handleSubmit} className="space-y-6">
                             <div className="space-y-2">
-                                <Label htmlFor="username">用户名</Label>
+                                <Label htmlFor="username">{t('auth.login.username')}</Label>
                                 <Input
                                     id="username"
                                     name="username"
                                     type="text"
-                                    placeholder="输入用户名"
+                                    placeholder={t('auth.login.usernamePlaceholder')}
                                     value={formData.username}
                                     onChange={handleInputChange}
                                     required
@@ -83,13 +85,13 @@ export function LoginPage() {
                             </div>
                             <div className="space-y-2">
                                 <div className="flex items-center justify-between">
-                                    <Label htmlFor="password">密码</Label>
+                                    <Label htmlFor="password">{t('auth.login.password')}</Label>
                                 </div>
                                 <Input
                                     id="password"
                                     name="password"
                                     type="password"
-                                    placeholder="输入密码"
+                                    placeholder={t('auth.login.passwordPlaceholder')}
                                     value={formData.password}
                                     onChange={handleInputChange}
                                     required
@@ -106,11 +108,11 @@ export function LoginPage() {
                                     {isSubmitting ? (
                                         <>
                                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                            登录中...
+                                            {t('auth.login.submitting')}
                                         </>
                                     ) : (
                                         <>
-                                            登录
+                                            {t('auth.login.submit')}
                                             <ArrowRight className="ml-2 h-4 w-4" />
                                         </>
                                     )}
