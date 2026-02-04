@@ -8,7 +8,7 @@ RUN npm run build
 FROM python:3.12-alpine
 WORKDIR /app/backend
 COPY backend/pyproject.toml ./
-COPY backend/src/releasetracker ./releasetracker
+COPY backend/src ./src
 COPY --from=frontend-builder /app/frontend/dist ./static
 RUN apk add --no-cache gcc musl-dev libffi-dev && \
     pip install --no-cache-dir -e . && \
