@@ -3,10 +3,6 @@ name: Build Docker Image
 on:
   workflow_dispatch:
     inputs:
-      branch:
-        description: '构建的分支名称'
-        required: false
-        default: ''
       tag_latest:
         description: '是否标记为 latest（同时会提取并打上版本标签）'
         required: false
@@ -34,24 +30,21 @@ jobs:
       packages: write
 
     steps:
-      - name: 确定构建分支
-        id: branch
+
+      - name: 转换镜像名为小写
+        id: image
         run: |
-          if [ -n "${{ github.event.inputs.branch }}" ]; then
-            echo "branch=${{ github.event.inputs.branch }}" >> $GITHUB_OUTPUT
-          else
-            echo "branch=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-          fi
+          IMAGE_NAME=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "name=$IMAGE_NAME" >> $GITHUB_OUTPUT
+          echo "📦 镜像名称: ${{ env.REGISTRY }}/$IMAGE_NAME"
 
       - name: Checkout 代码
         uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.branch.outputs.branch }}
 
       - name: 提取版本号
         id: version
         run: |
-          BRANCH="${{ steps.branch.outputs.branch }}"
+          BRANCH="${{ github.ref_name }}"
           # 尝试从分支名提取版本号（支持 2.1.1 或 release/2.1.1 格式）
           VERSION=$(echo "$BRANCH" | grep -oP '\d+\.\d+\.\d+' || echo "")
           
@@ -87,23 +80,23 @@ jobs:
           
           # tag_latest: 添加 latest 和版本标签
           if [ "${{ github.event.inputs.tag_latest }}" == "true" ]; then
-            TAGS="$TAGS,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+            TAGS="$TAGS,${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:latest"
             
             if [ -n "${{ steps.version.outputs.version }}" ]; then
-              TAGS="$TAGS,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}"
-              TAGS="$TAGS,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.minor }}"
-              TAGS="$TAGS,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major }}"
+              TAGS="$TAGS,${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ steps.version.outputs.version }}"
+              TAGS="$TAGS,${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ steps.version.outputs.minor }}"
+              TAGS="$TAGS,${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ steps.version.outputs.major }}"
             fi
           fi
           
           # tag_dev: 添加 dev 标签
           if [ "${{ github.event.inputs.tag_dev }}" == "true" ]; then
-            TAGS="$TAGS,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev"
+            TAGS="$TAGS,${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:dev"
           fi
           
           # custom_tag: 添加自定义标签
           if [ -n "${{ github.event.inputs.custom_tag }}" ]; then
-            TAGS="$TAGS,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.custom_tag }}"
+            TAGS="$TAGS,${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ github.event.inputs.custom_tag }}"
           fi
           
           # 移除开头的逗号
@@ -126,7 +119,7 @@ jobs:
         run: |
           echo "### 🎉 构建完成" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**分支:** ${{ steps.branch.outputs.branch }}" >> $GITHUB_STEP_SUMMARY
+          echo "**分支:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
           echo "**版本:** ${{ steps.version.outputs.version || '未提取' }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**镜像标签:**" >> $GITHUB_STEP_SUMMARY
