@@ -27,14 +27,12 @@ export default defineConfig({
             if (id.includes('recharts')) {
               return 'chart-vendor';
             }
-            if (id.includes('react') || id.includes('react-dom') || id.includes('react-router-dom')) {
+            if (id.includes('react') || id.includes('react-dom') || id.includes('react-router-dom') ||
+              id.includes('lucide-react') || id.includes('framer-motion') || id.includes('@radix-ui')) {
               return 'react-vendor';
             }
             if (id.includes('date-fns')) {
               return 'date-vendor';
-            }
-            if (id.includes('lucide-react') || id.includes('framer-motion') || id.includes('@radix-ui')) {
-              return 'ui-vendor';
             }
           }
         }
