@@ -3,6 +3,7 @@
 import httpx
 import logging
 import emoji
+import asyncio
 
 from ..models import Release
 from .base import BaseNotifier
@@ -68,13 +69,37 @@ class WebhookNotifier(BaseNotifier):
         }
 
         async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    self.url,
-                    json=payload,
-                    timeout=10.0,
-                )
-                response.raise_for_status()
-            except Exception as e:
-                # 记录错误但不抛出，避免阻塞主流程
-                logger.error(f"Webhook notification failed: {e}")
+            for attempt in range(4):
+                try:
+                    response = await client.post(
+                        self.url,
+                        json=payload,
+                        timeout=10.0,
+                    )
+
+                    if response.status_code == 429 and attempt < 3:
+                        wait_time = 1.0
+                        retry_after = response.headers.get("Retry-After")
+                        if retry_after:
+                            try:
+                                wait_time = float(retry_after)
+                            except ValueError:
+                                pass
+                        else:
+                            try:
+                                data = response.json()
+                                if isinstance(data, dict) and "retry_after" in data:
+                                    wait_time = float(data["retry_after"])
+                            except Exception:
+                                pass
+                        
+                        logger.warning(f"Webhook 429 Too Many Requests. Retrying in {wait_time}s...")
+                        await asyncio.sleep(wait_time)
+                        continue
+
+                    response.raise_for_status()
+                    break
+                except Exception as e:
+                    # 记录错误但不抛出，避免阻塞主流程
+                    logger.error(f"Webhook notification failed: {e}")
+                    break
