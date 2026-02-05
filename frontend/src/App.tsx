@@ -1,28 +1,46 @@
+import { Suspense, lazy } from "react"
 import { BrowserRouter, Routes, Route } from "react-router-dom"
 import { ThemeProvider } from "@/providers/theme-provider"
 import { Toaster } from "@/components/ui/sonner"
 import AppLayout from "@/components/layout/AppLayout"
-import DashboardPage from "@/pages/Dashboard"
-import TrackersPage from "@/pages/Trackers"
-import HistoryPage from "@/pages/History"
-import CredentialsPage from "@/pages/Credentials"
-import NotificationsPage from "@/pages/Notifications"
 import { Navigate, Outlet } from "react-router-dom"
 import { useAuth } from "@/context/auth-context"
-import { LoginPage } from "@/pages/Login"
+import { Spinner } from "@/components/ui/spinner"
+
+// Lazy load pages
+const DashboardPage = lazy(() => import("@/pages/Dashboard"))
+const TrackersPage = lazy(() => import("@/pages/Trackers"))
+const HistoryPage = lazy(() => import("@/pages/History"))
+const CredentialsPage = lazy(() => import("@/pages/Credentials"))
+const NotificationsPage = lazy(() => import("@/pages/Notifications"))
+const LoginPage = lazy(() => import("@/pages/Login").then(module => ({ default: module.LoginPage })))
+
 
 function RequireAuth() {
   const { isAuthenticated, isLoading } = useAuth()
 
   if (isLoading) {
-    return <div className="flex h-screen items-center justify-center">Loading...</div>
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <Spinner className="size-10 text-primary" />
+      </div>
+    )
   }
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />
   }
 
-  return <Outlet />
+  return (
+    <Suspense fallback={
+      <div className="flex h-screen w-full items-center justify-center">
+        <Spinner className="size-10 text-primary" />
+      </div>
+    }>
+      <Outlet />
+    </Suspense>
+  )
+
 }
 
 function App() {

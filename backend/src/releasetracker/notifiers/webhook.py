@@ -92,8 +92,10 @@ class WebhookNotifier(BaseNotifier):
                                     wait_time = float(data["retry_after"])
                             except Exception:
                                 pass
-                        
-                        logger.warning(f"Webhook 429 Too Many Requests. Retrying in {wait_time}s...")
+
+                        logger.warning(
+                            f"Webhook 429 Too Many Requests. Retrying in {wait_time}s..."
+                        )
                         await asyncio.sleep(wait_time)
                         continue
 

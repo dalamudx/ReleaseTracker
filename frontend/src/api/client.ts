@@ -37,6 +37,23 @@ apiClient.interceptors.request.use((config) => {
     return config
 })
 
+// 响应拦截器：处理 401 错误
+apiClient.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response?.status === 401) {
+            // Token 过期或无效，清除本地存储并跳转登录
+            localStorage.removeItem('token')
+            // 使用 window.location.href 强制跳转，确保状态重置
+            // 避免在非组件环境中使用 useNavigate 带来的复杂性
+            if (!window.location.pathname.startsWith('/login')) {
+                window.location.href = '/login'
+            }
+        }
+        return Promise.reject(error)
+    }
+)
+
 export const api = {
     getStats: () => apiClient.get<ReleaseStats>('/api/stats').then(res => res.data),
     getTrackers: (params?: { skip?: number, limit?: number }) =>
