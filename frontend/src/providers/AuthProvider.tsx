@@ -26,24 +26,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         // 初始化时检查本地是否有 User 信息或尝试获取当前用户
         const checkAuth = async () => {
+            // 1. 检查是否来自 OIDC 回调（URL hash 中有 token）
+            const hash = window.location.hash
+            if (hash && hash.includes('token=')) {
+                const params = new URLSearchParams(hash.slice(1))
+                const oidcToken = params.get('token')
+                if (oidcToken) {
+                    // 清理 hash（不触发刷新）
+                    window.history.replaceState(null, '', window.location.pathname)
+                    try {
+                        localStorage.setItem('token', oidcToken)
+                        const currentUser = await client.getCurrentUser()
+                        setUser(currentUser as unknown as AuthUser)
+                        toast.success(t('auth.oidc.loginSuccess'))
+                    } catch (error) {
+                        console.error('OIDC 登录失败', error)
+                        localStorage.removeItem('token')
+                        toast.error(t('auth.oidc.loginFailed'))
+                    }
+                    setIsLoading(false)
+                    return
+                }
+            }
+
+            // 2. 检查本地 token
             const token = localStorage.getItem("token")
             if (token) {
                 try {
-                    // 这里应该调用 /api/auth/me 接口验证 token 有效性并获取最新用户信息
-                    // 暂时简单实现，如果有 token 且 localStorage 有 user，就恢复状态
-                    // 实际应该:
                     const currentUser = await client.getCurrentUser()
-                    setUser(currentUser as unknown as AuthUser) // Cast if API User type differs slightly, or update types
+                    setUser(currentUser as unknown as AuthUser)
                 } catch (error) {
                     console.error("Session expired or invalid", error)
-                    logout() //Token 无效，清理
+                    logout()
                 }
             }
             setIsLoading(false)
         }
 
         checkAuth()
-    }, [logout])
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [logout]) // 故意不添加 t：避免语言切换触发重复认证
+
 
     const login = async (data: LoginData) => {
         try {

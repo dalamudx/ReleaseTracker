@@ -13,6 +13,7 @@ const TrackersPage = lazy(() => import("@/pages/Trackers"))
 const HistoryPage = lazy(() => import("@/pages/History"))
 const CredentialsPage = lazy(() => import("@/pages/Credentials"))
 const NotificationsPage = lazy(() => import("@/pages/Notifications"))
+const SystemSettingsPage = lazy(() => import("@/pages/SystemSettings").then(m => ({ default: m.SystemSettingsPage })))
 const LoginPage = lazy(() => import("@/pages/Login").then(module => ({ default: module.LoginPage })))
 
 
@@ -57,6 +58,7 @@ function App() {
               <Route path="/history" element={<HistoryPage />} />
               <Route path="/credentials" element={<CredentialsPage />} />
               <Route path="/notifications" element={<NotificationsPage />} />
+              <Route path="/settings" element={<SystemSettingsPage />} />
             </Route>
           </Route>
         </Routes>

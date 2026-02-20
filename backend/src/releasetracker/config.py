@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     """应用配置"""
 
     JWT_SECRET: str | None = None
-
+    FRONTEND_URL: str = "http://localhost:5173"  # OIDC 回调后重定向的前端地址
     model_config = {"env_file": ".env"}
 
 

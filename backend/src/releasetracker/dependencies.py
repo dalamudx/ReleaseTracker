@@ -52,3 +52,24 @@ async def get_current_user(
             detail=str(e),
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+async def get_current_admin_user(
+    token: Annotated[str, Depends(oauth2_scheme)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+):
+    """获取当前管理员用户（仅 admin 用户可访问）"""
+    try:
+        user = await auth_service.get_current_user(token)
+        if user.username != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin access required",
+            )
+        return user
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(e),
+            headers={"WWW-Authenticate": "Bearer"},
+        )

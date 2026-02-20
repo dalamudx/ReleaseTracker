@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import { useAuth } from "@/context/auth-context"
 import { Button } from "@/components/ui/button"
@@ -7,16 +7,34 @@ import { Label } from "@/components/ui/label"
 import { ArrowRight, Loader2 } from "lucide-react"
 import { motion } from "framer-motion"
 import { useTranslation } from "react-i18next"
+import { OIDCLoginButton } from "@/components/auth/OIDCLoginButton"
+import { getOIDCProviders, initiateOIDCLogin, type OIDCProvider } from "@/api/oidc"
 
 export function LoginPage() {
     const { t } = useTranslation()
     const navigate = useNavigate()
     const { login, isLoading } = useAuth()
-    const [formData, setFormData] = useState({
-        username: "",
-        password: ""
-    })
+    const [formData, setFormData] = useState({ username: "", password: "" })
     const [isSubmitting, setIsSubmitting] = useState(false)
+    const [oidcProviders, setOidcProviders] = useState<OIDCProvider[]>([])
+    const [isLoadingProviders, setIsLoadingProviders] = useState(false)
+    const [oidcLoginInProgress, setOidcLoginInProgress] = useState<string | null>(null)
+
+    // 加载 OIDC 提供商列表
+    useEffect(() => {
+        const loadProviders = async () => {
+            setIsLoadingProviders(true)
+            try {
+                const providers = await getOIDCProviders()
+                setOidcProviders(providers)
+            } catch {
+                // 静默失败，OIDC 不可用时不影响普通登录
+            } finally {
+                setIsLoadingProviders(false)
+            }
+        }
+        loadProviders()
+    }, [])
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -31,17 +49,19 @@ export function LoginPage() {
         }
     }
 
+    const handleOIDCLogin = (providerSlug: string) => {
+        setOidcLoginInProgress(providerSlug)
+        initiateOIDCLogin(providerSlug)
+    }
+
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const { name, value } = e.target
-        setFormData(prev => ({
-            ...prev,
-            [name]: value
-        }))
+        setFormData(prev => ({ ...prev, [name]: value }))
     }
 
     return (
         <div className="relative min-h-screen flex items-center justify-center overflow-hidden bg-background">
-            {/* Dynamic Background matching theme */}
+            {/* 动态背景 */}
             <div className="absolute inset-0 w-full h-full overflow-hidden">
                 <div className="absolute top-0 -left-4 w-72 h-72 bg-primary/20 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-blob dark:mix-blend-color-dodge"></div>
                 <div className="absolute top-0 -right-4 w-72 h-72 bg-secondary/20 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-blob animation-delay-2000 dark:mix-blend-color-dodge"></div>
@@ -84,9 +104,7 @@ export function LoginPage() {
                                 />
                             </div>
                             <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                    <Label htmlFor="password">{t('auth.login.password')}</Label>
-                                </div>
+                                <Label htmlFor="password">{t('auth.login.password')}</Label>
                                 <Input
                                     id="password"
                                     name="password"
@@ -119,11 +137,36 @@ export function LoginPage() {
                                 </Button>
                             </div>
                         </form>
+
+                        {/* OIDC 提供商登录区域 */}
+                        {!isLoadingProviders && oidcProviders.length > 0 && (
+                            <div className="mt-6">
+                                <div className="relative my-4">
+                                    <div className="absolute inset-0 flex items-center">
+                                        <div className="w-full border-t border-border/50"></div>
+                                    </div>
+                                    <div className="relative flex justify-center text-xs">
+                                        <span className="bg-card/50 px-3 text-muted-foreground uppercase tracking-wider">
+                                            {t('auth.oidc.orContinueWith')}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div className="space-y-2">
+                                    {oidcProviders.map((provider) => (
+                                        <OIDCLoginButton
+                                            key={provider.slug}
+                                            provider={provider}
+                                            onLogin={handleOIDCLogin}
+                                            isLoading={oidcLoginInProgress === provider.slug}
+                                        />
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             </motion.div>
 
-            {/* Custom Animation Styles */}
             <style>{`
                 @keyframes blob {
                     0% { transform: translate(0px, 0px) scale(1); }
@@ -131,15 +174,9 @@ export function LoginPage() {
                     66% { transform: translate(-20px, 20px) scale(0.9); }
                     100% { transform: translate(0px, 0px) scale(1); }
                 }
-                .animate-blob {
-                    animation: blob 7s infinite;
-                }
-                .animation-delay-2000 {
-                    animation-delay: 2s;
-                }
-                .animation-delay-4000 {
-                    animation-delay: 4s;
-                }
+                .animate-blob { animation: blob 7s infinite; }
+                .animation-delay-2000 { animation-delay: 2s; }
+                .animation-delay-4000 { animation-delay: 4s; }
             `}</style>
         </div>
     )

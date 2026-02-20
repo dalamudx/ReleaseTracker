@@ -95,7 +95,10 @@ class User(BaseModel):
     id: int | None = None
     username: str
     email: str
-    password_hash: str
+    password_hash: str | None = None  # OIDC 用户无密码
+    oauth_provider: str | None = None  # OIDC 提供商 slug
+    oauth_sub: str | None = None  # OIDC Subject（唯一标识）
+    avatar_url: str | None = None
     status: str = "active"  # active, inactive
     created_at: datetime = Field(default_factory=datetime.now)
     last_login_at: datetime | None = None

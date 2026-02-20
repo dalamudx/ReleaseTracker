@@ -217,6 +217,49 @@ class SQLiteStorage:
                 )
                 """)
 
+            # 迁移：为 users 表添加 OIDC 字段
+            cursor = await db.execute("PRAGMA table_info(users)")
+            user_columns = {col[1] for col in await cursor.fetchall()}
+            if "oauth_provider" not in user_columns:
+                await db.execute("ALTER TABLE users ADD COLUMN oauth_provider TEXT")
+            if "oauth_sub" not in user_columns:
+                await db.execute("ALTER TABLE users ADD COLUMN oauth_sub TEXT")
+            if "avatar_url" not in user_columns:
+                await db.execute("ALTER TABLE users ADD COLUMN avatar_url TEXT")
+
+            # OIDC 提供商表
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS oauth_providers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    slug TEXT NOT NULL UNIQUE,
+                    issuer_url TEXT,
+                    discovery_enabled INTEGER DEFAULT 1,
+                    client_id TEXT NOT NULL,
+                    client_secret TEXT,
+                    authorization_url TEXT,
+                    token_url TEXT,
+                    userinfo_url TEXT,
+                    jwks_uri TEXT,
+                    scopes TEXT DEFAULT 'openid email profile',
+                    enabled INTEGER DEFAULT 1,
+                    icon_url TEXT,
+                    description TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """)
+
+            # OAuth state 表（存储 CSRF state + PKCE verifier，含 TTL）
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS oauth_states (
+                    state TEXT PRIMARY KEY,
+                    provider_slug TEXT NOT NULL,
+                    code_verifier TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                )
+                """)
+
             await db.commit()
 
     async def save_tracker_config(self, config) -> None:
@@ -1202,13 +1245,16 @@ class SQLiteStorage:
             cursor = await db.execute(
                 """
                 INSERT INTO users 
-                (username, email, password_hash, status, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                (username, email, password_hash, oauth_provider, oauth_sub, avatar_url, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user.username,
                     user.email,
                     user.password_hash,
+                    user.oauth_provider,
+                    user.oauth_sub,
+                    user.avatar_url,
                     user.status,
                     user.created_at.isoformat(),
                 ),
@@ -1297,11 +1343,15 @@ class SQLiteStorage:
     @staticmethod
     def _row_to_user(row) -> User:
         """将数据库行转换为 User 对象"""
+        keys = row.keys() if hasattr(row, "keys") else []
         return User(
             id=row["id"],
             username=row["username"],
             email=row["email"],
             password_hash=row["password_hash"],
+            oauth_provider=row["oauth_provider"] if "oauth_provider" in keys else None,
+            oauth_sub=row["oauth_sub"] if "oauth_sub" in keys else None,
+            avatar_url=row["avatar_url"] if "avatar_url" in keys else None,
             status=row["status"] or "active",
             created_at=datetime.fromisoformat(row["created_at"]),
             last_login_at=(
@@ -1506,4 +1556,246 @@ class SQLiteStorage:
         """删除系统设置"""
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("DELETE FROM settings WHERE key = ?", (key,))
+            await db.commit()
+
+    # ==================== OIDC Provider Operations ====================
+
+    async def save_oauth_provider(self, provider):
+        """创建或保存 OIDC 提供商"""
+
+        now = datetime.now().isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO oauth_providers
+                (name, slug, issuer_url, discovery_enabled, client_id, client_secret,
+                 authorization_url, token_url, userinfo_url, jwks_uri, scopes,
+                 enabled, icon_url, description, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    provider.name,
+                    provider.slug,
+                    provider.issuer_url,
+                    1 if provider.discovery_enabled else 0,
+                    provider.client_id,
+                    self._encrypt(provider.client_secret) if provider.client_secret else None,
+                    provider.authorization_url,
+                    provider.token_url,
+                    provider.userinfo_url,
+                    provider.jwks_uri,
+                    provider.scopes,
+                    1 if provider.enabled else 0,
+                    provider.icon_url,
+                    provider.description,
+                    now,
+                    now,
+                ),
+            )
+            provider_id = cursor.lastrowid
+            await db.commit()
+        result = provider.model_copy()
+        result.id = provider_id
+        return result
+
+    async def list_oauth_providers(self, enabled_only: bool = False) -> list:
+        """获取 OIDC 提供商列表"""
+
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            if enabled_only:
+                cursor = await db.execute(
+                    "SELECT * FROM oauth_providers WHERE enabled = 1 ORDER BY name"
+                )
+            else:
+                cursor = await db.execute("SELECT * FROM oauth_providers ORDER BY name")
+            rows = await cursor.fetchall()
+            return [self._row_to_oidc_provider(row) for row in rows]
+
+    async def get_oauth_provider(self, slug: str):
+        """根据 slug 获取 OIDC 提供商（含 client_secret 解密）"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM oauth_providers WHERE slug = ?", (slug,))
+            row = await cursor.fetchone()
+            return self._row_to_oidc_provider(row, decrypt_secret=True) if row else None
+
+    async def get_oauth_provider_by_id(self, provider_id: int):
+        """根据 ID 获取 OIDC 提供商"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM oauth_providers WHERE id = ?", (provider_id,))
+            row = await cursor.fetchone()
+            return self._row_to_oidc_provider(row, decrypt_secret=True) if row else None
+
+    async def update_oauth_provider(self, provider_id: int, provider) -> None:
+        """更新 OIDC 提供商配置"""
+        now = datetime.now().isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            # 如果提供了 client_secret 则更新，否则不覆盖
+            if provider.client_secret:
+                await db.execute(
+                    """
+                    UPDATE oauth_providers SET
+                    name=?, issuer_url=?, discovery_enabled=?, client_id=?, client_secret=?,
+                    authorization_url=?, token_url=?, userinfo_url=?, jwks_uri=?,
+                    scopes=?, enabled=?, icon_url=?, description=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (
+                        provider.name,
+                        provider.issuer_url,
+                        1 if provider.discovery_enabled else 0,
+                        provider.client_id,
+                        self._encrypt(provider.client_secret),
+                        provider.authorization_url,
+                        provider.token_url,
+                        provider.userinfo_url,
+                        provider.jwks_uri,
+                        provider.scopes,
+                        1 if provider.enabled else 0,
+                        provider.icon_url,
+                        provider.description,
+                        now,
+                        provider_id,
+                    ),
+                )
+            else:
+                await db.execute(
+                    """
+                    UPDATE oauth_providers SET
+                    name=?, issuer_url=?, discovery_enabled=?, client_id=?,
+                    authorization_url=?, token_url=?, userinfo_url=?, jwks_uri=?,
+                    scopes=?, enabled=?, icon_url=?, description=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (
+                        provider.name,
+                        provider.issuer_url,
+                        1 if provider.discovery_enabled else 0,
+                        provider.client_id,
+                        provider.authorization_url,
+                        provider.token_url,
+                        provider.userinfo_url,
+                        provider.jwks_uri,
+                        provider.scopes,
+                        1 if provider.enabled else 0,
+                        provider.icon_url,
+                        provider.description,
+                        now,
+                        provider_id,
+                    ),
+                )
+            await db.commit()
+
+    async def delete_oauth_provider(self, provider_id: int) -> None:
+        """删除 OIDC 提供商"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM oauth_providers WHERE id = ?", (provider_id,))
+            await db.commit()
+
+    def _row_to_oidc_provider(self, row, decrypt_secret: bool = False):
+        """将数据库行转换为 OIDCProvider 对象"""
+        from ..oidc_models import OIDCProvider
+
+        secret = None
+        if decrypt_secret and row["client_secret"]:
+            secret = self._decrypt(row["client_secret"])
+        return OIDCProvider(
+            id=row["id"],
+            name=row["name"],
+            slug=row["slug"],
+            issuer_url=row["issuer_url"],
+            discovery_enabled=bool(row["discovery_enabled"]),
+            client_id=row["client_id"],
+            client_secret=secret,
+            authorization_url=row["authorization_url"],
+            token_url=row["token_url"],
+            userinfo_url=row["userinfo_url"],
+            jwks_uri=row["jwks_uri"],
+            scopes=row["scopes"] or "openid email profile",
+            enabled=bool(row["enabled"]),
+            icon_url=row["icon_url"],
+            description=row["description"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+    # ==================== OAuth State Operations ====================
+
+    async def save_oauth_state(self, state: str, provider_slug: str, code_verifier: str) -> None:
+        """保存 OAuth state 和 PKCE verifier（10 分钟 TTL）"""
+        expires_at = (datetime.now() + __import__("datetime").timedelta(minutes=10)).isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "INSERT OR REPLACE INTO oauth_states (state, provider_slug, code_verifier, expires_at) VALUES (?, ?, ?, ?)",
+                (state, provider_slug, code_verifier, expires_at),
+            )
+            await db.commit()
+
+    async def get_and_delete_oauth_state(self, state: str):
+        """获取并原子性删除 OAuth state（消费一次即失效）"""
+        from ..oidc_models import OAuthState
+
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM oauth_states WHERE state = ?", (state,))
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            await db.execute("DELETE FROM oauth_states WHERE state = ?", (state,))
+            await db.commit()
+            return OAuthState(
+                state=row["state"],
+                provider_slug=row["provider_slug"],
+                code_verifier=row["code_verifier"],
+                expires_at=datetime.fromisoformat(row["expires_at"]),
+            )
+
+    async def cleanup_expired_oauth_states(self) -> None:
+        """清理过期 OAuth state"""
+        now = datetime.now().isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM oauth_states WHERE expires_at < ?", (now,))
+            await db.commit()
+
+    # ==================== OIDC User Operations ====================
+
+    async def get_user_by_oauth(self, provider: str, oauth_sub: str) -> User | None:
+        """根据 OIDC 提供商和 Subject 获取用户"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM users WHERE oauth_provider = ? AND oauth_sub = ?",
+                (provider, oauth_sub),
+            )
+            row = await cursor.fetchone()
+            return self._row_to_user(row) if row else None
+
+    async def link_oauth_to_user(
+        self, user_id: int, provider: str, oauth_sub: str, avatar_url: str | None = None
+    ) -> None:
+        """将 OIDC 账号关联到已有用户"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE users SET oauth_provider = ?, oauth_sub = ?, avatar_url = ? WHERE id = ?",
+                (provider, oauth_sub, avatar_url, user_id),
+            )
+            await db.commit()
+
+    async def update_user_oidc_info(
+        self, user_id: int, email: str | None = None, avatar_url: str | None = None
+    ) -> None:
+        """同步用户 OIDC 信息（邮箱、头像）"""
+        async with aiosqlite.connect(self.db_path) as db:
+            if email:
+                await db.execute(
+                    "UPDATE users SET email = ?, avatar_url = ? WHERE id = ?",
+                    (email, avatar_url, user_id),
+                )
+            elif avatar_url:
+                await db.execute(
+                    "UPDATE users SET avatar_url = ? WHERE id = ?",
+                    (avatar_url, user_id),
+                )
             await db.commit()

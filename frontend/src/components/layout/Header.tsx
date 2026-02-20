@@ -23,7 +23,7 @@ import { useBreadcrumb } from "@/hooks/useBreadcrumb"
 
 export function Header() {
     const breadcrumbItems = useBreadcrumb()
-    const { i18n } = useTranslation()
+    const { i18n, t } = useTranslation()
 
     const changeLanguage = (lng: string) => {
         i18n.changeLanguage(lng)
@@ -61,7 +61,7 @@ export function Header() {
                         <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon">
                                 <Languages className="h-[1.2rem] w-[1.2rem]" />
-                                <span className="sr-only">Switch language</span>
+                                <span className="sr-only">{t('common.switchLanguage')}</span>
                             </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">

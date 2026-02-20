@@ -15,6 +15,8 @@ from .services.auth import AuthService
 from .storage.sqlite import SQLiteStorage
 from .logger import LogConfig
 from .routers import auth, notifiers, settings, trackers, credentials, releases, system
+from .routers import oidc as oidc_router
+from .routers import oidc_admin as oidc_admin_router
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +89,8 @@ app.include_router(trackers.router)
 app.include_router(credentials.router)
 app.include_router(releases.router)
 app.include_router(system.router)
+app.include_router(oidc_router.router)
+app.include_router(oidc_admin_router.router)
 
 
 # ==================== 静态文件服务 ====================
@@ -105,8 +109,8 @@ if static_dir.exists():
     @app.exception_handler(404)
     async def custom_404_handler(request: Request, exc):
         """捕获 404 错误，返回 SPA 的 index.html"""
-        # 只有非 API 路径才返回 index.html
-        if request.url.path.startswith("/api"):
+        # 只有非 API 和非 OIDC 回调路径才返回 index.html
+        if request.url.path.startswith("/api") or request.url.path.startswith("/auth/oidc"):
             return JSONResponse(status_code=404, content={"detail": "Not found"})
 
         # 尝试返回静态文件

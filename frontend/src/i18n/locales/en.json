@@ -50,6 +50,15 @@
         },
         "logout": {
             "success": "Logged out successfully"
+        },
+        "oidc": {
+            "orContinueWith": "Or continue with",
+            "loginWith": "Continue with {{name}}",
+            "loginWith_prefix": "Continue with",
+            "loginWith_suffix": "",
+            "connecting": "Connecting to {{name}}...",
+            "loginSuccess": "Login successful",
+            "loginFailed": "OIDC login failed, please try again"
         }
     },
     "user": {
@@ -98,14 +107,61 @@
         "description": "Description",
         "enabled": "Enabled",
         "disabled": "Disabled",
-        "actions": "Actions"
+        "actions": "Actions",
+        "saving": "Saving...",
+        "switchLanguage": "Switch language"
+    },
+    "systemSettings": {
+        "system": {
+            "title": "System Settings",
+            "description": "Manage global application configuration and integrations"
+        },
+        "oidc": {
+            "title": "OIDC Login Providers",
+            "description": "Configure third-party login providers (OpenID Connect)",
+            "add": "Add Provider",
+            "addTitle": "Add OIDC Provider",
+            "editTitle": "Edit OIDC Provider",
+            "dialogDesc": "Configure an OpenID Connect provider for user login",
+            "empty": "No OIDC providers configured",
+            "manualEndpoints": "[Manual endpoint config]",
+            "requiredFields": "Please fill in all required fields",
+            "secretRequired": "Client secret is required when creating a provider",
+            "secretHint": "Leave blank to keep unchanged",
+            "secretPlaceholder": "Leave blank to keep unchanged",
+            "created": "OIDC provider created",
+            "updated": "OIDC provider updated",
+            "deleted": "OIDC provider deleted",
+            "loadFailed": "Failed to load providers",
+            "saveFailed": "Failed to save",
+            "deleteFailed": "Failed to delete",
+            "deleteTitle": "Confirm Delete",
+            "deleteDesc": "Are you sure you want to delete \"{{name}}\"? Existing users will no longer be able to log in with this provider.",
+            "fields": {
+                "name": "Display Name",
+                "slug": "Slug (URL Identifier)",
+                "clientId": "Client ID",
+                "clientSecret": "Client Secret",
+                "issuerUrl": "Issuer URL",
+                "discoveryEnabled": "Enable OIDC Discovery",
+                "discoveryDesc": "Auto-discover endpoint configuration (recommended)",
+                "authorizationUrl": "Authorization URL",
+                "tokenUrl": "Token URL",
+                "userinfoUrl": "Userinfo URL",
+                "scopes": "Scopes",
+                "iconUrl": "Icon URL",
+                "description": "Description",
+                "enabled": "Enable this provider"
+            }
+        }
     },
     "sidebar": {
         "dashboard": "Dashboard",
         "history": "History",
         "trackers": "Trackers",
         "credentials": "Credentials",
-        "notifications": "Notifications"
+        "notifications": "Notifications",
+        "settings": "System Settings"
     },
     "dashboard": {
         "title": "Dashboard",

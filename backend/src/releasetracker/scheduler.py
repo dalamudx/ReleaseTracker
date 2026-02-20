@@ -228,17 +228,14 @@ class ReleaseScheduler:
             return status
 
     async def _send_notifications(self, event: str, release):
-        """发送通知"""
+        """发送通知（每次实时从数据库加载通知器，避免内存缓存重复发送）"""
         logger.info(
             f"Preparing to send notifications for event: {event}, release: {release.version}"
         )
 
         active_notifiers = []
 
-        # 1. 添加基于文件的通知器（旧版兼容）
-        active_notifiers.extend(self.notifiers)
-
-        # 2. 添加基于数据库的通知器
+        # 直接从数据库实时加载（不使用 self.notifiers 内存缓存，避免重复加载导致重复发送）
         try:
             db_notifiers = await self.storage.get_notifiers()
             logger.debug(f"Found {len(db_notifiers)} notifiers in DB")
@@ -247,15 +244,10 @@ class ReleaseScheduler:
                 logger.debug(
                     f"Checking notifier: {n.name}, enabled: {n.enabled}, type: {n.type}, events: {n.events}"
                 )
-                if n.enabled:
-                    # 创建 WebhookNotifier 实例
-                    if n.type == "webhook":
-                        notifier = WebhookNotifier(
-                            name=n.name,
-                            url=n.url,
-                            events=n.events,
-                        )
-                        active_notifiers.append(notifier)
+                if n.enabled and n.type == "webhook":
+                    active_notifiers.append(
+                        WebhookNotifier(name=n.name, url=n.url, events=n.events)
+                    )
         except Exception as e:
             logger.error(f"Failed to load notifiers from DB: {e}")
 
