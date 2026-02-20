@@ -56,211 +56,90 @@ class SQLiteStorage:
             return enc
 
     async def initialize(self):
-        """初始化数据库"""
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS releases (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    tracker_name TEXT NOT NULL,
-                    name TEXT NOT NULL,
-                    tag_name TEXT NOT NULL,
-                    version TEXT NOT NULL,
-                    published_at TEXT NOT NULL,
-                    url TEXT NOT NULL,
-                    prerelease INTEGER DEFAULT 0,
-                    body TEXT,
-                    created_at TEXT NOT NULL,
-                    UNIQUE(tracker_name, tag_name)
-                )
-                """)
+        """初始化数据库（通过 yoyo-migrations 执行 SQL 迁移文件）"""
+        import asyncio
 
-            # 检查 body 列是否存在，如果不存在则添加（迁移逻辑）
-            cursor = await db.execute("PRAGMA table_info(releases)")
-            columns = await cursor.fetchall()
-            column_names = [col[1] for col in columns]
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._run_migrations)
 
-            if "body" not in column_names:
-                await db.execute("ALTER TABLE releases ADD COLUMN body TEXT")
+    def _run_migrations(self):
+        """同步执行 yoyo 数据库迁移（在线程池中运行）"""
+        import sqlite3
+        from pathlib import Path as _Path
 
-            # 检查 commit_sha 列是否存在，如果不存在则添加
-            if "commit_sha" not in column_names:
-                await db.execute("ALTER TABLE releases ADD COLUMN commit_sha TEXT")
+        from yoyo import get_backend, read_migrations
 
-            # 检查 republish_count 列是否存在，如果不存在则添加
-            if "republish_count" not in column_names:
-                await db.execute(
-                    "ALTER TABLE releases ADD COLUMN republish_count INTEGER DEFAULT 0"
-                )
+        migrations_dir = _Path(__file__).parent.parent.parent.parent / "migrations"
+        if not migrations_dir.exists():
+            logger.warning(f"migrations 目录不存在: {migrations_dir}")
+            return
 
-            # 检查 channel_name 列是否存在，如果不存在则添加
-            if "channel_name" not in column_names:
-                await db.execute("ALTER TABLE releases ADD COLUMN channel_name TEXT")
+        db_url = f"sqlite:///{self.db_path}"
+        backend = get_backend(db_url)
+        migrations = read_migrations(str(migrations_dir))
 
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """)
+        # 检测已有数据库（有业务表但无 yoyo 版本记录）
+        conn = sqlite3.connect(self.db_path)
+        try:
+            c = conn.cursor()
+            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='releases'")
+            releases_exists = c.fetchone() is not None
+            c.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='_yoyo_migration'"
+            )
+            yoyo_table_exists = c.fetchone() is not None
+        finally:
+            conn.close()
 
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS tracker_status (
-                    name TEXT PRIMARY KEY,
-                    type TEXT NOT NULL,
-                    enabled INTEGER DEFAULT 1,
-                    last_check TEXT,
-                    last_version TEXT,
-                    error TEXT
-                )
-                """)
+        with backend.lock():
+            pending_ids = {m.id for m in backend.to_apply(migrations)}
 
-            # 凭证表
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS credentials (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL UNIQUE,
-                    type TEXT NOT NULL,
-                    token TEXT NOT NULL,
-                    description TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """)
+            if releases_exists and not yoyo_table_exists:
+                # 已有旧数据库，智能 stamp 已实际存在的 schema
+                logger.info("检测到旧版数据库，智能 stamp 已执行的迁移...")
+                conn = sqlite3.connect(self.db_path)
+                try:
 
-            # 通知器表
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS notifiers (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL UNIQUE,
-                    type TEXT NOT NULL,
-                    url TEXT NOT NULL,
-                    events TEXT DEFAULT '["new_release"]',
-                    enabled INTEGER DEFAULT 1,
-                    description TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """)
+                    def _has_table(name):
+                        c = conn.cursor()
+                        c.execute(
+                            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,)
+                        )
+                        return c.fetchone() is not None
 
-            # 追踪器配置表
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS trackers (
-                    name TEXT PRIMARY KEY,
-                    type TEXT NOT NULL,
-                    enabled INTEGER DEFAULT 1,
-                    repo TEXT,
-                    project TEXT,
-                    instance TEXT,
-                    chart TEXT,
-                    credential_name TEXT,
-                    channels TEXT DEFAULT '[]',
-                    interval TEXT DEFAULT '1h',
-                    description TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """)
+                    def _has_column(table, column):
+                        c = conn.cursor()
+                        c.execute(f"PRAGMA table_info({table})")
+                        return any(row[1] == column for row in c.fetchall())
 
-            # 版本历史表
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS release_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    release_id INTEGER NOT NULL,
-                    name TEXT,
-                    commit_sha TEXT NOT NULL,
-                    published_at TEXT NOT NULL,
-                    body TEXT,
-                    channel_name TEXT,
-                    recorded_at TEXT NOT NULL,
-                    FOREIGN KEY (release_id) REFERENCES releases(id) ON DELETE CASCADE
-                )
-                """)
+                    stamp_rules = {
+                        "0001_initial_schema": lambda: _has_table("releases"),
+                        "0002_releases_add_columns": lambda: _has_column("releases", "commit_sha"),
+                        "0003_release_history_add_columns": lambda: _has_column(
+                            "release_history", "name"
+                        ),
+                        "0004_users_oidc_fields": lambda: _has_column("users", "oauth_provider"),
+                        "0005_oidc_tables": lambda: _has_table("oauth_providers"),
+                    }
 
-            # 检查 release_history 表是否有 name 列
-            cursor = await db.execute("PRAGMA table_info(release_history)")
-            hist_columns = await cursor.fetchall()
-            hist_column_names = [col[1] for col in hist_columns]
+                    for migration in migrations:
+                        if migration.id not in pending_ids:
+                            continue
+                        rule = stamp_rules.get(migration.id)
+                        if rule and rule():
+                            backend.mark_one(migration, "applied")
+                            logger.info(f"  Stamped (already exists): {migration.id}")
+                finally:
+                    conn.close()
 
-            if "name" not in hist_column_names:
-                await db.execute("ALTER TABLE release_history ADD COLUMN name TEXT")
-
-            # 检查 release_history 表是否有 channel_name 列
-            if "channel_name" not in hist_column_names:
-                await db.execute("ALTER TABLE release_history ADD COLUMN channel_name TEXT")
-
-            # 用户表
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT NOT NULL UNIQUE,
-                    email TEXT NOT NULL UNIQUE,
-                    password_hash TEXT NOT NULL,
-                    status TEXT DEFAULT 'active',
-                    created_at TEXT NOT NULL,
-                    last_login_at TEXT
-                )
-                """)
-
-            # 会话表
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS sessions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    token_hash TEXT NOT NULL UNIQUE,
-                    refresh_token_hash TEXT,
-                    user_agent TEXT,
-                    ip_address TEXT,
-                    expires_at TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-                )
-                """)
-
-            # 迁移：为 users 表添加 OIDC 字段
-            cursor = await db.execute("PRAGMA table_info(users)")
-            user_columns = {col[1] for col in await cursor.fetchall()}
-            if "oauth_provider" not in user_columns:
-                await db.execute("ALTER TABLE users ADD COLUMN oauth_provider TEXT")
-            if "oauth_sub" not in user_columns:
-                await db.execute("ALTER TABLE users ADD COLUMN oauth_sub TEXT")
-            if "avatar_url" not in user_columns:
-                await db.execute("ALTER TABLE users ADD COLUMN avatar_url TEXT")
-
-            # OIDC 提供商表
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS oauth_providers (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    slug TEXT NOT NULL UNIQUE,
-                    issuer_url TEXT,
-                    discovery_enabled INTEGER DEFAULT 1,
-                    client_id TEXT NOT NULL,
-                    client_secret TEXT,
-                    authorization_url TEXT,
-                    token_url TEXT,
-                    userinfo_url TEXT,
-                    jwks_uri TEXT,
-                    scopes TEXT DEFAULT 'openid email profile',
-                    enabled INTEGER DEFAULT 1,
-                    icon_url TEXT,
-                    description TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """)
-
-            # OAuth state 表（存储 CSRF state + PKCE verifier，含 TTL）
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS oauth_states (
-                    state TEXT PRIMARY KEY,
-                    provider_slug TEXT NOT NULL,
-                    code_verifier TEXT NOT NULL,
-                    expires_at TEXT NOT NULL
-                )
-                """)
-
-            await db.commit()
+            # 执行所有还未应用的迁移
+            remaining = backend.to_apply(migrations)
+            if remaining:
+                logger.info(f"执行 {len(remaining)} 个数据库迁移...")
+                backend.apply_migrations(remaining)
+                logger.info("数据库迁移完成")
+            else:
+                logger.info("数据库已是最新版本，无需迁移")
 
     async def save_tracker_config(self, config) -> None:
         """保存追踪器配置(新增或更新)"""

@@ -5,7 +5,7 @@
 
 # 变量定义
 PYTHON = python3
-PIP = pip
+PIP = uv pip
 NPM = npm
 
 help: ## 显示帮助信息
