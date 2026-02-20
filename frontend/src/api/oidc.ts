@@ -42,7 +42,7 @@ export interface CreateOIDCProviderRequest {
     description?: string | null
 }
 
-export interface UpdateOIDCProviderRequest extends Partial<Omit<CreateOIDCProviderRequest, 'slug'>> {
+export interface UpdateOIDCProviderRequest extends Partial<Omit<CreateOIDCProviderRequest, 'slug' | 'client_secret'>> {
     client_secret?: string | null  // 不传则不更新
 }
 

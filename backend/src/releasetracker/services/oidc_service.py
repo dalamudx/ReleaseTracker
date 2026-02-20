@@ -97,20 +97,24 @@ class OIDCService:
         provider = await self._get_provider_endpoints(provider)
 
         # 1. 用 code 换取 access_token
+        # 大多数标准 OIDC IdP (如 Authentik, Keycloak) 默认要求使用 Basic Auth (client_secret_basic)
         token_data = {
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": redirect_uri,
             "client_id": provider.client_id,
-            "client_secret": provider.client_secret,
             "code_verifier": code_verifier,
         }
         async with httpx.AsyncClient(timeout=15) as http:
             try:
+                auth = (
+                    (provider.client_id, provider.client_secret) if provider.client_secret else None
+                )
                 token_resp = await http.post(
                     str(provider.token_url),
                     data=token_data,
                     headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    auth=auth,
                 )
                 token_resp.raise_for_status()
                 token = token_resp.json()
