@@ -1,0 +1,21 @@
+<svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="logo-gradient" x1="26.8" y1="180" x2="173.2" y2="20" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2563EB" /> <!-- Blue 600 -->
+      <stop offset="100%" stop-color="#10B981" /> <!-- Emerald 500 -->
+    </linearGradient>
+  </defs>
+  
+  <!-- Background Hexagon (Subtle Fill) -->
+  <path d="M100 25 L169.3 65 V145 L100 185 L30.7 145 V65 L100 25Z" fill="url(#logo-gradient)" fill-opacity="0.1"/>
+  
+  <!-- Outline Hexagon -->
+  <path d="M100 25 L169.3 65 V145 L100 185 L30.7 145 V65 L100 25Z" stroke="url(#logo-gradient)" stroke-width="10" stroke-linejoin="round"/>
+  
+  <!-- Up Arrow (Rocket/Release) -->
+  <path d="M100 135 V65 M100 65 L70 95 M100 65 L130 95" stroke="url(#logo-gradient)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- Tracking Dots (Radarish) -->
+  <circle cx="100" cy="160" r="4" fill="#2563EB" />
+  <circle cx="100" cy="175" r="3" fill="#10B981" opacity="0.8" />
+</svg>

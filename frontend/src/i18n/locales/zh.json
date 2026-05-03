@@ -1,0 +1,1103 @@
+{
+  "theme": {
+    "toggle": "切换主题",
+    "mode": {
+      "title": "主题模式",
+      "description": "选择明暗主题",
+      "light": "浅色",
+      "lightDesc": "浅色主题",
+      "dark": "深色",
+      "darkDesc": "深色主题",
+      "system": "跟随系统",
+      "systemDesc": "跟随系统设置"
+    },
+    "color": {
+      "title": "颜色主题",
+      "description": "选择主色调",
+      "neutral": "默认",
+      "red": "红色",
+      "rose": "玫瑰",
+      "orange": "橙色",
+      "green": "绿色",
+      "blue": "蓝色",
+      "yellow": "黄色",
+      "violet": "紫罗兰"
+    },
+    "scale": {
+      "title": "缩放模式",
+      "description": "选择界面缩放",
+      "default": "默认",
+      "scaled": "缩放",
+      "mono": "等宽"
+    },
+    "radius": {
+      "title": "圆角大小",
+      "description": "调整界面圆角"
+    }
+  },
+  "auth": {
+    "login": {
+      "title": "Release Tracker",
+      "subtitle": "管理和追踪您的软件发布版本",
+      "username": "用户名",
+      "usernamePlaceholder": "输入用户名",
+      "password": "密码",
+      "passwordPlaceholder": "输入密码",
+      "submit": "登录",
+      "submitting": "登录中...",
+      "success": "登录成功",
+      "failed": "登录失败，请检查用户名和密码"
+    },
+    "logout": {
+      "success": "已退出登录"
+    },
+    "oidc": {
+      "orContinueWith": "或继续使用",
+      "loginWith": "使用 {{name}} 登录",
+      "loginWith_prefix": "使用",
+      "loginWith_suffix": "登录",
+      "connecting": "连接中...",
+      "loginSuccess": "登录成功",
+      "loginFailed": "OIDC 登录失败，请重试"
+    }
+  },
+  "user": {
+    "settings": "用户设置",
+    "description": "管理您的账户设置和安全选项",
+    "tabs": {
+      "account": "账户信息",
+      "security": "安全设置"
+    },
+    "fields": {
+      "currentPassword": "当前密码",
+      "newPassword": "新密码",
+      "confirmPassword": "确认新密码"
+    },
+    "actions": {
+      "updatePassword": "更新密码",
+      "logout": "退出登录"
+    },
+    "messages": {
+      "passwordMismatch": "新密码与确认密码不匹配",
+      "passwordTooShort": "新密码至少需要 6 个字符",
+      "passwordUpdated": "密码修改成功",
+      "passwordUpdateFailed": "密码修改失败，请检查当前密码"
+    }
+  },
+  "common": {
+    "save": "保存",
+    "cancel": "取消",
+    "delete": "删除",
+    "edit": "编辑",
+    "add": "添加",
+    "search": "搜索",
+    "loading": "加载中...",
+    "noData": "暂无数据",
+    "confirm": "确认",
+    "back": "返回",
+    "close": "关闭",
+    "saving": "保存中...",
+    "saved": "保存成功",
+    "deleted": "删除成功",
+    "deleteFailed": "删除失败",
+    "checkStarted": "检查已开始",
+    "checkQueued": "检查已加入队列。",
+    "checkFailed": "检查失败",
+    "check": "检查",
+    "never": "从未",
+    "unexpectedError": "发生意外错误",
+    "description": "描述",
+    "enabled": "已启用",
+    "disabled": "已禁用",
+    "actions": "操作",
+    "switchLanguage": "切换语言"
+  },
+  "systemSettings": {
+    "system": {
+      "title": "系统设置",
+      "description": "管理全局应用配置与集成"
+    },
+    "tabs": {
+      "general": "全局配置",
+      "security": "安全密钥",
+      "oidc": "OIDC"
+    },
+    "global": {
+      "title": "全局设置",
+      "description": "这些配置会影响整个应用，后续新增的全局选项也会集中在这里管理。",
+      "baseUrl": {
+        "title": "BASE URL",
+        "label": "应用公开访问地址",
+        "description": "用于反向代理、OIDC 回调和登录完成跳转；如果部署在子路径下，请包含完整子路径。",
+        "placeholder": "https://example.com/releasetracker",
+        "invalid": "请输入有效的 http(s) 地址。"
+      },
+      "timezone": {
+        "title": "时区",
+        "label": "系统时区",
+        "description": "执行器维护窗口和统计图表统一使用这里配置的 IANA 时区，例如 Asia/Shanghai。"
+      },
+      "logLevel": {
+        "title": "日志级别",
+        "label": "后端日志级别",
+        "description": "控制应用启动后的后端日志输出级别。"
+      },
+      "releaseHistoryRetention": {
+        "title": "版本历史保留",
+        "label": "每个发布渠道保留版本数",
+        "description": "清理会在执行器维护窗口完成后执行；如果没有维护窗口，则每天 02:00 执行。",
+        "invalid": "请输入 1 到 1000 之间的整数。"
+      }
+    },
+    "securityKeys": {
+      "title": "安全密钥",
+      "description": "管理应用持有的会话密钥与加密密钥，页面不会展示密钥原文。",
+      "rotate": "轮换",
+      "generate": "服务端生成",
+      "manual": "手工输入",
+      "confirmRotate": "确认轮换",
+      "undecryptable": "不可解密：{{count}}",
+      "blocked": "发现 {{count}} 条看起来像 Fernet token 但无法用当前密钥解密的数据。请先修复这些数据后再轮换加密密钥。",
+      "summary": {
+        "activeSessions": "活跃会话",
+        "credentialsToken": "凭据 token",
+        "credentialsSecrets": "凭据 secrets",
+        "oidcSecrets": "OIDC 密钥",
+        "runtimeSecrets": "运行时密钥",
+        "undecryptable": "不可解密"
+      },
+      "inventory": {
+        "credentialsToken": "凭据 token：{{count}}",
+        "credentialsSecrets": "凭据 secrets：{{count}}",
+        "oidcSecrets": "OIDC 密钥：{{count}}",
+        "runtimeSecrets": "运行时密钥：{{count}}"
+      },
+      "jwt": {
+        "title": "会话密钥",
+        "description": "用于签发访问令牌和刷新令牌，轮换后会立即让所有当前会话失效。",
+        "activeSessions": "活跃会话：{{count}}",
+        "rotateTitle": "轮换会话密钥",
+        "rotateDescription": "可以由服务端生成，也可以手工输入强密钥。",
+        "warning": "轮换成功后所有用户都会立即退出登录，包括当前用户。",
+        "manualLabel": "新的会话密钥",
+        "rotated": "会话密钥已轮换，失效会话数：{{count}}"
+      },
+      "encryption": {
+        "title": "加密密钥",
+        "description": "用于加密数据库中的凭据、OIDC 客户端密钥和运行时连接密钥。",
+        "rotateTitle": "轮换加密密钥",
+        "rotateDescription": "已有加密数据会使用新的 Fernet key 重新加密。",
+        "warning": "如果存在看起来像 Fernet token 但不能用当前密钥解密的数据，轮换会中止。",
+        "manualLabel": "新的 Fernet 加密密钥",
+        "rotated": "加密密钥已轮换，重新加密明文数量：{{count}}"
+      }
+    },
+    "general": {
+      "title": "通用设置",
+      "description": "管理版本排序与数据抓取偏好",
+      "versionSortMode": "版本排序模式",
+      "versionSortModeDesc": "选择系统如何从 API 返回的历史记录中挑选最新版本",
+      "sortPublishedAt": "按发布时间排序 (默认)",
+      "sortSemver": "按系统语义化版本 (SemVer) 排序",
+      "fetchLimit": "单次抓取深度",
+      "fetchLimitDesc": "后台轮询时每次向源站获取的最大记录数，适用于频繁发布预览版的项目"
+    },
+    "oidc": {
+      "title": "OIDC 登录提供商",
+      "description": "配置第三方登录提供商（OpenID Connect）",
+      "add": "添加提供商",
+      "addTitle": "添加 OIDC 提供商",
+      "editTitle": "编辑 OIDC 提供商",
+      "dialogDesc": "配置 OpenID Connect 提供商，用户可通过该提供商登录",
+      "empty": "暂无配置 OIDC 提供商",
+      "manualEndpoints": "[手动配置端点]",
+      "requiredFields": "请填写必填字段",
+      "secretRequired": "创建时必须提供客户端密钥",
+      "secretHint": "不修改则留空",
+      "secretPlaceholder": "不修改则留空",
+      "created": "OIDC 提供商已创建",
+      "updated": "OIDC 提供商已更新",
+      "deleted": "OIDC 提供商已删除",
+      "loadFailed": "加载提供商列表失败",
+      "saveFailed": "保存失败",
+      "deleteFailed": "删除失败",
+      "deleteTitle": "确认删除",
+      "deleteDesc": "确定要删除提供商\"{{name}}\"？警告：已有用户将无法通过该提供商登录。",
+      "fields": {
+        "name": "显示名称",
+        "slug": "Slug（URL 标识符）",
+        "clientId": "Client ID",
+        "clientSecret": "Client Secret",
+        "issuerUrl": "Issuer URL",
+        "discoveryEnabled": "启用 OIDC Discovery",
+        "discoveryDesc": "自动发现端点配置（推荐）",
+        "authorizationUrl": "Authorization URL",
+        "tokenUrl": "Token URL",
+        "userinfoUrl": "Userinfo URL",
+        "scopes": "Scopes",
+        "iconUrl": "图标 URL",
+        "description": "描述",
+        "enabled": "启用该提供商"
+      }
+    }
+  },
+  "sidebar": {
+    "dashboard": "仪表盘",
+    "history": "版本历史",
+    "trackers": "追踪器",
+    "executors": "执行器",
+    "runtimeConnections": "运行时连接",
+    "credentials": "凭证",
+    "notifications": "消息通知",
+    "settings": "系统设置"
+  },
+  "dashboard": {
+    "title": "仪表盘",
+    "description": "版本发布监控概览",
+    "stats": {
+      "totalReleases": "总发布数",
+      "activeTrackers": "活跃追踪器",
+      "lastUpdate": "最后更新",
+      "recentInLast7Days": "最近 7 天",
+      "currentlyTracking": "当前追踪中",
+      "releaseTypeStats": "发布类型统计",
+      "channelStats": "渠道版本统计"
+    },
+    "releaseTrend": {
+      "title": "发布趋势",
+      "description": "最近 7 天的每日发布活动"
+    },
+    "recentReleases": {
+      "title": "最近发布",
+      "description": "最近 5 个发布版本",
+      "noReleases": "未找到发布版本",
+      "viewNotes": "查看发布说明"
+    },
+    "releaseNotes": {
+      "viewSource": "去源站查看",
+      "channelBadge": "发布渠道：{{channel}}",
+      "releasedAt": "发布于 {{date}}",
+      "noNotes": "暂无发布说明。"
+    }
+  },
+  "history": {
+    "title": "版本历史",
+    "description": "查看所有追踪器的版本历史记录。",
+    "searchPlaceholder": "搜索版本号或内容...",
+    "noResults": "暂无数据。",
+    "table": {
+      "tracker": "追踪器",
+      "version": "版本",
+      "channel": "渠道",
+      "channelType": "渠道类型",
+      "published": "发布时间",
+      "link": "链接"
+    }
+  },
+  "trackers": {
+    "title": "追踪器",
+    "description": "配置和管理版本追踪器",
+    "addNew": "添加追踪器",
+    "table": {
+      "name": "名称",
+      "type": "类型",
+      "repo": "仓库",
+      "status": "状态",
+      "lastCheck": "最后检查",
+      "lastVersion": "最新版本",
+      "channelCount": "渠道数量",
+      "actions": "操作"
+    },
+    "status": {
+      "enabled": "启用",
+      "disabled": "禁用",
+      "error": "错误"
+    },
+    "aggregate": {
+      "addTitle": "添加聚合追踪器",
+      "editTitle": "编辑聚合追踪器",
+      "description": "一个追踪器代表一个项目，可管理多个子渠道和带正则筛选的发布渠道。",
+      "table": {
+        "sources": "渠道类型"
+      },
+      "validation": {
+        "nameRequired": "必须填写追踪器名称。",
+        "atLeastOneSource": "保存前至少添加一个子渠道。",
+        "atLeastOneReleaseChannel": "保存前至少添加一个发布渠道。",
+        "primaryRequired": "保存前必须选择主 changelog 渠道。",
+        "primaryMustMatchSource": "主 changelog 渠道必须对应现有子渠道之一。",
+        "sourceKeyRequired": "必须填写渠道标识。",
+        "sourceKeyUnique": "每个渠道标识都必须唯一。",
+        "releaseChannelUnique": "同一个发布渠道只能添加一次。",
+        "invalidIncludePattern": "包含正则无效：",
+        "invalidExcludePattern": "排除正则无效：",
+        "requiredField": "此字段为必填项。"
+      },
+      "identity": {
+        "title": "追踪器标识",
+        "description": "这个追踪器代表整个项目，子渠道用于提供 release、chart、容器镜像或包版本。"
+      },
+      "trackerChannels": {
+        "title": "追踪渠道",
+        "description": "管理这个追踪器的子渠道。",
+        "add": "添加渠道"
+      },
+      "labels": {
+        "trackerChannelHeader": "{{type}} · {{key}}",
+        "releaseChannelHeader": "{{name}} · {{type}}",
+        "releaseChannelHeaderNoType": "{{name}}",
+        "blankTrackerChannelKey": "未命名渠道",
+        "blankReleaseChannelName": "未命名发布渠道",
+        "blankReleaseChannelType": "待选择发布类型"
+      },
+      "releaseChannels": {
+        "title": "发布渠道",
+        "description": "配置当前子渠道的发布渠道和正则筛选。",
+        "add": "添加发布渠道",
+        "empty": "这个子渠道暂时还没有绑定任何发布渠道。",
+        "collapsedSummary": "发布筛选",
+        "fields": {
+          "name": "发布渠道类型",
+          "nameDescription": "选择发布渠道类型。下拉列表会显示 stable、prerelease、beta、canary 的本地化名称。",
+          "type": "发布类型",
+          "typePlaceholder": "选择发布类型",
+          "typeDescription": "显式选择发布状态；不会再根据名称推导。",
+          "includePattern": "包含正则",
+          "includePatternPlaceholder": "留空则包含所有版本",
+          "includePatternDescription": "只有匹配该正则的版本才会进入当前发布渠道。",
+          "excludePattern": "排除正则",
+          "excludePatternPlaceholder": "留空则不排除任何版本",
+          "excludePatternDescription": "即使包含正则命中，只要匹配该正则也会被当前渠道排除。"
+        }
+      },
+      "fetching": {
+        "title": "抓取偏好",
+        "description": "这些设置作用于整个追踪器。"
+      },
+      "fields": {
+        "name": "追踪器名称",
+        "namePlaceholder": "例如：release-tracker",
+        "descriptionPlaceholder": "输入描述",
+        "primarySource": "主 changelog 渠道",
+        "primarySourcePlaceholder": "选择规范发布说明的来源渠道",
+        "primarySourceDescription": "多个渠道上报相同版本时，发布说明会使用这个子渠道。",
+        "enabled": "启用",
+        "enabledDescription": "禁用后配置会保留，但不会参与定时检查。",
+        "sourceKey": "渠道标识",
+        "sourceKeyPlaceholder": "例如：upstream-release",
+        "sourceKeyDescription": "稳定的渠道标识。",
+        "sourceType": "渠道类型",
+        "credential": "凭证",
+        "credentialPlaceholder": "选择凭证",
+        "none": "无",
+        "registryDescription": ""
+      },
+      "detail": {
+        "emptyTitle": "选择一个追踪器",
+        "emptyDescription": "选择一个追踪器以查看子渠道、发布渠道和版本数据。",
+        "loadingTitle": "正在加载追踪器",
+        "loadFailedTitle": "无法加载追踪器详情",
+        "loadFailedDescription": "无法加载当前追踪器详情。",
+        "noDescription": "暂无描述。",
+        "primarySource": "主说明来源",
+        "primaryBadge": "主来源",
+        "sourceCount": "已启用/子渠道数量",
+        "enabledSources": "已启用渠道",
+        "latestCanonical": "最新聚合版本",
+        "releaseChannels": "发布渠道",
+        "releaseChannelsSummary": "按子渠道归属分组的发布渠道数量",
+        "trackerChannelsTitle": "子渠道概览",
+        "trackerChannelsDescription": "",
+        "credential": "凭证",
+        "releaseViewsTitle": "版本视图",
+        "releaseViewsDescription": "查看聚合版本在各子渠道中的映射情况。",
+        "canonicalDiagramDescription": "",
+        "canonicalDiagramVersionLabel": "对比版本（合并）",
+        "helmChartVersion": "Chart 版本：{{version}}",
+        "emptyCanonical": "当前还没有可用的聚合版本。",
+        "channelType": {
+          "github": "GitHub",
+          "gitlab": "GitLab",
+          "gitea": "Gitea",
+          "helm": "Helm",
+          "container": "容器",
+          "unknown": "未知"
+        },
+        "configLabel": {
+          "repo": "仓库",
+          "project": "项目",
+          "instance": "实例地址",
+          "chart": "Chart 名称",
+          "image": "镜像",
+          "registry": "镜像仓库",
+          "fetch_mode": "抓取优先策略"
+        }
+      }
+    },
+    "dialog": {
+      "addTitle": "添加追踪器",
+      "editTitle": "编辑追踪器",
+      "basicInfo": "基本信息",
+      "name": "追踪器名称",
+      "namePlaceholder": "例如：My Project",
+      "type": "类型",
+      "selectType": "选择类型",
+      "repo": "仓库",
+      "repoPlaceholder": "例如：owner/repo",
+      "project": "项目",
+      "projectPlaceholder": "例如：group/project",
+      "instance": "实例地址",
+      "instancePlaceholder": "例如：https://gitlab.example.com",
+      "chart": "Chart 名称",
+      "chartPlaceholder": "例如：nginx",
+      "credential": "凭证",
+      "selectCredential": "选择凭证（可选）",
+      "interval": "检查间隔",
+      "channels": {
+        "title": "渠道配置",
+        "add": "添加渠道",
+        "type": "渠道类型",
+        "includePattern": "包含模式（正则）",
+        "includePatternPlaceholder": "留空则包含所有",
+        "excludePattern": "排除模式（正则）",
+        "excludePatternPlaceholder": "留空则不排除",
+        "enabled": "启用"
+      }
+    }
+  },
+  "executors": {
+    "title": "执行器",
+    "description": "将追踪到的版本连接到运行时目标。",
+    "addNew": "添加执行器",
+    "deleteConfirm": "确定要删除这个执行器吗？",
+    "prerequisites": {
+      "runtime": {
+        "title": "请先添加运行时连接，再创建执行器",
+        "description": "选择目标前，请先添加运行时连接。"
+      },
+      "tracker": {
+        "title": "请先添加追踪器，再创建执行器",
+        "description": "执行器只能自动更新已追踪的发布渠道，因此请先创建追踪器。"
+      },
+      "both": {
+        "title": "请先补齐执行器前置条件",
+        "description": "创建执行器前，请先添加运行时连接和追踪器。"
+      },
+      "actions": {
+        "runtimeConnections": "前往运行时连接",
+        "trackers": "前往追踪器"
+      }
+    },
+    "table": {
+      "name": "名称",
+      "runtime": "运行时",
+      "target": "目标",
+      "tracker": "追踪器",
+      "policy": "策略",
+      "status": "状态",
+      "lastRun": "最后运行",
+      "actions": "操作"
+    },
+    "actions": {
+      "continue": "继续",
+      "create": "创建执行器",
+      "discover": "发现目标",
+      "runNow": "立即执行",
+      "viewExecutionHistory": "查看执行历史"
+    },
+    "steps": {
+      "target": "选择目标",
+      "binding": "绑定",
+      "policy": "策略",
+      "review": "复核"
+    },
+    "sections": {
+      "targetSetup": "基本信息",
+      "targetSetupDesc": "先填写执行器名称并选择运行时连接，再进入绑定。",
+      "notes": "备注",
+      "notesDesc": "供后续维护参考的可选备注。",
+      "discovery": "目标发现",
+      "discoveryDesc": "从所选运行时发现实时目标，然后选择一个进行绑定。",
+      "targetSelection": "当前目标",
+      "targetSelectionDesc": "先完成发现，再选择目标进入绑定页。",
+      "binding": "目标绑定",
+      "bindingDesc": "为当前目标选择要跟随的版本来源。",
+      "bindingStepDesc": "为当前目标选择来源和发布渠道。",
+      "policy": "更新策略",
+      "policyDesc": "定义这个执行器何时可以应用新镜像版本。",
+      "review": "复核并保存",
+      "reviewDesc": "保存前确认运行时、目标和更新策略。"
+    },
+    "fields": {
+      "name": "执行器名称",
+      "namePlaceholder": "例如：edge-nginx-prod",
+      "tracker": "绑定追踪器",
+      "service": "服务",
+      "servicePlaceholder": "选择服务",
+      "trackerPlaceholder": "选择追踪器",
+      "trackerSource": "镜像来源",
+      "trackerSourcePlaceholder": "选择镜像来源",
+      "trackerSourcePlaceholderEmpty": "请先选择追踪器",
+      "trackerSourceAutoSelected": "已根据追踪器自动选中",
+      "trackerSourceHint": "选择这个执行器要跟随的镜像来源。",
+      "trackerSourceSingleHint": "该追踪器只有一个可用的镜像来源，因此会自动选中。",
+      "bindingUnavailable": "当前绑定不可用",
+      "runtimeConnection": "运行时连接",
+      "runtimeConnectionPlaceholder": "选择运行时连接",
+      "runtimeConnectionDesc": "用于发现目标和执行更新。",
+      "runtimeSelectionHint": "选择运行时连接后即可发现目标。",
+      "runtimeType": "运行时类型",
+      "runtimeTypeDesc": "由所选连接自动推导。",
+      "descriptionPlaceholder": "输入备注",
+      "trackerFilteredHint": "这里只显示同时具备可用镜像来源和发布渠道的追踪器。",
+      "enabled": "启用",
+      "enabledDesc": "禁用后配置仍会保留，但不会按计划运行。",
+      "updateMode": "更新模式",
+      "imageSelectionMode": "镜像选取策略",
+      "imageReferenceMode": "更新目标策略",
+      "maintenanceTimezone": "时区",
+      "globalTimezoneHint": "使用系统设置中的全局时区：{{timezone}}。",
+      "maintenanceDays": "允许日期",
+      "maintenanceDaysDesc": "留空表示允许所有日期，再用下面的时间窗口限制执行时段。",
+      "maintenanceStart": "窗口开始",
+      "maintenanceEnd": "窗口结束",
+      "channel": "发布渠道",
+      "channelPlaceholder": "选择发布渠道",
+      "channelPlaceholderEmpty": "请先选择镜像来源",
+      "channelHint": "这里只显示所选追踪渠道下的发布渠道。"
+    },
+    "modes": {
+      "manual": "手动",
+      "maintenance_window": "维护窗口",
+      "immediate": "立即"
+    },
+    "modeDescriptions": {
+      "manual": "仅在操作员从列表手动触发时执行。",
+      "maintenance_window": "自动运行，但只会在配置的本地维护窗口内执行。",
+      "immediate": "一旦检测到更高版本镜像就自动执行。"
+    },
+    "results": {
+      "queued": "排队中",
+      "running": "运行中",
+      "success": "成功",
+      "failed": "失败",
+      "skipped": "跳过",
+      "idle": "空闲"
+    },
+    "status": {
+      "invalid": "失效"
+    },
+    "discovery": {
+      "runtimeSummary": "正在从 {{name}} ({{type}}) 发现目标。",
+      "runtimeMissing": "请先选择运行时连接，再启用发现。",
+      "failed": "目标发现失败。",
+      "empty": "没有返回任何目标。",
+      "selected": "已选中",
+      "bind": "绑定目标",
+      "rebind": "重新绑定目标",
+      "noTargetSelected": "尚未选择目标。",
+      "namespace": "命名空间",
+      "namespacePlaceholder": "选择命名空间",
+      "namespaceRequired": "请先选择命名空间。",
+      "namespaceHint": "仅显示运行时连接配置中授权的命名空间，不会枚举全集群命名空间。",
+      "containerFixedHint": "Docker 和 Podman 只绑定一个已发现容器。",
+      "dockerComposeHint": "Compose 项目使用项目及所选服务。",
+      "portainerStackHint": "Portainer Stack 使用栈及所选服务。",
+      "kubernetesHint": "Kubernetes 工作负载作为一个目标绑定，下一步按容器配置服务绑定。"
+    },
+    "binding": {
+      "targetSelectionRequired": "请先选择目标，再配置来源和发布渠道。",
+      "groupedTargetHint": "按服务绑定追踪器。",
+      "portainerBindingEmpty": "继续之前，至少添加一个服务绑定。",
+      "addServiceBinding": "添加服务绑定",
+      "removeServiceBinding": "移除服务绑定",
+      "serviceBindingLabel": "服务绑定 {{index}}",
+      "serviceBindingGroup": "服务绑定",
+      "serviceBindingGroupHint": "在一个绑定区域内为多个服务分别选择追踪器和发布渠道。",
+      "currentBinding": "当前绑定关系"
+    },
+    "review": {
+      "name": "执行器",
+      "runtime": "运行时",
+      "tracker": "追踪器",
+      "source": "镜像来源",
+      "targetType": "目标类型",
+      "target": "目标",
+      "serviceBindings": "服务绑定",
+      "mode": "策略",
+      "status": "状态",
+      "imageStrategy": "镜像策略",
+      "imageReference": "目标策略",
+      "imageChanges": "镜像变更",
+      "versionChanges": "版本变更",
+      "targetVersion": "目标版本",
+      "targetImageDeferred": "执行时解析目标镜像",
+      "maintenanceSummary": "维护窗口：{{timezone}}，{{start}}–{{end}}。",
+      "ready": "执行器配置已完成，可以保存。"
+    },
+    "target": {
+      "kind": {
+        "container": "容器",
+        "kubernetes": "Kubernetes 工作负载",
+        "kubernetes_workload": "Kubernetes 工作负载",
+        "helm_release": "Helm Release",
+        "docker_compose": "Docker Compose 项目",
+        "podman_compose": "Podman Compose 项目",
+        "portainer_stack": "Portainer Stack"
+      },
+      "serviceCountSummary": "{{count}} 个服务",
+      "details": {
+        "container": "容器",
+        "containerId": "容器 ID",
+        "project": "项目",
+        "workingDir": "工作目录",
+        "configFiles": "配置文件",
+        "namespace": "命名空间",
+        "kind": "工作负载类型",
+        "workload": "工作负载",
+        "releaseName": "Release",
+        "chartName": "Chart",
+        "chartVersion": "Chart 版本",
+        "appVersion": "应用版本",
+        "workloads": "工作负载",
+        "workloadCount": "工作负载数量",
+        "endpointId": "Endpoint ID",
+        "stackId": "Stack ID",
+        "stackName": "Stack",
+        "stackType": "Stack 类型",
+        "services": "服务",
+        "serviceCount": "服务数量",
+        "entrypoint": "入口文件",
+        "projectPath": "项目路径"
+      }
+    },
+    "validation": {
+      "nameRequired": "必须填写执行器名称。",
+      "runtimeRequired": "必须选择运行时连接。",
+      "runtimeMismatch": "所选运行时连接与运行时类型必须保持一致。",
+      "trackerRequired": "必须绑定追踪器。",
+      "trackerSourceRequired": "该追踪器包含多个镜像来源，请选择一个。",
+      "trackerSourceMissing": "当前选择的镜像来源不存在，请重新选择。",
+      "trackerSourceUnavailable": "当前选择的镜像来源不可用，请重新选择。",
+      "containerTargetRequired": "Docker 和 Podman 执行器必须绑定到单个已发现容器。",
+      "portainerStackTargetRequired": "Portainer 执行器必须绑定到一个已发现的 Portainer Stack 目标。",
+      "portainerStackTargetIncomplete": "Portainer Stack 目标在保存前必须包含 endpoint ID、stack ID、stack name 和 stack type。",
+      "serviceBindingRequired": "分组服务执行器在保存前必须至少定义一个服务绑定。",
+      "serviceSelectionRequired": "每个分组服务绑定行都必须选择一个服务。",
+      "duplicateServiceBinding": "同一个服务不能在一个执行器里重复绑定。",
+      "kubernetesSingleContainer": "请选择一个 Kubernetes 工作负载目标后再保存。",
+      "helmReleaseTargetRequired": "请选择一个 Helm Release 目标后再保存。",
+      "trackerImageStrategyIncompatible": "当前策略要求所选镜像来源提供镜像值。请更换来源或切换镜像策略。",
+      "maintenanceTimezoneRequired": "维护窗口模式必须填写时区。",
+      "maintenanceTimeRequired": "维护窗口模式必须填写开始和结束时间。",
+      "channelRequired": "必须绑定发布渠道。",
+      "channelMissing": "当前绑定的发布渠道不存在，请重新选择。",
+      "channelUnavailable": "当前绑定的发布渠道已禁用，请重新选择。"
+    },
+    "toasts": {
+      "loadFailed": "加载执行器失败。",
+      "loadConfigFailed": "加载执行器配置失败。",
+      "runStarted": "执行器运行已排队。",
+      "runQueued": "执行器运行已加入队列。",
+      "runFailed": "执行器运行失败。",
+      "runDisabled": "执行器已禁用，无法手动执行。"
+    },
+    "imageStrategy": {
+      "replace_tag_on_current_image": "保留当前镜像名",
+      "use_tracker_image_and_tag": "使用追踪到的镜像名"
+    },
+    "imageStrategyDescriptions": {
+      "replace_tag_on_current_image": "保留当前镜像名，只更新版本。",
+      "use_tracker_image_and_tag": "使用所选来源提供的镜像名和版本。"
+    },
+    "imageReferenceStrategy": {
+      "digest": "优先使用不可变镜像",
+      "tag": "优先使用版本标签"
+    },
+    "referenceModes": {
+      "chart": "Chart"
+    },
+    "imageReferenceStrategyDescriptions": {
+      "digest": "可用时优先使用不可变镜像引用。",
+      "tag": "使用追踪到的版本标签。"
+    },
+    "history": {
+      "title": "执行历史",
+      "description": "查看所选执行器的执行历史。",
+      "emptySelection": "请选择一个执行器以查看其执行历史。",
+      "searchPlaceholder": "按镜像或消息搜索执行历史",
+      "noResults": "当前筛选条件下没有匹配的执行历史。",
+      "clearRecords": "清理记录",
+      "clearTitle": "清理执行历史？",
+      "clearDescription": "这会删除当前执行器的所有执行历史记录，操作无法撤销。",
+      "clearConfirm": "确认清理",
+      "clearSuccess": "已清理 {{count}} 条执行历史记录",
+      "clearFailed": "清理执行历史失败",
+      "filters": {
+        "all": "全部执行结果"
+      },
+      "table": {
+        "startedAt": "开始时间",
+        "finishedAt": "结束时间",
+        "result": "结果",
+        "fromImage": "原镜像",
+        "toImage": "目标镜像",
+        "fromVersion": "原版本",
+        "toVersion": "目标版本",
+        "message": "消息"
+      }
+    },
+    "sheet": {
+      "addTitle": "创建执行器",
+      "editTitle": "编辑执行器",
+      "description": ""
+    },
+    "days": {
+      "monday": "周一",
+      "tuesday": "周二",
+      "wednesday": "周三",
+      "thursday": "周四",
+      "friday": "周五",
+      "saturday": "周六",
+      "sunday": "周日"
+    }
+  },
+  "runtimeConnections": {
+    "title": "运行时连接",
+    "description": "管理执行器可用的连接。",
+    "addNew": "添加运行时连接",
+    "deleteConfirm": "确认删除此运行时连接吗？",
+    "toasts": {
+      "loadFailed": "加载运行时连接失败"
+    },
+    "table": {
+      "name": "名称",
+      "type": "类型",
+      "endpoint": "端点",
+      "secrets": "密钥",
+      "status": "状态",
+      "actions": "操作"
+    },
+    "dialog": {
+      "addTitle": "添加运行时连接",
+      "editTitle": "编辑运行时连接",
+      "description": "为运行时添加或更新连接。",
+      "createSuccess": "运行时连接已创建",
+      "updateSuccess": "运行时连接已更新",
+      "errors": {
+        "kubeconfigRequiredForNamespaceDiscovery": "获取命名空间前请选择 Kubernetes 凭证，或启用集群内配置。",
+        "kubernetesCredentialRequired": "保存前请选择 Kubernetes 凭证，或启用集群内配置。",
+        "portainerCredentialRequired": "保存前请选择 Portainer 凭证。"
+      },
+      "currentSecrets": "当前已脱敏密钥",
+      "sections": {
+        "connection": "连接信息",
+        "authentication": "鉴权信息",
+        "containerDescription": "设置 Docker 或 Podman 的 socket 端点。",
+        "kubernetesDescription": "选择集群上下文和可用命名空间。",
+        "portainerDescription": "连接 Portainer，并选择此连接要使用的 endpoint。",
+        "secretDescription": "密钥字段留空时，将保留当前保存的 {{type}} 值。",
+        "kubernetesSecrets": "密钥字段留空即可保留当前保存值。",
+        "portainerSecrets": "API Key 留空即可保留当前保存值。"
+      },
+      "fields": {
+        "name": "连接名称",
+        "type": "运行时类型",
+        "enabled": "启用",
+        "enabledDescription": "禁用后将不能用于新的执行器。",
+        "socket": "Socket 端点",
+        "apiVersion": "API 版本",
+        "tlsVerify": "校验 TLS",
+        "username": "用户名",
+        "password": "密码",
+        "token": "令牌",
+        "caCert": "CA 证书",
+        "clientCert": "客户端证书",
+        "clientKey": "客户端私钥",
+        "context": "Context",
+        "namespaces": "命名空间",
+        "inCluster": "使用集群内配置",
+        "kubeconfig": "Kubeconfig",
+        "clientCertificate": "客户端证书",
+        "certificateAuthority": "CA 证书",
+        "baseUrl": "Base URL",
+        "endpointId": "Endpoint ID",
+        "apiKey": "API 密钥",
+        "credential": "凭证",
+        "noCredential": "不使用凭证"
+      },
+      "placeholders": {
+        "name": "例如：prod-cluster",
+        "type": "选择运行时类型",
+        "description": "输入描述",
+        "socket": "unix:///var/run/docker.sock 或 tcp://host:2376",
+        "apiVersion": "例如：v1.46",
+        "context": "例如：production",
+        "kubeconfig": "粘贴 kubeconfig YAML",
+        "secret": "留空则保持不变",
+        "baseUrl": "https://portainer.example.com",
+        "endpointId": "例如：1",
+        "apiKey": "输入 Portainer API Key",
+        "credential": "选择凭证"
+      },
+      "hints": {
+        "socket": "本地 socket 使用 unix://，远程 socket 使用 tcp://。",
+        "tlsVerify": "远程 daemon 需要证书校验时启用。",
+        "namespaces": "从当前集群自动获取命名空间，可多选。",
+        "inCluster": "启用后 kubeconfig 变为可选，后端将使用集群内认证。",
+        "kubeconfig": "未启用集群内配置且未选择 Kubernetes 凭证时必须提供。",
+        "credential": "凭证用于复用鉴权材料。",
+        "baseUrl": "必须以 http:// 或 https:// 开头。",
+        "endpointId": "填写 Portainer endpoint 的正整数标识。"
+      },
+      "actions": {
+        "discoverNamespaces": "获取命名空间",
+        "selectNamespaces": "选择命名空间",
+        "editNamespaces": "编辑命名空间"
+      },
+      "empty": {
+        "namespaces": "尚未获取命名空间，请先点击“获取命名空间”。",
+        "namespaceSearch": "没有匹配的命名空间。"
+      }
+    }
+  },
+  "credentials": {
+    "title": "凭证",
+    "description": "管理 API 访问凭证",
+    "addNew": "添加凭证",
+    "table": {
+      "name": "名称",
+      "type": "类型",
+      "token": "令牌",
+      "description": "描述",
+      "createdAt": "创建时间",
+      "actions": "操作"
+    },
+    "dialog": {
+      "addTitle": "添加凭证",
+      "editTitle": "编辑凭证",
+      "name": "凭证名称",
+      "namePlaceholder": "例如：GitHub Token",
+      "type": "类型",
+      "selectType": "选择类型",
+      "token": "访问令牌",
+      "tokenPlaceholder": "输入访问令牌",
+      "description": "描述",
+      "descriptionPlaceholder": "输入描述"
+    },
+    "references": {
+      "blockedTitle": "凭证正在被使用",
+      "blockedDescription": "删除此凭证前，请先移除以下引用。",
+      "runtimeConnections": "运行时连接",
+      "trackerSources": "追踪器来源",
+      "trackers": "旧版追踪器"
+    }
+  },
+  "tracker": {
+    "addTitle": "添加追踪器",
+    "editTitle": "编辑追踪器",
+    "description": "配置追踪器渠道、凭证和发布渠道。",
+    "fields": {
+      "name": "名称",
+      "nameDesc": "追踪器的唯一标识符。",
+      "type": "类型",
+      "selectType": "选择类型",
+      "repo": "仓库 (拥有者/仓库名)",
+      "instanceUrl": "实例 URL",
+      "projectId": "项目 ID/路径",
+      "giteaRepo": "仓库路径 (拥有者/仓库名)",
+      "chartRepo": "Chart 仓库 URL",
+      "chartName": "Chart 名称",
+      "image": "镜像名",
+      "registry": "Registry 地址",
+      "credential": "凭证",
+      "optional": "可选",
+      "none": "无",
+      "interval": "检查间隔 (分钟)",
+      "channels": "渠道",
+      "addChannel": "添加渠道",
+      "channelName": "渠道名称",
+      "channelNameDesc": "选择此渠道的显示分类",
+      "platformType": "平台类型",
+      "platformTypeDesc": "根据发布状态（正式版/预发布版）过滤版本",
+      "all": "全部",
+      "release": "发布版",
+      "preRelease": "预发布版",
+      "includeRegex": "包含正则",
+      "includeRegexDesc": "仅包含匹配此正则模式的版本",
+      "excludeRegex": "排除正则",
+      "excludeRegexDesc": "排除匹配此正则模式的版本",
+      "fetchPrefs": "抓取选项",
+      "fetchLimit": "单次拉取深度",
+      "fetchLimitDesc": "如果是更新尤其频繁的库，可以适当增加以保证不漏抓 (最大 100 条)",
+      "fetchTimeout": "请求超时时间 (s)",
+      "fetchTimeoutDesc": "单次网络请求最大等待秒数，如果源站较慢可以增加 (最大 180s)",
+      "versionSortMode": "版本排序及最新标识判断",
+      "sortModePublished": "按发布时间排列 (默认)",
+      "sortModeSemVer": "按语义化排列 (忽略旧版安全补丁)",
+      "githubFetchMode": "GitHub 抓取优先策略",
+      "githubFetchModeDesc": "设置 GitHub 优先使用 GraphQL 或 REST。",
+      "githubFetchModeGraphql": "GraphQL 优先",
+      "githubFetchModeRest": "REST 优先",
+      "fallbackTags": "Release 回退机制",
+      "fallbackTagsDesc": "未返回 Release 时，回退为拉取原始 Git Tag"
+    },
+    "errors": {
+      "nameExists": "追踪器名称已存在"
+    },
+    "save": "保存追踪器"
+  },
+  "credential": {
+    "editTitle": "编辑凭证",
+    "addTitle": "添加凭证",
+    "description": "安全存储令牌和连接鉴权材料。",
+    "sections": {
+      "basic": "基础信息",
+      "authentication": "鉴权信息"
+    },
+    "hints": {
+      "trackerAuthentication": "追踪器凭证用于保存来源服务的访问令牌。",
+      "connectionAuthentication": "连接凭证用于保存可复用的鉴权材料。"
+    },
+    "types": {
+      "github": "GitHub",
+      "gitlab": "GitLab",
+      "gitea": "Gitea",
+      "helm": "Helm Chart 仓库",
+      "docker": "容器镜像仓库",
+      "docker_runtime": "Docker",
+      "podman_runtime": "Podman",
+      "kubernetes_runtime": "Kubernetes",
+      "portainer_runtime": "Portainer"
+    },
+    "fields": {
+      "name": "名称",
+      "namePlaceholder": "例如：我的 GitHub 凭证",
+      "type": "类型",
+      "selectType": "选择类型",
+      "token": "令牌",
+      "tokenPlaceholder": "输入令牌",
+      "tokenPlaceholder_github": "例如：ghp_xxxxxxxx（个人访问令牌）",
+      "tokenPlaceholder_gitlab": "例如：glpat-xxxxxxxx（个人访问令牌）",
+      "tokenPlaceholder_gitea": "例如：1a2b3c...（应用令牌）",
+      "tokenPlaceholder_helm": "例如：username:password（仓库需要 Basic Auth 时）",
+      "tokenPlaceholder_docker": "例如：username:password 或镜像仓库令牌",
+      "tokenUnchanged": "留空则保持不变",
+      "username": "用户名",
+      "password": "密码",
+      "passwordOrPat": "密码或 PAT",
+      "kubeconfig": "Kubeconfig",
+      "clientCertificate": "客户端证书",
+      "clientKey": "客户端私钥",
+      "certificateAuthority": "CA 证书",
+      "caCert": "CA 证书",
+      "apiKey": "API 密钥",
+      "description": "描述",
+      "descriptionPlaceholder": "输入描述"
+    },
+    "placeholders": {
+      "username": "输入用户名",
+      "password": "输入密码",
+      "registryUsername": "输入镜像仓库用户名",
+      "registryPasswordOrPat": "输入镜像仓库密码或 PAT",
+      "kubeconfig": "粘贴 kubeconfig YAML",
+      "clientCertificate": "粘贴客户端证书",
+      "clientKey": "粘贴客户端私钥",
+      "certificateAuthority": "粘贴 CA 证书",
+      "caCert": "粘贴 CA 证书",
+      "apiKey": "输入 API 密钥"
+    },
+    "save": "保存"
+  },
+  "channel": {
+    "stable": "正式版",
+    "prerelease": "预发布版",
+    "beta": "测试版",
+    "canary": "金丝雀版",
+    "unclassified": "未分类"
+  },
+  "language": {
+    "switch": "切换语言",
+    "zh": "中文",
+    "en": "English"
+  },
+  "pagination": {
+    "previous": "上一页",
+    "next": "下一页",
+    "previousPage": "前往上一页",
+    "nextPage": "前往下一页",
+    "morePages": "更多页",
+    "firstPage": "前往第一页",
+    "lastPage": "前往最后一页",
+    "totalItems": "共 {{count}} 条",
+    "rowsPerPage": "每页行数",
+    "pageOf": "第 {{page}} 页 / 共 {{total}} 页"
+  },
+  "settings": {
+    "title": "通知设置",
+    "description": "管理消息推送通知渠道",
+    "tabs": {
+      "notifications": "通知设置",
+      "general": "常规设置",
+      "backup": "备份与恢复"
+    },
+    "timezone": {
+      "title": "全局时区",
+      "label": "系统时区",
+      "description": "执行器维护窗口统一使用这里配置的 IANA 时区，例如 Asia/Shanghai。"
+    },
+    "notifications": {
+      "title": "通知",
+      "description": "配置 Webhook 以接收版本更新通知",
+      "add": "添加通知渠道",
+      "table": {
+        "name": "名称",
+        "url": "Webhook URL",
+        "events": "触发事件",
+        "status": "状态",
+        "enabled": "启用",
+        "disabled": "禁用",
+        "actions": "操作"
+      },
+      "dialog": {
+        "addTitle": "添加通知渠道",
+        "editTitle": "编辑通知渠道",
+        "name": "名称",
+        "url": "Webhook URL",
+        "language": "消息语言",
+        "languageDesc": "控制 Webhook 消息字段和测试消息使用的语言。",
+        "languages": {
+          "en": "英语",
+          "zh": "中文"
+        },
+        "events": "触发事件",
+        "eventsDesc": "选择触发通知的事件类型",
+        "description": "配置通知渠道的详细信息。",
+        "deleteConfirm": "确认删除此通知渠道吗？",
+        "test": "发送测试消息",
+        "testSuccess": "测试消息发送成功",
+        "testFailed": "测试消息发送失败",
+        "createSuccess": "通知渠道已创建",
+        "updateSuccess": "通知渠道已更新",
+        "placeholder": {
+          "name": "例如：Discord Webhook",
+          "url": "https://..."
+        }
+      },
+      "eventTypes": {
+        "new_release": "新版本发布",
+        "republish": "重新发布",
+        "executor_run_success": "执行器运行成功",
+        "executor_run_failed": "执行器运行失败",
+        "executor_run_skipped": "执行器运行跳过"
+      },
+      "eventDescriptions": {
+        "new_release": "当检测到新版本时触发",
+        "republish": "当版本重新发布时触发",
+        "executor_run_success": "当执行器成功更新运行时目标时触发",
+        "executor_run_failed": "当执行器运行失败时触发",
+        "executor_run_skipped": "当执行器运行被跳过时触发"
+      }
+    }
+  }
+}

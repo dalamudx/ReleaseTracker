@@ -1,0 +1,1097 @@
+{
+    "theme": {
+        "toggle": "Toggle Theme",
+        "mode": {
+            "title": "Theme Mode",
+            "description": "Select light/dark theme",
+            "light": "Light",
+            "lightDesc": "Light theme",
+            "dark": "Dark",
+            "darkDesc": "Dark theme",
+            "system": "System",
+            "systemDesc": "Follow system settings"
+        },
+        "color": {
+            "title": "Color Scheme",
+            "description": "Select primary color",
+            "neutral": "Default",
+            "red": "Red",
+            "rose": "Rose",
+            "orange": "Orange",
+            "green": "Green",
+            "blue": "Blue",
+            "yellow": "Yellow",
+            "violet": "Violet"
+        },
+        "scale": {
+            "title": "Scale Mode",
+            "description": "Select interface scale",
+            "default": "Default",
+            "scaled": "Scaled",
+            "mono": "Mono"
+        },
+        "radius": {
+            "title": "Radius",
+            "description": "Adjust corner radius"
+        }
+    },
+    "auth": {
+        "login": {
+            "title": "Release Tracker",
+            "subtitle": "Manage and track your software releases",
+            "username": "Username",
+            "usernamePlaceholder": "Enter username",
+            "password": "Password",
+            "passwordPlaceholder": "Enter password",
+            "submit": "Login",
+            "submitting": "Logging in...",
+            "success": "Login successful",
+            "failed": "Login failed, please check username and password"
+        },
+        "logout": {
+            "success": "Logged out successfully"
+        },
+        "oidc": {
+            "orContinueWith": "Or continue with",
+            "loginWith": "Continue with {{name}}",
+            "loginWith_prefix": "Continue with",
+            "loginWith_suffix": "",
+            "connecting": "Connecting to {{name}}...",
+            "loginSuccess": "Login successful",
+            "loginFailed": "OIDC login failed, please try again"
+        }
+    },
+    "user": {
+        "settings": "User Settings",
+        "description": "Manage your account settings and security options",
+        "tabs": {
+            "account": "Account",
+            "security": "Security"
+        },
+        "fields": {
+            "currentPassword": "Current Password",
+            "newPassword": "New Password",
+            "confirmPassword": "Confirm Password"
+        },
+        "actions": {
+            "updatePassword": "Update Password",
+            "logout": "Log out"
+        },
+        "messages": {
+            "passwordMismatch": "New password and confirmation do not match",
+            "passwordTooShort": "New password must be at least 6 characters",
+            "passwordUpdated": "Password updated successfully",
+            "passwordUpdateFailed": "Failed to update password, please check current password"
+        }
+    },
+    "common": {
+        "save": "Save",
+        "cancel": "Cancel",
+        "delete": "Delete",
+        "edit": "Edit",
+        "add": "Add",
+        "search": "Search",
+        "loading": "Loading...",
+        "noData": "No data available",
+        "confirm": "Confirm",
+        "back": "Back",
+        "close": "Close",
+        "saved": "Saved successfully",
+        "deleted": "Deleted successfully",
+        "deleteFailed": "Failed to delete",
+        "checkStarted": "Check started successfully",
+        "checkQueued": "Check has been queued.",
+        "checkFailed": "Check failed",
+        "check": "Check",
+        "never": "Never",
+        "unexpectedError": "An unexpected error occurred",
+        "description": "Description",
+        "enabled": "Enabled",
+        "disabled": "Disabled",
+        "actions": "Actions",
+        "saving": "Saving...",
+        "switchLanguage": "Switch language"
+    },
+    "systemSettings": {
+        "system": {
+            "title": "System Settings",
+            "description": "Manage global application configuration and integrations"
+        },
+        "tabs": {
+            "general": "Global",
+            "security": "Security keys",
+            "oidc": "OIDC"
+        },
+        "global": {
+            "title": "Global Settings",
+            "description": "These settings apply to the whole application. Future global options should be managed here as well.",
+            "baseUrl": {
+                "title": "BASE URL",
+                "label": "Public app URL",
+                "description": "Used for reverse proxy deployments, OIDC callbacks, and post-login redirects. Include the full subpath if the app is hosted under one.",
+                "placeholder": "https://example.com/releasetracker",
+                "invalid": "Enter a valid http(s) URL."
+            },
+            "timezone": {
+                "title": "Global timezone",
+                "label": "System timezone",
+                "description": "Executor maintenance windows and statistics charts use this IANA timezone, for example Asia/Shanghai."
+            },
+            "logLevel": {
+                "title": "Log level",
+                "label": "Backend log level",
+                "description": "Controls backend application logging after startup."
+            },
+            "releaseHistoryRetention": {
+                "title": "Release history retention",
+                "label": "Versions per release channel",
+                "description": "Keep the latest N versions for each release channel. Cleanup runs after executor maintenance windows finish, or daily at 02:00 when no maintenance windows exist.",
+                "invalid": "Enter an integer from 1 to 1000."
+            }
+        },
+        "securityKeys": {
+            "title": "Security keys",
+            "description": "Manage application-owned session and encryption keys. Raw key values are never displayed.",
+            "rotate": "Rotate",
+            "generate": "Generate on server",
+            "manual": "Manual value",
+            "confirmRotate": "Rotate key",
+            "undecryptable": "Undecryptable: {{count}}",
+            "blocked": "Found {{count}} Fernet-looking values that cannot be decrypted with the current key. Fix those records before rotating the encryption key.",
+            "summary": {
+                "activeSessions": "Active sessions",
+                "credentialsToken": "Credential tokens",
+                "credentialsSecrets": "Credential secrets",
+                "oidcSecrets": "OIDC secrets",
+                "runtimeSecrets": "Runtime secrets",
+                "undecryptable": "Undecryptable"
+            },
+            "inventory": {
+                "credentialsToken": "Credential tokens: {{count}}",
+                "credentialsSecrets": "Credential secrets: {{count}}",
+                "oidcSecrets": "OIDC secrets: {{count}}",
+                "runtimeSecrets": "Runtime secrets: {{count}}"
+            },
+            "jwt": {
+                "title": "Session key",
+                "description": "Signs access and refresh tokens. Rotating it immediately invalidates all current sessions.",
+                "activeSessions": "Active sessions: {{count}}",
+                "rotateTitle": "Rotate session key",
+                "rotateDescription": "Use a generated secret or provide a strong manual value.",
+                "warning": "All users, including you, will be logged out immediately after rotation.",
+                "manualLabel": "New session key",
+                "rotated": "Session key rotated. Invalidated sessions: {{count}}"
+            },
+            "encryption": {
+                "title": "Encryption key",
+                "description": "Encrypts credentials, OIDC client secrets, and runtime connection secrets stored in the database.",
+                "rotateTitle": "Rotate encryption key",
+                "rotateDescription": "Existing encrypted data will be re-encrypted with the new Fernet key.",
+                "warning": "Rotation aborts if any Fernet-looking value cannot be decrypted with the current key.",
+                "manualLabel": "New Fernet encryption key",
+                "rotated": "Encryption key rotated. Plaintext values re-encrypted: {{count}}"
+            }
+        },
+        "general": {
+            "title": "General Settings",
+            "description": "Manage version sorting and data fetching preferences",
+            "versionSortMode": "Version Sort Mode",
+            "versionSortModeDesc": "Choose how the system picks the latest version from tracking records",
+            "sortPublishedAt": "Sort by publishing time (Default)",
+            "sortSemver": "Sort by Semantic Versioning (SemVer)",
+            "fetchLimit": "Fetch Limit Depth",
+            "fetchLimitDesc": "The maximum number of records to fetch per check. Higher limits are useful for projects that release frequently."
+        },
+        "oidc": {
+            "title": "OIDC Login Providers",
+            "description": "Configure third-party login providers (OpenID Connect)",
+            "add": "Add Provider",
+            "addTitle": "Add OIDC Provider",
+            "editTitle": "Edit OIDC Provider",
+            "dialogDesc": "Configure an OpenID Connect provider for user login",
+            "empty": "No OIDC providers configured",
+            "manualEndpoints": "[Manual endpoint config]",
+            "requiredFields": "Please fill in all required fields",
+            "secretRequired": "Client secret is required when creating a provider",
+            "secretHint": "Leave blank to keep unchanged",
+            "secretPlaceholder": "Leave blank to keep unchanged",
+            "created": "OIDC provider created",
+            "updated": "OIDC provider updated",
+            "deleted": "OIDC provider deleted",
+            "loadFailed": "Failed to load providers",
+            "saveFailed": "Failed to save",
+            "deleteFailed": "Failed to delete",
+            "deleteTitle": "Confirm Delete",
+            "deleteDesc": "Are you sure you want to delete \"{{name}}\"? Existing users will no longer be able to log in with this provider.",
+            "fields": {
+                "name": "Display Name",
+                "slug": "Slug (URL Identifier)",
+                "clientId": "Client ID",
+                "clientSecret": "Client Secret",
+                "issuerUrl": "Issuer URL",
+                "discoveryEnabled": "Enable OIDC Discovery",
+                "discoveryDesc": "Auto-discover endpoint configuration (recommended)",
+                "authorizationUrl": "Authorization URL",
+                "tokenUrl": "Token URL",
+                "userinfoUrl": "Userinfo URL",
+                "scopes": "Scopes",
+                "iconUrl": "Icon URL",
+                "description": "Description",
+                "enabled": "Enable this provider"
+            }
+        }
+    },
+    "sidebar": {
+        "dashboard": "Dashboard",
+        "history": "Version History",
+        "trackers": "Trackers",
+        "executors": "Executors",
+        "runtimeConnections": "Runtime Connections",
+        "credentials": "Credentials",
+        "notifications": "Notifications",
+        "settings": "System Settings"
+    },
+    "dashboard": {
+        "title": "Dashboard",
+        "description": "Release monitoring overview",
+        "stats": {
+            "totalReleases": "Total Releases",
+            "activeTrackers": "Active Trackers",
+            "lastUpdate": "Last Update",
+            "recentInLast7Days": "in last 7 days",
+            "currentlyTracking": "currently tracking",
+            "releaseTypeStats": "Release Type Statistics",
+            "channelStats": "Channel Version Statistics"
+        },
+        "releaseTrend": {
+            "title": "Release Trend",
+            "description": "Showing daily release activity for the last 7 days"
+        },
+        "recentReleases": {
+            "title": "Recent Releases",
+            "description": "The 5 most recent releases",
+            "noReleases": "No releases found",
+            "viewNotes": "View Release Notes"
+        },
+        "releaseNotes": {
+            "viewSource": "View Source",
+            "channelBadge": "Release channel: {{channel}}",
+            "releasedAt": "Released on {{date}}",
+            "noNotes": "No release notes provided."
+        }
+    },
+    "history": {
+        "title": "Release History",
+        "description": "View and search release history across all trackers.",
+        "searchPlaceholder": "Search by version or body content...",
+        "noResults": "No results found.",
+        "table": {
+            "tracker": "Tracker",
+            "version": "Version",
+            "channel": "Channel",
+            "channelType": "Channel Type",
+            "published": "Published At",
+            "link": "Link"
+        }
+    },
+    "trackers": {
+        "title": "Tracker Management",
+        "description": "Configure and manage release trackers",
+        "addNew": "Add Tracker",
+        "table": {
+            "name": "Name",
+            "type": "Type",
+            "repo": "Repository",
+            "status": "Status",
+            "lastCheck": "Last Check",
+            "lastVersion": "Latest Version",
+            "channelCount": "Channel Count",
+            "actions": "Actions"
+        },
+        "status": {
+            "enabled": "Enabled",
+            "disabled": "Disabled",
+            "error": "Error"
+        },
+        "aggregate": {
+            "addTitle": "Add Aggregate Tracker",
+            "editTitle": "Edit Aggregate Tracker",
+            "description": "Track one project across child channels and define release channels with regex filters.",
+            "table": {
+                "sources": "Channel Types"
+            },
+            "validation": {
+                "nameRequired": "Tracker name is required.",
+                "atLeastOneSource": "Add at least one child channel before saving.",
+                "atLeastOneReleaseChannel": "Add at least one release channel before saving.",
+                "primaryRequired": "Choose a primary changelog channel before saving.",
+                "primaryMustMatchSource": "Primary changelog channel must match one of the tracker child channels.",
+                "sourceKeyRequired": "Channel key is required.",
+                "sourceKeyUnique": "Each channel key must be unique.",
+                "releaseChannelUnique": "Each release channel can only be added once.",
+                "invalidIncludePattern": "Include regex is invalid:",
+                "invalidExcludePattern": "Exclude regex is invalid:",
+                "requiredField": "This field is required."
+            },
+            "identity": {
+                "title": "Tracker identity",
+                "description": "This tracker represents the project. Child channels provide its releases, packages, charts, or container images."
+            },
+            "trackerChannels": {
+                "title": "Tracked channels",
+                "description": "Manage the child channels for this tracker.",
+                "add": "Add channel"
+            },
+            "labels": {
+                "trackerChannelHeader": "{{type}} · {{key}}",
+                "releaseChannelHeader": "{{name}} · {{type}}",
+                "releaseChannelHeaderNoType": "{{name}}",
+                "blankTrackerChannelKey": "Untitled channel",
+                "blankReleaseChannelName": "Untitled release channel",
+                "blankReleaseChannelType": "Release type pending"
+            },
+            "releaseChannels": {
+                "title": "Release channels",
+                "description": "Configure release channels and regex filters for this child channel.",
+                "add": "Add release channel",
+                "empty": "No release channels are attached to this child channel yet.",
+                    "collapsedSummary": "Release filter",
+                "fields": {
+                    "name": "Release channel type",
+                    "nameDescription": "Choose the release channel type. Labels are localized for stable, prerelease, beta, and canary.",
+                    "type": "Release type",
+                    "typePlaceholder": "Select release type",
+                    "typeDescription": "Choose the release status explicitly; it won’t be inferred from the name.",
+                    "includePattern": "Include regex",
+                    "includePatternPlaceholder": "Leave empty to include all versions",
+                    "includePatternDescription": "Only versions matching this regex can enter the selected release channel.",
+                    "excludePattern": "Exclude regex",
+                    "excludePatternPlaceholder": "Leave empty to exclude none",
+                    "excludePatternDescription": "Versions matching this regex are blocked even if the include regex matches."
+                }
+            },
+            "fetching": {
+                "title": "Fetch preferences",
+                "description": "These settings apply to the whole tracker."
+            },
+            "fields": {
+                "name": "Tracker name",
+                "namePlaceholder": "e.g. release-tracker",
+                "descriptionPlaceholder": "Enter description",
+                "primarySource": "Primary changelog channel",
+                "primarySourcePlaceholder": "Select the source for canonical release notes",
+                "primarySourceDescription": "When multiple channels report the same version, release notes come from this child channel.",
+                "enabled": "Enabled",
+                "enabledDescription": "Disabled trackers keep their configuration but won’t run scheduled checks.",
+                "sourceKey": "Channel key",
+                "sourceKeyPlaceholder": "e.g. upstream-release",
+                "sourceKeyDescription": "Stable channel ID.",
+                "sourceType": "Channel type",
+                "credential": "Credential",
+                "credentialPlaceholder": "Select credential",
+                "none": "None",
+                "registryDescription": ""            },
+            "detail": {
+                "emptyTitle": "Select a tracker",
+                "emptyDescription": "Select a tracker to view its child channels, release channels, and version data.",
+                "loadingTitle": "Loading tracker",
+                "loadFailedTitle": "Tracker detail unavailable",
+                "loadFailedDescription": "The selected tracker could not be loaded.",
+                "noDescription": "No description provided.",
+                "primarySource": "Primary notes source",
+                "primaryBadge": "Primary",
+                "sourceCount": "Enabled / child channels",
+                "enabledSources": "enabled channels",
+                "latestCanonical": "Latest aggregated version",
+                "releaseChannels": "Release channels",
+                "releaseChannelsSummary": "release channels grouped by child channel",
+                "trackerChannelsTitle": "Child channel overview",
+                "trackerChannelsDescription": "",
+                "credential": "Credential",
+                "releaseViewsTitle": "Version view",
+                "releaseViewsDescription": "See how aggregated versions map across child channels.",
+                "canonicalDiagramDescription": "",
+                "canonicalDiagramVersionLabel": "Comparison version (merged)",
+                "helmChartVersion": "Chart version: {{version}}",
+                "emptyCanonical": "No aggregated versions are available yet.",
+                "channelType": {
+                    "github": "GitHub",
+                    "gitlab": "GitLab",
+                    "gitea": "Gitea",
+                    "helm": "Helm",
+                    "container": "Container",
+                    "unknown": "Unknown"
+                },
+                "configLabel": {
+                    "repo": "Repository",
+                    "project": "Project",
+                    "instance": "Instance URL",
+                    "chart": "Chart name",
+                    "image": "Image",
+                    "registry": "Registry",
+                    "fetch_mode": "Fetch priority"
+                }
+            }
+        },
+        "dialog": {
+            "addTitle": "Add Tracker",
+            "editTitle": "Edit Tracker",
+            "basicInfo": "Basic Information",
+            "name": "Tracker Name",
+            "namePlaceholder": "e.g., My Project",
+            "type": "Type",
+            "selectType": "Select type",
+            "repo": "Repository",
+            "repoPlaceholder": "e.g., owner/repo",
+            "project": "Project",
+            "projectPlaceholder": "e.g., group/project",
+            "instance": "Instance URL",
+            "instancePlaceholder": "e.g., https://gitlab.example.com",
+            "chart": "Chart Name",
+            "chartPlaceholder": "e.g., nginx",
+            "credential": "Credential",
+            "selectCredential": "Select credential (optional)",
+            "interval": "Check Interval",
+            "channels": {
+                "title": "Channel Configuration",
+                "add": "Add Channel",
+                "type": "Channel Type",
+                "includePattern": "Include Pattern (regex)",
+                "includePatternPlaceholder": "Leave empty to include all",
+                "excludePattern": "Exclude Pattern (regex)",
+                "excludePatternPlaceholder": "Leave empty to exclude none",
+                "enabled": "Enabled"
+            }
+        }
+    },
+    "executors": {
+        "title": "Executor Management",
+        "description": "Connect tracked versions to your runtime targets.",
+        "addNew": "Add Executor",
+        "deleteConfirm": "Are you sure you want to delete this executor?",
+        "prerequisites": {
+            "runtime": {
+                "title": "Add a runtime connection before creating executors",
+                "description": "Add a runtime connection before selecting a target."
+            },
+            "tracker": {
+                "title": "Add a tracker before creating executors",
+                "description": "Executors only automate tracked release channels, so create a tracker first."
+            },
+            "both": {
+                "title": "Create the prerequisites before adding executors",
+                "description": "Add a runtime connection and a tracker before creating an executor."
+            },
+            "actions": {
+                "runtimeConnections": "Open Runtime Connections",
+                "trackers": "Open Trackers"
+            }
+        },
+        "table": {
+            "name": "Name",
+            "runtime": "Runtime",
+            "target": "Target",
+            "tracker": "Tracker",
+            "policy": "Policy",
+            "status": "Status",
+            "lastRun": "Last Run",
+            "actions": "Actions"
+        },
+        "actions": {
+            "continue": "Continue",
+            "create": "Create Executor",
+            "discover": "Discover Targets",
+            "runNow": "Run Now",
+            "viewExecutionHistory": "View execution history"
+        },
+        "steps": {
+            "target": "Target",
+            "binding": "Binding",
+            "policy": "Policy",
+            "review": "Review"
+        },
+        "sections": {
+            "targetSetup": "Basic information",
+            "targetSetupDesc": "Name the executor and choose a runtime connection before binding.",
+            "notes": "Notes",
+            "notesDesc": "Optional notes for future operators.",
+            "discovery": "Target discovery",
+            "discoveryDesc": "Discover live targets from the selected runtime, then choose one to bind.",
+            "targetSelection": "Current target",
+            "targetSelectionDesc": "Complete discovery first, then select a target to continue to tracker binding.",
+            "binding": "Target binding",
+            "bindingDesc": "Choose what this executor should follow for the selected target.",
+            "bindingStepDesc": "Select the source and release channel for this target.",
+            "policy": "Update policy",
+            "policyDesc": "Define when this executor can apply a newly tracked image.",
+            "review": "Review and save",
+            "reviewDesc": "Confirm the runtime, target, and update policy before saving the executor."
+        },
+        "fields": {
+            "name": "Executor name",
+            "namePlaceholder": "e.g. edge-nginx-prod",
+            "tracker": "Bound tracker",
+            "service": "Service",
+            "servicePlaceholder": "Select a service",
+            "trackerPlaceholder": "Select a tracker",
+            "trackerSource": "Image source",
+            "trackerSourcePlaceholder": "Select an image source",
+            "trackerSourcePlaceholderEmpty": "Select a tracker first",
+            "trackerSourceAutoSelected": "Auto-selected from the tracker",
+            "trackerSourceHint": "Choose the image source this executor follows.",
+            "trackerSourceSingleHint": "This tracker has one available image source, so it is selected automatically.",
+            "bindingUnavailable": "current binding unavailable",
+            "runtimeConnection": "Runtime connection",
+            "runtimeConnectionPlaceholder": "Select a runtime connection",
+            "runtimeConnectionDesc": "Used to discover targets and run updates.",
+            "runtimeSelectionHint": "Choose a runtime connection to discover targets.",
+            "runtimeType": "Runtime type",
+            "runtimeTypeDesc": "Derived from the selected connection.",
+            "descriptionPlaceholder": "Enter notes",
+            "trackerFilteredHint": "Only trackers with an available image source and release channel are shown.",
+            "enabled": "Enabled",
+            "enabledDesc": "Disabled executors stay configured but won’t run on schedule.",
+            "updateMode": "Update mode",
+            "imageSelectionMode": "Image selection strategy",
+            "imageReferenceMode": "Update target strategy",
+            "maintenanceTimezone": "Timezone",
+            "globalTimezoneHint": "Using the global timezone from System Settings: {{timezone}}.",
+            "maintenanceDays": "Allowed days",
+            "maintenanceDaysDesc": "Leave empty to allow all days. Use the time window below to restrict execution.",
+            "maintenanceStart": "Window start",
+            "maintenanceEnd": "Window end",
+            "channel": "Release channel",
+            "channelPlaceholder": "Select a release channel",
+            "channelPlaceholderEmpty": "Select an image source first",
+            "channelHint": "Only release channels from the selected tracker channel are available here."
+        },
+        "modes": {
+            "manual": "Manual",
+            "maintenance_window": "Maintenance window",
+            "immediate": "Immediate"
+        },
+        "modeDescriptions": {
+            "manual": "Only runs when an operator triggers it manually from the list.",
+            "maintenance_window": "Runs automatically, but only inside the configured local maintenance window.",
+            "immediate": "Runs automatically as soon as a newer tracked image is detected."
+        },
+        "results": {
+            "queued": "Queued",
+            "running": "Running",
+            "success": "Success",
+            "failed": "Failed",
+            "skipped": "Skipped",
+            "idle": "Idle"
+        },
+        "status": {
+            "invalid": "Invalid"
+        },
+        "discovery": {
+            "runtimeSummary": "Discovering targets from {{name}} ({{type}}).",
+            "runtimeMissing": "Select a runtime connection first to enable discovery.",
+            "failed": "Target discovery failed.",
+            "empty": "No targets were returned.",
+            "selected": "Selected",
+            "bind": "Bind target",
+            "rebind": "Rebind target",
+            "noTargetSelected": "No target selected yet.",
+            "namespace": "Namespace",
+            "namespacePlaceholder": "Select namespace",
+            "namespaceRequired": "Select a namespace first.",
+            "namespaceHint": "Only namespaces configured on the runtime connection are shown; cluster-wide namespace enumeration is not used.",
+            "containerFixedHint": "Docker and Podman bind exactly one discovered container.",
+            "dockerComposeHint": "Compose projects use the project and selected services.",
+            "portainerStackHint": "Portainer stack executors use the stack and selected services.",
+            "kubernetesHint": "Kubernetes workloads are bound as one target; choose container bindings in the next step."
+        },
+        "binding": {
+            "targetSelectionRequired": "Select a target before choosing its source and release channel.",
+            "groupedTargetHint": "Bind trackers by service.",
+            "portainerBindingEmpty": "Add at least one service binding before continuing.",
+            "addServiceBinding": "Add service binding",
+            "removeServiceBinding": "Remove service binding",
+            "serviceBindingLabel": "Service binding {{index}}",
+            "serviceBindingGroup": "Service binding",
+            "serviceBindingGroupHint": "Bind multiple services in one compact table.",
+            "currentBinding": "Current binding"
+        },
+        "review": {
+            "name": "Executor",
+            "runtime": "Runtime",
+            "tracker": "Tracker",
+            "source": "Image source",
+            "targetType": "Target type",
+            "target": "Target",
+            "serviceBindings": "Service bindings",
+            "mode": "Policy",
+            "status": "State",
+            "imageStrategy": "Image strategy",
+            "imageReference": "Target strategy",
+            "imageChanges": "Image changes",
+            "versionChanges": "Version changes",
+            "targetVersion": "Target version",
+            "targetImageDeferred": "Resolved at run time",
+            "maintenanceSummary": "Maintenance window: {{timezone}}, {{start}}–{{end}}.",
+            "ready": "The executor configuration is complete and ready to save."
+        },
+        "target": {
+            "kind": {
+                "container": "Container",
+                "kubernetes": "Kubernetes workload",
+                "kubernetes_workload": "Kubernetes workload",
+                "helm_release": "Helm release",
+                "docker_compose": "Docker Compose project",
+                "podman_compose": "Podman Compose project",
+                "portainer_stack": "Portainer stack"
+            },
+            "serviceCountSummary": "{{count}} services",
+            "details": {
+                "container": "Container",
+                "containerId": "Container ID",
+                "project": "Project",
+                "workingDir": "Working directory",
+                "configFiles": "Config files",
+                "namespace": "Namespace",
+                "kind": "Workload kind",
+                "workload": "Workload",
+                "releaseName": "Release",
+                "chartName": "Chart",
+                "chartVersion": "Chart version",
+                "appVersion": "App version",
+                "workloads": "Workloads",
+                "workloadCount": "Workload count",
+                "endpointId": "Endpoint ID",
+                "stackId": "Stack ID",
+                "stackName": "Stack",
+                "stackType": "Stack type",
+                "services": "Services",
+                "serviceCount": "Service count",
+                "entrypoint": "Entrypoint",
+                "projectPath": "Project path"
+            }
+        },
+        "validation": {
+            "nameRequired": "Executor name is required.",
+            "runtimeRequired": "A runtime connection is required.",
+            "runtimeMismatch": "The selected runtime connection and runtime type must match.",
+            "trackerRequired": "A tracker binding is required.",
+            "trackerSourceRequired": "This tracker has multiple image sources. Choose one.",
+            "trackerSourceMissing": "The selected image source no longer exists. Please choose another one.",
+            "trackerSourceUnavailable": "The selected image source is unavailable. Please choose another one.",
+            "containerTargetRequired": "Docker and Podman executors must be bound to one discovered container.",
+            "portainerStackTargetRequired": "Portainer executors must be bound to one discovered Portainer stack target.",
+            "portainerStackTargetIncomplete": "Portainer stack targets require endpoint ID, stack ID, stack name, and stack type before the executor can be saved.",
+            "serviceBindingRequired": "Grouped service executors must define at least one service binding before they can be saved.",
+            "serviceSelectionRequired": "Each grouped service binding row must choose a service.",
+            "duplicateServiceBinding": "The same service cannot be bound twice in one executor.",
+      "kubernetesSingleContainer": "Select a Kubernetes workload target before saving.",
+            "helmReleaseTargetRequired": "Select a Helm release target before saving.",
+            "trackerImageStrategyIncompatible": "This strategy requires an image source with an image value. Choose another source or switch image strategy.",
+            "maintenanceTimezoneRequired": "Timezone is required for maintenance window mode.",
+            "maintenanceTimeRequired": "Start and end times are required for maintenance window mode.",
+            "channelRequired": "A release channel binding is required.",
+            "channelMissing": "The currently bound release channel no longer exists. Please choose a new one.",
+            "channelUnavailable": "The currently bound release channel is disabled. Please choose a new one."
+        },
+            "toasts": {
+            "loadFailed": "Failed to load executors.",
+            "loadConfigFailed": "Failed to load executor configuration.",
+            "runStarted": "Executor run queued.",
+            "runQueued": "Executor run has been queued.",
+            "runFailed": "Executor run failed.",
+            "runDisabled": "This executor is disabled and cannot be run manually."
+        },
+        "imageStrategy": {
+            "replace_tag_on_current_image": "Keep current image name",
+            "use_tracker_image_and_tag": "Use tracked image name"
+        },
+        "imageStrategyDescriptions": {
+            "replace_tag_on_current_image": "Keeps the current image name and updates only the version.",
+            "use_tracker_image_and_tag": "Uses the image name and version from the selected source."
+        },
+        "imageReferenceStrategy": {
+            "digest": "Prefer immutable image",
+            "tag": "Prefer version tag"
+        },
+        "referenceModes": {
+            "chart": "Chart"
+        },
+        "imageReferenceStrategyDescriptions": {
+            "digest": "Uses an immutable image reference when available.",
+            "tag": "Uses the tracked version tag."
+        },
+        "history": {
+            "title": "Execution History",
+            "description": "Review execution history for the selected executor.",
+            "emptySelection": "Select an executor to view its execution history.",
+            "searchPlaceholder": "Search execution history by image or message",
+            "noResults": "No execution history matched the current filters.",
+            "clearRecords": "Clear records",
+            "clearTitle": "Clear execution history?",
+            "clearDescription": "This deletes all execution history records for the current executor. This action cannot be undone.",
+            "clearConfirm": "Clear records",
+            "clearSuccess": "Cleared {{count}} execution history records",
+            "clearFailed": "Failed to clear execution history",
+            "filters": {
+                "all": "All run results"
+            },
+            "table": {
+                "startedAt": "Started",
+                "finishedAt": "Finished",
+                "result": "Result",
+                "fromImage": "From Image",
+                "toImage": "To Image",
+                "fromVersion": "From version",
+                "toVersion": "To version",
+                "message": "Message"
+            }
+        },
+        "sheet": {
+            "addTitle": "Create Executor",
+            "editTitle": "Edit Executor",
+            "description": ""
+        },
+        "days": {
+            "monday": "Mon",
+            "tuesday": "Tue",
+            "wednesday": "Wed",
+            "thursday": "Thu",
+            "friday": "Fri",
+            "saturday": "Sat",
+            "sunday": "Sun"
+        }
+    },
+    "runtimeConnections": {
+        "title": "Runtime Connections",
+        "description": "Manage the connections your executors can use.",
+        "addNew": "Add Runtime Connection",
+        "deleteConfirm": "Delete this runtime connection?",
+        "toasts": {
+            "loadFailed": "Failed to load runtime connections"
+        },
+        "table": {
+            "name": "Name",
+            "type": "Type",
+            "endpoint": "Endpoint",
+            "secrets": "Secrets",
+            "status": "Status",
+            "actions": "Actions"
+        },
+        "dialog": {
+            "addTitle": "Add Runtime Connection",
+            "editTitle": "Edit Runtime Connection",
+            "description": "Add or update a connection for your runtime.",
+            "createSuccess": "Runtime connection created",
+            "updateSuccess": "Runtime connection updated",
+            "errors": {
+                "kubeconfigRequiredForNamespaceDiscovery": "Select a Kubernetes credential, or enable in-cluster config before discovering namespaces.",
+                "kubernetesCredentialRequired": "Select a Kubernetes credential, or enable in-cluster config before saving.",
+                "portainerCredentialRequired": "Select a Portainer credential before saving."
+            },
+            "currentSecrets": "Current masked secrets",
+            "sections": {
+                "connection": "Connection",
+                "authentication": "Authentication",
+                "containerDescription": "Set the Docker or Podman socket endpoint.",
+                "kubernetesDescription": "Choose a cluster context and the namespaces this connection can use.",
+                "portainerDescription": "Connect to Portainer and choose the endpoint this connection should use.",
+                "secretDescription": "Leave a secret field blank to keep the current saved value for {{type}}.",
+                "kubernetesSecrets": "Leave secret fields blank to keep the current saved values.",
+                "portainerSecrets": "Leave the API key blank to keep the current saved value."
+            },
+            "fields": {
+                "name": "Connection Name",
+                "type": "Runtime Type",
+                "enabled": "Enabled",
+                "enabledDescription": "Disabled connections cannot be selected for new executors.",
+                "socket": "Socket endpoint",
+                "apiVersion": "API Version",
+                "tlsVerify": "TLS Verify",
+                "username": "Username",
+                "password": "Password",
+                "token": "Token",
+                "caCert": "CA Certificate",
+                "clientCert": "Client Certificate",
+                "clientKey": "Client Key",
+                "context": "Context",
+                "namespaces": "Namespaces",
+                "inCluster": "Use in-cluster config",
+                "kubeconfig": "Kubeconfig",
+                "clientCertificate": "Client Certificate",
+                "certificateAuthority": "Certificate Authority",
+                "baseUrl": "Base URL",
+                "endpointId": "Endpoint ID",
+                "apiKey": "API Key",
+                "credential": "Credential",
+                "noCredential": "No credential"
+            },
+            "placeholders": {
+                "name": "e.g. prod-cluster",
+                "type": "Select runtime type",
+                "description": "Enter description",
+                "socket": "unix:///var/run/docker.sock or tcp://host:2376",
+                "apiVersion": "e.g. v1.46",
+                "context": "e.g. production",
+                "kubeconfig": "Paste kubeconfig YAML",
+                "secret": "Leave blank to keep unchanged",
+                "baseUrl": "https://portainer.example.com",
+                "endpointId": "e.g. 1",
+                "apiKey": "Enter Portainer API key",
+                "credential": "Select a credential"
+            },
+            "hints": {
+                "socket": "Use unix:// for a local socket or tcp:// for a remote socket.",
+                "tlsVerify": "Enable when the remote daemon requires certificate validation.",
+                "namespaces": "Discover namespaces from the current cluster and select one or more.",
+                "inCluster": "When enabled, kubeconfig is optional and the backend uses in-cluster auth.",
+                "kubeconfig": "Required unless in-cluster config is enabled or a Kubernetes credential is selected.",
+                "credential": "Credentials store reusable authentication material.",
+                "baseUrl": "Must start with http:// or https://.",
+                "endpointId": "Positive integer Portainer endpoint identifier."
+            },
+            "actions": {
+                "discoverNamespaces": "Discover namespaces",
+                "selectNamespaces": "Select namespaces",
+                "editNamespaces": "Edit namespaces"
+            },
+            "empty": {
+                "namespaces": "No namespaces loaded yet. Click discover namespaces first.",
+                "namespaceSearch": "No matching namespaces."
+            }
+        }
+    },
+    "credentials": {
+        "title": "Credentials",
+        "description": "Manage API access credentials",
+        "addNew": "Add Credential",
+        "table": {
+            "name": "Name",
+            "type": "Type",
+            "token": "Token",
+            "description": "Description",
+            "createdAt": "Created At",
+            "actions": "Actions"
+        },
+        "dialog": {
+            "addTitle": "Add Credential",
+            "editTitle": "Edit Credential",
+            "name": "Credential Name",
+            "namePlaceholder": "e.g., GitHub Token",
+            "type": "Type",
+            "selectType": "Select type",
+            "token": "Access Token",
+            "tokenPlaceholder": "Enter access token",
+            "description": "Description",
+            "descriptionPlaceholder": "Enter description"
+        },
+        "references": {
+            "blockedTitle": "Credential is in use",
+            "blockedDescription": "Remove these references before deleting this credential.",
+            "runtimeConnections": "Runtime connections",
+            "trackerSources": "Tracker sources",
+            "trackers": "Legacy trackers"
+        }
+    },
+    "tracker": {
+        "addTitle": "Add Tracker",
+        "editTitle": "Edit Tracker",
+        "description": "Configure tracker channels, credentials, and release channels.",
+        "fields": {
+            "name": "Name",
+            "nameDesc": "Unique identifier for this tracker.",
+            "type": "Type",
+            "selectType": "Select type",
+            "repo": "Repository (Owner/Repo)",
+            "instanceUrl": "Instance URL",
+            "projectId": "Project ID/Path",
+            "giteaRepo": "Repository Path (owner/repo)",
+            "chartRepo": "Chart Repo URL",
+            "chartName": "Chart Name",
+            "image": "Image Name",
+            "registry": "Registry Address",
+            "credential": "Credential",
+            "optional": "Optional",
+            "none": "None",
+            "interval": "Check Interval (Minutes)",
+            "channels": "Channels",
+            "addChannel": "Add Channel",
+            "channelName": "Channel Name",
+            "channelNameDesc": "Select the display category for this channel",
+            "platformType": "Platform Type",
+            "platformTypeDesc": "Filter versions by release status (Release/Pre-release)",
+            "all": "All",
+            "release": "Release",
+            "preRelease": "Pre-release",
+            "includeRegex": "Include Regex",
+            "includeRegexDesc": "Only include versions matching this regex pattern",
+            "excludeRegex": "Exclude Regex",
+            "excludeRegexDesc": "Exclude versions matching this regex pattern",
+            "fetchPrefs": "Fetch Preferences",
+            "fetchLimit": "Fetch Limit per Check",
+            "fetchLimitDesc": "Can be increased for frequently released repositories (max 100).",
+            "fetchTimeout": "Fetch Timeout (s)",
+            "fetchTimeoutDesc": "Maximum waiting time for fetching remote data (max 180s).",
+            "versionSortMode": "Version Sorting Strategy",
+            "sortModePublished": "Sort by Published Date (Default)",
+            "sortModeSemVer": "Sort by Semantic Version (Ignores older security patches)",
+            "githubFetchMode": "GitHub Fetch Priority",
+            "githubFetchModeDesc": "Choose whether GitHub tries GraphQL or REST first.",
+            "githubFetchModeGraphql": "GraphQL First",
+            "githubFetchModeRest": "REST First",
+            "fallbackTags": "Fallback to Git Tags",
+            "fallbackTagsDesc": "Retry with raw Git tags when no releases are returned"
+        },
+        "errors": {
+            "nameExists": "Tracker name already exists"
+        },
+        "save": "Save Tracker"
+    },
+    "credential": {
+        "editTitle": "Edit Credential",
+        "addTitle": "Add Credential",
+        "description": "Store tokens and connection authentication materials securely.",
+        "sections": {
+            "basic": "Basic information",
+            "authentication": "Authentication"
+        },
+        "hints": {
+            "trackerAuthentication": "Tracker credentials store API tokens for source providers.",
+            "connectionAuthentication": "Connection credentials store reusable authentication materials."
+        },
+        "types": {
+            "github": "GitHub",
+            "gitlab": "GitLab",
+            "gitea": "Gitea",
+            "helm": "Helm Chart",
+            "docker": "Container Registry",
+            "docker_runtime": "Docker",
+            "podman_runtime": "Podman",
+            "kubernetes_runtime": "Kubernetes",
+            "portainer_runtime": "Portainer"
+        },
+        "fields": {
+            "name": "Name",
+            "namePlaceholder": "e.g. My GitHub Token",
+            "type": "Type",
+            "selectType": "Select type",
+            "token": "Token",
+            "tokenPlaceholder": "Enter token",
+            "tokenPlaceholder_github": "e.g. ghp_xxxxxxxx (Personal Access Token)",
+            "tokenPlaceholder_gitlab": "e.g. glpat-xxxxxxxx (Personal Access Token)",
+            "tokenPlaceholder_gitea": "e.g. 1a2b3c... (Application Token)",
+            "tokenPlaceholder_helm": "e.g. username:password",
+            "tokenPlaceholder_docker": "e.g. username:password or registry token",
+            "tokenUnchanged": "Leave blank to keep unchanged",
+            "username": "Username",
+            "password": "Password",
+            "passwordOrPat": "Password or PAT",
+            "kubeconfig": "Kubeconfig",
+            "clientCertificate": "Client Certificate",
+            "clientKey": "Client Key",
+            "certificateAuthority": "Certificate Authority",
+            "caCert": "CA Certificate",
+            "apiKey": "API Key",
+            "description": "Description",
+            "descriptionPlaceholder": "Enter description"
+        },
+        "placeholders": {
+            "username": "Enter username",
+            "password": "Enter password",
+            "registryUsername": "Enter registry username",
+            "registryPasswordOrPat": "Enter registry password or PAT",
+            "kubeconfig": "Paste kubeconfig YAML",
+            "clientCertificate": "Paste client certificate",
+            "clientKey": "Paste client key",
+            "certificateAuthority": "Paste CA certificate",
+            "caCert": "Paste CA certificate",
+            "apiKey": "Enter API key"
+        },
+        "save": "Save"
+    },
+    "channel": {
+        "stable": "Stable",
+        "prerelease": "Pre-Release",
+        "beta": "Beta",
+        "canary": "Canary",
+        "unclassified": "Unclassified"
+    },
+    "language": {
+        "switch": "Switch Language",
+        "zh": "中文",
+        "en": "English"
+    },
+    "pagination": {
+        "previous": "Previous",
+        "next": "Next",
+        "previousPage": "Go to previous page",
+        "nextPage": "Go to next page",
+        "morePages": "More pages",
+        "firstPage": "Go to first page",
+        "lastPage": "Go to last page",
+        "totalItems": "Total {{count}} items",
+        "rowsPerPage": "Rows per page",
+        "pageOf": "Page {{page}} of {{total}}"
+    },
+    "settings": {
+        "title": "Notification Settings",
+        "description": "Manage message push notification channels",
+        "timezone": {
+            "title": "Global timezone",
+            "label": "System timezone",
+            "description": "Executor maintenance windows use this IANA timezone, for example Asia/Shanghai."
+        },
+        "notifications": {
+            "title": "Notifications",
+            "description": "Configure webhooks to receive release update notifications",
+            "add": "Add Notification Channel",
+            "table": {
+                "name": "Name",
+                "url": "Webhook URL",
+                "events": "Trigger Events",
+                "status": "Status",
+                "enabled": "Enabled",
+                "disabled": "Disabled",
+                "actions": "Actions"
+            },
+            "dialog": {
+                "addTitle": "Add Notification Channel",
+                "editTitle": "Edit Notification Channel",
+                "name": "Name",
+                "url": "Webhook URL",
+                "language": "Message Language",
+                "languageDesc": "Controls the language used in webhook message fields and test messages.",
+                "languages": {
+                    "en": "English",
+                    "zh": "Chinese"
+                },
+                "events": "Trigger Events",
+                "eventsDesc": "Select event types to trigger notifications",
+                "description": "Configure the details for your notification channel.",
+                "deleteConfirm": "Delete this notification channel?",
+                "test": "Send Test Message",
+                "testSuccess": "Test message sent successfully",
+                "testFailed": "Test message failed",
+                "createSuccess": "Notification channel created",
+                "updateSuccess": "Notification channel updated",
+                "placeholder": {
+                    "name": "e.g., Discord Webhook",
+                    "url": "https://..."
+                }
+            },
+            "eventTypes": {
+                "new_release": "New Release",
+                "republish": "Republish",
+                "executor_run_success": "Executor Run Succeeded",
+                "executor_run_failed": "Executor Run Failed",
+                "executor_run_skipped": "Executor Run Skipped"
+            },
+            "eventDescriptions": {
+                "new_release": "Triggered when a new version is detected",
+                "republish": "Triggered when a version is republished",
+                "executor_run_success": "Triggered when an executor updates its runtime target successfully",
+                "executor_run_failed": "Triggered when an executor run fails",
+                "executor_run_skipped": "Triggered when an executor run is skipped"
+            }
+        }
+    }
+}
