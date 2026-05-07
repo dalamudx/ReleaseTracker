@@ -123,7 +123,7 @@ export function RuntimeConnectionDialog({ open, onOpenChange, runtimeConnection,
             base_url: getStringValue(runtimeConnection.config.base_url),
             endpoint_id: stringifyInteger(runtimeConnection.config.endpoint_id),
         })
-    }, [open, runtimeConnection, form, t])
+    }, [open, runtimeConnection, form])
 
     const selectedType = useWatch({ control: form.control, name: 'type' })
     const useInClusterAuth = useWatch({ control: form.control, name: 'in_cluster' })
