@@ -43,7 +43,7 @@ jobs:
           chmod +x /usr/local/bin/dbmate
 
       - name: Run backend tests
-        run: uv --directory backend run pytest -q
+        run: uv --directory backend run --extra dev pytest -q
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
