@@ -6,6 +6,8 @@ COPY frontend/ ./
 RUN npm run build
 
 FROM python:3.12-alpine
+LABEL org.opencontainers.image.description="A lightweight, configurable release tracking and update orchestration tool" \
+      org.opencontainers.image.authors="dalamudx"
 WORKDIR /app/backend
 ARG DBMATE_VERSION=2.32.0
 ARG HELM_VERSION=3.17.3
