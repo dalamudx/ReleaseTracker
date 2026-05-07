@@ -7,6 +7,11 @@ export const CHANNEL_LABELS: Record<string, string> = {
     'canary': 'channel.canary',
 }
 
+export const RELEASE_TYPE_LABELS: Record<string, string> = {
+    'release': 'releaseType.release',
+    'prerelease': 'releaseType.prerelease',
+}
+
 export function getChannelLabel(name: string | null | undefined): string {
     if (!name) return i18n.t('channel.unclassified')
 
@@ -16,4 +21,15 @@ export function getChannelLabel(name: string | null | undefined): string {
     }
 
     return name
+}
+
+export function getReleaseTypeLabel(type: string | null | undefined): string {
+    if (!type) return i18n.t('channel.unclassified')
+
+    const translationKey = RELEASE_TYPE_LABELS[type]
+    if (translationKey) {
+        return i18n.t(translationKey)
+    }
+
+    return type
 }

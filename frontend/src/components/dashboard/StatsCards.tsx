@@ -7,7 +7,7 @@ import {
     CardContent,
 } from "@/components/ui/card"
 import type { ReleaseStats } from "@/api/types"
-import { getChannelLabel } from "@/lib/channel"
+import { getChannelLabel, getReleaseTypeLabel } from "@/lib/channel"
 
 interface StatsCardsProps {
     stats: ReleaseStats | null
@@ -28,7 +28,7 @@ export function StatsCards({ stats, loading }: StatsCardsProps) {
     // Get release type stats (stable vs prerelease) sorted by count
     const releaseTypeEntries = stats?.release_type_stats
         ? Object.entries(stats.release_type_stats)
-            .map(([key, count]) => ({ name: getChannelLabel(key), value: count }))
+            .map(([key, count]) => ({ name: getReleaseTypeLabel(key), value: count }))
             .sort((a, b) => b.value - a.value)
         : []
 

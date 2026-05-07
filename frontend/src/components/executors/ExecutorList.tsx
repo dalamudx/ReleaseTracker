@@ -22,6 +22,7 @@ import {
     TableRow,
 } from "@/components/ui/table"
 import type { ExecutorListItem } from "@/api/types"
+import { getChannelLabel } from "@/lib/channel"
 import { buildExecutorTargetDisplay, isHelmReleaseTarget } from "./executorSheetHelpers"
 
 interface ExecutorListProps {
@@ -128,7 +129,7 @@ export function ExecutorList({ executors, loading, onEdit, onDelete, onRun, onVi
                                         <div className="min-w-0 space-y-2">
                                             <div className="min-w-0 space-y-1">
                                                 <div className="truncate text-sm font-medium text-foreground">{executor.tracker_name}</div>
-                                                <div className="text-xs text-muted-foreground">{executor.channel_name || '-'}</div>
+                                                <div className="text-xs text-muted-foreground">{getChannelLabel(executor.channel_name)}</div>
                                             </div>
                                             {serviceBindingSummary ? (
                                                 <div className="max-w-[280px] truncate text-xs text-muted-foreground">

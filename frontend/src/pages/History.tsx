@@ -24,6 +24,7 @@ import type { ReleaseHistoryItem, TrackerSourceType } from "@/api/types"
 import { buildReleaseIdentityPrefix } from "@/pages/historyHelpers"
 import { ReleaseNotesModal } from "@/components/dashboard/ReleaseNotesModal"
 import { getReleaseChannelDisplayLabel } from "@/components/dashboard/releaseNotesModalHelpers"
+import { getReleaseTypeLabel } from "@/lib/channel"
 import { useReleaseHistory } from "@/hooks/queries"
 import {
     Select,
@@ -166,7 +167,7 @@ export default function HistoryPage() {
                                                         variant="outline"
                                                         className="h-3.5 rounded-full border-amber-500 bg-transparent px-1 text-[9px] font-medium leading-none text-amber-500 transition-colors hover:bg-transparent"
                                                     >
-                                                        Pre
+                                                        {getReleaseTypeLabel('prerelease')}
                                                     </Badge>
                                                 ) : null}
                                             </div>

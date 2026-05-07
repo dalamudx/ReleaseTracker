@@ -1015,6 +1015,10 @@
         "canary": "Canary",
         "unclassified": "Unclassified"
     },
+    "releaseType": {
+        "release": "Stable",
+        "prerelease": "Pre-Release"
+    },
     "language": {
         "switch": "Switch Language",
         "zh": "中文",

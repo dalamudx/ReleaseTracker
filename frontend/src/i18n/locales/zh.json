@@ -1016,6 +1016,10 @@
     "canary": "金丝雀版",
     "unclassified": "未分类"
   },
+  "releaseType": {
+    "release": "正式版",
+    "prerelease": "预发布版"
+  },
   "language": {
     "switch": "切换语言",
     "zh": "中文",
