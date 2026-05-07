@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
+from . import __version__
 from .scheduler import ReleaseScheduler
 from .scheduler_host import SchedulerHost
 from .executor_scheduler import ExecutorScheduler
@@ -79,8 +80,8 @@ async def lifespan(app: FastAPI):
 # Create the FastAPI application
 app = FastAPI(
     title="ReleaseTracker API",
-    description="版本追踪软件 REST API",
-    version="0.1.0",
+    description="A lightweight, configurable release tracking and update orchestration API",
+    version=__version__,
     lifespan=lifespan,
 )
 

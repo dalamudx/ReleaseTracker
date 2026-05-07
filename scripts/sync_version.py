@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 VERSION_FILE = ROOT / "VERSION"
 BACKEND_PYPROJECT = ROOT / "backend" / "pyproject.toml"
+BACKEND_INIT = ROOT / "backend" / "src" / "releasetracker" / "__init__.py"
 FRONTEND_PACKAGE = ROOT / "frontend" / "package.json"
 FRONTEND_LOCK = ROOT / "frontend" / "package-lock.json"
 VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
@@ -27,6 +28,14 @@ def update_pyproject(version: str) -> None:
     if count == 0:
         raise SystemExit(f"No version field found in {BACKEND_PYPROJECT}")
     BACKEND_PYPROJECT.write_text(updated, encoding="utf-8")
+
+
+def update_backend_init(version: str) -> None:
+    content = BACKEND_INIT.read_text(encoding="utf-8")
+    updated, count = re.subn(r'^__version__ = ".*"$', f'__version__ = "{version}"', content, count=1, flags=re.MULTILINE)
+    if count == 0:
+        raise SystemExit(f"No __version__ field found in {BACKEND_INIT}")
+    BACKEND_INIT.write_text(updated, encoding="utf-8")
 
 
 def update_package_json(path: Path, version: str) -> None:
@@ -50,6 +59,7 @@ def main() -> None:
 
     version = read_version()
     update_pyproject(version)
+    update_backend_init(version)
     update_package_json(FRONTEND_PACKAGE, version)
     update_package_json(FRONTEND_LOCK, version)
     print(f"Synchronized project version to {version}")
