@@ -426,17 +426,34 @@ async def link_oauth_to_user(
 
 
 async def update_user_oidc_info(
-    storage: "SQLiteStorage", user_id: int, email: str | None = None, avatar_url: str | None = None
+    storage: "SQLiteStorage",
+    user_id: int,
+    username: str | None = None,
+    email: str | None = None,
+    avatar_url: str | None = None,
 ) -> None:
     db = await storage._get_connection()
-    if email:
-        await db.execute(
-            "UPDATE users SET email = ?, avatar_url = ? WHERE id = ?",
-            (email, avatar_url, user_id),
-        )
-    elif avatar_url:
-        await db.execute(
-            "UPDATE users SET avatar_url = ? WHERE id = ?",
-            (avatar_url, user_id),
-        )
+    db.row_factory = aiosqlite.Row
+    cursor = await db.execute("SELECT username, email, avatar_url FROM users WHERE id = ?", (user_id,))
+    row = await cursor.fetchone()
+    if not row:
+        return
+
+    next_username = row["username"]
+    if username and username != row["username"]:
+        cursor = await db.execute("SELECT id FROM users WHERE username = ? AND id != ?", (username, user_id))
+        if not await cursor.fetchone():
+            next_username = username
+
+    next_email = row["email"]
+    if email and email != row["email"]:
+        cursor = await db.execute("SELECT id FROM users WHERE email = ? AND id != ?", (email, user_id))
+        if not await cursor.fetchone():
+            next_email = email
+
+    next_avatar_url = avatar_url if avatar_url else row["avatar_url"]
+    await db.execute(
+        "UPDATE users SET username = ?, email = ?, avatar_url = ? WHERE id = ?",
+        (next_username, next_email, next_avatar_url, user_id),
+    )
     await db.commit()

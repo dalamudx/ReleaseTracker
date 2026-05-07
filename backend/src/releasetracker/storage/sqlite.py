@@ -4234,6 +4234,10 @@ class SQLiteStorage:
         await sqlite_auth_oidc.link_oauth_to_user(self, user_id, provider, oauth_sub, avatar_url)
 
     async def update_user_oidc_info(
-        self, user_id: int, email: str | None = None, avatar_url: str | None = None
+        self,
+        user_id: int,
+        username: str | None = None,
+        email: str | None = None,
+        avatar_url: str | None = None,
     ) -> None:
-        await sqlite_auth_oidc.update_user_oidc_info(self, user_id, email, avatar_url)
+        await sqlite_auth_oidc.update_user_oidc_info(self, user_id, username, email, avatar_url)

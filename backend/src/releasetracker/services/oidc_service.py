@@ -133,16 +133,18 @@ class OIDCService:
                 raise ValueError(f"Token 换取失败：{e.response.status_code}")
 
         # 2. Fetch user information
-        if token.get("id_token"):
-            userinfo = self._parse_id_token(token["id_token"], provider_slug)
-        else:
+        userinfo = self._parse_id_token(token["id_token"], provider_slug) if token.get("id_token") else None
+        if provider.userinfo_url and token.get("access_token"):
             async with httpx.AsyncClient(timeout=10) as http:
                 ui_resp = await http.get(
                     str(provider.userinfo_url),
                     headers={"Authorization": f"Bearer {token['access_token']}"},
                 )
                 ui_resp.raise_for_status()
-                userinfo = self._normalize_userinfo(ui_resp.json(), provider_slug)
+                userinfo_from_endpoint = self._normalize_userinfo(ui_resp.json(), provider_slug)
+                userinfo = self._merge_userinfo(userinfo, userinfo_from_endpoint)
+        if userinfo is None:
+            raise ValueError("OIDC 用户信息缺失")
 
         # 3. Create or link user
         user = await self._get_or_create_user(userinfo)
@@ -204,22 +206,39 @@ class OIDCService:
             provider_slug=provider_slug,
         )
 
+    def _merge_userinfo(
+        self,
+        primary: OIDCUserInfo | None,
+        fallback: OIDCUserInfo,
+    ) -> OIDCUserInfo:
+        if primary is None:
+            return fallback
+        return OIDCUserInfo(
+            sub=primary.sub,
+            email=fallback.email or primary.email,
+            email_verified=fallback.email_verified or primary.email_verified,
+            name=fallback.name or primary.name,
+            preferred_username=fallback.preferred_username or primary.preferred_username,
+            picture=fallback.picture or primary.picture,
+            provider_slug=primary.provider_slug,
+        )
+
     async def _get_or_create_user(self, userinfo: OIDCUserInfo) -> User:
         """Get or create an OIDC user with three-step matching"""
+        username = userinfo.preferred_username or userinfo.name or userinfo.email.split("@")[0]
+
         # 1. Match by OIDC sub
         existing = await self.storage.get_user_by_oauth(userinfo.provider_slug, userinfo.sub)
         if existing:
-            # Synchronize avatar and email
-            if userinfo.email_verified or userinfo.picture:
-                await self.storage.update_user_oidc_info(
-                    _require_user_id(existing),
-                    email=userinfo.email if userinfo.email_verified else None,
-                    avatar_url=userinfo.picture,
-                )
-            return existing
+            await self.storage.update_user_oidc_info(
+                _require_user_id(existing),
+                username=username,
+                email=userinfo.email,
+                avatar_url=userinfo.picture,
+            )
+            return await self.storage.get_user_by_oauth(userinfo.provider_slug, userinfo.sub) or existing
 
         # 2. Match by username and link automatically
-        username = userinfo.preferred_username or userinfo.email.split("@")[0]
         by_username = await self.storage.get_user_by_username(username)
         if by_username:
             await self.storage.link_oauth_to_user(

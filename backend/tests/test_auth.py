@@ -5,7 +5,7 @@ import pytest
 from urllib.parse import parse_qs, urlparse
 
 from releasetracker.main import app
-from releasetracker.models import LoginRequest
+from releasetracker.models import LoginRequest, User
 from releasetracker.oidc_models import OIDCProvider
 from releasetracker.routers.oidc import get_oidc_service
 from releasetracker.storage.sqlite import SYSTEM_BASE_URL_SETTING_KEY
@@ -220,6 +220,40 @@ async def test_oidc_authorize_uses_configured_base_url(client, storage):
     assert params["redirect_uri"] == [
         "https://example.com/releasetracker/auth/oidc/mock/callback"
     ]
+
+
+@pytest.mark.asyncio
+async def test_existing_oidc_user_display_fields_are_synchronized(storage):
+    from releasetracker.services.oidc_service import OIDCService
+
+    existing_user = await storage.create_user(
+        User(
+            username="old-subject-name",
+            email="old@example.com",
+            password_hash="oidc",
+            oauth_provider="authentik",
+            oauth_sub="subject-1",
+            avatar_url="https://example.com/old.png",
+        )
+    )
+    oidc_service = OIDCService(storage, auth_service=None)  # type: ignore[arg-type]
+    userinfo = oidc_service._normalize_userinfo(
+        {
+            "sub": "subject-1",
+            "email": "new@example.com",
+            "email_verified": True,
+            "name": "Display Name",
+            "picture": "https://example.com/new.png",
+        },
+        "authentik",
+    )
+
+    user = await oidc_service._get_or_create_user(userinfo)
+
+    assert user.id == existing_user.id
+    assert user.username == "Display Name"
+    assert user.email == "new@example.com"
+    assert user.avatar_url == "https://example.com/new.png"
 
 
 @pytest.mark.asyncio
