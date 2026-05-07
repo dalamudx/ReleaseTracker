@@ -189,6 +189,7 @@ make dbmate-migrate
 | `make lint` | 执行后端和前端代码检查 |
 | `make format` | 格式化后端代码 |
 | `make build` | 构建前端生产产物 |
+| `make version VERSION=1.0.1` | 同步根版本文件、后端版本和前端版本 |
 | `make dbmate-migrate` | 对当前数据库执行 dbmate 迁移 |
 | `make clean` | 清理构建产物和缓存 |
 

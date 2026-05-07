@@ -1,4 +1,4 @@
-.PHONY: help install run-backend run-frontend lint format clean build dbmate-migrate
+.PHONY: help install run-backend run-frontend lint format clean build dbmate-migrate version
 
 # 默认目标
 .DEFAULT_GOAL := help
@@ -46,6 +46,10 @@ format: ## 代码格式化 (后端 black/ruff)
 build: ## 构建前端生产代码
 	@echo "🏗️ 构建前端..."
 	cd frontend && $(NPM) run build
+
+version: ## 同步版本号，用法：make version VERSION=1.0.1
+	@test -n "$(VERSION)" || (echo "VERSION is required, for example: make version VERSION=1.0.1" && exit 1)
+	$(PYTHON) scripts/sync_version.py $(VERSION)
 
 dbmate-migrate: ## 对当前 releases.db 执行 dbmate 迁移
 	@echo "🛫 执行 dbmate 迁移..."
