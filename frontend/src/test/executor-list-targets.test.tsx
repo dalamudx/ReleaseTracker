@@ -5,6 +5,10 @@ import type { ExecutorListItem } from "@/api/types"
 import { ExecutorList } from "@/components/executors/ExecutorList"
 
 vi.mock("react-i18next", () => ({
+  initReactI18next: {
+    type: "3rdParty",
+    init: vi.fn(),
+  },
   useTranslation: () => ({
     t: (key: string) => key,
     i18n: { language: "en" },
