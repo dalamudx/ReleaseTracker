@@ -17,8 +17,14 @@ on:
         description: 'Custom tag (optional)'
         required: false
         default: ''
+      use_cache:
+        description: 'Whether to use Docker build cache'
+        required: false
+        type: boolean
+        default: true
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
@@ -27,15 +33,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v6
 
       - name: Install dbmate
         run: |
@@ -46,7 +52,7 @@ jobs:
         run: uv --directory backend run --extra dev pytest -q
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '20'
           cache: npm
@@ -75,7 +81,7 @@ jobs:
           echo "📦 Image name: ${{ env.REGISTRY }}/$IMAGE_NAME"
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Read project version
         id: version
@@ -144,11 +150,11 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: ${{ github.event.inputs.use_cache == 'true' && 'type=gha' || '' }}
+          cache-to: ${{ github.event.inputs.use_cache == 'true' && 'type=gha,mode=max' || '' }}
 
       - name: Output build information
         run: |

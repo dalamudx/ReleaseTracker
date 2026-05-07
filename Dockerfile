@@ -1,7 +1,7 @@
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY frontend/ ./
 RUN npm run build
 
@@ -13,12 +13,13 @@ COPY backend/src ./src
 COPY backend/dbmate ./dbmate
 COPY backend/scripts ./scripts
 COPY --from=frontend-builder /app/frontend/dist ./static
-RUN apk add --no-cache gcc musl-dev libffi-dev curl && \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    apk add --no-cache --virtual .build-deps gcc musl-dev libffi-dev curl && \
     curl -fsSL -o /usr/local/bin/dbmate "https://github.com/amacneil/dbmate/releases/download/v${DBMATE_VERSION}/dbmate-linux-amd64" && \
     chmod +x /usr/local/bin/dbmate && \
     chmod +x /app/backend/scripts/docker-entrypoint.sh && \
-    pip install --no-cache-dir -e . && \
-    apk del gcc musl-dev libffi-dev curl
+    pip install -e . && \
+    apk del .build-deps
 EXPOSE 8000
 ENTRYPOINT ["/app/backend/scripts/docker-entrypoint.sh"]
 CMD ["serve"]
