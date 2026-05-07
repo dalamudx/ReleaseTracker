@@ -1,6 +1,6 @@
 [project]
 name = "releasetracker"
-version = "1.0.0"
+version = "1.0.1"
 license = {text = "GPL-3.0"}
 description = "A lightweight, configurable release tracking and update orchestration tool"
 requires-python = ">=3.10"
@@ -19,6 +19,7 @@ dependencies = [
     "cryptography>=41.0.0",
     "emoji>=2.10.0",
     "authlib>=1.6.8",
+    "packaging>=24.0",
     "docker",
     "podman",
     "kubernetes",

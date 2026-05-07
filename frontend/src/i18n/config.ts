@@ -18,6 +18,7 @@ i18n
         resources,
         lng: localStorage.getItem('language') || 'zh',
         fallbackLng: 'zh',
+        showSupportNotice: false,
         interpolation: {
             escapeValue: false
         }

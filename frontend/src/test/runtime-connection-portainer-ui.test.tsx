@@ -64,7 +64,7 @@ describe("Portainer runtime connection UI", () => {
         vi.mocked(api.getCredentials).mockResolvedValue({ items: [], total: 0 })
     })
 
-    it("renders dedicated Portainer edit fields without Docker runtime inputs", () => {
+    it("renders dedicated Portainer edit fields without Docker runtime inputs", async () => {
         render(
             <RuntimeConnectionDialog
                 open
@@ -73,6 +73,8 @@ describe("Portainer runtime connection UI", () => {
                 onSuccess={vi.fn()}
             />,
         )
+
+        await waitFor(() => expect(api.getCredentials).toHaveBeenCalled())
 
         expect(screen.getByDisplayValue("https://portainer.example.com")).toBeInTheDocument()
         expect(screen.getByDisplayValue("12")).toBeInTheDocument()
