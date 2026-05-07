@@ -69,7 +69,7 @@ export function ThemeCustomizer() {
 
     if (!mounted) {
         return (
-            <Button variant="ghost" size="icon" className="h-7 w-7">
+            <Button variant="ghost" size="icon" className="h-8 w-8">
                 <Palette className="h-4 w-4" />
                 <span className="sr-only">{t('theme.toggle')}</span>
             </Button>
@@ -93,7 +93,7 @@ export function ThemeCustomizer() {
                 <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 hover:bg-accent hover:text-accent-foreground relative group-data-[collapsible=icon]:w-7 group-data-[collapsible=icon]:overflow-hidden"
+                    className="h-8 w-8 relative group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:overflow-hidden"
                 >
                     <div className="relative">
                         <CurrentModeIcon className="h-4 w-4" />

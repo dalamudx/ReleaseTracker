@@ -11,10 +11,11 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { toast } from "sonner"
 import { api } from "@/api/client"
 import { useAuth } from "@/context/auth-context"
-import { User, Lock, Loader2 } from "lucide-react"
+import { Lock, Loader2 } from "lucide-react"
 
 interface UserSettingsDialogProps {
     open: boolean
@@ -86,9 +87,10 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                     <TabsContent value="account" className="space-y-4 pt-4">
                         <div className="space-y-4 rounded-lg border p-4 bg-muted/50">
                             <div className="flex items-center gap-4">
-                                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-                                    <User className="h-6 w-6 text-primary" />
-                                </div>
+                                <Avatar className="h-12 w-12">
+                                    <AvatarImage src={user.avatar_url} alt={user.username} />
+                                    <AvatarFallback>{user.username.charAt(0).toUpperCase()}</AvatarFallback>
+                                </Avatar>
                                 <div className="space-y-1">
                                     <p className="font-medium leading-none">{user.username}</p>
                                     <p className="text-sm text-muted-foreground">{user.email}</p>
