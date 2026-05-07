@@ -28,14 +28,14 @@ export function StatsCards({ stats, loading }: StatsCardsProps) {
     // Get release type stats (stable vs prerelease) sorted by count
     const releaseTypeEntries = stats?.release_type_stats
         ? Object.entries(stats.release_type_stats)
-            .map(([key, count]) => ({ name: getReleaseTypeLabel(key), value: count }))
+            .map(([key, count]) => ({ name: getReleaseTypeLabel(key, t), value: count }))
             .sort((a, b) => b.value - a.value)
         : []
 
     // Get channel stats sorted by count
     const channelEntries = stats?.channel_stats
         ? Object.entries(stats.channel_stats)
-            .map(([key, count]) => ({ name: getChannelLabel(key), value: count }))
+            .map(([key, count]) => ({ name: getChannelLabel(key, t), value: count }))
             .sort((a, b) => b.value - a.value)
         : []
 

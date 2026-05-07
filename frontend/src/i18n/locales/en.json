@@ -271,7 +271,14 @@
             "title": "Recent Releases",
             "description": "The 5 most recent releases",
             "noReleases": "No releases found",
-            "viewNotes": "View Release Notes"
+            "viewNotes": "View Release Notes",
+            "columns": {
+                "tracker": "Tracker",
+                "source": "Source",
+                "releaseChannel": "Release",
+                "version": "Version",
+                "published": "Published"
+            }
         },
         "releaseNotes": {
             "viewSource": "View Source",

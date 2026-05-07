@@ -3486,7 +3486,7 @@ class SQLiteStorage:
             )
             channel_stats[channel] = channel_stats.get(channel, 0) + 1
 
-            release_type = "prerelease" if release.prerelease else "stable"
+            release_type = "prerelease" if release.prerelease else "release"
             release_type_stats[release_type] = release_type_stats.get(release_type, 0) + 1
 
             pub_dt = release.published_at

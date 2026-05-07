@@ -271,7 +271,14 @@
       "title": "最近发布",
       "description": "最近 5 个发布版本",
       "noReleases": "未找到发布版本",
-      "viewNotes": "查看发布说明"
+      "viewNotes": "查看发布说明",
+      "columns": {
+        "tracker": "追踪器",
+        "source": "渠道类型",
+        "releaseChannel": "发布类型",
+        "version": "版本",
+        "published": "发布时间"
+      }
     },
     "releaseNotes": {
       "viewSource": "去源站查看",

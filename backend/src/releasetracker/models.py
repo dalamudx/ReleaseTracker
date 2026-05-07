@@ -425,7 +425,7 @@ class ReleaseStats(BaseModel):
     )  # Total release count by channel {"stable": 10, "beta": 5, ...}
     release_type_stats: dict[str, int] = (
         {}
-    )  # Release count by release type {"stable": 10, "prerelease": 5}
+    )  # Release count by release type {"release": 10, "prerelease": 5}
 
 
 CredentialType = Literal[

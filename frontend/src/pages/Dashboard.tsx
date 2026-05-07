@@ -38,11 +38,11 @@ export default function DashboardPage() {
                 <StatsCards stats={stats ?? null} loading={loading} />
             </motion.div>
 
-            <div className="grid gap-4 grid-cols-1 lg:grid-cols-7">
-                <motion.div variants={item} className="lg:col-span-4">
+            <div className="grid gap-4 md:grid-cols-2">
+                <motion.div variants={item}>
                     <ReleaseTrendChart stats={stats ?? null} loading={loading} />
                 </motion.div>
-                <motion.div variants={item} className="lg:col-span-3">
+                <motion.div variants={item}>
                     <RecentReleases releases={releases} loading={loading} />
                 </motion.div>
             </div>

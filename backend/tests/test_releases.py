@@ -421,8 +421,9 @@ async def test_releases_stats_preserve_tracker_defined_channel_categories_when_h
     assert stats["channel_stats"]["beta"] == 1
     assert stats["channel_stats"]["canary"] == 1
     assert "prerelease" not in stats["channel_stats"]
-    assert stats["release_type_stats"]["stable"] == 1
+    assert stats["release_type_stats"]["release"] == 1
     assert stats["release_type_stats"]["prerelease"] == 2
+    assert "stable" not in stats["release_type_stats"]
 
 
 @pytest.mark.asyncio
