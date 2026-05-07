@@ -224,6 +224,7 @@ After starting the backend, open:
 
 - [ ] Add executor snapshots and recovery
 - [ ] Add post-update health checks
+- [ ] Add customizable CHANGELOG support
 - [ ] Add more notification channels
 
 ## License

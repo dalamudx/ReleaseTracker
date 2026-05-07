@@ -1852,8 +1852,7 @@ class SQLiteStorage:
 
         identity_key = self.release_identity_key_for_source(release, source_type=source_type)
         digest = self._release_digest_value(release, source_type=source_type)
-        version, _, chart_version = self._release_version_metadata(release, source_type=source_type)
-        persisted_version = chart_version or version
+        version, _, _ = self._release_version_metadata(release, source_type=source_type)
         timestamp = datetime.now().isoformat()
 
         cursor = await db.execute(
@@ -1866,7 +1865,7 @@ class SQLiteStorage:
                 aggregate_tracker_id,
                 identity_key,
                 identity_key,
-                persisted_version,
+                version,
                 digest,
                 "sha256" if digest else None,
                 None,
@@ -1903,7 +1902,7 @@ class SQLiteStorage:
             WHERE id = ?
             """,
             (
-                persisted_version,
+                version,
                 digest,
                 "sha256" if digest else None,
                 None,

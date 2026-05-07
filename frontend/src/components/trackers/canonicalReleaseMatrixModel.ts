@@ -403,9 +403,9 @@ export function buildTrackerCurrentMatrixPresentationModel(
             ? [...new Set([...existingRow.selectedChannelKeys, ...row.channel_keys])]
             : [...row.channel_keys]
         const sourceTypeBadges = [...new Set(sourceContributions.map((contribution) => contribution.source_type))]
-        const helmChartVersions = [...new Set(sourceContributions
-            .map((contribution) => contribution.chart_version)
-            .filter((chartVersion): chartVersion is string => Boolean(chartVersion)))]
+        const latestHelmChartContribution = sourceContributions
+            .filter((contribution) => Boolean(contribution.chart_version))
+            .sort((left, right) => compareIsoDescending(left.published_at, right.published_at))[0]
 
         const nextRow: TrackerCurrentMatrixPresentationRow = {
             trackerReleaseHistoryId: existingRow?.trackerReleaseHistoryId ?? row.tracker_release_history_id,
@@ -418,7 +418,7 @@ export function buildTrackerCurrentMatrixPresentationModel(
             matchedChannelCount: selectedChannelKeys.length,
             selectedChannelKeys,
             sourceTypeBadges,
-            helmChartVersion: helmChartVersions.length === 1 ? helmChartVersions[0] : null,
+            helmChartVersion: latestHelmChartContribution?.chart_version ?? null,
             sourceContributions,
         }
 

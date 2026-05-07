@@ -288,8 +288,10 @@
         "table": {
             "tracker": "Tracker",
             "version": "Version",
+            "identity": "Commit / SHA256",
             "channel": "Channel",
             "channelType": "Channel Type",
+            "releaseChannelType": "Release Channel Type",
             "published": "Published At",
             "link": "Link"
         }

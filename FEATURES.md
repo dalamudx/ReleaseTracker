@@ -69,14 +69,14 @@ The credentials module centrally manages Git platform tokens, container registry
 System Settings manage runtime configuration such as timezone, log level, release history retention, BASE URL, session key rotation, and encryption key rotation. Most runtime configuration can be completed from the Web UI without editing environment variables.
 
 ## 推荐使用流程 / Recommended Workflow
-
+>
 1. 在凭证管理中添加 Git、镜像仓库、运行时或 OIDC 所需凭证。
 2. 在运行时连接中接入 Docker、Podman、Portainer 或 Kubernetes 环境。
 3. 创建追踪器并配置版本来源和发布渠道规则。
 4. 使用执行器发现运行时目标，并绑定对应追踪器和发布渠道。
 5. 在追踪器和版本历史中观察版本变化。
 6. 查看 Release Notes 后，手动或按计划执行更新。
-
+>
 1. Add Git, registry, runtime, or OIDC credentials in Credentials.
 2. Connect Docker, Podman, Portainer, or Kubernetes environments in Runtime Connections.
 3. Create trackers and configure release sources and channel rules.

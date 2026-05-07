@@ -115,8 +115,9 @@ export default function HistoryPage() {
                             <TableRow>
                                 <TableHead>{t('history.table.tracker')}</TableHead>
                                 <TableHead>{t('history.table.channelType')}</TableHead>
+                                <TableHead>{t('history.table.releaseChannelType')}</TableHead>
                                 <TableHead>{t('history.table.version')}</TableHead>
-                                <TableHead>{t('history.table.channel')}</TableHead>
+                                <TableHead>{t('history.table.identity')}</TableHead>
                                 <TableHead>{t('history.table.published')}</TableHead>
                                 <TableHead className="text-right">{t('history.table.link')}</TableHead>
                             </TableRow>
@@ -124,13 +125,13 @@ export default function HistoryPage() {
                         <TableBody>
                             {isLoading ? (
                                 <TableRow>
-                                    <TableCell colSpan={6} className="h-24 text-center">
+                                    <TableCell colSpan={7} className="h-24 text-center">
                                         {t('common.loading')}
                                     </TableCell>
                                 </TableRow>
                             ) : releases.length === 0 ? (
                                 <TableRow>
-                                    <TableCell colSpan={6} className="h-24 text-center">
+                                    <TableCell colSpan={7} className="h-24 text-center">
                                         {t('history.noResults')}
                                     </TableCell>
                                 </TableRow>
@@ -139,6 +140,7 @@ export default function HistoryPage() {
                                     const releaseChannelLabel = getReleaseChannelDisplayLabel(release, t)
                                     const sourceTypeLabel = getSourceTypeLabel(release.primary_source?.source_type, t)
                                     const identityPrefix = buildReleaseIdentityPrefix(release)
+                                    const identityValue = release.digest || release.commit_sha
 
                                     return (
                                     <TableRow
@@ -152,16 +154,17 @@ export default function HistoryPage() {
                                             </Badge>
                                         </TableCell>
                                         <TableCell className="py-2.5">
+                                            {releaseChannelLabel ? (
+                                                <Badge variant="outline" className="text-xs">
+                                                    {releaseChannelLabel}
+                                                </Badge>
+                                            ) : (
+                                                <span className="text-xs text-muted-foreground">—</span>
+                                            )}
+                                        </TableCell>
+                                        <TableCell className="py-2.5">
                                             <div className="relative inline-flex items-center gap-1.5">
                                                 <span className="font-mono text-sm">{release.tag_name}</span>
-                                                {identityPrefix ? (
-                                                    <span
-                                                        className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
-                                                        title={release.digest || release.commit_sha || undefined}
-                                                    >
-                                                        {identityPrefix}
-                                                    </span>
-                                                ) : null}
                                                 {release.prerelease ? (
                                                     <Badge
                                                         variant="outline"
@@ -173,10 +176,13 @@ export default function HistoryPage() {
                                             </div>
                                         </TableCell>
                                         <TableCell className="py-2.5">
-                                            {releaseChannelLabel ? (
-                                                <Badge variant="outline" className="text-xs">
-                                                    {releaseChannelLabel}
-                                                </Badge>
+                                            {identityPrefix ? (
+                                                <span
+                                                    className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground"
+                                                    title={identityValue || undefined}
+                                                >
+                                                    {identityPrefix}
+                                                </span>
                                             ) : (
                                                 <span className="text-xs text-muted-foreground">—</span>
                                             )}

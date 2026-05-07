@@ -49,7 +49,7 @@ async def test_create_and_load_aggregate_tracker_roundtrip(storage):
                     enabled=False,
                     source_rank=20,
                     source_config={
-                        "image": "library/nginx",
+                        "image": "library/sample-web",
                         "registry": "registry-1.docker.io",
                     },
                 ),
@@ -67,7 +67,7 @@ async def test_create_and_load_aggregate_tracker_roundtrip(storage):
     assert created_tracker.sources[0].aggregate_tracker_id == created_tracker.id
     assert created_tracker.sources[0].source_config == {"repo": "owner/repo"}
     assert created_tracker.sources[1].source_config == {
-        "image": "library/nginx",
+        "image": "library/sample-web",
         "registry": "registry-1.docker.io",
     }
 
@@ -197,7 +197,7 @@ async def test_save_source_observations_updates_github_metadata_without_new_hist
 async def test_docker_source_history_refreshes_synthetic_published_at_for_existing_tags(storage):
     aggregate_tracker = await storage.create_aggregate_tracker(
         AggregateTracker(
-            name="jenkins-agent-refresh",
+            name="sample-worker-refresh",
             primary_changelog_source_key="container",
             sources=[
                 TrackerSource(
@@ -205,7 +205,7 @@ async def test_docker_source_history_refreshes_synthetic_published_at_for_existi
                     source_type="container",
                     source_rank=0,
                     source_config={
-                        "image": "jenkins/inbound-agent",
+                        "image": "example/worker-agent",
                         "registry": "registry-1.docker.io",
                     },
                 )
@@ -232,12 +232,12 @@ async def test_docker_source_history_refreshes_synthetic_published_at_for_existi
 
     def docker_release(tag: str, published_at: str) -> Release:
         return Release(
-            tracker_name="jenkins-agent-refresh",
+            tracker_name="sample-worker-refresh",
             tracker_type="container",
             version=tag,
             name=tag,
             tag_name=tag,
-            url=f"https://registry-1.docker.io/jenkins/inbound-agent:{tag}",
+            url=f"https://registry-1.docker.io/example/worker-agent:{tag}",
             published_at=datetime.fromisoformat(published_at),
             prerelease=False,
         )
@@ -490,6 +490,73 @@ async def test_helm_chart_version_aliases_persist_as_one_history_identity(storag
     assert history_rows[0]["identity_key"] == digest
     assert history_rows[0]["immutable_key"] == digest
     assert history_rows[0]["digest"] == digest
+
+
+@pytest.mark.asyncio
+async def test_helm_tracker_release_history_persists_app_version(storage):
+    aggregate_tracker = await storage.create_aggregate_tracker(
+        AggregateTracker(
+            name="helm-history-app-version",
+            primary_changelog_source_key="helm",
+            sources=[
+                TrackerSource(
+                    source_key="helm",
+                    source_type="helm",
+                    source_config={"repo": "https://charts.example.com", "chart": "demo"},
+                )
+            ],
+        )
+    )
+    helm_source = aggregate_tracker.sources[0]
+    helm_tracker = HelmTracker(
+        name="helm-history-app-version",
+        repo="https://charts.example.com",
+        chart="demo",
+    )
+    release = helm_tracker._parse_chart_version(
+        {
+            "version": "1.2.3-chart.7",
+            "appVersion": "1.2.3",
+            "created": "2026-04-23T00:00:00Z",
+            "digest": "sha256:" + "c" * 64,
+        }
+    )
+
+    source_fetch_run_id = await storage.create_source_fetch_run(
+        helm_source.id,
+        trigger_mode="manual",
+    )
+    await storage.append_source_history_for_run(
+        source_fetch_run_id,
+        helm_source,
+        [release],
+        aggregate_tracker_id=aggregate_tracker.id,
+    )
+    identity_key = storage.release_identity_key_for_source(
+        release,
+        source_type=helm_source.source_type,
+    )
+    source_history_id = await storage.get_source_release_history_id(helm_source.id, identity_key)
+    assert source_history_id is not None
+
+    await storage.upsert_tracker_release_history(
+        aggregate_tracker.id,
+        release,
+        primary_source_release_history_id=source_history_id,
+        source_type=helm_source.source_type,
+    )
+
+    async with aiosqlite.connect(storage.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        tracker_history_row = await (
+            await db.execute(
+                "SELECT version FROM tracker_release_history WHERE aggregate_tracker_id = ?",
+                (aggregate_tracker.id,),
+            )
+        ).fetchone()
+
+    assert tracker_history_row is not None
+    assert tracker_history_row["version"] == "1.2.3"
 
 
 @pytest.mark.asyncio

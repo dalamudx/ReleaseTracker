@@ -1155,7 +1155,7 @@ wheels = [
 
 [[package]]
 name = "releasetracker"
-version = "1.0.3"
+version = "1.0.4"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },

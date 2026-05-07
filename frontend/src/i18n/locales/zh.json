@@ -288,8 +288,10 @@
     "table": {
       "tracker": "追踪器",
       "version": "版本",
+      "identity": "Commit / SHA256",
       "channel": "渠道",
       "channelType": "渠道类型",
+      "releaseChannelType": "发布渠道类型",
       "published": "发布时间",
       "link": "链接"
     }

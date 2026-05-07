@@ -279,7 +279,7 @@ describe("tracker current matrix presentation model", () => {
                     source_contributions: [
                         {
                             source_release_history_id: 21,
-                            tracker_name: "affine",
+                            tracker_name: "sample-suite",
                             source_key: "repo",
                             source_type: "github",
                             contribution_kind: "primary",
@@ -313,7 +313,7 @@ describe("tracker current matrix presentation model", () => {
                     source_contributions: [
                         {
                             source_release_history_id: 23,
-                            tracker_name: "affine",
+                            tracker_name: "sample-suite",
                             source_key: "helm",
                             source_type: "helm",
                             contribution_kind: "primary",
@@ -334,6 +334,38 @@ describe("tracker current matrix presentation model", () => {
                     cells: {},
                 },
                 {
+                    tracker_release_history_id: 26,
+                    identity_key: "0.26.3-chart.2@no_digest",
+                    version: "0.26.3",
+                    digest: "digest-helm-newer",
+                    published_at: "2026-03-04T00:00:00Z",
+                    matched_channel_count: 0,
+                    channel_keys: [],
+                    primary_source: null,
+                    source_contributions: [
+                        {
+                            source_release_history_id: 27,
+                            tracker_name: "sample-suite",
+                            source_key: "helm",
+                            source_type: "helm",
+                            contribution_kind: "primary",
+                            version: "0.26.3",
+                            name: "Helm 0.26.3 newer chart",
+                            tag_name: "0.26.3-chart.2",
+                            published_at: "2026-03-04T00:00:00Z",
+                            url: "https://example.com/helm-newer",
+                            changelog_url: null,
+                            prerelease: false,
+                            body: null,
+                            digest: "digest-helm-newer",
+                            app_version: "0.26.3",
+                            chart_version: "1.0.6",
+                            observed_at: "2026-03-04T00:10:00Z",
+                        },
+                    ],
+                    cells: {},
+                },
+                {
                     tracker_release_history_id: 24,
                     identity_key: "0.26.3@sha256:def",
                     version: "0.26.3",
@@ -345,7 +377,7 @@ describe("tracker current matrix presentation model", () => {
                     source_contributions: [
                         {
                             source_release_history_id: 25,
-                            tracker_name: "affine",
+                            tracker_name: "sample-suite",
                             source_key: "image",
                             source_type: "container",
                             contribution_kind: "primary",
@@ -371,6 +403,7 @@ describe("tracker current matrix presentation model", () => {
         expect(model.rows).toHaveLength(1)
         expect(model.rows[0]?.displayVersion).toBe("0.26.3")
         expect(model.rows[0]?.sourceTypeBadges).toEqual(["github", "helm", "container"])
+        expect(model.rows[0]?.helmChartVersion).toBe("1.0.6")
         expect(model.rows[0]?.selectedChannelKeys).toEqual(["stable"])
     })
 
@@ -434,7 +467,7 @@ describe("tracker current matrix presentation model", () => {
 
         const items = [
             {
-                tracker_name: "n8n",
+                tracker_name: "sample-flow",
                 tracker_release_history_id: 1,
                 identity_key: "stable@no_digest",
                 version: "stable",
@@ -454,7 +487,7 @@ describe("tracker current matrix presentation model", () => {
                 created_at: "2026-04-23T14:40:49Z",
             },
             {
-                tracker_name: "n8n",
+                tracker_name: "sample-flow",
                 tracker_release_history_id: 2,
                 identity_key: "2.17.5@no_digest",
                 version: "2.17.5",
@@ -474,7 +507,7 @@ describe("tracker current matrix presentation model", () => {
                 created_at: "2026-04-23T14:41:07Z",
             },
             {
-                tracker_name: "n8n",
+                tracker_name: "sample-flow",
                 tracker_release_history_id: 3,
                 identity_key: "2.18.1@sha256:abc",
                 version: "2.18.1",
@@ -517,7 +550,7 @@ describe("tracker current matrix presentation model", () => {
                     source_contributions: [
                         {
                             source_release_history_id: 1,
-                            tracker_name: "affine",
+                            tracker_name: "sample-suite",
                             source_key: "container",
                             source_type: "container",
                             contribution_kind: "primary",
@@ -549,7 +582,7 @@ describe("tracker current matrix presentation model", () => {
                     source_contributions: [
                         {
                             source_release_history_id: 2,
-                            tracker_name: "affine",
+                            tracker_name: "sample-suite",
                             source_key: "repo",
                             source_type: "github",
                             contribution_kind: "primary",
@@ -568,7 +601,7 @@ describe("tracker current matrix presentation model", () => {
                         },
                         {
                             source_release_history_id: 3,
-                            tracker_name: "affine",
+                            tracker_name: "sample-suite",
                             source_key: "helm",
                             source_type: "helm",
                             contribution_kind: "supporting",
@@ -600,7 +633,7 @@ describe("tracker current matrix presentation model", () => {
                     source_contributions: [
                         {
                             source_release_history_id: 4,
-                            tracker_name: "affine",
+                            tracker_name: "sample-suite",
                             source_key: "repo",
                             source_type: "github",
                             contribution_kind: "primary",
@@ -619,7 +652,7 @@ describe("tracker current matrix presentation model", () => {
                         },
                         {
                             source_release_history_id: 5,
-                            tracker_name: "affine",
+                            tracker_name: "sample-suite",
                             source_key: "helm",
                             source_type: "helm",
                             contribution_kind: "supporting",
