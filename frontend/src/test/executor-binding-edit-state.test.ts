@@ -701,7 +701,7 @@ describe("executor binding edit state helpers", () => {
             values: createValues({ runtime_type: "portainer" }),
             t,
             selectedRuntimeConnection: createRuntimeConnection({ id: 1, type: "portainer", enabled: true }),
-            selectedTargetRef: { mode: "container", container_name: "nginx" },
+            selectedTargetRef: { mode: "container", container_name: "sample-web" },
         })
 
         expect(message).toBe("executors.validation.portainerStackTargetRequired")
@@ -1033,21 +1033,21 @@ describe("executor binding edit state helpers", () => {
         expect(isEquivalentDockerComposeTarget(
             {
                 mode: "docker_compose",
-                project: "jenkins-agent",
-                working_dir: "/data/podman/jenkins-agent",
+                project: "sample-worker",
+                working_dir: "/data/podman/sample-worker",
                 config_files: ["podman-compose.yaml"],
                 services: [
-                    { service: "jenkins-agent", image: "docker.io/jenkins/inbound-agent:latest", replica_count: 1 },
+                    { service: "sample-worker", image: "docker.io/example/worker-agent:latest", replica_count: 1 },
                 ],
                 service_count: 1,
             },
             {
                 mode: "docker_compose",
-                project: "jenkins-agent",
-                working_dir: "/data/podman/jenkins-agent",
+                project: "sample-worker",
+                working_dir: "/data/podman/sample-worker",
                 config_files: ["compose.yaml", "compose.override.yaml"],
                 services: [
-                    { service: "jenkins-agent", image: "docker.io/jenkins/inbound-agent:trixie", replica_count: 2 },
+                    { service: "sample-worker", image: "docker.io/example/worker-agent:trixie", replica_count: 2 },
                     { service: "sidecar", image: "ghcr.io/acme/sidecar:1.0", replica_count: 1 },
                 ],
                 service_count: 2,
@@ -1070,63 +1070,63 @@ describe("executor binding edit state helpers", () => {
         )).toBe(false)
     })
 
-    it("preserves compose working directory and config files when rediscovery omits stable metadata", () => {
+    it("preserves compose working directory and config files when sample-cachecovery omits stable metadata", () => {
         expect(mergeDockerComposeTargetRef(
             {
                 mode: "docker_compose",
-                project: "jenkins-agent",
+                project: "sample-worker",
                 services: [
-                    { service: "jenkins-agent", image: "docker.io/jenkins/inbound-agent:trixie", replica_count: 2 },
+                    { service: "sample-worker", image: "docker.io/example/worker-agent:trixie", replica_count: 2 },
                 ],
                 service_count: 1,
             },
             {
                 mode: "docker_compose",
-                project: "jenkins-agent",
-                working_dir: "/data/podman/jenkins-agent",
+                project: "sample-worker",
+                working_dir: "/data/podman/sample-worker",
                 config_files: ["podman-compose.yaml"],
                 services: [
-                    { service: "jenkins-agent", image: "docker.io/jenkins/inbound-agent:latest", replica_count: 1 },
+                    { service: "sample-worker", image: "docker.io/example/worker-agent:latest", replica_count: 1 },
                 ],
                 service_count: 1,
             },
         )).toEqual({
             mode: "docker_compose",
-            project: "jenkins-agent",
-            working_dir: "/data/podman/jenkins-agent",
+            project: "sample-worker",
+            working_dir: "/data/podman/sample-worker",
             config_files: ["podman-compose.yaml"],
             services: [
-                { service: "jenkins-agent", image: "docker.io/jenkins/inbound-agent:trixie", replica_count: 2 },
+                { service: "sample-worker", image: "docker.io/example/worker-agent:trixie", replica_count: 2 },
             ],
             service_count: 1,
         })
     })
 
-    it("keeps rediscovered compose working directory and config files when they are present", () => {
+    it("keeps sample-cachecovered compose working directory and config files when they are present", () => {
         expect(mergeDockerComposeTargetRef(
             {
                 mode: "docker_compose",
-                project: "jenkins-agent",
-                working_dir: "/data/podman/jenkins-agent-next",
+                project: "sample-worker",
+                working_dir: "/data/podman/sample-worker-next",
                 config_files: ["compose.yaml"],
                 services: [
-                    { service: "jenkins-agent", image: "docker.io/jenkins/inbound-agent:trixie", replica_count: 2 },
+                    { service: "sample-worker", image: "docker.io/example/worker-agent:trixie", replica_count: 2 },
                 ],
                 service_count: 1,
             },
             {
                 mode: "docker_compose",
-                project: "jenkins-agent",
-                working_dir: "/data/podman/jenkins-agent",
+                project: "sample-worker",
+                working_dir: "/data/podman/sample-worker",
                 config_files: ["podman-compose.yaml"],
             },
         )).toEqual({
             mode: "docker_compose",
-            project: "jenkins-agent",
-            working_dir: "/data/podman/jenkins-agent-next",
+            project: "sample-worker",
+            working_dir: "/data/podman/sample-worker-next",
             config_files: ["compose.yaml"],
             services: [
-                { service: "jenkins-agent", image: "docker.io/jenkins/inbound-agent:trixie", replica_count: 2 },
+                { service: "sample-worker", image: "docker.io/example/worker-agent:trixie", replica_count: 2 },
             ],
             service_count: 1,
         })

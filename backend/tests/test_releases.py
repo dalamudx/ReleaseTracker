@@ -177,12 +177,12 @@ async def _fetch_release_surface_counts(
 
 def test_container_and_helm_channel_type_filters_are_ignored_for_stored_releases():
     container_release = Release(
-        tracker_name="nginx",
+        tracker_name="sample-web",
         tracker_type="container",
         version="1.2.0",
         name="1.2.0",
         tag_name="1.2.0",
-        url="https://example.com/nginx:1.2.0",
+        url="https://example.com/sample-web:1.2.0",
         published_at=datetime.now(timezone.utc),
         prerelease=False,
     )
@@ -886,14 +886,14 @@ async def test_latest_current_summary_prefers_newer_folded_stable_version_over_o
 async def test_docker_folded_alias_identity_prefers_concrete_tag_for_display(storage):
     aggregate_tracker = await storage.create_aggregate_tracker(
         AggregateTracker(
-            name="openbao-display",
+            name="sample_secret-display",
             primary_changelog_source_key="image",
             sources=[
                 TrackerSource(
                     source_key="image",
                     source_type="container",
                     source_rank=0,
-                    source_config={"image": "openbao/openbao", "registry": "ghcr.io"},
+                    source_config={"image": "example/sample-secret", "registry": "ghcr.io"},
                     release_channels=[
                         ReleaseChannel(
                             release_channel_key="image-stable",
@@ -912,34 +912,34 @@ async def test_docker_folded_alias_identity_prefers_concrete_tag_for_display(sto
     digest = "sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806"
     releases = [
         Release(
-            tracker_name="openbao-display",
+            tracker_name="sample_secret-display",
             tracker_type="container",
             version="2.5.3",
             name="latest",
             tag_name="latest",
-            url="https://ghcr.io/openbao/openbao:latest",
+            url="https://ghcr.io/example/sample-secret:latest",
             published_at=datetime(2026, 4, 22, 7, 29, 57),
             prerelease=False,
             commit_sha=digest,
         ),
         Release(
-            tracker_name="openbao-display",
+            tracker_name="sample_secret-display",
             tracker_type="container",
             version="2.5.3",
             name="2.5.3",
             tag_name="2.5.3",
-            url="https://ghcr.io/openbao/openbao:2.5.3",
+            url="https://ghcr.io/example/sample-secret:2.5.3",
             published_at=datetime(2026, 4, 22, 7, 29, 58),
             prerelease=False,
             commit_sha=digest,
         ),
         Release(
-            tracker_name="openbao-display",
+            tracker_name="sample_secret-display",
             tracker_type="container",
             version="2.5.3",
             name="2.5",
             tag_name="2.5",
-            url="https://ghcr.io/openbao/openbao:2.5",
+            url="https://ghcr.io/example/sample-secret:2.5",
             published_at=datetime(2026, 4, 22, 7, 29, 59),
             prerelease=False,
             commit_sha=digest,
@@ -959,7 +959,7 @@ async def test_docker_folded_alias_identity_prefers_concrete_tag_for_display(sto
     assert len(source_history_releases) == 1
     assert source_history_releases[0].version == "2.5.3"
     assert source_history_releases[0].tag_name == "2.5.3"
-    assert source_history_releases[0].url == "https://ghcr.io/openbao/openbao:2.5.3"
+    assert source_history_releases[0].url == "https://ghcr.io/example/sample-secret:2.5.3"
 
     deduped_releases = storage.dedupe_releases_by_immutable_identity(releases)
     assert len(deduped_releases) == 1
@@ -983,7 +983,7 @@ async def test_docker_folded_alias_identity_prefers_concrete_tag_for_display(sto
     assert len(current_releases) == 1
     assert current_releases[0].version == "2.5.3"
     assert current_releases[0].tag_name == "2.5.3"
-    assert current_releases[0].url == "https://ghcr.io/openbao/openbao:2.5.3"
+    assert current_releases[0].url == "https://ghcr.io/example/sample-secret:2.5.3"
 
 
 @pytest.mark.asyncio
@@ -1057,7 +1057,7 @@ async def test_docker_different_tags_with_same_digest_share_one_immutable_identi
                     source_key="image",
                     source_type="container",
                     source_rank=0,
-                    source_config={"image": "library/debian", "registry": "docker.io"},
+                    source_config={"image": "library/sample-os", "registry": "docker.io"},
                 )
             ],
         )
@@ -1074,7 +1074,7 @@ async def test_docker_different_tags_with_same_digest_share_one_immutable_identi
             version=tag,
             name=tag,
             tag_name=tag,
-            url=f"https://docker.io/library/debian:{tag}",
+            url=f"https://docker.io/library/sample-os:{tag}",
             published_at=datetime(2026, 4, 22, 7, index, 0),
             prerelease=False,
             commit_sha=digest,
@@ -1688,7 +1688,7 @@ async def test_excluded_releases_are_hidden_from_tracker_version_views_but_kept_
                     source_key="image",
                     source_type="container",
                     source_rank=0,
-                    source_config={"image": "jenkins/inbound-agent", "registry": "docker.io"},
+                    source_config={"image": "example/worker-agent", "registry": "docker.io"},
                     release_channels=[
                         ReleaseChannel(
                             release_channel_key="image-stable",
@@ -1708,7 +1708,7 @@ async def test_excluded_releases_are_hidden_from_tracker_version_views_but_kept_
             name="excluded-version-views",
             type="container",
             enabled=True,
-            image="jenkins/inbound-agent",
+            image="example/worker-agent",
             registry="docker.io",
             interval=60,
         )
@@ -2044,7 +2044,7 @@ async def test_latest_releases_preserve_projected_row_channel_name(authed_client
                     source_key="container",
                     source_type="container",
                     source_rank=0,
-                    source_config={"image": "fawney19/aether", "registry": "ghcr.io"},
+                    source_config={"image": "example/sample-canary", "registry": "ghcr.io"},
                     release_channels=[
                         ReleaseChannel(
                             release_channel_key="container-stable",
@@ -2067,7 +2067,7 @@ async def test_latest_releases_preserve_projected_row_channel_name(authed_client
         version="0.7.0-rc22",
         name="0.7.0-rc22",
         tag_name="0.7.0-rc22",
-        url="http://example.com/aether:0.7.0-rc22",
+        url="http://example.com/sample_canary:0.7.0-rc22",
         published_at=datetime(2026, 5, 1, 12, 0, 0),
         prerelease=False,
         channel_name="prerelease",
@@ -2090,14 +2090,14 @@ async def test_latest_releases_preserve_projected_row_channel_name(authed_client
 async def test_release_history_channel_type_uses_stored_channel_name_before_inference(authed_client, storage):
     aggregate_tracker = await storage.create_aggregate_tracker(
         AggregateTracker(
-            name="aether-channel-type",
+            name="sample_canary-channel-type",
             primary_changelog_source_key="container",
             sources=[
                 TrackerSource(
                     source_key="container",
                     source_type="container",
                     source_rank=0,
-                    source_config={"image": "fawney19/aether", "registry": "reg.example.com"},
+                    source_config={"image": "example/sample-canary", "registry": "reg.example.com"},
                     release_channels=[
                         ReleaseChannel(
                             release_channel_key="container-stable",
@@ -2122,12 +2122,12 @@ async def test_release_history_channel_type_uses_stored_channel_name_before_infe
         {
             "container": [
                 Release(
-                    tracker_name="aether-channel-type",
+                    tracker_name="sample_canary-channel-type",
                     tracker_type="container",
                     version="0.7.0-rc22",
                     name="0.7.0-rc22",
                     tag_name="0.7.0-rc22",
-                    url="http://example.com/aether:0.7.0-rc22",
+                    url="http://example.com/sample_canary:0.7.0-rc22",
                     published_at=datetime(2026, 5, 1, 12, 0, 0),
                     prerelease=False,
                     channel_name="canary",
@@ -2136,7 +2136,7 @@ async def test_release_history_channel_type_uses_stored_channel_name_before_infe
         },
     )
 
-    response = authed_client.get("/api/releases?tracker=aether-channel-type")
+    response = authed_client.get("/api/releases?tracker=sample_canary-channel-type")
 
     assert response.status_code == 200, response.text
     item = response.json()["items"][0]
@@ -2778,7 +2778,7 @@ def test_select_best_releases_by_channel_normalizes_version_prefix_before_semver
 def test_select_best_releases_by_channel_prefers_semver_over_published_at_even_when_mode_is_published_at():
     releases = [
         Release(
-            tracker_name="aether",
+            tracker_name="sample_canary",
             tracker_type="container",
             version="0.1.6",
             name="0.1.6",
@@ -2790,7 +2790,7 @@ def test_select_best_releases_by_channel_prefers_semver_over_published_at_even_w
             commit_sha="sha256:016",
         ),
         Release(
-            tracker_name="aether",
+            tracker_name="sample_canary",
             tracker_type="container",
             version="0.1.7",
             name="latest",
@@ -2819,14 +2819,14 @@ async def test_latest_current_summary_prefers_highest_stable_semver_before_publi
 ):
     aggregate_tracker = await storage.create_aggregate_tracker(
         AggregateTracker(
-            name="aether-summary-order",
+            name="sample_canary-summary-order",
             primary_changelog_source_key="channel-1",
             sources=[
                 TrackerSource(
                     source_key="channel-1",
                     source_type="github",
                     source_rank=0,
-                    source_config={"repo": "owner/aether-summary-order"},
+                    source_config={"repo": "owner/sample_canary-summary-order"},
                     release_channels=[
                         ReleaseChannel(
                             release_channel_key="channel-1-0-stable",
@@ -2839,7 +2839,7 @@ async def test_latest_current_summary_prefers_highest_stable_semver_before_publi
                     source_key="channel-2",
                     source_type="container",
                     source_rank=1,
-                    source_config={"image": "owner/aether-summary-order", "registry": "ghcr.io"},
+                    source_config={"image": "owner/sample_canary-summary-order", "registry": "ghcr.io"},
                     release_channels=[
                         ReleaseChannel(
                             release_channel_key="channel-2-0-stable",
@@ -2860,7 +2860,7 @@ async def test_latest_current_summary_prefers_highest_stable_semver_before_publi
                     source_type="container",
                     source_rank=2,
                     source_config={
-                        "image": "owner/aether-summary-order-hub",
+                        "image": "owner/sample_canary-summary-order-hub",
                         "registry": "ghcr.io",
                     },
                     release_channels=[
@@ -2876,10 +2876,10 @@ async def test_latest_current_summary_prefers_highest_stable_semver_before_publi
     )
     await storage.save_tracker_runtime_config(
         TrackerConfig(
-            name="aether-summary-order",
+            name="sample_canary-summary-order",
             type="github",
             enabled=True,
-            repo="owner/aether-summary-order",
+            repo="owner/sample_canary-summary-order",
             interval=60,
             version_sort_mode="published_at",
             channels=[Channel(name="stable", type="release", exclude_pattern=".*rc.*")],
@@ -2887,7 +2887,7 @@ async def test_latest_current_summary_prefers_highest_stable_semver_before_publi
     )
 
     github_release = Release(
-        tracker_name="aether-summary-order",
+        tracker_name="sample_canary-summary-order",
         tracker_type="github",
         version="proxy-v0.3.2",
         name="proxy-v0.3.2",
@@ -2897,7 +2897,7 @@ async def test_latest_current_summary_prefers_highest_stable_semver_before_publi
         prerelease=False,
     )
     docker_canary = Release(
-        tracker_name="aether-summary-order",
+        tracker_name="sample_canary-summary-order",
         tracker_type="container",
         version="0.7.0-rc1",
         name="0.7.0-rc1",
@@ -2908,7 +2908,7 @@ async def test_latest_current_summary_prefers_highest_stable_semver_before_publi
         commit_sha="sha256:rc1",
     )
     docker_stable_old = Release(
-        tracker_name="aether-summary-order",
+        tracker_name="sample_canary-summary-order",
         tracker_type="container",
         version="0.1.6",
         name="0.1.6",
@@ -2919,7 +2919,7 @@ async def test_latest_current_summary_prefers_highest_stable_semver_before_publi
         commit_sha="sha256:016",
     )
     docker_stable_new = Release(
-        tracker_name="aether-summary-order",
+        tracker_name="sample_canary-summary-order",
         tracker_type="container",
         version="0.1.7",
         name="latest",
@@ -2930,7 +2930,7 @@ async def test_latest_current_summary_prefers_highest_stable_semver_before_publi
         commit_sha="sha256:017",
     )
     second_docker_old = Release(
-        tracker_name="aether-summary-order",
+        tracker_name="sample_canary-summary-order",
         tracker_type="container",
         version="0.6.3",
         name="latest",
@@ -2959,7 +2959,7 @@ async def test_latest_current_summary_prefers_highest_stable_semver_before_publi
     )
 
     latest_summary = await storage.get_tracker_latest_current_release_summary(
-        "aether-summary-order"
+        "sample_canary-summary-order"
     )
 
     assert latest_summary is not None
@@ -3068,7 +3068,7 @@ def test_select_best_releases_by_channel_uses_runtime_channel_names_as_selection
 def test_select_best_releases_by_channel_excludes_docker_alias_when_folded_version_matches_exclude():
     releases = [
         Release(
-            tracker_name="jenkins-agent",
+            tracker_name="sample-worker",
             tracker_type="container",
             version="3256.3258.v858f3c9a_f69d-1",
             name="latest",
@@ -3079,7 +3079,7 @@ def test_select_best_releases_by_channel_excludes_docker_alias_when_folded_versi
             commit_sha="sha256:latest",
         ),
         Release(
-            tracker_name="jenkins-agent",
+            tracker_name="sample-worker",
             tracker_type="container",
             version="3256.3258.v858f3c9a_f69d",
             name="trixie",

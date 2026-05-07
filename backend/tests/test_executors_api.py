@@ -27,9 +27,9 @@ class FakeDiscoveryAdapter(BaseRuntimeAdapter):
         return [
             RuntimeTarget(
                 runtime_type=self.runtime_connection.type,
-                name="nginx",
-                target_ref={"mode": "container", "container_id": "abc", "container_name": "nginx"},
-                image="nginx:1.25",
+                name="sample-web",
+                target_ref={"mode": "container", "container_id": "abc", "container_name": "sample-web"},
+                image="sample-web:1.25",
             )
         ]
 
@@ -38,7 +38,7 @@ class FakeDiscoveryAdapter(BaseRuntimeAdapter):
             raise ValueError("container not found")
 
     async def get_current_image(self, target_ref) -> str:
-        return "nginx:1.25"
+        return "sample-web:1.25"
 
     async def capture_snapshot(self, target_ref, current_image: str):
         return {"image": current_image, "target_ref": target_ref}
@@ -48,7 +48,7 @@ class FakeDiscoveryAdapter(BaseRuntimeAdapter):
             raise ValueError("snapshot target_ref mismatch")
 
     async def update_image(self, target_ref, new_image: str):
-        return RuntimeUpdateResult(updated=True, old_image="nginx:1.25", new_image=new_image)
+        return RuntimeUpdateResult(updated=True, old_image="sample-web:1.25", new_image=new_image)
 
     async def recover_from_snapshot(self, target_ref, snapshot):
         return RuntimeUpdateResult(updated=True, old_image=None, new_image=snapshot.get("image"))
@@ -134,7 +134,7 @@ async def _create_portainer_runtime_connection(
 async def _create_tracker(
     storage,
     *,
-    name: str = "nginx",
+    name: str = "sample-web",
     tracker_type: Literal["github", "gitlab", "gitea", "helm", "container"] = "container",
 ):
     channels = (
@@ -348,8 +348,8 @@ async def _create_executor_via_api(
 @pytest.mark.asyncio
 async def test_executor_discovery_and_create_validation(authed_client, storage, monkeypatch):
     runtime_id = await _create_runtime_connection(storage)
-    await _create_tracker(storage, name="nginx")
-    nginx_source_id = await _get_tracker_source_id(storage, "nginx")
+    await _create_tracker(storage, name="sample-web")
+    sample_web_source_id = await _get_tracker_source_id(storage, "sample-web")
 
     monkeypatch.setattr(
         "releasetracker.routers.executors.DockerRuntimeAdapter",
@@ -361,9 +361,9 @@ async def test_executor_discovery_and_create_validation(authed_client, storage, 
     assert discovery.json()["items"] == [
         {
             "runtime_type": "docker",
-            "name": "nginx",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "nginx"},
-            "image": "nginx:1.25",
+            "name": "sample-web",
+            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
+            "image": "sample-web:1.25",
         }
     ]
 
@@ -389,7 +389,7 @@ async def test_executor_discovery_and_create_validation(authed_client, storage, 
             "name": "executor-invalid-runtime",
             "runtime_type": "docker",
             "runtime_connection_id": runtime_id + 99,
-            "tracker_name": "nginx",
+            "tracker_name": "sample-web",
             "enabled": True,
             "update_mode": "manual",
             "target_ref": {"mode": "container", "container_id": "abc"},
@@ -404,13 +404,13 @@ async def test_executor_discovery_and_create_validation(authed_client, storage, 
             "name": "executor-valid",
             "runtime_type": "docker",
             "runtime_connection_id": runtime_id,
-            "tracker_name": "nginx",
-            "tracker_source_id": nginx_source_id,
+            "tracker_name": "sample-web",
+            "tracker_source_id": sample_web_source_id,
             "channel_name": "stable",
             "enabled": True,
             "image_selection_mode": "replace_tag_on_current_image",
             "update_mode": "manual",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "nginx"},
+            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
             "description": "test executor",
         },
     )
@@ -428,7 +428,7 @@ async def test_executor_discovery_and_create_validation(authed_client, storage, 
     assert status_detail.json()["target_ref"] == {
         "mode": "container",
         "container_id": "abc",
-        "container_name": "nginx",
+        "container_name": "sample-web",
     }
     assert status_detail.json()["description"] == "test executor"
     assert status_detail.json()["maintenance_window"] is None
@@ -436,7 +436,7 @@ async def test_executor_discovery_and_create_validation(authed_client, storage, 
 
     detail = authed_client.get(f"/api/executors/{executor_id}/config")
     assert detail.status_code == 200
-    assert detail.json()["tracker_name"] == "nginx"
+    assert detail.json()["tracker_name"] == "sample-web"
     assert isinstance(detail.json()["tracker_source_id"], int)
 
 
@@ -535,7 +535,7 @@ async def test_executor_create_rejects_mode_less_container_target_ref(authed_cli
             "channel_name": "stable",
             "enabled": True,
             "update_mode": "manual",
-            "target_ref": {"container_id": "abc", "container_name": "nginx"},
+            "target_ref": {"container_id": "abc", "container_name": "sample-web"},
         },
     )
 
@@ -554,13 +554,13 @@ async def test_executor_update_rejects_mode_less_container_target_ref(authed_cli
         name="executor-mode-required",
         runtime_id=runtime_id,
         tracker_name="mode-required-update",
-        target_ref={"mode": "container", "container_id": "abc", "container_name": "nginx"},
+        target_ref={"mode": "container", "container_id": "abc", "container_name": "sample-web"},
     )
 
     response = authed_client.put(
         f"/api/executors/{executor_id}",
         json={
-            "target_ref": {"container_id": "abc", "container_name": "nginx"},
+            "target_ref": {"container_id": "abc", "container_name": "sample-web"},
         },
     )
 
@@ -1594,8 +1594,8 @@ async def test_executor_create_rejects_tracker_image_mode_without_image(authed_c
 @pytest.mark.asyncio
 async def test_executor_create_accepts_tracker_image_mode(authed_client, storage, monkeypatch):
     runtime_id = await _create_runtime_connection(storage)
-    await _create_tracker(storage, name="nginx")
-    tracker_source_id = await _get_tracker_source_id(storage, "nginx")
+    await _create_tracker(storage, name="sample-web")
+    tracker_source_id = await _get_tracker_source_id(storage, "sample-web")
 
     monkeypatch.setattr(
         "releasetracker.routers.executors.DockerRuntimeAdapter",
@@ -1608,13 +1608,13 @@ async def test_executor_create_accepts_tracker_image_mode(authed_client, storage
             "name": "executor-tracker-image",
             "runtime_type": "docker",
             "runtime_connection_id": runtime_id,
-            "tracker_name": "nginx",
+            "tracker_name": "sample-web",
             "tracker_source_id": tracker_source_id,
             "channel_name": "stable",
             "enabled": True,
             "image_selection_mode": "use_tracker_image_and_tag",
             "update_mode": "manual",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "nginx"},
+            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
         },
     )
 
@@ -1843,7 +1843,7 @@ async def test_executor_create_rejects_missing_channel_name(authed_client, stora
             "tracker_source_id": tracker_source_id,
             "enabled": True,
             "update_mode": "manual",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "nginx"},
+            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
         },
     )
     assert response.status_code == 400
@@ -1877,7 +1877,7 @@ async def test_executor_create_rejects_nonexistent_channel(authed_client, storag
             "channel_name": "canary",
             "enabled": True,
             "update_mode": "manual",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "nginx"},
+            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
         },
     )
     assert response.status_code == 400
@@ -1933,7 +1933,7 @@ async def test_executor_create_rejects_disabled_channel(authed_client, storage, 
             "channel_name": "canary",
             "enabled": True,
             "update_mode": "manual",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "nginx"},
+            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
         },
     )
     assert response.status_code == 400
@@ -1982,7 +1982,7 @@ async def test_executor_create_accepts_valid_channel_and_persists_it(
             "channel_name": "stable",
             "enabled": True,
             "update_mode": "manual",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "nginx"},
+            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
         },
     )
     assert response.status_code == 200
@@ -2037,7 +2037,7 @@ async def test_executor_create_rejects_non_bindable_tracker_source(
             "channel_name": "stable",
             "enabled": True,
             "update_mode": "manual",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "nginx"},
+            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
         },
     )
 
@@ -2090,7 +2090,7 @@ async def test_executor_create_rejects_ambiguous_tracker_without_source_id_when_
             "channel_name": "stable",
             "enabled": True,
             "update_mode": "manual",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "nginx"},
+            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
         },
     )
 
@@ -2177,7 +2177,7 @@ async def test_executor_create_rejects_channel_name_not_owned_by_bound_tracker_c
             "enabled": True,
             "image_selection_mode": "use_tracker_image_and_tag",
             "update_mode": "manual",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "nginx"},
+            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
         },
     )
 

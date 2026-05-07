@@ -6,8 +6,8 @@ def test_executor_webhook_uses_version_labels_for_helm_release():
         "executor_run_success",
         {
             "entity": "executor_run",
-            "executor_name": "jenkins",
-            "tracker_name": "jenkins-chart",
+            "executor_name": "sample-ci",
+            "tracker_name": "sample-ci-chart",
             "runtime_type": "kubernetes",
             "target_mode": "helm_release",
             "status": "success",
@@ -22,9 +22,9 @@ def test_executor_webhook_uses_version_labels_for_helm_release():
     assert {field["name"] for field in fields} >= {"From Version", "To Version"}
     assert "From Image" not in {field["name"] for field in fields}
     assert "From Chart Version" not in {field["name"] for field in fields}
-    assert payload["message"] == "[Executor:jenkins]"
-    assert payload["content"] == "[Executor:jenkins]"
-    assert payload["text"] == "[Executor:jenkins]"
+    assert payload["message"] == "[Executor:sample-ci]"
+    assert payload["content"] == "[Executor:sample-ci]"
+    assert payload["text"] == "[Executor:sample-ci]"
     assert payload["embeds"][0]["description"] == "Helm release upgraded"
     assert payload["embeds"][0]["timestamp"] == "2026-05-03T09:10:00Z"
 
@@ -61,8 +61,8 @@ def test_executor_webhook_uses_chinese_labels_when_language_is_zh():
         "executor_run_success",
         {
             "entity": "executor_run",
-            "executor_name": "jenkins",
-            "tracker_name": "jenkins-chart",
+            "executor_name": "sample-ci",
+            "tracker_name": "sample-ci-chart",
             "runtime_type": "kubernetes",
             "status": "success",
             "from_version": "5.9.17",
@@ -84,7 +84,7 @@ def test_executor_webhook_uses_chinese_labels_when_language_is_zh():
         "目标版本",
         "运行 ID",
     }
-    assert payload["message"] == "[Executor:jenkins]"
+    assert payload["message"] == "[Executor:sample-ci]"
     assert payload["embeds"][0]["title"] == "执行器运行成功"
     result_field = next(field for field in fields if field["name"] == "结果")
     assert result_field["value"] == "成功"

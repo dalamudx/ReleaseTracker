@@ -1382,12 +1382,12 @@ async def _wait_for_adapter_run_count(
 @pytest.mark.asyncio
 async def test_manual_executor_run_updates_image_and_status(storage):
     runtime_id = await _create_runtime_connection(storage)
-    tracker_name = "nginx"
+    tracker_name = "sample-web"
     await save_docker_tracker_config(
         storage,
         name=tracker_name,
         enabled=True,
-        image="nginx",
+        image="sample-web",
         registry="registry-1.docker.io",
         channels=[config_module.Channel(name="stable", enabled=True, type="release")],
     )
@@ -1395,7 +1395,7 @@ async def test_manual_executor_run_updates_image_and_status(storage):
 
     executor_id = await storage.save_executor_config(
         ExecutorConfig(
-            name="docker-nginx",
+            name="docker-sample-web",
             runtime_type="docker",
             runtime_connection_id=runtime_id,
             tracker_name=tracker_name,
@@ -1403,7 +1403,7 @@ async def test_manual_executor_run_updates_image_and_status(storage):
             channel_name="stable",
             enabled=True,
             update_mode="manual",
-            target_ref={"mode": "container", "container_id": "container-1", "image": "nginx"},
+            target_ref={"mode": "container", "container_id": "container-1", "image": "sample-web"},
         )
     )
 
@@ -1416,7 +1416,7 @@ async def test_manual_executor_run_updates_image_and_status(storage):
             config={"socket": "unix:///var/run/docker.sock"},
             secrets={},
         ),
-        current_image="ghcr.io/library/nginx:1.0.0",
+        current_image="ghcr.io/library/sample-web:1.0.0",
         storage=storage,
         executor_id=executor_id,
     )
@@ -1425,23 +1425,23 @@ async def test_manual_executor_run_updates_image_and_status(storage):
     outcome = await scheduler.run_executor_now(executor_id)
 
     assert outcome.status == "success"
-    assert adapter.update_calls == ["ghcr.io/library/nginx:1.1.0"]
+    assert adapter.update_calls == ["ghcr.io/library/sample-web:1.1.0"]
 
     status = await storage.get_executor_status(executor_id)
     assert status is not None
     assert status.last_result == "success"
-    assert status.last_version == "ghcr.io/library/nginx:1.1.0"
+    assert status.last_version == "ghcr.io/library/sample-web:1.1.0"
 
     history = await storage.get_executor_run_history(executor_id, limit=1)
     assert history[0].status == "success"
-    assert history[0].from_version == "ghcr.io/library/nginx:1.0.0"
-    assert history[0].to_version == "ghcr.io/library/nginx:1.1.0"
+    assert history[0].from_version == "ghcr.io/library/sample-web:1.0.0"
+    assert history[0].to_version == "ghcr.io/library/sample-web:1.1.0"
 
     snapshot = await storage.get_executor_snapshot(executor_id)
     assert snapshot is not None
     assert snapshot.snapshot_data == {
         "runtime_type": "docker",
-        "image": "ghcr.io/library/nginx:1.0.0",
+        "image": "ghcr.io/library/sample-web:1.0.0",
         "target_ref": {"mode": "container", "container_id": "container-1"},
     }
     assert adapter.snapshot_seen_before_update is not None
@@ -1577,12 +1577,12 @@ async def test_invalid_snapshot_aborts_before_runtime_mutation(storage):
 @pytest.mark.asyncio
 async def test_failed_update_triggers_automatic_recovery_from_snapshot(storage):
     runtime_id = await _create_runtime_connection(storage)
-    tracker_name = "recoverable-nginx"
+    tracker_name = "recoverable-sample-web"
     await save_docker_tracker_config(
         storage,
         name=tracker_name,
         enabled=True,
-        image="recoverable-nginx",
+        image="recoverable-sample-web",
         registry="registry-1.docker.io",
         channels=[config_module.Channel(name="stable", enabled=True, type="release")],
     )
@@ -1601,7 +1601,7 @@ async def test_failed_update_triggers_automatic_recovery_from_snapshot(storage):
             target_ref={
                 "mode": "container",
                 "container_id": "container-recover",
-                "image": "recoverable-nginx",
+                "image": "recoverable-sample-web",
             },
         )
     )
@@ -1615,7 +1615,7 @@ async def test_failed_update_triggers_automatic_recovery_from_snapshot(storage):
             config={"socket": "unix:///var/run/docker.sock"},
             secrets={},
         ),
-        current_image="ghcr.io/acme/recoverable-nginx:1.0.0",
+        current_image="ghcr.io/acme/recoverable-sample-web:1.0.0",
         storage=storage,
         executor_id=executor_id,
         fail_after_destructive_update=True,
@@ -1629,20 +1629,20 @@ async def test_failed_update_triggers_automatic_recovery_from_snapshot(storage):
     assert "automatic recovery succeeded: runtime recovered from snapshot" in (
         outcome.message or ""
     )
-    assert adapter.update_calls == ["ghcr.io/acme/recoverable-nginx:1.1.0"]
+    assert adapter.update_calls == ["ghcr.io/acme/recoverable-sample-web:1.1.0"]
     assert len(adapter.recovery_calls) == 1
-    assert adapter.current_image == "ghcr.io/acme/recoverable-nginx:1.0.0"
+    assert adapter.current_image == "ghcr.io/acme/recoverable-sample-web:1.0.0"
 
     history = await storage.get_executor_run_history(executor_id, limit=1)
     assert history[0].status == "failed"
     assert "automatic recovery succeeded" in (history[0].message or "")
-    assert history[0].from_version == "ghcr.io/acme/recoverable-nginx:1.0.0"
-    assert history[0].to_version == "ghcr.io/acme/recoverable-nginx:1.0.0"
+    assert history[0].from_version == "ghcr.io/acme/recoverable-sample-web:1.0.0"
+    assert history[0].to_version == "ghcr.io/acme/recoverable-sample-web:1.0.0"
 
     status = await storage.get_executor_status(executor_id)
     assert status is not None
     assert status.last_result == "failed"
-    assert status.last_version == "ghcr.io/acme/recoverable-nginx:1.0.0"
+    assert status.last_version == "ghcr.io/acme/recoverable-sample-web:1.0.0"
     assert status.last_error == "simulated update failure after destructive steps"
 
 
@@ -1905,12 +1905,12 @@ async def test_docker_scheduler_recovers_from_snapshot_after_recreate_failure(st
 @pytest.mark.asyncio
 async def test_maintenance_window_desired_state_defers_without_skip_history_spam(storage):
     runtime_id = await _create_runtime_connection(storage)
-    tracker_name = "redis"
+    tracker_name = "sample-cache"
     await save_docker_tracker_config(
         storage,
         name=tracker_name,
         enabled=True,
-        image="redis",
+        image="sample-cache",
         registry="registry-1.docker.io",
         channels=[config_module.Channel(name="stable", enabled=True, type="release")],
     )
@@ -1920,7 +1920,7 @@ async def test_maintenance_window_desired_state_defers_without_skip_history_spam
 
     executor_id = await storage.save_executor_config(
         ExecutorConfig(
-            name="docker-redis",
+            name="docker-sample-cache",
             runtime_type="docker",
             runtime_connection_id=runtime_id,
             tracker_name=tracker_name,
@@ -1928,7 +1928,7 @@ async def test_maintenance_window_desired_state_defers_without_skip_history_spam
             channel_name="stable",
             enabled=True,
             update_mode="maintenance_window",
-            target_ref={"mode": "container", "container_id": "container-2", "image": "redis"},
+            target_ref={"mode": "container", "container_id": "container-2", "image": "sample-cache"},
             maintenance_window=MaintenanceWindowConfig(
                 timezone="UTC",
                 days_of_week=[0],
@@ -1947,7 +1947,7 @@ async def test_maintenance_window_desired_state_defers_without_skip_history_spam
             config={"socket": "unix:///var/run/docker.sock"},
             secrets={},
         ),
-        current_image="redis:7.2",
+        current_image="sample-cache:7.2",
     )
     scheduler._adapters[executor_id] = adapter
 
@@ -1974,12 +1974,12 @@ async def test_maintenance_window_desired_state_defers_without_skip_history_spam
 @pytest.mark.asyncio
 async def test_maintenance_window_pending_desired_state_runs_once_when_window_opens(storage):
     runtime_id = await _create_runtime_connection(storage)
-    tracker_name = "redis-window-open"
+    tracker_name = "sample-cache-window-open"
     await save_docker_tracker_config(
         storage,
         name=tracker_name,
         enabled=True,
-        image="redis-window-open",
+        image="sample-cache-window-open",
         registry="registry-1.docker.io",
         channels=[config_module.Channel(name="stable", enabled=True, type="release")],
     )
@@ -1989,7 +1989,7 @@ async def test_maintenance_window_pending_desired_state_runs_once_when_window_op
 
     executor_id = await storage.save_executor_config(
         ExecutorConfig(
-            name="docker-redis-window-open",
+            name="docker-sample-cache-window-open",
             runtime_type="docker",
             runtime_connection_id=runtime_id,
             tracker_name=tracker_name,
@@ -2000,7 +2000,7 @@ async def test_maintenance_window_pending_desired_state_runs_once_when_window_op
             target_ref={
                 "mode": "container",
                 "container_id": "container-window-open",
-                "image": "redis-window-open",
+                "image": "sample-cache-window-open",
             },
             maintenance_window=MaintenanceWindowConfig(
                 timezone="UTC",
@@ -2020,7 +2020,7 @@ async def test_maintenance_window_pending_desired_state_runs_once_when_window_op
             config={"socket": "unix:///var/run/docker.sock"},
             secrets={},
         ),
-        current_image="redis-window-open:7.2",
+        current_image="sample-cache-window-open:7.2",
     )
     scheduler._adapters[executor_id] = adapter
 
@@ -2042,7 +2042,7 @@ async def test_maintenance_window_pending_desired_state_runs_once_when_window_op
     current_now = datetime(2026, 3, 30, 1, 30, tzinfo=timezone.utc)
     await scheduler.reconcile_pending_desired_states()
 
-    assert adapter.update_calls == ["redis-window-open:7.4"]
+    assert adapter.update_calls == ["sample-cache-window-open:7.4"]
     final_state = await storage.get_executor_desired_state(executor_id)
     assert final_state is not None
     assert final_state.pending is False
@@ -2058,12 +2058,12 @@ async def test_maintenance_window_pending_desired_state_runs_once_when_window_op
 @pytest.mark.asyncio
 async def test_maintenance_window_desired_state_uses_latest_system_timezone(storage):
     runtime_id = await _create_runtime_connection(storage)
-    tracker_name = "redis-global-timezone"
+    tracker_name = "sample-cache-global-timezone"
     await save_docker_tracker_config(
         storage,
         name=tracker_name,
         enabled=True,
-        image="redis-global-timezone",
+        image="sample-cache-global-timezone",
         registry="registry-1.docker.io",
         channels=[config_module.Channel(name="stable", enabled=True, type="release")],
     )
@@ -2075,7 +2075,7 @@ async def test_maintenance_window_desired_state_uses_latest_system_timezone(stor
     current_now = datetime(2026, 3, 29, 17, 30, tzinfo=timezone.utc)
     executor_id = await storage.save_executor_config(
         ExecutorConfig(
-            name="docker-redis-global-timezone",
+            name="docker-sample-cache-global-timezone",
             runtime_type="docker",
             runtime_connection_id=runtime_id,
             tracker_name=tracker_name,
@@ -2086,7 +2086,7 @@ async def test_maintenance_window_desired_state_uses_latest_system_timezone(stor
             target_ref={
                 "mode": "container",
                 "container_id": "container-global-timezone",
-                "image": "redis-global-timezone",
+                "image": "sample-cache-global-timezone",
             },
             maintenance_window=MaintenanceWindowConfig(
                 timezone="UTC",
@@ -2107,7 +2107,7 @@ async def test_maintenance_window_desired_state_uses_latest_system_timezone(stor
             config={"socket": "unix:///var/run/docker.sock"},
             secrets={},
         ),
-        current_image="redis-global-timezone:7.2",
+        current_image="sample-cache-global-timezone:7.2",
     )
     scheduler._adapters[executor_id] = adapter
 
@@ -2120,7 +2120,7 @@ async def test_maintenance_window_desired_state_uses_latest_system_timezone(stor
 
     await scheduler.reconcile_pending_desired_states()
 
-    assert adapter.update_calls == ["redis-global-timezone:7.4"]
+    assert adapter.update_calls == ["sample-cache-global-timezone:7.4"]
     desired_state = await storage.get_executor_desired_state(executor_id)
     assert desired_state is not None
     assert desired_state.pending is False
@@ -2781,12 +2781,12 @@ async def test_source_bound_executor_canary_uses_bound_source_channels_when_trac
     storage,
 ):
     runtime_id = await _create_runtime_connection(storage)
-    tracker_name = "aether-source-bound-scope"
+    tracker_name = "sample_canary-source-bound-scope"
     await save_docker_tracker_config(
         storage,
         name=tracker_name,
         enabled=True,
-        image="ghcr.io/acme/aether",
+        image="ghcr.io/acme/sample_canary",
         registry="registry-1.docker.io",
         channels=[config_module.Channel(name="stable", enabled=True, type="release")],
     )
@@ -2805,7 +2805,7 @@ async def test_source_bound_executor_canary_uses_bound_source_channels_when_trac
                     source_key="stable-origin",
                     source_type="container",
                     source_rank=0,
-                    source_config={"image": "ghcr.io/acme/aether", "registry": "ghcr.io"},
+                    source_config={"image": "ghcr.io/acme/sample_canary", "registry": "ghcr.io"},
                     release_channels=[
                         ReleaseChannel(
                             release_channel_key="stable-origin-stable",
@@ -2816,13 +2816,13 @@ async def test_source_bound_executor_canary_uses_bound_source_channels_when_trac
                     ],
                 ),
                 TrackerSource(
-                    source_key="aether-origin",
+                    source_key="sample_canary-origin",
                     source_type="container",
                     source_rank=1,
-                    source_config={"image": "ghcr.io/acme/aether", "registry": "ghcr.io"},
+                    source_config={"image": "ghcr.io/acme/sample_canary", "registry": "ghcr.io"},
                     release_channels=[
                         ReleaseChannel(
-                            release_channel_key="aether-origin-canary",
+                            release_channel_key="sample_canary-origin-canary",
                             name="canary",
                             type="prerelease",
                             include_pattern=".*rc.*",
@@ -2840,7 +2840,7 @@ async def test_source_bound_executor_canary_uses_bound_source_channels_when_trac
         source for source in aggregate_tracker.sources if source.source_key == "stable-origin"
     )
     canary_source = next(
-        source for source in aggregate_tracker.sources if source.source_key == "aether-origin"
+        source for source in aggregate_tracker.sources if source.source_key == "sample_canary-origin"
     )
     assert stable_source.id is not None
     assert canary_source.id is not None
@@ -2903,7 +2903,7 @@ async def test_source_bound_executor_canary_uses_bound_source_channels_when_trac
 
     executor_id = await storage.save_executor_config(
         ExecutorConfig(
-            name="aether-canary-executor",
+            name="sample_canary-canary-executor",
             runtime_type="docker",
             runtime_connection_id=runtime_id,
             tracker_name=tracker_name,
@@ -2912,7 +2912,7 @@ async def test_source_bound_executor_canary_uses_bound_source_channels_when_trac
             enabled=True,
             image_selection_mode="replace_tag_on_current_image",
             update_mode="manual",
-            target_ref={"mode": "container", "container_id": "container-aether"},
+            target_ref={"mode": "container", "container_id": "container-sample_canary"},
         )
     )
 
@@ -2922,13 +2922,13 @@ async def test_source_bound_executor_canary_uses_bound_source_channels_when_trac
         config={"socket": "unix:///var/run/docker.sock"},
         secrets={},
     )
-    adapter = FakeAdapter(rc, current_image="ghcr.io/acme/aether:0.7.0-rc16")
+    adapter = FakeAdapter(rc, current_image="ghcr.io/acme/sample_canary:0.7.0-rc16")
     scheduler._adapters[executor_id] = adapter
 
     outcome = await scheduler.run_executor_now(executor_id)
 
     assert outcome.status == "success"
-    assert adapter.update_calls == ["ghcr.io/acme/aether:0.7.0-rc18"]
+    assert adapter.update_calls == ["ghcr.io/acme/sample_canary:0.7.0-rc18"]
 
 
 @pytest.mark.asyncio
@@ -3179,7 +3179,7 @@ async def test_executor_config_round_trip_persists_channel_name(storage):
             name="channel-round-trip",
             runtime_type="docker",
             runtime_connection_id=runtime_id,
-            tracker_name="nginx",
+            tracker_name="sample-web",
             channel_name="stable",
             enabled=True,
             update_mode="manual",
@@ -3911,7 +3911,7 @@ async def test_portainer_stack_executor_updates_bound_services_via_single_stack_
                         "  api:\n"
                         "    image: ghcr.io/acme/api:1.0.0\n"
                         "  db:\n"
-                        "    image: postgres:16\n"
+                        "    image: sample-db:16\n"
                         "  worker:\n"
                         "    image: ghcr.io/acme/worker:1.0.0\n"
                     )
@@ -3956,7 +3956,7 @@ async def test_portainer_stack_executor_updates_bound_services_via_single_stack_
     assert payload is not None
     assert "ghcr.io/acme/api:1.1.0" in payload["stackFileContent"]
     assert "ghcr.io/acme/worker:2.0.0" in payload["stackFileContent"]
-    assert "postgres:16" in payload["stackFileContent"]
+    assert "sample-db:16" in payload["stackFileContent"]
 
     history = await storage.get_executor_run_history(executor_id, limit=1)
     assert history[0].status == "success"
@@ -4033,7 +4033,7 @@ async def test_docker_compose_executor_updates_only_bound_services_via_single_gr
         "services": [
             {"service": "api", "image": "ghcr.io/acme/api:1.0.0"},
             {"service": "worker", "image": "ghcr.io/acme/worker:1.0.0"},
-            {"service": "db", "image": "postgres:16"},
+            {"service": "db", "image": "sample-db:16"},
         ],
     }
     executor_id = await storage.save_executor_config(
@@ -4077,7 +4077,7 @@ async def test_docker_compose_executor_updates_only_bound_services_via_single_gr
         current_images={
             "api": "ghcr.io/acme/api:1.0.0",
             "worker": "ghcr.io/acme/worker:1.0.0",
-            "db": "postgres:16",
+            "db": "sample-db:16",
         },
     )
     scheduler._adapters[executor_id] = adapter
@@ -4222,34 +4222,34 @@ async def test_helm_release_executor_skips_when_chart_version_is_current(storage
     )
     await storage.save_tracker_config(
         TrackerConfig(
-            name="aether-chart",
+            name="sample_canary-chart",
             type="helm",
             enabled=True,
             repo="https://charts.example",
-            chart="aether",
+            chart="sample_canary",
             channels=[config_module.Channel(name="stable", enabled=True, type="release")],
         )
     )
     await _create_bound_helm_release(
         storage,
-        "aether-chart",
+        "sample_canary-chart",
         app_version="3.0.0",
         chart_version="1.2.3",
         published_at=datetime(2026, 3, 25, tzinfo=timezone.utc),
     )
-    source_id = await _get_tracker_source_id(storage, "aether-chart")
+    source_id = await _get_tracker_source_id(storage, "sample_canary-chart")
     target_ref = {
         "mode": "helm_release",
         "namespace": "apps",
-        "release_name": "aether",
-        "chart_name": "aether",
+        "release_name": "sample_canary",
+        "chart_name": "sample_canary",
     }
     executor_id = await storage.save_executor_config(
         ExecutorConfig(
-            name="aether-release-executor",
+            name="sample_canary-release-executor",
             runtime_type="kubernetes",
             runtime_connection_id=runtime_id,
-            tracker_name="aether-chart",
+            tracker_name="sample_canary-chart",
             tracker_source_id=source_id,
             channel_name="stable",
             enabled=True,
@@ -4440,7 +4440,7 @@ async def test_docker_compose_executor_ignores_non_bound_dependency_services_in_
         "project": "release-stack",
         "services": [
             {"service": "api", "image": "ghcr.io/acme/api:1.0.0", "depends_on": ["db"]},
-            {"service": "db", "image": "postgres:16"},
+            {"service": "db", "image": "sample-db:16"},
         ],
     }
     executor_id = await storage.save_executor_config(
@@ -4475,7 +4475,7 @@ async def test_docker_compose_executor_ignores_non_bound_dependency_services_in_
         ),
         current_images={
             "api": "ghcr.io/acme/api:1.0.0",
-            "db": "postgres:16",
+            "db": "sample-db:16",
         },
     )
     scheduler._adapters[executor_id] = adapter

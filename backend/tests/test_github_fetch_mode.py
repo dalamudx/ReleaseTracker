@@ -288,7 +288,7 @@ async def test_github_rest_releases_do_not_use_target_commitish_branch_as_identi
     fake_client = _FakeAsyncClient(
         get_responses=[
             (
-                lambda url: url.endswith("/repos/navidrome/navidrome/releases"),
+                lambda url: url.endswith("/repos/example/sample-audio/releases"),
                 lambda url: _FakeResponse(
                     200,
                     [
@@ -298,7 +298,7 @@ async def test_github_rest_releases_do_not_use_target_commitish_branch_as_identi
                             "body": "latest notes",
                             "published_at": datetime(2026, 4, 12, tzinfo=timezone.utc).isoformat(),
                             "prerelease": False,
-                            "html_url": "https://github.com/navidrome/navidrome/releases/tag/v0.61.2",
+                            "html_url": "https://github.com/example/sample-audio/releases/tag/v0.61.2",
                             "target_commitish": "master",
                         },
                         {
@@ -307,7 +307,7 @@ async def test_github_rest_releases_do_not_use_target_commitish_branch_as_identi
                             "body": "older notes",
                             "published_at": datetime(2026, 3, 12, tzinfo=timezone.utc).isoformat(),
                             "prerelease": False,
-                            "html_url": "https://github.com/navidrome/navidrome/releases/tag/v0.60.0",
+                            "html_url": "https://github.com/example/sample-audio/releases/tag/v0.60.0",
                             "target_commitish": "master",
                         },
                     ],
@@ -315,11 +315,11 @@ async def test_github_rest_releases_do_not_use_target_commitish_branch_as_identi
                 ),
             ),
             (
-                lambda url: url.endswith("/repos/navidrome/navidrome/commits/v0.61.2"),
+                lambda url: url.endswith("/repos/example/sample-audio/commits/v0.61.2"),
                 lambda url: _FakeResponse(200, {"sha": "sha-latest"}, url),
             ),
             (
-                lambda url: url.endswith("/repos/navidrome/navidrome/commits/v0.60.0"),
+                lambda url: url.endswith("/repos/example/sample-audio/commits/v0.60.0"),
                 lambda url: _FakeResponse(200, {"sha": "sha-older"}, url),
             ),
         ]
@@ -329,8 +329,8 @@ async def test_github_rest_releases_do_not_use_target_commitish_branch_as_identi
     )
 
     tracker = GitHubTracker(
-        name="navidrome",
-        repo="navidrome/navidrome",
+        name="sample-audio",
+        repo="example/sample-audio",
         fetch_mode="rest_first",
     )
     releases = await tracker.fetch_all(limit=2)

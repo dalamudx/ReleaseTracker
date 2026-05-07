@@ -42,7 +42,7 @@ async def _create_portainer_runtime_connection(
     return await create_portainer_runtime_connection(storage, name=name)
 
 
-async def _create_tracker_source_id(storage, name: str = "nginx") -> int:
+async def _create_tracker_source_id(storage, name: str = "sample-web") -> int:
     await save_docker_tracker_config(
         storage,
         name=name,
@@ -66,22 +66,22 @@ async def test_executor_config_round_trip_with_status(storage):
         end_time="03:00",
     )
     executor_config = ExecutorConfig(
-        name="docker-nginx",
+        name="docker-sample-web",
         runtime_type="docker",
         runtime_connection_id=runtime_id,
-        tracker_name="nginx",
+        tracker_name="sample-web",
         tracker_source_id=tracker_source_id,
         enabled=True,
         update_mode="maintenance_window",
         image_reference_mode="tag",
-        target_ref={"mode": "container", "container_id": "container-1", "image": "nginx:1.25"},
+        target_ref={"mode": "container", "container_id": "container-1", "image": "sample-web:1.25"},
         maintenance_window=maintenance,
-        description="nginx executor",
+        description="sample-web executor",
     )
 
     executor_id = await storage.save_executor_config(executor_config)
     saved_executor = await storage.get_executor_config(executor_id)
-    saved_by_name = await storage.get_executor_config_by_name("docker-nginx")
+    saved_by_name = await storage.get_executor_config_by_name("docker-sample-web")
     all_executors = await storage.get_all_executor_configs()
     paginated = await storage.get_executor_configs_paginated(skip=0, limit=10)
     total = await storage.get_total_executor_configs_count()
@@ -125,14 +125,14 @@ async def test_executor_run_history_records_success_failure_and_skip(storage):
     tracker_source_id = await _create_tracker_source_id(storage)
     executor_id = await storage.save_executor_config(
         ExecutorConfig(
-            name="podman-nginx",
+            name="podman-sample-web",
             runtime_type="podman",
             runtime_connection_id=runtime_id,
-            tracker_name="nginx",
+            tracker_name="sample-web",
             tracker_source_id=tracker_source_id,
             enabled=True,
             update_mode="immediate",
-            target_ref={"mode": "container", "container_name": "nginx"},
+            target_ref={"mode": "container", "container_name": "sample-web"},
             description="podman executor",
         )
     )
@@ -220,10 +220,10 @@ async def test_executor_persistence_keeps_tracker_and_release_tables_untouched(s
     tracker_source_id = await _create_tracker_source_id(storage)
     executor_id = await storage.save_executor_config(
         ExecutorConfig(
-            name="k8s-nginx",
+            name="k8s-sample-web",
             runtime_type="kubernetes",
             runtime_connection_id=runtime_id,
-            tracker_name="nginx",
+            tracker_name="sample-web",
             tracker_source_id=tracker_source_id,
             channel_name="stable",
             enabled=True,
@@ -232,11 +232,11 @@ async def test_executor_persistence_keeps_tracker_and_release_tables_untouched(s
                 "mode": "kubernetes_workload",
                 "namespace": "default",
                 "kind": "Deployment",
-                "name": "nginx",
+                "name": "sample-web",
             },
             service_bindings=[
                 ExecutorServiceBinding(
-                    service="nginx", tracker_source_id=tracker_source_id, channel_name="stable"
+                    service="sample-web", tracker_source_id=tracker_source_id, channel_name="stable"
                 ),
             ],
             description="k8s executor",
@@ -298,7 +298,7 @@ async def test_executor_snapshot_save_overwrites_latest_snapshot_for_same_execut
             name="snapshot-executor",
             runtime_type="docker",
             runtime_connection_id=runtime_id,
-            tracker_name="nginx",
+            tracker_name="sample-web",
             tracker_source_id=tracker_source_id,
             enabled=True,
             update_mode="manual",
@@ -311,7 +311,7 @@ async def test_executor_snapshot_save_overwrites_latest_snapshot_for_same_execut
         ExecutorSnapshot(
             executor_id=executor_id,
             snapshot_data={
-                "image": "nginx:1.24.0",
+                "image": "sample-web:1.24.0",
                 "target": {"container_id": "container-snapshot"},
                 "runtime": {"type": "docker"},
             },
@@ -323,7 +323,7 @@ async def test_executor_snapshot_save_overwrites_latest_snapshot_for_same_execut
         ExecutorSnapshot(
             executor_id=executor_id,
             snapshot_data={
-                "image": "nginx:1.25.0",
+                "image": "sample-web:1.25.0",
                 "target": {"container_id": "container-snapshot"},
                 "runtime": {"type": "docker", "region": "prod"},
             },
@@ -335,7 +335,7 @@ async def test_executor_snapshot_save_overwrites_latest_snapshot_for_same_execut
     assert latest_snapshot is not None
     assert latest_snapshot.executor_id == executor_id
     assert latest_snapshot.snapshot_data == {
-        "image": "nginx:1.25.0",
+        "image": "sample-web:1.25.0",
         "target": {"container_id": "container-snapshot"},
         "runtime": {"type": "docker", "region": "prod"},
     }
@@ -361,7 +361,7 @@ async def test_executor_snapshot_storage_stays_separate_from_run_history(storage
             name="snapshot-separation-executor",
             runtime_type="docker",
             runtime_connection_id=runtime_id,
-            tracker_name="nginx",
+            tracker_name="sample-web",
             tracker_source_id=tracker_source_id,
             enabled=True,
             update_mode="manual",
@@ -374,7 +374,7 @@ async def test_executor_snapshot_storage_stays_separate_from_run_history(storage
         ExecutorSnapshot(
             executor_id=executor_id,
             snapshot_data={
-                "image": "nginx:1.25.0",
+                "image": "sample-web:1.25.0",
                 "target": {"container_id": "container-separation"},
                 "recovery": {"strategy": "recreate"},
             },
@@ -396,7 +396,7 @@ async def test_executor_snapshot_storage_stays_separate_from_run_history(storage
 
     assert snapshot is not None
     assert snapshot.snapshot_data == {
-        "image": "nginx:1.25.0",
+        "image": "sample-web:1.25.0",
         "target": {"container_id": "container-separation"},
         "recovery": {"strategy": "recreate"},
     }
@@ -423,7 +423,7 @@ def test_executor_target_ref_container_requires_explicit_mode():
             name="docker-mode-required",
             runtime_type="docker",
             runtime_connection_id=1,
-            tracker_name="nginx",
+            tracker_name="sample-web",
             tracker_source_id=1,
             channel_name="stable",
             enabled=True,
@@ -458,7 +458,7 @@ def test_executor_target_ref_portainer_stack_round_trip_shape_is_explicit():
         name="portainer-stack",
         runtime_type="portainer",
         runtime_connection_id=1,
-        tracker_name="nginx",
+        tracker_name="sample-web",
         tracker_source_id=1,
         channel_name="stable",
         enabled=True,
@@ -494,7 +494,7 @@ def test_executor_target_ref_portainer_stack_rejects_missing_identity_fields():
             name="portainer-stack-invalid",
             runtime_type="portainer",
             runtime_connection_id=1,
-            tracker_name="nginx",
+            tracker_name="sample-web",
             tracker_source_id=1,
             channel_name="stable",
             enabled=True,
@@ -515,7 +515,7 @@ def test_executor_target_ref_portainer_stack_rejects_non_portainer_runtime(runti
             name=f"{runtime_type}-portainer-stack-invalid",
             runtime_type=runtime_type,
             runtime_connection_id=1,
-            tracker_name="nginx",
+            tracker_name="sample-web",
             tracker_source_id=1,
             channel_name="stable",
             enabled=True,
@@ -538,14 +538,14 @@ def test_executor_target_ref_portainer_runtime_rejects_non_portainer_stack_mode(
             name="portainer-container-mode-invalid",
             runtime_type="portainer",
             runtime_connection_id=1,
-            tracker_name="nginx",
+            tracker_name="sample-web",
             tracker_source_id=1,
             channel_name="stable",
             enabled=True,
             update_mode="manual",
             target_ref={
                 "mode": "container",
-                "container_name": "nginx",
+                "container_name": "sample-web",
             },
         )
 
@@ -632,7 +632,7 @@ def test_executor_target_ref_docker_compose_rejects_non_docker_runtime(runtime_t
             name=f"{runtime_type}-docker-compose-invalid",
             runtime_type=runtime_type,
             runtime_connection_id=1,
-            tracker_name="nginx",
+            tracker_name="sample-web",
             tracker_source_id=1,
             channel_name="stable",
             enabled=True,
@@ -705,7 +705,7 @@ def test_executor_target_ref_kubernetes_workload_rejects_non_kubernetes_runtime(
             name=f"{runtime_type}-kubernetes-workload-invalid",
             runtime_type=runtime_type,
             runtime_connection_id=1,
-            tracker_name="nginx",
+            tracker_name="sample-web",
             tracker_source_id=1,
             channel_name="stable",
             enabled=True,

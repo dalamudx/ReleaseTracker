@@ -39,17 +39,17 @@ import { ExecutorExecutionHistoryPanel } from "@/components/executors/ExecutorEx
 function createExecutor(overrides: Partial<ExecutorListItem> = {}): ExecutorListItem {
   return {
     id: overrides.id ?? 1,
-    name: overrides.name ?? "ubuntu-executor",
+    name: overrides.name ?? "sample-base-executor",
     runtime_type: overrides.runtime_type ?? "docker",
     runtime_connection_id: overrides.runtime_connection_id ?? 1,
-    tracker_name: overrides.tracker_name ?? "ubuntu-tracker",
+    tracker_name: overrides.tracker_name ?? "sample-base-tracker",
     tracker_source_id: overrides.tracker_source_id ?? 1,
     channel_name: overrides.channel_name ?? "stable",
     enabled: overrides.enabled ?? true,
     update_mode: overrides.update_mode ?? "manual",
     image_selection_mode: overrides.image_selection_mode ?? "replace_tag_on_current_image",
     target_ref: overrides.target_ref ?? {
-      container_name: "ubuntu",
+      container_name: "sample_base",
       container_id: "abc123",
     },
     maintenance_window: overrides.maintenance_window,
@@ -66,8 +66,8 @@ function createHistoryItem(overrides: Partial<ExecutorRunHistory> = {}): Executo
     started_at: overrides.started_at ?? "2026-04-25T10:00:00Z",
     finished_at: overrides.finished_at ?? "2026-04-25T10:01:00Z",
     status: overrides.status ?? "success",
-    from_version: "from_version" in overrides ? overrides.from_version : "docker.io/library/ubuntu:24.04",
-    to_version: "to_version" in overrides ? overrides.to_version : "docker.io/library/ubuntu:24.10",
+    from_version: "from_version" in overrides ? overrides.from_version : "docker.io/library/sample-base:24.04",
+    to_version: "to_version" in overrides ? overrides.to_version : "docker.io/library/sample-base:24.10",
     message: overrides.message ?? "updated",
     diagnostics: overrides.diagnostics ?? null,
     created_at: overrides.created_at,
@@ -86,8 +86,8 @@ describe("ExecutorExecutionHistoryPanel image rendering", () => {
     getExecutorHistoryMock.mockResolvedValue({
       items: [
         createHistoryItem({
-          from_version: "docker.io/library/ubuntu:24.04",
-          to_version: "docker.io/library/ubuntu:24.10",
+          from_version: "docker.io/library/sample-base:24.04",
+          to_version: "docker.io/library/sample-base:24.10",
         }),
       ],
       total: 1,
@@ -106,8 +106,8 @@ describe("ExecutorExecutionHistoryPanel image rendering", () => {
 
     const historyItems = await screen.findAllByTestId("executor-history-item")
     expect(historyItems).toHaveLength(1)
-    expect(within(historyItems[0]).getByTestId("executor-history-from-image")).toHaveTextContent("docker.io/library/ubuntu:24.04")
-    expect(within(historyItems[0]).getByTestId("executor-history-to-image")).toHaveTextContent("docker.io/library/ubuntu:24.10")
+    expect(within(historyItems[0]).getByTestId("executor-history-from-image")).toHaveTextContent("docker.io/library/sample-base:24.04")
+    expect(within(historyItems[0]).getByTestId("executor-history-to-image")).toHaveTextContent("docker.io/library/sample-base:24.10")
     expect(screen.getByText("executors.history.table.fromImage")).toBeInTheDocument()
     expect(screen.getByText("executors.history.table.toImage")).toBeInTheDocument()
   })

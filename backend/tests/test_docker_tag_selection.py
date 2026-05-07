@@ -34,7 +34,7 @@ def _build_filtered_releases(tracker: DockerTracker, tags: list[str]):
 def test_docker_semver_beats_older_after_exclude_filter():
     tracker = DockerTracker(
         name="docker-test",
-        image="library/nginx",
+        image="library/sample-web",
         filter={"exclude_pattern": "-(arm64)"},
     )
     tags = ["v0.9.18", "v0.9.22", "v0.9.22-arm64", "v0.9.18-arm64"]
@@ -47,7 +47,7 @@ def test_docker_semver_beats_older_after_exclude_filter():
 def test_docker_exclude_suffix_keeps_base_tag():
     tracker = DockerTracker(
         name="docker-test",
-        image="library/nginx",
+        image="library/sample-web",
         filter={"exclude_pattern": "-(arm64)$"},
     )
     tags = ["v1.2.3", "v1.2.3-arm64"]
@@ -60,7 +60,7 @@ def test_docker_exclude_suffix_keeps_base_tag():
 def test_docker_filter_does_not_promote_older_semver():
     tracker = DockerTracker(
         name="docker-test",
-        image="library/nginx",
+        image="library/sample-web",
         filter={"exclude_pattern": "-(arm64)$"},
     )
     tags = [
@@ -75,8 +75,8 @@ def test_docker_filter_does_not_promote_older_semver():
     assert latest.tag_name == "v1.1.0"
 
 
-def test_ubuntu_style_two_part_tags_rank_by_version():
-    tracker = DockerTracker(name="ubuntu-test", image="library/ubuntu")
+def test_sample_base_style_two_part_tags_rank_by_version():
+    tracker = DockerTracker(name="sample-base-test", image="library/sample-base")
     tags = ["14.04.5", "22.04", "24.04", "latest"]
     releases = _build_filtered_releases(tracker, tags)
     version_releases = [r for r in releases if r.tag_name != "latest"]
@@ -86,7 +86,7 @@ def test_ubuntu_style_two_part_tags_rank_by_version():
 
 
 def test_two_part_tag_not_demoted_below_older_three_part():
-    tracker = DockerTracker(name="ubuntu-test", image="library/ubuntu")
+    tracker = DockerTracker(name="sample-base-test", image="library/sample-base")
     tags = ["14.04.5", "22.04", "24.04"]
     releases = _build_filtered_releases(tracker, tags)
     ranked = sorted(releases, key=lambda r: r.published_at, reverse=True)
@@ -95,10 +95,10 @@ def test_two_part_tag_not_demoted_below_older_three_part():
     assert tag_order == ["24.04", "22.04", "14.04.5"]
 
 
-def test_ubuntu_style_filter_interaction_numeric_winner_survives():
+def test_sample_base_style_filter_interaction_numeric_winner_survives():
     tracker = DockerTracker(
-        name="ubuntu-test",
-        image="library/ubuntu",
+        name="sample-base-test",
+        image="library/sample-base",
         filter={"exclude_pattern": "-amd64$"},
     )
     tags = ["14.04.5", "22.04", "24.04", "24.04-amd64", "22.04-amd64"]
@@ -109,7 +109,7 @@ def test_ubuntu_style_filter_interaction_numeric_winner_survives():
 
 
 def test_latest_tag_keeps_raw_tag_version():
-    tracker = DockerTracker(name="ubuntu-test", image="library/ubuntu")
+    tracker = DockerTracker(name="sample-base-test", image="library/sample-base")
     releases = _build_filtered_releases(tracker, ["latest", "24.04", "24.04.1", "22.04.3"])
 
     latest_release = next(release for release in releases if release.tag_name == "latest")
@@ -118,7 +118,7 @@ def test_latest_tag_keeps_raw_tag_version():
 
 
 def test_major_minor_shorthand_keeps_raw_tag_version():
-    tracker = DockerTracker(name="ubuntu-test", image="library/ubuntu")
+    tracker = DockerTracker(name="sample-base-test", image="library/sample-base")
     releases = _build_filtered_releases(tracker, ["24.04", "24.04.1", "24.03.9"])
 
     shorthand_release = next(release for release in releases if release.tag_name == "24.04")
@@ -129,7 +129,7 @@ def test_major_minor_shorthand_keeps_raw_tag_version():
 
 
 def test_24_0_keeps_raw_tag_version():
-    tracker = DockerTracker(name="ubuntu-test", image="library/ubuntu")
+    tracker = DockerTracker(name="sample-base-test", image="library/sample-base")
     releases = _build_filtered_releases(tracker, ["latest", "24.0", "24.04", "24.04.1"])
 
     short_minor_zero = next(release for release in releases if release.tag_name == "24.0")
@@ -140,7 +140,7 @@ def test_24_0_keeps_raw_tag_version():
 
 
 def test_stable_and_lts_tags_remain_independent_versions():
-    tracker = DockerTracker(name="ubuntu-test", image="library/ubuntu")
+    tracker = DockerTracker(name="sample-base-test", image="library/sample-base")
     releases = _build_filtered_releases(tracker, ["latest", "stable", "lts", "24.04.1"])
 
     stable_release = next(release for release in releases if release.tag_name == "stable")
@@ -153,7 +153,7 @@ def test_stable_and_lts_tags_remain_independent_versions():
 
 
 def test_latest_does_not_fold_into_suffixed_numeric_target():
-    tracker = DockerTracker(name="docker-test", image="library/nginx")
+    tracker = DockerTracker(name="docker-test", image="library/sample-web")
     releases = _build_filtered_releases(tracker, ["latest", "2.0.0-rc.1", "1.9.0"])
 
     latest_release = next(release for release in releases if release.tag_name == "latest")
@@ -161,10 +161,10 @@ def test_latest_does_not_fold_into_suffixed_numeric_target():
     assert latest_release.version == "latest"
 
 
-def test_jenkins_style_tags_rank_by_natural_suffix_after_filter():
+def test_sample_ci_style_tags_rank_by_natural_suffix_after_filter():
     tracker = DockerTracker(
-        name="jenkins-agent",
-        image="jenkins/inbound-agent",
+        name="sample-worker",
+        image="example/worker-agent",
         registry="docker.io",
         channels=[
             Channel(
@@ -199,8 +199,8 @@ def test_jenkins_style_tags_rank_by_natural_suffix_after_filter():
 
 def test_prerelease_tags_rank_by_numeric_suffix():
     tracker = DockerTracker(
-        name="aether-test",
-        image="fawney19/aether",
+        name="sample_canary-test",
+        image="example/sample-canary",
         registry="ghcr.io",
         channels=[Channel(name="canary", include_pattern=r".*rc.*")],
     )
@@ -218,7 +218,7 @@ def test_prerelease_tags_rank_by_numeric_suffix():
 
 
 def test_latest_alias_stays_independent_from_numeric_tags():
-    tracker = DockerTracker(name="openbao-test", image="ghcr.io/openbao/openbao")
+    tracker = DockerTracker(name="sample_secret-test", image="ghcr.io/example/sample-secret")
     releases = _build_filtered_releases(tracker, ["latest", "2.5.3", "2.5.2"])
 
     latest_alias = next(release for release in releases if release.tag_name == "latest")
@@ -230,10 +230,10 @@ def test_latest_alias_stays_independent_from_numeric_tags():
     assert newest_numeric_release.published_at > numeric_release.published_at
 
 
-def test_openbao_arch_exclude_keeps_raw_tag_matches():
+def test_sample_secret_arch_exclude_keeps_raw_tag_matches():
     tracker = DockerTracker(
-        name="openbao-test",
-        image="openbao/openbao",
+        name="sample_secret-test",
+        image="example/sample-secret",
         registry="ghcr.io",
         channels=[
             Channel(
@@ -258,8 +258,8 @@ def test_openbao_arch_exclude_keeps_raw_tag_matches():
 
 def test_docker_channel_exclude_uses_raw_tag_only():
     tracker = DockerTracker(
-        name="jenkins-agent",
-        image="jenkins/inbound-agent",
+        name="sample-worker",
+        image="example/worker-agent",
         channels=[
             Channel(
                 name="stable",
@@ -279,8 +279,8 @@ def test_docker_channel_exclude_uses_raw_tag_only():
 
 def test_docker_channel_include_remains_tag_based_for_aliases():
     tracker = DockerTracker(
-        name="jenkins-agent",
-        image="jenkins/inbound-agent",
+        name="sample-worker",
+        image="example/worker-agent",
         channels=[
             Channel(
                 name="stable",
@@ -300,7 +300,7 @@ def test_docker_channel_include_remains_tag_based_for_aliases():
 
 @pytest.mark.asyncio
 async def test_fetch_all_enriches_digest_with_head_then_get_fallback(monkeypatch):
-    tracker = DockerTracker(name="ubuntu-test", image="library/ubuntu")
+    tracker = DockerTracker(name="sample-base-test", image="library/sample-base")
     request_calls: list[tuple[str, str]] = []
 
     async def fake_get_bearer_token(self, client, scope):
@@ -359,18 +359,18 @@ async def test_fetch_all_enriches_digest_with_head_then_get_fallback(monkeypatch
         "sha256:digest-2404",
     ]
     assert request_calls[:4] == [
-        ("HEAD", "https://registry-1.docker.io/v2/library/ubuntu/manifests/latest"),
-        ("GET", "https://registry-1.docker.io/v2/library/ubuntu/manifests/latest"),
-        ("HEAD", "https://registry-1.docker.io/v2/library/ubuntu/manifests/24.04.1"),
-        ("HEAD", "https://registry-1.docker.io/v2/library/ubuntu/manifests/24.04"),
+        ("HEAD", "https://registry-1.docker.io/v2/library/sample-base/manifests/latest"),
+        ("GET", "https://registry-1.docker.io/v2/library/sample-base/manifests/latest"),
+        ("HEAD", "https://registry-1.docker.io/v2/library/sample-base/manifests/24.04.1"),
+        ("HEAD", "https://registry-1.docker.io/v2/library/sample-base/manifests/24.04"),
     ]
 
 
 @pytest.mark.asyncio
 async def test_fetch_all_normalizes_full_ghcr_image_ref(monkeypatch):
     tracker = DockerTracker(
-        name="openbao-test",
-        image="ghcr.io/openbao/openbao",
+        name="sample_secret-test",
+        image="ghcr.io/example/sample-secret",
         registry="https://ghcr.io/",
     )
     token_scopes: list[str] = []
@@ -391,7 +391,7 @@ async def test_fetch_all_normalizes_full_ghcr_image_ref(monkeypatch):
         return httpx.Response(
             200,
             headers={
-                "Docker-Content-Digest": "sha256:openbao",
+                "Docker-Content-Digest": "sha256:sample_secret",
                 "Content-Type": "application/vnd.oci.image.index.v1+json",
             },
             request=request,
@@ -403,21 +403,21 @@ async def test_fetch_all_normalizes_full_ghcr_image_ref(monkeypatch):
 
     releases = await tracker.fetch_all(limit=2)
 
-    assert token_scopes == ["repository:openbao/openbao:pull"]
-    assert tag_fetches == [("ghcr.io", "openbao/openbao")]
+    assert token_scopes == ["repository:example/sample-secret:pull"]
+    assert tag_fetches == [("ghcr.io", "example/sample-secret")]
     assert manifest_calls == [
-        ("HEAD", "https://ghcr.io/v2/openbao/openbao/manifests/latest"),
-        ("HEAD", "https://ghcr.io/v2/openbao/openbao/manifests/2.5.3"),
+        ("HEAD", "https://ghcr.io/v2/example/sample-secret/manifests/latest"),
+        ("HEAD", "https://ghcr.io/v2/example/sample-secret/manifests/2.5.3"),
     ]
     assert [release.url for release in releases] == [
-        "https://ghcr.io/openbao/openbao:latest",
-        "https://ghcr.io/openbao/openbao:2.5.3",
+        "https://ghcr.io/example/sample-secret:latest",
+        "https://ghcr.io/example/sample-secret:2.5.3",
     ]
 
 
 @pytest.mark.asyncio
 async def test_fetch_all_keeps_candidates_when_digest_lookup_fails(monkeypatch):
-    tracker = DockerTracker(name="ubuntu-test", image="library/ubuntu")
+    tracker = DockerTracker(name="sample-base-test", image="library/sample-base")
 
     async def fake_get_bearer_token(self, client, scope):
         return None
@@ -441,7 +441,7 @@ async def test_fetch_all_keeps_candidates_when_digest_lookup_fails(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_manifest_request_retries_once_after_401_with_token_refresh(monkeypatch):
-    tracker = DockerTracker(name="docker-test", image="library/nginx")
+    tracker = DockerTracker(name="docker-test", image="library/sample-web")
     seen_auth: list[str | None] = []
 
     async def fake_request(self, method, url, headers=None, timeout=None):
@@ -461,9 +461,9 @@ async def test_manifest_request_retries_once_after_401_with_token_refresh(monkey
         response, refreshed_token = await tracker._request_manifest(
             client,
             "HEAD",
-            "https://registry-1.docker.io/v2/library/nginx/manifests/latest",
+            "https://registry-1.docker.io/v2/library/sample-web/manifests/latest",
             bearer_token=None,
-            scope="repository:library/nginx:pull",
+            scope="repository:library/sample-web:pull",
         )
 
     assert response.status_code == 200
@@ -474,7 +474,7 @@ async def test_manifest_request_retries_once_after_401_with_token_refresh(monkey
 def test_docker_channel_filters_keep_enabled_regex_rules_isolated():
     tracker = DockerTracker(
         name="docker-test",
-        image="library/nginx",
+        image="library/sample-web",
         channels=[
             Channel(
                 name="stable",
@@ -508,7 +508,7 @@ def test_docker_channel_filters_keep_enabled_regex_rules_isolated():
 def test_container_channel_type_does_not_filter_tag_classification():
     tracker = DockerTracker(
         name="docker-test",
-        image="library/nginx",
+        image="library/sample-web",
         channels=[Channel(name="canary", type="prerelease")],
     )
     stable_release = tracker._tag_to_release("v1.2.0")
@@ -520,7 +520,7 @@ def test_container_channel_type_does_not_filter_tag_classification():
 def test_docker_channel_invalid_regex_logs_and_keeps_other_rules_deterministic(caplog):
     tracker = DockerTracker(
         name="docker-test",
-        image="library/nginx",
+        image="library/sample-web",
         channels=[
             Channel(
                 name="stable",

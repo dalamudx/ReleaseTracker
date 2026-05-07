@@ -226,16 +226,16 @@ describe("ExecutorSheet Portainer grouping", () => {
   it("renders helm release app version in target detail grid", () => {
     const helmTarget: RuntimeTargetDiscoveryItem = {
       runtime_type: "kubernetes",
-      name: "helm/jenkins-5-1772603248",
+      name: "helm/sample-ci-5-1772603248",
       image: null,
       target_ref: {
         mode: "helm_release",
-        namespace: "jenkins",
-        release_name: "jenkins-5-1772603248",
-        chart_name: "jenkins",
+        namespace: "sample-ci",
+        release_name: "sample-ci-5-1772603248",
+        chart_name: "sample-ci",
         chart_version: "5.9.17",
         app_version: "2.555.1",
-        workloads: [{ kind: "StatefulSet", name: "jenkins-5-1772603248" }],
+        workloads: [{ kind: "StatefulSet", name: "sample-ci-5-1772603248" }],
         service_count: 1,
       },
     }
@@ -243,8 +243,8 @@ describe("ExecutorSheet Portainer grouping", () => {
     renderTargetSection({
       runtimeType: "kubernetes",
       runtimeConnection: createRuntimeConnection({ type: "kubernetes", name: "k8s-prod" }),
-      configuredDiscoveryNamespaces: ["jenkins"],
-      selectedDiscoveryNamespace: "jenkins",
+      configuredDiscoveryNamespaces: ["sample-ci"],
+      selectedDiscoveryNamespace: "sample-ci",
       discoveredTargets: [helmTarget],
       selectedTargetRef: helmTarget.target_ref,
     })
@@ -252,17 +252,17 @@ describe("ExecutorSheet Portainer grouping", () => {
     expect(screen.getAllByTestId("executor-target-detail-grid")).toHaveLength(2)
     expect(screen.getAllByText("executors.target.details.appVersion")).toHaveLength(2)
     expect(screen.getAllByText("2.555.1")).toHaveLength(2)
-    expect(screen.queryByText("StatefulSet/jenkins-5-1772603248")).not.toBeInTheDocument()
+    expect(screen.queryByText("StatefulSet/sample-ci-5-1772603248")).not.toBeInTheDocument()
   })
 
   it("renders standalone container selections with the simple target detail grid", () => {
     const containerTarget: RuntimeTargetDiscoveryItem = {
       runtime_type: "docker",
-      name: "nginx",
-      image: "nginx:latest",
+      name: "sample-web",
+      image: "sample-web:latest",
       target_ref: {
         mode: "container",
-        container_name: "nginx",
+        container_name: "sample-web",
         container_id: "abc123",
       },
     }
@@ -273,9 +273,9 @@ describe("ExecutorSheet Portainer grouping", () => {
     })
 
     expect(screen.getAllByTestId("executor-target-detail-grid").length).toBeGreaterThan(0)
-    expect(screen.getAllByText("nginx").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("sample-web").length).toBeGreaterThan(0)
     expect(screen.getAllByText("abc123").length).toBeGreaterThan(0)
-    expect(screen.queryByText("nginx / abc123")).not.toBeInTheDocument()
+    expect(screen.queryByText("sample-web / abc123")).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "executors.discovery.rebind" })).toBeInTheDocument()
     expect(screen.queryByText("Unsupported target")).not.toBeInTheDocument()
   })
@@ -321,15 +321,15 @@ describe("ExecutorSheet Portainer grouping", () => {
   it("renders compose projects as one project-level target with nested services", () => {
     const composeTarget: RuntimeTargetDiscoveryItem = {
       runtime_type: "podman",
-      name: "jenkins-agent",
-      image: "docker.io/jenkins/inbound-agent:trixie",
+      name: "sample-worker",
+      image: "docker.io/example/worker-agent:trixie",
       target_ref: {
         mode: "docker_compose",
-        project: "jenkins-agent",
-        working_dir: "/data/podman/jenkins-agent",
+        project: "sample-worker",
+        working_dir: "/data/podman/sample-worker",
         config_files: ["podman-compose.yaml"],
         services: [
-          { service: "jenkins-agent", image: "docker.io/jenkins/inbound-agent:trixie", replica_count: 1 },
+          { service: "sample-worker", image: "docker.io/example/worker-agent:trixie", replica_count: 1 },
         ],
         service_count: 1,
       },
@@ -343,9 +343,9 @@ describe("ExecutorSheet Portainer grouping", () => {
     })
 
     expect(screen.getAllByTestId("executor-grouped-target-detail-group")).toHaveLength(2)
-    expect(screen.getAllByText("jenkins-agent").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("sample-worker").length).toBeGreaterThan(0)
     expect(screen.getAllByText("Podman Compose project").length).toBeGreaterThan(0)
-    expect(screen.getAllByText("docker.io/jenkins/inbound-agent:trixie").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("docker.io/example/worker-agent:trixie").length).toBeGreaterThan(0)
     expect(screen.queryByTestId("executor-target-detail-grid")).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "executors.discovery.rebind" })).toBeInTheDocument()
   })

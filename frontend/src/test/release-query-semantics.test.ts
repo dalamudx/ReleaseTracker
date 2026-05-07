@@ -10,10 +10,10 @@ describe("release query semantics", () => {
     })
 
     it("uses explicit history query keys", () => {
-        expect(queryKeys.releaseHistory({ limit: 20, skip: 0, search: "nginx" })).toEqual([
+        expect(queryKeys.releaseHistory({ limit: 20, skip: 0, search: "sample-web" })).toEqual([
             "releases",
             "history",
-            { limit: 20, skip: 0, search: "nginx" },
+            { limit: 20, skip: 0, search: "sample-web" },
         ])
         expect(queryKeys.trackerCurrentView("stable-tracker")).toEqual([
             "trackers",
@@ -40,10 +40,10 @@ describe("release query semantics", () => {
             data: { items: [], total: 0, skip: 0, limit: 20 },
         })
 
-        await api.getReleaseHistory({ limit: 20, skip: 0, search: "nginx" })
+        await api.getReleaseHistory({ limit: 20, skip: 0, search: "sample-web" })
 
         expect(getSpy).toHaveBeenCalledWith("/api/releases", {
-            params: { limit: 20, skip: 0, search: "nginx" },
+            params: { limit: 20, skip: 0, search: "sample-web" },
         })
     })
 

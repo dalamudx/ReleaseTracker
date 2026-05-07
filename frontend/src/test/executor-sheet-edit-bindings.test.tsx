@@ -137,20 +137,20 @@ describe("ExecutorSheet edit bindings", () => {
   it("shows existing Kubernetes workload target and service binding when editing", async () => {
     getExecutorConfigMock.mockResolvedValue(createExecutorConfig({
       id: 12,
-      name: "aether",
+      name: "sample_canary",
       runtime_type: "kubernetes",
       runtime_connection_id: 3,
-      tracker_name: "aether",
+      tracker_name: "sample_canary",
       tracker_source_id: 40,
       target_ref: {
         mode: "kubernetes_workload",
         namespace: "infra",
         kind: "Deployment",
-        name: "aether",
-        services: [{ service: "aether-lkdsjfh", image: "reg.aoodc.com/fawney19/aether:0.7.0-rc21" }],
+        name: "sample_canary",
+        services: [{ service: "sample_canary-lkdsjfh", image: "reg.aoodc.com/example/sample-canary:0.7.0-rc21" }],
         service_count: 1,
       },
-      service_bindings: [{ service: "aether-lkdsjfh", tracker_source_id: 40, channel_name: "stable" }],
+      service_bindings: [{ service: "sample_canary-lkdsjfh", tracker_source_id: 40, channel_name: "stable" }],
     }))
 
     render(
@@ -160,21 +160,21 @@ describe("ExecutorSheet edit bindings", () => {
         executorId={12}
         runtimeConnections={[createRuntimeConnection({ id: 3, name: "k3s", type: "kubernetes", config: { namespaces: ["apps"] } })]}
         trackers={[createTracker({
-          name: "aether",
+          name: "sample_canary",
           sources: [
             {
               id: 40,
               channel_key: "image",
               channel_type: "container",
               enabled: true,
-              channel_config: { image: "reg.aoodc.com/fawney19/aether" },
+              channel_config: { image: "reg.aoodc.com/example/sample-canary" },
               release_channels: [
                 { release_channel_key: "image-stable", name: "stable", type: "release", enabled: true },
               ],
               channel_rank: 0,
               source_key: "image",
               source_type: "container",
-              source_config: { image: "reg.aoodc.com/fawney19/aether" },
+              source_config: { image: "reg.aoodc.com/example/sample-canary" },
               source_rank: 0,
             },
           ],
@@ -184,9 +184,9 @@ describe("ExecutorSheet edit bindings", () => {
       />,
     )
 
-    expect(await screen.findByDisplayValue("aether")).toBeInTheDocument()
+    expect(await screen.findByDisplayValue("sample_canary")).toBeInTheDocument()
     expect(screen.queryByText("executors.binding.currentBinding")).not.toBeInTheDocument()
-    expect(screen.queryByText("aether-lkdsjfh / aether / stable")).not.toBeInTheDocument()
+    expect(screen.queryByText("sample_canary-lkdsjfh / sample_canary / stable")).not.toBeInTheDocument()
     expect(screen.queryByText("executors.discovery.noTargetSelected")).not.toBeInTheDocument()
   })
 

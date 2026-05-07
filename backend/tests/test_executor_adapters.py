@@ -448,33 +448,33 @@ async def test_docker_adapter_discovers_and_updates_image_only():
         config={"socket": "unix:///var/run/docker.sock"},
         secrets={},
     )
-    container = FakeContainer("abc", "nginx", FakeImage(tags=["nginx:1.25"]))
+    container = FakeContainer("abc", "sample-web", FakeImage(tags=["sample-web:1.25"]))
     client = FakeContainerClient([container])
     adapter = DockerRuntimeAdapter(runtime, client=client)
 
     targets = await adapter.discover_targets()
     assert len(targets) == 1
     assert targets[0].target_ref["container_id"] == "abc"
-    assert targets[0].target_ref["container_name"] == "nginx"
-    assert targets[0].image == "nginx:1.25"
+    assert targets[0].target_ref["container_name"] == "sample-web"
+    assert targets[0].image == "sample-web:1.25"
 
     current = await adapter.get_current_image({"container_id": "abc"})
-    assert current == "nginx:1.25"
+    assert current == "sample-web:1.25"
 
-    result = await adapter.update_image({"container_id": "abc"}, "nginx:1.26")
+    result = await adapter.update_image({"container_id": "abc"}, "sample-web:1.26")
     assert result.updated is True
-    assert result.old_image == "nginx:1.25"
-    assert result.new_image == "nginx:1.26"
-    assert client.update_container_image_calls == [("abc", "nginx:1.26")]
+    assert result.old_image == "sample-web:1.25"
+    assert result.new_image == "sample-web:1.26"
+    assert client.update_container_image_calls == [("abc", "sample-web:1.26")]
     assert container.update_image_calls == []
 
-    snapshot = await adapter.capture_snapshot({"container_id": "abc"}, "nginx:1.25")
+    snapshot = await adapter.capture_snapshot({"container_id": "abc"}, "sample-web:1.25")
     await adapter.validate_snapshot({"container_id": "abc"}, snapshot)
     assert snapshot == {
         "runtime_type": "docker",
         "container_id": "abc",
-        "container_name": "nginx",
-        "image": "nginx:1.25",
+        "container_name": "sample-web",
+        "image": "sample-web:1.25",
     }
 
 
@@ -486,7 +486,7 @@ async def test_docker_adapter_discovers_compose_projects_as_grouped_targets():
         config={"socket": "unix:///var/run/docker.sock"},
         secrets={},
     )
-    standalone = FakeContainer("standalone", "nginx", FakeImage(tags=["nginx:1.25"]))
+    standalone = FakeContainer("standalone", "sample-web", FakeImage(tags=["sample-web:1.25"]))
     web = FakeContainer(
         "web-1",
         "release-stack-web-1",
@@ -522,7 +522,7 @@ async def test_docker_adapter_discovers_compose_projects_as_grouped_targets():
 
     targets = await adapter.discover_targets()
 
-    assert [target.name for target in targets] == ["nginx", "release-stack"]
+    assert [target.name for target in targets] == ["sample-web", "release-stack"]
     compose_target = targets[1]
     assert compose_target.runtime_type == "docker"
     assert compose_target.image is None
@@ -549,12 +549,12 @@ async def test_docker_adapter_recreates_container_when_image_only_update_is_unav
     )
     container = FakeContainer(
         "abc",
-        "nginx",
-        FakeImage(tags=["nginx:1.25"]),
+        "sample-web",
+        FakeImage(tags=["sample-web:1.25"]),
         attrs={
             "Config": {
                 "Env": ["FOO=bar"],
-                "Cmd": ["nginx", "-g", "daemon off;"],
+                "Cmd": ["sample-web", "-g", "daemon off;"],
                 "Entrypoint": None,
                 "Labels": {"app": "web"},
             },
@@ -574,24 +574,24 @@ async def test_docker_adapter_recreates_container_when_image_only_update_is_unav
     client = FakeDockerRecreateClient([container])
     adapter = DockerRuntimeAdapter(runtime, client=client)
 
-    snapshot = await adapter.capture_snapshot({"container_name": "nginx"}, "nginx:1.25")
-    await adapter.validate_snapshot({"container_name": "nginx"}, snapshot)
+    snapshot = await adapter.capture_snapshot({"container_name": "sample-web"}, "sample-web:1.25")
+    await adapter.validate_snapshot({"container_name": "sample-web"}, snapshot)
 
-    result = await adapter.update_image({"container_name": "nginx"}, "nginx:1.26")
+    result = await adapter.update_image({"container_name": "sample-web"}, "sample-web:1.26")
 
     assert result.updated is True
-    assert result.old_image == "nginx:1.25"
-    assert result.new_image == "nginx:1.26"
+    assert result.old_image == "sample-web:1.25"
+    assert result.new_image == "sample-web:1.26"
     assert result.new_container_id == "docker-new-id"
-    assert client.images.pull_calls == ["nginx:1.26"]
+    assert client.images.pull_calls == ["sample-web:1.26"]
     assert len(container.stop_calls) == 1
     assert len(container.remove_calls) == 1
     assert len(client.containers.create_calls) == 1
     create_kwargs = client.containers.create_calls[0]
-    assert create_kwargs["image"] == "nginx:1.26"
-    assert create_kwargs["name"] == "nginx"
+    assert create_kwargs["image"] == "sample-web:1.26"
+    assert create_kwargs["name"] == "sample-web"
     assert create_kwargs["environment"] == ["FOO=bar"]
-    assert create_kwargs["command"] == ["nginx", "-g", "daemon off;"]
+    assert create_kwargs["command"] == ["sample-web", "-g", "daemon off;"]
     assert create_kwargs["ports"] == {"80/tcp": [("", 8080), ("127.0.0.1", 18080)]}
     assert create_kwargs["volumes"] == {"/host/data": {"bind": "/data", "mode": "ro"}}
     assert create_kwargs["restart_policy"] == {"Name": "unless-stopped", "MaximumRetryCount": 0}
@@ -609,16 +609,16 @@ async def test_docker_adapter_requires_recreate_metadata_when_image_only_update_
         config={"socket": "unix:///var/run/docker.sock"},
         secrets={},
     )
-    container = FakeContainer("abc", "nginx", FakeImage(tags=["nginx:1.25"]), attrs={})
+    container = FakeContainer("abc", "sample-web", FakeImage(tags=["sample-web:1.25"]), attrs={})
     client = FakeDockerRecreateClient([container])
     adapter = DockerRuntimeAdapter(runtime, client=client)
 
     with pytest.raises(
         ValueError, match="cannot recreate container .* without a restorable create configuration"
     ):
-        await adapter.update_image({"container_id": "abc"}, "nginx:1.26")
+        await adapter.update_image({"container_id": "abc"}, "sample-web:1.26")
 
-    snapshot = await adapter.capture_snapshot({"container_id": "abc"}, "nginx:1.25")
+    snapshot = await adapter.capture_snapshot({"container_id": "abc"}, "sample-web:1.25")
     with pytest.raises(ValueError, match="snapshot.create_config must be a non-empty dict"):
         await adapter.validate_snapshot({"container_id": "abc"}, snapshot)
 
@@ -633,13 +633,13 @@ async def test_podman_adapter_recreates_container_with_new_image():
     )
     container = FakeContainer(
         "def",
-        "redis",
-        FakeImage(tags=["redis:7.2"]),
+        "sample-cache",
+        FakeImage(tags=["sample-cache:7.2"]),
         attrs={
             "Pod": "",
             "Config": {
                 "Env": ["FOO=bar"],
-                "Cmd": ["redis-server"],
+                "Cmd": ["sample-cache-server"],
                 "Entrypoint": None,
                 "Labels": {"app": "cache"},
             },
@@ -654,26 +654,26 @@ async def test_podman_adapter_recreates_container_with_new_image():
     client = FakePodmanClient([container])
     adapter = PodmanRuntimeAdapter(runtime, client=client)
 
-    snapshot = await adapter.capture_snapshot({"container_name": "redis"}, "redis:7.2")
-    await adapter.validate_snapshot({"container_name": "redis"}, snapshot)
+    snapshot = await adapter.capture_snapshot({"container_name": "sample-cache"}, "sample-cache:7.2")
+    await adapter.validate_snapshot({"container_name": "sample-cache"}, snapshot)
     assert snapshot["container_id"] == "def"
-    assert snapshot["container_name"] == "redis"
-    assert snapshot["image"] == "redis:7.2"
-    assert snapshot["create_config"]["image"] == "redis:7.2"
+    assert snapshot["container_name"] == "sample-cache"
+    assert snapshot["image"] == "sample-cache:7.2"
+    assert snapshot["create_config"]["image"] == "sample-cache:7.2"
 
-    result = await adapter.update_image({"container_name": "redis"}, "redis:7.4")
+    result = await adapter.update_image({"container_name": "sample-cache"}, "sample-cache:7.4")
 
     assert result.updated is True
-    assert result.old_image == "redis:7.2"
-    assert result.new_image == "redis:7.4"
-    assert client.images.pull_calls == ["redis:7.4"]
+    assert result.old_image == "sample-cache:7.2"
+    assert result.new_image == "sample-cache:7.4"
+    assert client.images.pull_calls == ["sample-cache:7.4"]
     assert len(container.stop_calls) == 1
     assert len(container.remove_calls) == 1
     assert len(client.containers.create_calls) == 1
     create_kwargs = client.containers.create_calls[0]
-    assert create_kwargs["image"] == "redis:7.4"
+    assert create_kwargs["image"] == "sample-cache:7.4"
     assert create_kwargs["environment"] == ["FOO=bar"]
-    assert create_kwargs["command"] == ["redis-server"]
+    assert create_kwargs["command"] == ["sample-cache-server"]
     assert create_kwargs["ports"] == {"6379/tcp": ("", 6379)}
     assert create_kwargs["mounts"] == [
         {
@@ -688,7 +688,7 @@ async def test_podman_adapter_recreates_container_with_new_image():
     assert create_kwargs.get("entrypoint") is None
     recreated = client.containers._created[0]
     assert len(recreated.stop_calls) == 0
-    assert recreated.image.tags == ["redis:7.4"]
+    assert recreated.image.tags == ["sample-cache:7.4"]
 
 
 @pytest.mark.asyncio
@@ -701,8 +701,8 @@ async def test_podman_adapter_discovery_filters_pod_members():
     )
     standalone = FakeContainer(
         "standalone",
-        "redis",
-        FakeImage(tags=["redis:7.2"]),
+        "sample-cache",
+        FakeImage(tags=["sample-cache:7.2"]),
         attrs={"Pod": "", "Config": {}, "HostConfig": {}},
     )
     pod_member = FakeContainer(
@@ -717,11 +717,11 @@ async def test_podman_adapter_discovery_filters_pod_members():
     targets = await adapter.discover_targets()
 
     assert [target.target_ref["container_id"] for target in targets] == ["standalone"]
-    assert [target.name for target in targets] == ["redis"]
+    assert [target.name for target in targets] == ["sample-cache"]
     assert targets[0].target_ref == {
         "mode": "container",
         "container_id": "standalone",
-        "container_name": "redis",
+        "container_name": "sample-cache",
     }
 
 
@@ -735,23 +735,23 @@ async def test_podman_adapter_discovers_pod_backed_compose_projects_as_grouped_t
     )
     standalone = FakeContainer(
         "standalone",
-        "redis",
-        FakeImage(tags=["redis:7.2"]),
+        "sample-cache",
+        FakeImage(tags=["sample-cache:7.2"]),
         attrs={"Pod": "", "Config": {}, "HostConfig": {}},
     )
     compose_member = FakeContainer(
         "agent-1",
-        "jenkins-agent",
-        FakeImage(tags=["docker.io/jenkins/inbound-agent:latest"]),
+        "sample-worker",
+        FakeImage(tags=["docker.io/example/worker-agent:latest"]),
         attrs={
             "Pod": "pod-123",
             "Config": {
                 "Labels": {
-                    "com.docker.compose.project": "jenkins-agent",
-                    "com.docker.compose.service": "jenkins-agent",
-                    "com.docker.compose.project.working_dir": "/data/podman/jenkins-agent",
+                    "com.docker.compose.project": "sample-worker",
+                    "com.docker.compose.service": "sample-worker",
+                    "com.docker.compose.project.working_dir": "/data/podman/sample-worker",
                     "com.docker.compose.project.config_files": "podman-compose.yaml",
-                    "io.podman.compose.project": "jenkins-agent",
+                    "io.podman.compose.project": "sample-worker",
                 }
             },
             "HostConfig": {},
@@ -762,20 +762,20 @@ async def test_podman_adapter_discovers_pod_backed_compose_projects_as_grouped_t
 
     targets = await adapter.discover_targets()
 
-    assert [target.name for target in targets] == ["redis", "jenkins-agent"]
+    assert [target.name for target in targets] == ["sample-cache", "sample-worker"]
     compose_target = targets[1]
     assert compose_target.runtime_type == "podman"
-    assert compose_target.image == "docker.io/jenkins/inbound-agent:latest"
+    assert compose_target.image == "docker.io/example/worker-agent:latest"
     assert compose_target.target_ref == {
         "mode": "docker_compose",
-        "project": "jenkins-agent",
-        "working_dir": "/data/podman/jenkins-agent",
+        "project": "sample-worker",
+        "working_dir": "/data/podman/sample-worker",
         "config_files": ["podman-compose.yaml"],
         "services": [
             {
-                "service": "jenkins-agent",
+                "service": "sample-worker",
                 "replica_count": 1,
-                "image": "docker.io/jenkins/inbound-agent:latest",
+                "image": "docker.io/example/worker-agent:latest",
             }
         ],
         "service_count": 1,
@@ -956,7 +956,7 @@ async def test_kubernetes_adapter_discovery_groups_helm_managed_workloads_as_rel
     )
     helm_statefulset = FakeWorkload(
         "certd-db",
-        [FakeContainerSpec("db", "postgres:16")],
+        [FakeContainerSpec("db", "sample-db:16")],
         labels=helm_labels,
         annotations=helm_annotations,
     )
@@ -996,15 +996,15 @@ async def test_kubernetes_adapter_discovery_uses_helm_status_app_version_when_wo
     )
     helm_labels = {
         "app.kubernetes.io/managed-by": "Helm",
-        "helm.sh/chart": "jenkins-5.8.13",
+        "helm.sh/chart": "sample-ci-5.8.13",
     }
     helm_annotations = {
-        "meta.helm.sh/release-name": "jenkins",
+        "meta.helm.sh/release-name": "sample-ci",
         "meta.helm.sh/release-namespace": "apps",
     }
     helm_deployment = FakeWorkload(
-        "jenkins",
-        [FakeContainerSpec("jenkins", "jenkins/jenkins:2.528.1-jdk21")],
+        "sample-ci",
+        [FakeContainerSpec("sample-ci", "example/ci-server:2.528.1-jdk21")],
         labels=helm_labels,
         annotations=helm_annotations,
     )
@@ -1013,9 +1013,9 @@ async def test_kubernetes_adapter_discovery_uses_helm_status_app_version_when_wo
     def fake_run_helm_command(args):
         return json.dumps(
             {
-                "name": "jenkins",
+                "name": "sample-ci",
                 "app_version": "2.528.1",
-                "chart": "jenkins-5.8.13",
+                "chart": "sample-ci-5.8.13",
             }
         )
 
@@ -1026,10 +1026,10 @@ async def test_kubernetes_adapter_discovery_uses_helm_status_app_version_when_wo
     assert targets[0].target_ref == {
         "mode": "helm_release",
         "namespace": "apps",
-        "release_name": "jenkins",
-        "workloads": [{"kind": "Deployment", "name": "jenkins"}],
+        "release_name": "sample-ci",
+        "workloads": [{"kind": "Deployment", "name": "sample-ci"}],
         "service_count": 1,
-        "chart_name": "jenkins",
+        "chart_name": "sample-ci",
         "chart_version": "5.8.13",
         "app_version": "2.528.1",
     }
@@ -1042,20 +1042,20 @@ async def test_kubernetes_adapter_discovery_uses_helm_list_app_version_when_stat
     runtime = RuntimeConnectionConfig(
         name="k8s-prod",
         type="kubernetes",
-        config={"namespace": "jenkins", "in_cluster": True},
+        config={"namespace": "sample-ci", "in_cluster": True},
         secrets={},
     )
     helm_labels = {
         "app.kubernetes.io/managed-by": "Helm",
-        "helm.sh/chart": "jenkins-5.9.17",
+        "helm.sh/chart": "sample-ci-5.9.17",
     }
     helm_annotations = {
-        "meta.helm.sh/release-name": "jenkins-5-1772603248",
-        "meta.helm.sh/release-namespace": "jenkins",
+        "meta.helm.sh/release-name": "sample-ci-5-1772603248",
+        "meta.helm.sh/release-namespace": "sample-ci",
     }
     helm_statefulset = FakeWorkload(
-        "jenkins-5-1772603248",
-        [FakeContainerSpec("jenkins", "jenkins/jenkins:2.528.1-jdk21")],
+        "sample-ci-5-1772603248",
+        [FakeContainerSpec("sample-ci", "example/ci-server:2.528.1-jdk21")],
         labels=helm_labels,
         annotations=helm_annotations,
     )
@@ -1065,13 +1065,13 @@ async def test_kubernetes_adapter_discovery_uses_helm_list_app_version_when_stat
     def fake_run_helm_command(args):
         command_calls.append(args)
         if args[0] == "status":
-            return json.dumps({"name": "jenkins-5-1772603248", "chart": "jenkins-5.9.17"})
+            return json.dumps({"name": "sample-ci-5-1772603248", "chart": "sample-ci-5.9.17"})
         if args[0] == "list":
             return json.dumps(
                 [
                     {
-                        "name": "jenkins-5-1772603248",
-                        "chart": "jenkins-5.9.17",
+                        "name": "sample-ci-5-1772603248",
+                        "chart": "sample-ci-5.9.17",
                         "app_version": "2.528.1",
                     }
                 ]
@@ -1083,24 +1083,24 @@ async def test_kubernetes_adapter_discovery_uses_helm_list_app_version_when_stat
     targets = await adapter.discover_targets()
 
     assert command_calls == [
-        ["status", "jenkins-5-1772603248", "--namespace", "jenkins", "--output", "json"],
+        ["status", "sample-ci-5-1772603248", "--namespace", "sample-ci", "--output", "json"],
         [
             "list",
             "--namespace",
-            "jenkins",
+            "sample-ci",
             "--filter",
-            "^jenkins-5-1772603248$",
+            "^sample-ci-5-1772603248$",
             "--output",
             "json",
         ],
     ]
     assert targets[0].target_ref == {
         "mode": "helm_release",
-        "namespace": "jenkins",
-        "release_name": "jenkins-5-1772603248",
-        "workloads": [{"kind": "StatefulSet", "name": "jenkins-5-1772603248"}],
+        "namespace": "sample-ci",
+        "release_name": "sample-ci-5-1772603248",
+        "workloads": [{"kind": "StatefulSet", "name": "sample-ci-5-1772603248"}],
         "service_count": 1,
-        "chart_name": "jenkins",
+        "chart_name": "sample-ci",
         "chart_version": "5.9.17",
         "app_version": "2.528.1",
     }
@@ -1499,15 +1499,15 @@ async def test_podman_adapter_pull_failure_leaves_container_untouched():
     )
     container = FakeContainer(
         "def",
-        "redis",
-        FakeImage(tags=["redis:7.2"]),
+        "sample-cache",
+        FakeImage(tags=["sample-cache:7.2"]),
         attrs={"Pod": "", "Config": {}, "HostConfig": {}},
     )
     client = FakePodmanClient([container], pull_should_fail=True)
     adapter = PodmanRuntimeAdapter(runtime, client=client)
 
     with pytest.raises(RuntimeError, match="pull failed"):
-        await adapter.update_image({"container_name": "redis"}, "redis:7.4")
+        await adapter.update_image({"container_name": "sample-cache"}, "sample-cache:7.4")
 
     assert len(container.stop_calls) == 0
     assert len(container.remove_calls) == 0
@@ -1769,18 +1769,18 @@ async def test_podman_adapter_noop_when_image_unchanged():
     )
     container = FakeContainer(
         "def",
-        "redis",
-        FakeImage(tags=["redis:7.2"]),
+        "sample-cache",
+        FakeImage(tags=["sample-cache:7.2"]),
         attrs={"Pod": "", "Config": {}, "HostConfig": {}},
     )
     client = FakePodmanClient([container])
     adapter = PodmanRuntimeAdapter(runtime, client=client)
 
-    result = await adapter.update_image({"container_name": "redis"}, "redis:7.2")
+    result = await adapter.update_image({"container_name": "sample-cache"}, "sample-cache:7.2")
 
     assert result.updated is False
-    assert result.old_image == "redis:7.2"
-    assert result.new_image == "redis:7.2"
+    assert result.old_image == "sample-cache:7.2"
+    assert result.new_image == "sample-cache:7.2"
     assert client.images.pull_calls == []
     assert len(container.stop_calls) == 0
     assert len(container.remove_calls) == 0
@@ -1798,15 +1798,15 @@ async def test_podman_adapter_recovery_recreates_container_from_snapshot():
     adapter = PodmanRuntimeAdapter(runtime, client=client)
 
     result = await adapter.recover_from_snapshot(
-        {"container_name": "redis"},
+        {"container_name": "sample-cache"},
         {
             "runtime_type": "podman",
             "container_id": "def",
-            "container_name": "redis",
-            "image": "redis:7.2",
+            "container_name": "sample-cache",
+            "image": "sample-cache:7.2",
             "create_config": {
-                "image": "redis:7.2",
-                "name": "redis",
+                "image": "sample-cache:7.2",
+                "name": "sample-cache",
                 "environment": ["FOO=bar"],
             },
             "pod_id": None,
@@ -1814,9 +1814,9 @@ async def test_podman_adapter_recovery_recreates_container_from_snapshot():
     )
 
     assert result.updated is True
-    assert result.new_image == "redis:7.2"
+    assert result.new_image == "sample-cache:7.2"
     assert len(client.containers.create_calls) == 1
-    assert client.containers.create_calls[0]["image"] == "redis:7.2"
+    assert client.containers.create_calls[0]["image"] == "sample-cache:7.2"
 
 
 @pytest.mark.asyncio
@@ -1860,8 +1860,8 @@ async def test_podman_adapter_named_volume_mode_flags_are_sanitized():
     )
     container = FakeContainer(
         "vol1",
-        "ubuntu",
-        FakeImage(tags=["ubuntu:latest"]),
+        "sample_base",
+        FakeImage(tags=["sample-base:latest"]),
         attrs={
             "Pod": "",
             "Config": {
@@ -1881,7 +1881,7 @@ async def test_podman_adapter_named_volume_mode_flags_are_sanitized():
     client = FakePodmanClient([container])
     adapter = PodmanRuntimeAdapter(runtime, client=client)
 
-    result = await adapter.update_image({"container_name": "ubuntu"}, "ubuntu:22.04")
+    result = await adapter.update_image({"container_name": "sample_base"}, "sample-base:22.04")
 
     assert result.updated is True
     create_kwargs = client.containers.create_calls[0]
@@ -1899,8 +1899,8 @@ async def test_podman_adapter_bind_mount_ro_flag_is_preserved():
     )
     container = FakeContainer(
         "ro1",
-        "nginx",
-        FakeImage(tags=["nginx:1.25"]),
+        "sample-web",
+        FakeImage(tags=["sample-web:1.25"]),
         attrs={
             "Pod": "",
             "Config": {"Env": None, "Cmd": None, "Entrypoint": None, "Labels": None},
@@ -1915,7 +1915,7 @@ async def test_podman_adapter_bind_mount_ro_flag_is_preserved():
     client = FakePodmanClient([container])
     adapter = PodmanRuntimeAdapter(runtime, client=client)
 
-    result = await adapter.update_image({"container_name": "nginx"}, "nginx:1.26")
+    result = await adapter.update_image({"container_name": "sample-web"}, "sample-web:1.26")
 
     assert result.updated is True
     create_kwargs = client.containers.create_calls[0]
@@ -1941,8 +1941,8 @@ async def test_podman_adapter_update_image_returns_new_container_id():
     )
     container = FakeContainer(
         "old-id",
-        "redis",
-        FakeImage(tags=["redis:7.2"]),
+        "sample-cache",
+        FakeImage(tags=["sample-cache:7.2"]),
         attrs={
             "Pod": "",
             "Config": {"Env": None, "Cmd": None, "Entrypoint": None, "Labels": None},
@@ -1958,7 +1958,7 @@ async def test_podman_adapter_update_image_returns_new_container_id():
     adapter = PodmanRuntimeAdapter(runtime, client=client)
 
     result = await adapter.update_image(
-        {"container_id": "old-id", "container_name": "redis"}, "redis:7.4"
+        {"container_id": "old-id", "container_name": "sample-cache"}, "sample-cache:7.4"
     )
 
     assert result.updated is True
@@ -2014,13 +2014,13 @@ async def test_podman_adapter_recovery_returns_new_container_id():
     adapter = PodmanRuntimeAdapter(runtime, client=client)
 
     result = await adapter.recover_from_snapshot(
-        {"container_name": "redis"},
+        {"container_name": "sample-cache"},
         {
             "runtime_type": "podman",
             "container_id": "old-id",
-            "container_name": "redis",
-            "image": "redis:7.2",
-            "create_config": {"image": "redis:7.2", "name": "redis"},
+            "container_name": "sample-cache",
+            "image": "sample-cache:7.2",
+            "create_config": {"image": "sample-cache:7.2", "name": "sample-cache"},
             "pod_id": None,
         },
     )
@@ -2349,9 +2349,9 @@ async def test_docker_compose_grouped_update_orders_only_targeted_specs_and_igno
     db = FakeContainer(
         "db-1",
         "release-stack-db-1",
-        FakeImage(tags=["postgres:16"]),
+        FakeImage(tags=["sample-db:16"]),
         attrs={
-            "Config": {"Image": "postgres:16", "Labels": db_labels},
+            "Config": {"Image": "sample-db:16", "Labels": db_labels},
             "HostConfig": {
                 "PortBindings": {},
                 "Binds": [],
@@ -2744,14 +2744,14 @@ async def test_podman_compose_fetch_images_falls_back_to_get_for_complete_inspec
     )
     summary_container = FakeContainer(
         "47e2f891",
-        "jenkins-agent",
+        "sample-worker",
         FakeImage(tags=["ghcr.io/acme/agent:3.0"]),
         attrs={
             "Pod": "",
             "Labels": {
                 "io.container.manager": "libpod",
                 "io.container.image": "ghcr.io/acme/agent:3.0",
-                "io.podman.compose.project": "jenkins-agent",
+                "io.podman.compose.project": "sample-worker",
                 "com.docker.compose.service": "",
             },
             "HostConfig": {},
@@ -2759,13 +2759,13 @@ async def test_podman_compose_fetch_images_falls_back_to_get_for_complete_inspec
     )
     full_container = FakeContainer(
         "47e2f891",
-        "jenkins-agent",
+        "sample-worker",
         FakeImage(tags=["ghcr.io/acme/agent:3.0"]),
         attrs={
             "Pod": "",
             "Config": {
                 "Labels": {
-                    "io.podman.compose.project": "jenkins-agent",
+                    "io.podman.compose.project": "sample-worker",
                     "com.docker.compose.service": "agent",
                 }
             },
@@ -2794,7 +2794,7 @@ async def test_podman_compose_fetch_images_falls_back_to_get_for_complete_inspec
     adapter = PodmanRuntimeAdapter(runtime, client=client)
 
     images = await adapter.fetch_compose_service_images(
-        {"mode": "docker_compose", "project": "jenkins-agent"}
+        {"mode": "docker_compose", "project": "sample-worker"}
     )
 
     assert images == {"agent": "ghcr.io/acme/agent:3.0"}
@@ -2810,26 +2810,26 @@ def test_podman_compose_find_service_containers_returns_full_inspect_container_o
     )
     summary_container = FakeContainer(
         "47e2f891",
-        "jenkins-agent",
+        "sample-worker",
         FakeImage(tags=["ghcr.io/acme/agent:3.0"]),
         attrs={
-            "Pod": "pod-jenkins",
+            "Pod": "pod-sample-ci",
             "Labels": {
-                "io.podman.compose.project": "jenkins-agent",
+                "io.podman.compose.project": "sample-worker",
                 "com.docker.compose.service": "",
             },
         },
     )
     full_container = FakeContainer(
         "47e2f891",
-        "jenkins-agent",
+        "sample-worker",
         FakeImage(tags=["ghcr.io/acme/agent:3.0"]),
         attrs={
-            "Pod": "pod-jenkins",
+            "Pod": "pod-sample-ci",
             "Config": {
                 "Image": "ghcr.io/acme/agent:3.0",
                 "Labels": {
-                    "io.podman.compose.project": "jenkins-agent",
+                    "io.podman.compose.project": "sample-worker",
                     "com.docker.compose.service": "agent",
                 },
             },
@@ -2858,7 +2858,7 @@ def test_podman_compose_find_service_containers_returns_full_inspect_container_o
     client = SummaryOnlyPodmanClient()
     adapter = PodmanRuntimeAdapter(runtime, client=client)
 
-    containers_by_service = adapter._find_compose_service_containers("jenkins-agent")
+    containers_by_service = adapter._find_compose_service_containers("sample-worker")
 
     assert list(containers_by_service.keys()) == ["agent"]
     assert containers_by_service["agent"] == [full_container]
@@ -2893,10 +2893,10 @@ async def test_podman_compose_grouped_update_recreates_pod_backed_targets_in_sam
             "Pod": "pod-core",
             "PodName": "core-pod",
             "Config": {"Image": "ghcr.io/acme/worker:9.1", "Labels": worker_labels},
-            "HostConfig": {"Binds": ["/data/podman/jenkins-agent/agent:/home/jenkins/agent:Z"]},
+            "HostConfig": {"Binds": ["/data/podman/sample-worker/agent:/home/sample-ci/agent:Z"]},
             "NetworkSettings": {
                 "Networks": {
-                    "traefik-external": {
+                    "sample-edge": {
                         "Aliases": ["worker", "core-worker-1"],
                         "Links": [],
                         "IPAMConfig": None,
@@ -2916,7 +2916,7 @@ async def test_podman_compose_grouped_update_recreates_pod_backed_targets_in_sam
             "HostConfig": {},
             "NetworkSettings": {
                 "Networks": {
-                    "traefik-external": {
+                    "sample-edge": {
                         "Aliases": ["api", "core-api-1"],
                         "Links": [],
                         "IPAMConfig": None,
@@ -2925,7 +2925,7 @@ async def test_podman_compose_grouped_update_recreates_pod_backed_targets_in_sam
             },
         },
     )
-    client = FakePodmanClient([worker, api], network_names=["traefik-external", "podman"])
+    client = FakePodmanClient([worker, api], network_names=["sample-edge", "podman"])
     adapter = PodmanRuntimeAdapter(runtime, client=client)
 
     result = await adapter.update_compose_services(
@@ -2956,8 +2956,8 @@ async def test_podman_compose_grouped_update_recreates_pod_backed_targets_in_sam
             "mounts": [
                 {
                     "type": "bind",
-                    "source": "/data/podman/jenkins-agent/agent",
-                    "target": "/home/jenkins/agent",
+                    "source": "/data/podman/sample-worker/agent",
+                    "target": "/home/sample-ci/agent",
                     "relabel": "Z",
                 }
             ],
@@ -2966,14 +2966,14 @@ async def test_podman_compose_grouped_update_recreates_pod_backed_targets_in_sam
         },
     ]
     assert client.networks.disconnect_calls == [
-        ("traefik-external", "core-api-1", True),
+        ("sample-edge", "core-api-1", True),
         ("podman", "core-api-1", True),
-        ("traefik-external", "core-worker-1", True),
+        ("sample-edge", "core-worker-1", True),
         ("podman", "core-worker-1", True),
     ]
     assert client.networks.connect_calls == [
-        ("traefik-external", "core-api-1", {"aliases": ["api", "core-api-1"]}),
-        ("traefik-external", "core-worker-1", {"aliases": ["worker", "core-worker-1"]}),
+        ("sample-edge", "core-api-1", {"aliases": ["api", "core-api-1"]}),
+        ("sample-edge", "core-worker-1", {"aliases": ["worker", "core-worker-1"]}),
     ]
 
 
@@ -3075,36 +3075,36 @@ async def test_podman_compose_grouped_update_injects_fallback_compose_labels_int
         secrets={},
     )
     summary_labels = {
-        "io.podman.compose.project": "jenkins-agent",
+        "io.podman.compose.project": "sample-worker",
         "com.docker.compose.service": "",
     }
     full_labels = {
-        "com.docker.compose.project": "jenkins-agent",
+        "com.docker.compose.project": "sample-worker",
         "com.docker.compose.service": "agent",
         "com.docker.compose.container-number": "1",
-        "io.podman.compose.project": "jenkins-agent",
+        "io.podman.compose.project": "sample-worker",
         "io.podman.compose.version": "1.0.6",
         "com.docker.compose.oneoff": "False",
         "custom.label": "keep-me",
     }
     listed_summary = FakeContainer(
         "agent-1",
-        "jenkins-agent",
+        "sample-worker",
         FakeImage(tags=["ghcr.io/acme/agent:3.0"]),
         attrs={
-            "Pod": "pod-jenkins",
-            "PodName": "jenkins-pod",
+            "Pod": "pod-sample-ci",
+            "PodName": "sample-ci-pod",
             "Config": {"Image": "ghcr.io/acme/agent:3.0", "Labels": summary_labels},
             "HostConfig": {},
         },
     )
     stored_full = FakeContainer(
         "agent-1",
-        "jenkins-agent",
+        "sample-worker",
         FakeImage(tags=["ghcr.io/acme/agent:3.0"]),
         attrs={
-            "Pod": "pod-jenkins",
-            "PodName": "jenkins-pod",
+            "Pod": "pod-sample-ci",
+            "PodName": "sample-ci-pod",
             "Config": {"Image": "ghcr.io/acme/agent:3.0", "Labels": full_labels},
             "HostConfig": {},
         },
@@ -3116,21 +3116,21 @@ async def test_podman_compose_grouped_update_injects_fallback_compose_labels_int
     adapter = PodmanRuntimeAdapter(runtime, client=client)
 
     result = await adapter.update_compose_services(
-        {"mode": "docker_compose", "project": "jenkins-agent"},
+        {"mode": "docker_compose", "project": "sample-worker"},
         {"agent": "ghcr.io/acme/agent:3.1"},
     )
     client.containers.list = default_list
     images = await adapter.fetch_compose_service_images(
-        {"mode": "docker_compose", "project": "jenkins-agent"}
+        {"mode": "docker_compose", "project": "sample-worker"}
     )
 
     assert result.updated is True
     assert client.containers.create_calls == [
         {
             "image": "ghcr.io/acme/agent:3.1",
-            "name": "jenkins-agent",
+            "name": "sample-worker",
             "labels": full_labels,
-            "pod": "jenkins-pod",
+            "pod": "sample-ci-pod",
         }
     ]
     assert images == {"agent": "ghcr.io/acme/agent:3.1"}

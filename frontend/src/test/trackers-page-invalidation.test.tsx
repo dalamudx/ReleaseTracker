@@ -169,7 +169,7 @@ describe("TrackersPage tracker invalidation", () => {
         source_type: "container",
         enabled: true,
         credential_name: "",
-        source_config: { image: "library/nginx", registry: "" },
+        source_config: { image: "library/sample-web", registry: "" },
         source_rank: 0,
         release_channels: [
           { release_channel_key: "image-0-stable", name: "stable", type: "prerelease", enabled: true },
