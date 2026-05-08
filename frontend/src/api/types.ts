@@ -131,6 +131,7 @@ export interface TrackerChannel {
         image?: string
         registry?: string
         fetch_mode?: GitHubFetchMode
+        published_at_mode?: ContainerPublishedAtMode
     }
     release_channels?: ReleaseChannelInput[]
     channel_rank: number
@@ -146,9 +147,16 @@ export interface TrackerChannel {
         image?: string
         registry?: string
         fetch_mode?: GitHubFetchMode
+        published_at_mode?: ContainerPublishedAtMode
     }
     source_rank?: number
 }
+
+/**
+ * Controls how accurately we try to record a container tag's publish time.
+ * See backend/src/releasetracker/trackers/docker.py for the full behaviour.
+ */
+export type ContainerPublishedAtMode = "auto" | "prefer_real" | "first_observed"
 
 export type TrackerSource = TrackerChannel
 

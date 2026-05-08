@@ -9,7 +9,7 @@ import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from zoneinfo import ZoneInfo
 
 import aiosqlite
@@ -523,6 +523,10 @@ class SQLiteStorage:
             chart=source_config.get("chart"),
             image=source_config.get("image"),
             registry=source_config.get("registry"),
+            published_at_mode=cast(
+                Literal["auto", "prefer_real", "first_observed"],
+                source_config.get("published_at_mode") or "auto",
+            ),
             credential_name=selected_source.credential_name,
             interval=runtime_config.interval if runtime_config else 360,
             version_sort_mode=(
@@ -841,6 +845,10 @@ class SQLiteStorage:
             normalized_registry = self._normalize_optional_string(config.registry)
             if normalized_registry is not None:
                 source_config["registry"] = normalized_registry
+            # Only persist the mode when it diverges from the default "auto",
+            # so legacy trackers stay clean of the new key.
+            if config.published_at_mode and config.published_at_mode != "auto":
+                source_config["published_at_mode"] = config.published_at_mode
 
         aggregate_tracker = AggregateTracker(
             name=config.name,
@@ -1653,6 +1661,51 @@ class SQLiteStorage:
             )
             tag_name = chart_version or self._normalize_release_value(release.tag_name) or version
 
+            # When a container fetch couldn't resolve the manifest digest
+            # (registry errors, intermittent unavailability, or manifest 404
+            # for a retired tag) the release enters this function without
+            # `commit_sha`. The identity_key for such a release falls back
+            # to `version` instead of the digest, which would silently
+            # create a *second* history row that shadows the real one.
+            # Skip the write entirely if a row with a real digest already
+            # exists for this (source, tag) so the stable observation and
+            # its original published_at stay authoritative.
+            if (
+                tracker_source.source_type == "container"
+                and digest is None
+                and tag_name is not None
+            ):
+                prior_digest_row = await (
+                    await db.execute(
+                        """
+                        SELECT id
+                        FROM source_release_history
+                        WHERE tracker_source_id = ?
+                          AND tag_name = ?
+                          AND commit_sha IS NOT NULL
+                          AND commit_sha != ''
+                        LIMIT 1
+                        """,
+                        (tracker_source.id, tag_name),
+                    )
+                ).fetchone()
+                if prior_digest_row is not None:
+                    source_history_ids_by_identity[identity_key] = prior_digest_row["id"]
+                    await db.execute(
+                        """
+                        INSERT OR IGNORE INTO source_release_run_observations
+                        (source_fetch_run_id, source_release_history_id, observed_at, created_at)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (
+                            source_fetch_run_id,
+                            prior_digest_row["id"],
+                            timestamp,
+                            timestamp,
+                        ),
+                    )
+                    continue
+
             raw_payload: dict[str, Any] = {
                 "aggregate_tracker_id": aggregate_tracker_id,
                 "source_key": tracker_source.source_key,
@@ -1714,12 +1767,40 @@ class SQLiteStorage:
             normalized_existing_commit = self._normalize_release_value(source_row["commit_sha"])
             normalized_new_commit = self._normalize_release_value(release.commit_sha)
             preserved_published_at = release.published_at.isoformat()
-            if tracker_source.source_type != "container" and (
-                source_row["version"] == version
-                and normalized_existing_commit is not None
-                and normalized_existing_commit == normalized_new_commit
-            ):
-                preserved_published_at = source_row["published_at"]
+
+            # Decide whether the existing published_at should be preserved.
+            #
+            # The goal is to treat published_at as "time of the most recent
+            # content change", so the timestamp stays stable when nothing
+            # about the release has actually changed.
+            #
+            # - Non-container sources (github/gitlab/gitea/helm): preserve when
+            #   version and commit_sha match, i.e. the upstream API returned
+            #   the exact same release metadata we already stored.
+            # - Container sources: preserve when version matches AND digest
+            #   is unchanged. If the existing digest is null (backfilled
+            #   history or a prior fetch where manifest HEAD failed) treat a
+            #   now-available digest as the "first time we learned what this
+            #   tag points to", which is NOT a content change, so we still
+            #   preserve the existing published_at.
+            # - Container sources where we failed to resolve a digest this
+            #   fetch (new digest is null): we have no way to tell if the
+            #   image changed, so we must NOT reset published_at — preserve
+            #   the previous value rather than claim a fake update.
+            if source_row["version"] == version:
+                if tracker_source.source_type == "container":
+                    digest_matches_or_absent = (
+                        normalized_new_commit is None
+                        or normalized_existing_commit is None
+                        or normalized_existing_commit == normalized_new_commit
+                    )
+                    if digest_matches_or_absent:
+                        preserved_published_at = source_row["published_at"]
+                elif (
+                    normalized_existing_commit is not None
+                    and normalized_existing_commit == normalized_new_commit
+                ):
+                    preserved_published_at = source_row["published_at"]
 
             if self._should_replace_source_history_display(
                 source_type=tracker_source.source_type,
@@ -1837,6 +1918,38 @@ class SQLiteStorage:
             )
         ).fetchone()
         return row["id"] if row else None
+
+    async def get_source_release_history_digests(
+        self,
+        tracker_source_id: int,
+        tag_names: list[str],
+    ) -> dict[str, str | None]:
+        """
+        Return {tag_name → existing digest} for any rows already present.
+
+        Used by incremental fetchers (primarily the container tracker) to skip
+        additional metadata lookups on tags that are already stored with a
+        known digest. Missing tags are absent from the returned mapping.
+        """
+        if not tag_names:
+            return {}
+
+        db = await self._get_connection()
+        db.row_factory = aiosqlite.Row
+        # Build placeholders for the IN clause; SQLite doesn't support array params.
+        placeholders = ",".join("?" for _ in tag_names)
+        rows = await (
+            await db.execute(
+                f"""
+                SELECT tag_name, commit_sha
+                FROM source_release_history
+                WHERE tracker_source_id = ? AND tag_name IN ({placeholders})
+                """,
+                (tracker_source_id, *tag_names),
+            )
+        ).fetchall()
+
+        return {row["tag_name"]: row["commit_sha"] for row in rows}
 
     async def upsert_tracker_release_history(
         self,
@@ -2620,12 +2733,26 @@ class SQLiteStorage:
         persisted_published_at = release.published_at.isoformat()
         normalized_existing_commit = self._normalize_release_value(existing_row["commit_sha"])
         normalized_new_commit = self._normalize_release_value(release.commit_sha)
-        if source_type != "container" and (
-            existing_row["version"] == comparison_version
-            and normalized_existing_commit is not None
-            and normalized_existing_commit == normalized_new_commit
-        ):
-            persisted_published_at = existing_row["published_at"]
+
+        # Mirror the digest-diff logic from append_source_history_for_run:
+        # container releases preserve their prior published_at unless the
+        # digest itself changes (and failed-lookup digests don't count as
+        # a change), while other sources keep preserving on version+commit
+        # identity like before.
+        if existing_row["version"] == comparison_version:
+            if source_type == "container":
+                digest_matches_or_absent = (
+                    normalized_new_commit is None
+                    or normalized_existing_commit is None
+                    or normalized_existing_commit == normalized_new_commit
+                )
+                if digest_matches_or_absent:
+                    persisted_published_at = existing_row["published_at"]
+            elif (
+                normalized_existing_commit is not None
+                and normalized_existing_commit == normalized_new_commit
+            ):
+                persisted_published_at = existing_row["published_at"]
 
         await db.execute(
             """

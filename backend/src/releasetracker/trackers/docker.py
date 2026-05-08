@@ -5,7 +5,9 @@ import base64
 import logging
 import random
 import re
-from datetime import datetime, timedelta
+import time
+from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 import httpx
 
@@ -28,6 +30,33 @@ _REGISTRY_AUTH = {
 
 _DEFAULT_REGISTRY = "registry-1.docker.io"
 
+# Anonymous pulls on these registries share a small shared quota (docker.io is
+# the notorious one), so by default we skip config-blob reads when there is no
+# credential to prove we're not a scrape bot.
+_RATE_LIMITED_ANONYMOUS_REGISTRIES = frozenset(
+    {
+        "registry-1.docker.io",
+        "docker.io",
+        "quay.io",
+    }
+)
+
+# Process-local cooldown per registry host. When a registry returns 429 or
+# signals exhausted remaining quota, we skip config-blob reads for this long
+# to avoid amplifying the problem.
+_RATE_LIMIT_COOLDOWN_SECONDS = 600  # 10 minutes
+_registry_cooldowns: dict[str, float] = {}
+
+# Config-blob bodies are typically small; cap to defend against malicious /
+# mis-configured registries that could send very large JSON.
+_MAX_CONFIG_BLOB_BYTES = 256 * 1024  # 256 KiB
+
+# Reproducible builds often set config.created to the Unix epoch. Treat any
+# timestamp before 2000 as "not a real publish time" and ignore it.
+_MIN_CREDIBLE_CREATED = datetime(2000, 1, 1, tzinfo=timezone.utc)
+
+PublishedAtMode = Literal["auto", "prefer_real", "first_observed"]
+
 # Matches both two-part (x.y) and three-part (x.y.z) numeric version tags,
 # with an optional suffix separated by '.' or '-'.
 # Group 1: major, Group 2: minor, Group 3: patch (optional), Group 4: suffix (optional)
@@ -44,6 +73,15 @@ _MANIFEST_ACCEPT = ", ".join(
     ]
 )
 
+# Preferred architecture for platform selection when resolving multi-arch
+# manifest indexes. We only need one platform's config to read `created`; all
+# platforms in a multi-arch build share the same upstream build time.
+_PLATFORM_PREFERENCES = (
+    ("linux", "amd64"),
+    ("linux", "arm64"),
+    ("linux", "arm"),
+)
+
 
 class DockerTracker(BaseTracker):
     """OCI container image tracker compatible with Docker Hub, GHCR, and private registries"""
@@ -54,6 +92,7 @@ class DockerTracker(BaseTracker):
         image: str,
         registry: str | None = None,
         token: str | None = None,
+        published_at_mode: PublishedAtMode = "auto",
         **kwargs,
     ):
         super().__init__(name, **kwargs)
@@ -68,9 +107,33 @@ class DockerTracker(BaseTracker):
         #   "username:password" → Basic Auth
         #   "ghp_xxxx" / raw Bearer Token
         self.token = token
+        self.published_at_mode: PublishedAtMode = published_at_mode
 
     def _registry_url(self) -> str:
         return f"https://{self.registry}"
+
+    def _should_fetch_config_blob(self) -> bool:
+        """Decide whether config-blob reading is worth attempting for this registry.
+
+        - `prefer_real`: try on every registry; user accepts the request cost.
+        - `first_observed`: never try; entirely skip the extra request.
+        - `auto` (default):
+            - If we have a credential (`self.token`), always try.
+            - Otherwise skip on registries known to aggressively rate-limit
+              anonymous pulls (docker.io, quay.io).
+            - Skip on any registry currently in cooldown (recently 429'd).
+        """
+        if self.published_at_mode == "first_observed":
+            return False
+        if self.published_at_mode == "prefer_real":
+            return not _is_registry_cooling_down(self.registry)
+
+        # auto mode
+        if _is_registry_cooling_down(self.registry):
+            return False
+        if self.token:
+            return True
+        return self.registry not in _RATE_LIMITED_ANONYMOUS_REGISTRIES
 
     async def _get_bearer_token(self, client: httpx.AsyncClient, scope: str) -> str | None:
         """Fetch access token from auth service via Bearer Token flow"""
@@ -210,6 +273,8 @@ class DockerTracker(BaseTracker):
                     return None, None, "manifest_unauthorized", current_token
                 if head_status == 429 or 500 <= head_status < 600:
                     last_error = f"manifest_head_http_{head_status}"
+                    if head_status == 429:
+                        _mark_registry_rate_limited(self.registry)
                 elif 400 <= head_status < 500:
                     return None, None, f"manifest_head_http_{head_status}", current_token
                 else:
@@ -233,6 +298,8 @@ class DockerTracker(BaseTracker):
                         return None, None, "manifest_unauthorized", current_token
                     if get_status == 429 or 500 <= get_status < 600:
                         last_error = f"manifest_get_http_{get_status}"
+                        if get_status == 429:
+                            _mark_registry_rate_limited(self.registry)
                     elif 400 <= get_status < 500:
                         return None, None, f"manifest_get_http_{get_status}", current_token
                     else:
@@ -254,6 +321,135 @@ class DockerTracker(BaseTracker):
 
         return None, None, last_error, current_token
 
+    async def _fetch_image_created(
+        self,
+        client: httpx.AsyncClient,
+        tag: str,
+        bearer_token: str | None,
+        scope: str,
+    ) -> tuple[datetime | None, str | None]:
+        """Fetch the image's build time from the OCI config blob.
+
+        Returns (created_at, current_bearer_token). `created_at` is None when
+        any step fails (missing config, unusable platforms, HTTP errors,
+        implausible timestamp, etc.) so the caller can fall back gracefully.
+
+        The extra HTTP cost is:
+          * one GET manifest (pulls the body we already HEAD'd for digest);
+          * if it's a multi-arch index, one more GET for a platform manifest;
+          * one GET config blob.
+
+        That's at most 3 calls per tag — only invoked when the tag is new to
+        the database, so amortised cost per scheduler tick is near zero once
+        the tracker is in steady state.
+        """
+        manifest_url = f"{self._registry_url()}/v2/{self.image}/manifests/{tag}"
+        current_token = bearer_token
+
+        # Step 1: GET the manifest body to find the config digest.
+        try:
+            response, current_token = await self._request_manifest(
+                client, "GET", manifest_url, current_token, scope
+            )
+        except (httpx.TimeoutException, httpx.RequestError) as exc:
+            logger.debug(
+                "DockerTracker: config blob fetch transport error on %s:%s: %s",
+                self.image,
+                tag,
+                exc,
+            )
+            return None, current_token
+
+        if response.status_code == 429:
+            _mark_registry_rate_limited(self.registry)
+            return None, current_token
+        if response.status_code >= 400:
+            return None, current_token
+
+        try:
+            manifest_json = response.json()
+        except ValueError:
+            return None, current_token
+
+        media_type = response.headers.get("Content-Type", "") or manifest_json.get(
+            "mediaType", ""
+        )
+
+        # Step 2: if we got an index / manifest list, pick one platform and
+        # GET that sub-manifest. Otherwise the body already contains config.
+        if _is_manifest_index(media_type, manifest_json):
+            sub_digest = _pick_platform_manifest(manifest_json)
+            if sub_digest is None:
+                return None, current_token
+            sub_url = f"{self._registry_url()}/v2/{self.image}/manifests/{sub_digest}"
+            try:
+                response, current_token = await self._request_manifest(
+                    client, "GET", sub_url, current_token, scope
+                )
+            except (httpx.TimeoutException, httpx.RequestError):
+                return None, current_token
+
+            if response.status_code == 429:
+                _mark_registry_rate_limited(self.registry)
+                return None, current_token
+            if response.status_code >= 400:
+                return None, current_token
+            try:
+                manifest_json = response.json()
+            except ValueError:
+                return None, current_token
+
+        config_descriptor = manifest_json.get("config")
+        if not isinstance(config_descriptor, dict):
+            return None, current_token
+        config_digest = config_descriptor.get("digest")
+        if not isinstance(config_digest, str) or not config_digest:
+            return None, current_token
+
+        # Step 3: fetch the config blob and read `created`.
+        blob_url = f"{self._registry_url()}/v2/{self.image}/blobs/{config_digest}"
+        try:
+            blob_resp = await client.get(
+                blob_url,
+                headers=self._get_auth_header(current_token),
+                timeout=self.timeout,
+            )
+        except (httpx.TimeoutException, httpx.RequestError):
+            return None, current_token
+
+        if blob_resp.status_code == 429:
+            _mark_registry_rate_limited(self.registry)
+            return None, current_token
+        if blob_resp.status_code >= 400:
+            return None, current_token
+
+        # Defend against oversized / malicious config bodies.
+        raw_body = blob_resp.content[:_MAX_CONFIG_BLOB_BYTES]
+        try:
+            import json
+
+            config_json = json.loads(raw_body)
+        except ValueError:
+            return None, current_token
+
+        created_str = config_json.get("created")
+        if not isinstance(created_str, str) or not created_str.strip():
+            return None, current_token
+
+        try:
+            created_at = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+        except ValueError:
+            return None, current_token
+
+        # Reject reproducible-build placeholder (epoch) and other clearly
+        # implausible times so the UI doesn't show "55 years ago" for those.
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        if created_at < _MIN_CREDIBLE_CREATED:
+            return None, current_token
+
+        return created_at, current_token
+
     def _tag_to_release(self, tag: str, created_at: datetime | None = None) -> Release:
         """Convert a tag into a Release object"""
         return Release(
@@ -272,7 +468,17 @@ class DockerTracker(BaseTracker):
         return releases[0] if releases else None
 
     async def fetch_all(self, limit: int = 10, fallback_tags: bool = False) -> list[Release]:
-        """Fetch the first limit tags matching filter rules"""
+        """Fetch the first `limit` tags matching filter rules.
+
+        The `published_at` handling works in two layers:
+          * Per-tag: when the tracker can read the image's config blob, we
+            replace the placeholder timestamp with the real build time.
+          * Across tags: the remaining tags keep the default placeholder
+            (now() offset by rank). The storage layer takes care of NOT
+            overwriting an already-stored published_at when the digest hasn't
+            changed, so steady state is stable even when config-blob reading
+            is skipped.
+        """
         scope = f"repository:{self.image}:pull"
 
         logger.info(f"DockerTracker: 从 {self.registry}/{self.image} 获取 Tags（limit={limit}）")
@@ -308,6 +514,8 @@ class DockerTracker(BaseTracker):
             _apply_semver_published_at(releases)
 
             candidate_window = releases[:limit]
+            allow_config_blob = self._should_fetch_config_blob()
+
             for candidate in candidate_window:
                 digest, _, error_reason, bearer_token = await self._resolve_manifest_digest(
                     client,
@@ -317,8 +525,26 @@ class DockerTracker(BaseTracker):
                 )
                 if digest:
                     candidate.commit_sha = digest
+
+                    # Try to upgrade the placeholder published_at to the real
+                    # image build time, but only when the registry policy
+                    # allows it and we haven't been rate-limited recently.
+                    if allow_config_blob and not _is_registry_cooling_down(self.registry):
+                        real_created, bearer_token = await self._fetch_image_created(
+                            client,
+                            candidate.tag_name,
+                            bearer_token,
+                            scope,
+                        )
+                        if real_created is not None:
+                            candidate.published_at = real_created
+
                     continue
 
+                # Digest resolution failed. We still emit the candidate so
+                # first-time tags can get tracked; the storage layer is
+                # responsible for preserving the previous published_at when
+                # a digest is already on file for the same tag.
                 logger.warning(
                     "DockerTracker: digest resolution failed, keep candidate without digest "
                     "(image=%s, tag=%s, reason=%s)",
@@ -454,7 +680,106 @@ def _sort_tags(tags: list[str]) -> list[str]:
 
 
 def _apply_semver_published_at(releases: list[Release]) -> None:
+    """Assign placeholder `published_at` values that preserve the rank order.
+
+    The storage layer treats container releases specially: when the digest
+    has not changed, the stored `published_at` is retained rather than
+    overwritten with this placeholder. So each tag's timestamp only sticks
+    the FIRST time we see it; after that the DB keeps the real first-seen
+    time even if this function runs again on the next scheduler tick.
+    """
     base_time = datetime.now()
     total = len(releases)
     for index, release in enumerate(releases):
         release.published_at = base_time + timedelta(seconds=total - index)
+
+
+def _is_manifest_index(media_type: str, manifest_json: dict) -> bool:
+    if isinstance(media_type, str):
+        lowered = media_type.lower()
+        if "manifest.list" in lowered or "image.index" in lowered:
+            return True
+    body_media_type = manifest_json.get("mediaType")
+    if isinstance(body_media_type, str):
+        lowered_body = body_media_type.lower()
+        if "manifest.list" in lowered_body or "image.index" in lowered_body:
+            return True
+    # Some older Docker media types still use "manifests" array.
+    return isinstance(manifest_json.get("manifests"), list)
+
+
+def _pick_platform_manifest(index_json: dict) -> str | None:
+    """Pick a platform manifest from an index, preferring amd64/arm64 Linux.
+
+    Returns the digest string of the chosen manifest, or None if none match.
+    We explicitly skip attestation manifests (`vnd.in-toto+json` etc.) that
+    some registries add to image indexes.
+    """
+    manifests = index_json.get("manifests")
+    if not isinstance(manifests, list):
+        return None
+
+    # Filter to real image manifests (skip attestation / signature artifacts).
+    candidates: list[dict] = []
+    for entry in manifests:
+        if not isinstance(entry, dict):
+            continue
+        media_type = entry.get("mediaType", "")
+        if not isinstance(media_type, str):
+            continue
+        lowered = media_type.lower()
+        if "manifest" not in lowered or "signature" in lowered or "attestation" in lowered:
+            continue
+        if "in-toto" in lowered:
+            continue
+        candidates.append(entry)
+
+    if not candidates:
+        return None
+
+    # Prefer preferred (os, arch) pairs in order.
+    for os_name, arch_name in _PLATFORM_PREFERENCES:
+        for entry in candidates:
+            platform = entry.get("platform") or {}
+            if not isinstance(platform, dict):
+                continue
+            if (
+                platform.get("os") == os_name
+                and platform.get("architecture") == arch_name
+                and platform.get("variant") in (None, "", "v8")
+            ):
+                digest = entry.get("digest")
+                if isinstance(digest, str) and digest:
+                    return digest
+
+    # Fall back to first Linux image, then any image manifest.
+    for entry in candidates:
+        platform = entry.get("platform") or {}
+        if isinstance(platform, dict) and platform.get("os") == "linux":
+            digest = entry.get("digest")
+            if isinstance(digest, str) and digest:
+                return digest
+
+    first_digest = candidates[0].get("digest")
+    return first_digest if isinstance(first_digest, str) and first_digest else None
+
+
+def _is_registry_cooling_down(registry: str) -> bool:
+    deadline = _registry_cooldowns.get(registry)
+    if deadline is None:
+        return False
+    if time.monotonic() < deadline:
+        return True
+    # expired — clean up so the dict doesn't grow unbounded
+    _registry_cooldowns.pop(registry, None)
+    return False
+
+
+def _mark_registry_rate_limited(registry: str, seconds: float | None = None) -> None:
+    cooldown = seconds if seconds is not None else _RATE_LIMIT_COOLDOWN_SECONDS
+    _registry_cooldowns[registry] = time.monotonic() + cooldown
+    logger.info(
+        "DockerTracker: registry %s rate-limited, skipping config blob reads for %ss",
+        registry,
+        cooldown,
+    )

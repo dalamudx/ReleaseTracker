@@ -2,6 +2,7 @@ import type { TFunction } from "i18next"
 
 import type {
     AggregateTracker,
+    ContainerPublishedAtMode,
     CreateTrackerRequest,
     GitHubFetchMode,
     ReleaseChannelInput,
@@ -28,6 +29,7 @@ export interface TrackerFormSource {
         image?: string
         registry?: string
         fetch_mode?: GitHubFetchMode
+        published_at_mode?: ContainerPublishedAtMode
     }
     release_channels: ReleaseChannelInput[]
     source_rank: number
@@ -144,6 +146,10 @@ export function normalizeSourceForForm(source: AggregateTracker["sources"][numbe
             image: source.source_config?.image ?? source.channel_config?.image ?? "",
             registry: source.source_config?.registry ?? source.channel_config?.registry ?? "",
             fetch_mode: source.source_config?.fetch_mode ?? source.channel_config?.fetch_mode ?? undefined,
+            published_at_mode:
+                source.source_config?.published_at_mode
+                ?? source.channel_config?.published_at_mode
+                ?? undefined,
         },
     }
 }
@@ -331,11 +337,20 @@ export function buildSanitizedSourceConfig(source: TrackerFormSource): TrackerFo
                 repo: trimOrUndefined(source.source_config.repo),
                 chart: trimOrUndefined(source.source_config.chart),
             }
-        case "container":
+        case "container": {
+            const normalizedMode =
+                source.source_config.published_at_mode === "prefer_real"
+                || source.source_config.published_at_mode === "first_observed"
+                    ? source.source_config.published_at_mode
+                    : undefined
             return {
                 image: trimOrUndefined(source.source_config.image),
                 registry: trimOrUndefined(source.source_config.registry),
+                // Only send when the user picks something other than "auto" so
+                // legacy trackers round-trip without extra keys.
+                ...(normalizedMode ? { published_at_mode: normalizedMode } : {}),
             }
+        }
     }
 }
 

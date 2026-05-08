@@ -194,7 +194,16 @@ async def test_save_source_observations_updates_github_metadata_without_new_hist
 
 
 @pytest.mark.asyncio
-async def test_docker_source_history_refreshes_synthetic_published_at_for_existing_tags(storage):
+async def test_docker_source_history_preserves_published_at_when_digest_unchanged(storage):
+    """Container source `published_at` must stay stable across fetches
+    when the underlying image has not been rebuilt.
+
+    Prior to the digest-diff fix the storage layer always rewrote a
+    container release's `published_at` with the tracker's synthetic
+    timestamp, which made every scheduler tick look like "the image was
+    just published". The new contract: only refresh `published_at` when
+    the digest actually changes.
+    """
     aggregate_tracker = await storage.create_aggregate_tracker(
         AggregateTracker(
             name="sample-worker-refresh",
@@ -230,7 +239,15 @@ async def test_docker_source_history_refreshes_synthetic_published_at_for_existi
                 source_type="container",
             )
 
-    def docker_release(tag: str, published_at: str) -> Release:
+    # Each tag carries a stable sha256 digest across fetches — the
+    # scheduler's _apply_semver_published_at would otherwise hand out new
+    # `published_at` values on every tick, which used to override the DB.
+    v20_digest = "sha256:" + "a" * 64
+    v19_digest = "sha256:" + "b" * 64
+    v2_digest = "sha256:" + "c" * 64
+    v18_digest = "sha256:" + "d" * 64
+
+    def docker_release(tag: str, published_at: str, digest: str | None) -> Release:
         return Release(
             tracker_name="sample-worker-refresh",
             tracker_type="container",
@@ -240,20 +257,25 @@ async def test_docker_source_history_refreshes_synthetic_published_at_for_existi
             url=f"https://registry-1.docker.io/example/worker-agent:{tag}",
             published_at=datetime.fromisoformat(published_at),
             prerelease=False,
+            commit_sha=digest,
         )
 
     await persist_fetch(
         [
-            docker_release("3355.v388858a_47b_33-20", "2026-05-06T01:21:48"),
-            docker_release("3355.v388858a_47b_33-19", "2026-05-06T01:21:47"),
-            docker_release("3355.v388858a_47b_33-2", "2026-05-06T01:21:46"),
+            docker_release("3355.v388858a_47b_33-20", "2026-05-06T01:21:48", v20_digest),
+            docker_release("3355.v388858a_47b_33-19", "2026-05-06T01:21:47", v19_digest),
+            docker_release("3355.v388858a_47b_33-2", "2026-05-06T01:21:46", v2_digest),
         ]
     )
     await persist_fetch(
         [
-            docker_release("3355.v388858a_47b_33-20", "2026-05-06T01:45:40"),
-            docker_release("3355.v388858a_47b_33-19", "2026-05-06T01:45:39"),
-            docker_release("3355.v388858a_47b_33-18", "2026-05-06T01:45:38"),
+            # Same two tags with the SAME digests: published_at must stick
+            # to the first observation.
+            docker_release("3355.v388858a_47b_33-20", "2026-05-06T01:45:40", v20_digest),
+            docker_release("3355.v388858a_47b_33-19", "2026-05-06T01:45:39", v19_digest),
+            # A newly-discovered tag gets its fresh `published_at` — this is
+            # a first observation for -18 so there's nothing to preserve.
+            docker_release("3355.v388858a_47b_33-18", "2026-05-06T01:45:38", v18_digest),
         ]
     )
 
@@ -263,13 +285,19 @@ async def test_docker_source_history_refreshes_synthetic_published_at_for_existi
         storage.dedupe_releases_by_immutable_identity(history_releases),
     )
     current_releases = await storage.get_tracker_current_releases(aggregate_tracker.id)
-    latest_release = max(
-        current_releases,
-        key=lambda release: storage._release_order_key(release, "published_at"),
-    )
 
-    assert latest_release.tag_name == "3355.v388858a_47b_33-20"
-    assert latest_release.published_at == datetime.fromisoformat("2026-05-06T01:45:40")
+    # v-20 exists with its original first-seen time, not the second-fetch time.
+    release_for = {release.tag_name: release for release in current_releases}
+    assert release_for["3355.v388858a_47b_33-20"].published_at == datetime.fromisoformat(
+        "2026-05-06T01:21:48"
+    )
+    assert release_for["3355.v388858a_47b_33-19"].published_at == datetime.fromisoformat(
+        "2026-05-06T01:21:47"
+    )
+    # The newly-discovered -18 uses the second fetch's timestamp.
+    assert release_for["3355.v388858a_47b_33-18"].published_at == datetime.fromisoformat(
+        "2026-05-06T01:45:38"
+    )
 
 
 @pytest.mark.asyncio
@@ -1487,9 +1515,17 @@ async def test_canonical_release_removes_stale_docker_alias_target_after_latest_
 
 
 @pytest.mark.asyncio
-async def test_source_observation_refreshes_published_at_for_digestless_docker_alias(
+async def test_source_observation_preserves_published_at_for_digestless_docker_alias(
     storage,
 ):
+    """Container observation `published_at` must stick across fetches when
+    the tag is unchanged, even when the registry cannot provide a digest
+    (and thus `commit_sha` stays None).
+
+    Prior to the digest-diff fix the observation row was overwritten on
+    every poll with the scheduler's "now" timestamp, which surfaced as
+    "just updated" in the UI for tags that had not actually moved.
+    """
     aggregate_tracker = await storage.create_aggregate_tracker(
         AggregateTracker(
             name="aggregate-docker-stable-timestamp",
@@ -1552,7 +1588,8 @@ async def test_source_observation_refreshes_published_at_for_digestless_docker_a
     assert len(source_observations) == 1
     assert source_observations[0].tag_name == "latest"
     assert source_observations[0].version == "24.10.1"
-    assert source_observations[0].published_at == later_poll_at
+    # published_at stays at the first-seen time; only observed_at moves.
+    assert source_observations[0].published_at == first_seen_at
     assert source_observations[0].observed_at == later_poll_at
 
 

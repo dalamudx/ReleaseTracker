@@ -924,6 +924,13 @@
       "chartName": "Chart 名称",
       "image": "镜像名",
       "registry": "Registry 地址",
+      "publishedAtMode": {
+        "label": "发布时间来源",
+        "description": "容器镜像的发布时间记录方式。推荐使用「自动」：在兼容 OCI 的仓库（GHCR / Harbor 等）上读取镜像真实构建时间；在 docker.io 匿名等限流严格的场景下降级为首次观察时间，保护速率额度。",
+        "auto": "自动（按仓库类型识别）",
+        "preferReal": "总是尝试读取真实构建时间",
+        "firstObserved": "仅使用首次观察时间"
+      },
       "credential": "凭证",
       "optional": "可选",
       "none": "无",

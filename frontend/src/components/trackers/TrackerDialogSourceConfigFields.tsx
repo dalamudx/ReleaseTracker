@@ -211,18 +211,57 @@ export function TrackerDialogSourceConfigFields({
     }
 
     return (
-        <FormField
-            control={form.control}
-            name={`sources.${index}.source_config.registry`}
-            render={({ field }) => (
-                <FormItem className="w-full max-w-md">
-                    <FormLabel>{t("tracker.fields.registry")}</FormLabel>
-                    <FormControl>
-                        <Input {...field} value={field.value ?? ""} placeholder="ghcr.io" />
-                    </FormControl>
-                    <FormMessage />
-                </FormItem>
-            )}
-        />
+        <div className="flex w-full flex-wrap gap-4">
+            <FormField
+                control={form.control}
+                name={`sources.${index}.source_config.registry`}
+                render={({ field }) => (
+                    <FormItem className="w-full max-w-md">
+                        <FormLabel>{t("tracker.fields.registry")}</FormLabel>
+                        <FormControl>
+                            <Input {...field} value={field.value ?? ""} placeholder="ghcr.io" />
+                        </FormControl>
+                        <FormMessage />
+                    </FormItem>
+                )}
+            />
+
+            <FormField
+                control={form.control}
+                name={`sources.${index}.source_config.published_at_mode`}
+                render={({ field }) => (
+                    <FormItem className="w-full max-w-md">
+                        <FormLabel>{t("tracker.fields.publishedAtMode.label")}</FormLabel>
+                        <Select
+                            value={field.value ?? "auto"}
+                            onValueChange={(value) =>
+                                field.onChange(value as "auto" | "prefer_real" | "first_observed")
+                            }
+                        >
+                            <FormControl>
+                                <SelectTrigger>
+                                    <SelectValue />
+                                </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                                <SelectItem value="auto">
+                                    {t("tracker.fields.publishedAtMode.auto")}
+                                </SelectItem>
+                                <SelectItem value="prefer_real">
+                                    {t("tracker.fields.publishedAtMode.preferReal")}
+                                </SelectItem>
+                                <SelectItem value="first_observed">
+                                    {t("tracker.fields.publishedAtMode.firstObserved")}
+                                </SelectItem>
+                            </SelectContent>
+                        </Select>
+                        <FormDescription>
+                            {t("tracker.fields.publishedAtMode.description")}
+                        </FormDescription>
+                        <FormMessage />
+                    </FormItem>
+                )}
+            />
+        </div>
     )
 }

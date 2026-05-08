@@ -76,6 +76,7 @@ class AggregateTrackerPayload(BaseModel):
             chart=source_config.get("chart"),
             image=source_config.get("image"),
             registry=source_config.get("registry"),
+            published_at_mode=source_config.get("published_at_mode") or "auto",
             credential_name=selected_source.credential_name,
             interval=self.interval,
             version_sort_mode=self.version_sort_mode,

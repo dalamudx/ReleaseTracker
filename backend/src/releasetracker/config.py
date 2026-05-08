@@ -62,6 +62,12 @@ class TrackerConfig(BaseModel):
     chart: str | None = None  # Helm chart name
     image: str | None = None  # Docker image name, for example "library/nginx" or "owner/image"
     registry: str | None = None  # Docker registry URL
+    # How to resolve published_at for container image tags. Only used when type == "container":
+    #   - "auto": fetch config blob on well-behaved registries, fall back to "first observed
+    #     time" on rate-limited anonymous registries (docker.io, quay.io without credential).
+    #   - "prefer_real": always try to fetch the config blob (user accepts any rate-limit cost).
+    #   - "first_observed": never fetch config blob; just record the first time we saw the tag.
+    published_at_mode: Literal["auto", "prefer_real", "first_observed"] = "auto"
     version_sort_mode: Literal["published_at", "semver"] = "published_at"  # Version sorting mode
     fetch_limit: int = 10  # Fetch limit per run
     fetch_timeout: int = 15  # Fetch timeout in seconds

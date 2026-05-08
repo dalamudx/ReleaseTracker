@@ -176,7 +176,7 @@ class TrackerSource(BaseModel):
             "gitlab": ({"project", "instance"}, {"project"}),
             "gitea": ({"repo", "instance"}, {"repo"}),
             "helm": ({"repo", "chart"}, {"repo", "chart"}),
-            "container": ({"image", "registry"}, {"image", "registry"}),
+            "container": ({"image", "registry", "published_at_mode"}, {"image", "registry"}),
         }
 
         allowed_keys, required_keys = provider_requirements[self.source_type]
@@ -207,6 +207,16 @@ class TrackerSource(BaseModel):
             "rest_first",
         }:
             raise ValueError("source_config.fetch_mode must be one of: graphql_first, rest_first")
+
+        if self.source_type == "container" and self.source_config.get("published_at_mode") not in {
+            None,
+            "auto",
+            "prefer_real",
+            "first_observed",
+        }:
+            raise ValueError(
+                "source_config.published_at_mode must be one of: auto, prefer_real, first_observed"
+            )
 
         return self
 

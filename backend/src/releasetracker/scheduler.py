@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import logging
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from .config import TrackerConfig
 from .models import (
@@ -623,6 +623,10 @@ class ReleaseScheduler:
             chart=source.source_config.get("chart"),
             image=source.source_config.get("image"),
             registry=source.source_config.get("registry"),
+            published_at_mode=cast(
+                Literal["auto", "prefer_real", "first_observed"],
+                source.source_config.get("published_at_mode") or "auto",
+            ),
             credential_name=source.credential_name,
             interval=tracker_config.interval if tracker_config else 360,
             version_sort_mode=(
@@ -1172,6 +1176,7 @@ class ReleaseScheduler:
                 image=config.image or "",
                 registry=config.registry,
                 token=_container_registry_auth_token(credential) if credential else token,
+                published_at_mode=config.published_at_mode,
                 filter=legacy_filter,
                 channels=config.channels,
                 timeout=config.fetch_timeout,
