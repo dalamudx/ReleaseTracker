@@ -134,6 +134,14 @@ async def _validate_executor_payload(
     description = executor_data.get(
         "description", existing_executor.description if existing_executor else None
     )
+    health_check_payload = executor_data.get(
+        "health_check",
+        (
+            existing_executor.health_check.model_dump(mode="json")
+            if existing_executor
+            else None
+        ),
+    )
 
     runtime_connection = await storage.get_runtime_connection(runtime_connection_id)
     if not runtime_connection:
@@ -350,7 +358,7 @@ async def _validate_executor_payload(
             binding_tracker_name_value=binding_tracker_name,
         )
 
-    executor = ExecutorConfig(
+    executor_kwargs: dict[str, Any] = dict(
         id=existing_executor.id if existing_executor else None,
         name=name,
         runtime_type=runtime_type,
@@ -367,6 +375,41 @@ async def _validate_executor_payload(
         maintenance_window=maintenance_window,
         description=description,
     )
+    if health_check_payload is not None:
+        executor_kwargs["health_check"] = health_check_payload
+
+    try:
+        executor = ExecutorConfig(**executor_kwargs)
+    except ValueError as exc:
+        # Surface pydantic / cross-field validation errors (health check
+        # strategy/timings, services-not-in-bindings, etc.) as 400s so the
+        # UI and API consumers can display the offending field.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Save-time network-path pre-flight (Req 12.4). Non-fatal when the
+    # adapter does not override ``validate_probe_network_path`` — the
+    # default implementation returns None.
+    if executor.health_check.strategy in {"http", "tcp"}:
+        try:
+            runtime_connection = await storage.get_runtime_connection(
+                executor.runtime_connection_id
+            )
+            materialized_runtime = await materialize_runtime_connection_credentials(
+                storage, runtime_connection
+            )
+            adapter = _get_runtime_adapter(materialized_runtime)
+            await adapter.validate_probe_network_path(
+                executor.target_ref,
+                executor.health_check,
+            )
+        except HTTPException:
+            raise
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except NotImplementedError:
+            # Adapter does not yet support pre-flight; runtime errors
+            # surface as probe-level host_unresolvable outcomes instead.
+            pass
 
     try:
         runtime_connection = await materialize_runtime_connection_credentials(
@@ -473,6 +516,7 @@ async def get_executor_status_detail(
         "maintenance_window": (
             executor.maintenance_window.model_dump() if executor.maintenance_window else None
         ),
+        "health_check": executor.health_check.model_dump(mode="json"),
         "status": _serialize_executor_status(status),
         "latest_run": latest_run.model_dump() if latest_run else None,
     }
@@ -551,7 +595,11 @@ async def create_executor(
         executor = await _validate_executor_payload(storage, executor_data)
         executor_id = await storage.create_executor_config(executor)
         await scheduler.refresh_executor(executor_id)
-        return {"message": f"执行器 {executor.name} 已创建", "id": executor_id}
+        return {
+            "message": f"执行器 {executor.name} 已创建",
+            "id": executor_id,
+            "health_check": executor.health_check.model_dump(mode="json"),
+        }
     except HTTPException:
         raise
     except Exception as exc:
@@ -580,7 +628,10 @@ async def update_executor(
         )
         await storage.update_executor_config(executor_id, executor)
         await scheduler.refresh_executor(executor_id)
-        return {"message": f"执行器 {executor.name} 已更新"}
+        return {
+            "message": f"执行器 {executor.name} 已更新",
+            "health_check": executor.health_check.model_dump(mode="json"),
+        }
     except HTTPException:
         raise
     except Exception as exc:

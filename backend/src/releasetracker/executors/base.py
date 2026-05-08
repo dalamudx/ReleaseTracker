@@ -65,6 +65,58 @@ class BaseRuntimeAdapter(ABC):
     ) -> RuntimeUpdateResult:
         raise NotImplementedError("runtime adapter does not support recovery")
 
+    async def probe_runtime_native_health(
+        self,
+        target_ref: dict[str, Any],
+        *,
+        baseline: dict[str, Any],
+        services: list[str] | None = None,
+    ) -> "Any":
+        """Return a ``ProbeAttemptResult`` for the runtime-native strategy.
+
+        Default implementation signals the runner to treat the attempt as
+        a runtime-native "not supported" error; adapters that implement
+        readiness semantics override this. Typed as ``Any`` to avoid
+        circular import with ``health_check.types``; the runner consumes
+        whatever dataclass subclass each adapter returns.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement runtime-native health probing"
+        )
+
+    async def resolve_probe_hosts(
+        self,
+        target_ref: dict[str, Any],
+        *,
+        services: list[str] | None = None,
+        default_port: int | None = None,
+    ) -> list["Any"]:
+        """Return a list of ``ProbeHost`` entries reachable from the adapter.
+
+        Concrete adapters implement this to surface the list of
+        ``(service, host, port)`` tuples HTTP / TCP probes should target.
+        The default raises ``NotImplementedError`` so HTTP / TCP probes
+        can map it to ``host_unresolvable``.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement resolve_probe_hosts"
+        )
+
+    async def validate_probe_network_path(
+        self,
+        target_ref: dict[str, Any],
+        profile: "Any",
+    ) -> None:
+        """Raise ``ValueError`` if the configured probe cannot be reached.
+
+        The scheduler calls this at executor save time (Req 12.4, 4.13) so
+        operators see unsupported combinations as 400 responses rather
+        than per-run failures. Adapters that cannot pre-flight the path
+        simply return ``None`` (the default) and let runtime failures
+        surface as probe-level ``host_unresolvable`` outcomes.
+        """
+        return None
+
     def _require_target_field(self, target_ref: dict[str, Any], field: str) -> str:
         value = target_ref.get(field)
         if not isinstance(value, str) or not value.strip():

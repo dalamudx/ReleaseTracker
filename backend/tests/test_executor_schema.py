@@ -1184,3 +1184,70 @@ async def test_executor_desired_state_claim_defer_and_complete_semantics(storage
         desired_target={"identity_key": "3.1.0@sha256:" + "d" * 64},
     )
     assert deduped_after_completion is False
+
+
+@pytest.mark.asyncio
+async def test_executor_health_check_profile_round_trip(storage):
+    """Persisting an ExecutorConfig with a non-default health_check must round-trip."""
+    from releasetracker.config import HealthCheckProfile
+
+    runtime_id = await _create_runtime_connection(storage, name="healthcheck-roundtrip")
+    tracker_source_id = await _create_tracker_source_id(storage)
+
+    profile = HealthCheckProfile(
+        strategy="runtime_native",
+        use_default_strategy=False,
+        grace_period_seconds=15,
+        attempt_timeout_seconds=10,
+        interval_seconds=5,
+        probe_window_seconds=180,
+        failure_policy="mark_failed",
+    )
+
+    executor_id = await storage.save_executor_config(
+        ExecutorConfig(
+            name="healthcheck-executor",
+            runtime_type="docker",
+            runtime_connection_id=runtime_id,
+            tracker_name="sample-web",
+            tracker_source_id=tracker_source_id,
+            enabled=True,
+            update_mode="manual",
+            target_ref={"mode": "container", "container_id": "healthcheck-container"},
+            health_check=profile,
+        )
+    )
+
+    loaded = await storage.get_executor_config(executor_id)
+    assert loaded is not None
+    assert loaded.health_check.strategy == "runtime_native"
+    assert loaded.health_check.grace_period_seconds == 15
+    assert loaded.health_check.attempt_timeout_seconds == 10
+    assert loaded.health_check.interval_seconds == 5
+    assert loaded.health_check.probe_window_seconds == 180
+    assert loaded.health_check.failure_policy == "mark_failed"
+
+
+@pytest.mark.asyncio
+async def test_executor_default_health_check_persists_as_strategy_none(storage):
+    """Executors saved without an explicit health_check default to strategy=none."""
+    runtime_id = await _create_runtime_connection(storage, name="healthcheck-default")
+    tracker_source_id = await _create_tracker_source_id(storage)
+
+    executor_id = await storage.save_executor_config(
+        ExecutorConfig(
+            name="healthcheck-default-executor",
+            runtime_type="docker",
+            runtime_connection_id=runtime_id,
+            tracker_name="sample-web",
+            tracker_source_id=tracker_source_id,
+            enabled=True,
+            update_mode="manual",
+            target_ref={"mode": "container", "container_id": "healthcheck-default-container"},
+        )
+    )
+
+    loaded = await storage.get_executor_config(executor_id)
+    assert loaded is not None
+    assert loaded.health_check.strategy == "none"
+    assert loaded.health_check.failure_policy == "mark_failed"

@@ -10,6 +10,7 @@ import aiosqlite
 from ..config import (
     ExecutorConfig,
     ExecutorServiceBinding,
+    HealthCheckProfile,
     MaintenanceWindowConfig,
     RuntimeConnectionConfig,
     normalize_executor_target_ref,
@@ -239,6 +240,14 @@ def _row_to_executor_config(
         "description": row["description"],
     }
 
+    # ``health_check`` column shipped in Migration B. Older test fixtures or
+    # in-flight rolling deployments may read rows without it; default to
+    # ``HealthCheckProfile()`` (strategy=none) so behavior matches pre-feature.
+    if "health_check" in row.keys():
+        raw_health_check = storage._load_json(row["health_check"])
+        if isinstance(raw_health_check, dict) and raw_health_check:
+            payload["health_check"] = raw_health_check
+
     return ExecutorConfig(**payload)
 
 
@@ -284,6 +293,7 @@ def _try_row_to_executor_config(
             service_bindings=service_bindings or [],
             maintenance_window=None,
             description=row["description"],
+            health_check=HealthCheckProfile(),
             invalid_config_error=str(exc),
         )
 
@@ -484,8 +494,8 @@ async def create_executor_config(storage: "SQLiteStorage", executor_config: Exec
         """
         INSERT INTO executors
         (name, runtime_type, runtime_connection_id, tracker_name, tracker_source_id, channel_name, enabled, image_selection_mode,
-         image_reference_mode, update_mode, target_ref, maintenance_window, description, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         image_reference_mode, update_mode, target_ref, maintenance_window, description, health_check, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             executor_config.name,
@@ -505,6 +515,7 @@ async def create_executor_config(storage: "SQLiteStorage", executor_config: Exec
                 else None
             ),
             executor_config.description,
+            storage._dump_json(executor_config.health_check.model_dump(mode="json")),
             now,
             now,
         ),
@@ -629,7 +640,7 @@ async def update_executor_config(
         SET name = ?, runtime_type = ?, runtime_connection_id = ?, tracker_name = ?,
             tracker_source_id = ?, channel_name = ?, enabled = ?, image_selection_mode = ?, image_reference_mode = ?, update_mode = ?,
             target_ref = ?, maintenance_window = ?,
-            description = ?, updated_at = ?
+            description = ?, health_check = ?, updated_at = ?
         WHERE id = ?
         """,
         (
@@ -650,6 +661,7 @@ async def update_executor_config(
                 else None
             ),
             executor_config.description,
+            storage._dump_json(executor_config.health_check.model_dump(mode="json")),
             datetime.now().isoformat(),
             executor_id,
         ),

@@ -247,3 +247,90 @@ async def test_save_executor_snapshot_shim_delegates_to_history_insert(storage):
     latest = await storage.get_executor_snapshot(executor_id)
     assert latest is not None
     assert latest.image_at_capture == "shim:2"
+
+
+# ============================================================
+# Phase E: SnapshotService list + detail
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_snapshot_service_list_paginates_newest_first(storage):
+    from releasetracker.services.snapshot_service import SnapshotService
+
+    executor_id = await _create_executor(storage, name="service-list-executor")
+
+    base = datetime(2026, 4, 1, 0, 0, 0)
+    ids: list[int] = []
+    for index in range(4):
+        ids.append(
+            await storage.create_executor_snapshot(
+                ExecutorSnapshot(
+                    executor_id=executor_id,
+                    snapshot_data={"image": f"svc:1.{index}.0"},
+                    trigger="pre_update",
+                    image_at_capture=f"svc:1.{index}.0",
+                    created_at=base + timedelta(minutes=index),
+                    updated_at=base + timedelta(minutes=index),
+                )
+            )
+        )
+
+    service = SnapshotService(storage)
+    page_one = await service.list_snapshots(executor_id, page=1, page_size=2)
+    page_two = await service.list_snapshots(executor_id, page=2, page_size=2)
+
+    assert page_one.total == 4
+    assert page_one.page == 1
+    assert page_one.page_size == 2
+    assert [item.id for item in page_one.items] == list(reversed(ids[-2:]))
+    assert [item.id for item in page_two.items] == list(reversed(ids[:2]))
+
+
+@pytest.mark.asyncio
+async def test_snapshot_service_get_snapshot_redacts_sensitive_fields(storage):
+    from releasetracker.services.snapshot_service import REDACTED_MARKER, SnapshotService
+
+    executor_id = await _create_executor(storage, name="service-detail-executor")
+
+    snapshot_id = await storage.create_executor_snapshot(
+        ExecutorSnapshot(
+            executor_id=executor_id,
+            snapshot_data={
+                "runtime_type": "docker",
+                "container_id": "abc",
+                "image": "acme/api:1.0",
+                "env": {"DB_PASSWORD": "secret", "LOG_LEVEL": "info"},
+            },
+            trigger="pre_update",
+            image_at_capture="acme/api:1.0",
+        )
+    )
+
+    service = SnapshotService(storage)
+    detail = await service.get_snapshot(executor_id, snapshot_id, runtime_type="docker")
+
+    assert detail is not None
+    assert detail.snapshot_data["env"]["DB_PASSWORD"] == REDACTED_MARKER
+    assert detail.snapshot_data["env"]["LOG_LEVEL"] == "info"
+    assert detail.snapshot_data["image"] == "acme/api:1.0"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_service_get_snapshot_returns_none_for_foreign_executor(storage):
+    from releasetracker.services.snapshot_service import SnapshotService
+
+    executor_id_a = await _create_executor(storage, name="service-scope-a")
+    executor_id_b = await _create_executor(storage, name="service-scope-b")
+    snapshot_id = await storage.create_executor_snapshot(
+        ExecutorSnapshot(
+            executor_id=executor_id_a,
+            snapshot_data={"image": "a:1"},
+            trigger="pre_update",
+            image_at_capture="a:1",
+        )
+    )
+
+    service = SnapshotService(storage)
+    assert await service.get_snapshot(executor_id_b, snapshot_id) is None
+    assert await service.get_snapshot(executor_id_a, 999_999) is None

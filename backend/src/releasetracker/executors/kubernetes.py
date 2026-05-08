@@ -321,6 +321,215 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
             return await self.recover_helm_release_from_snapshot(target_ref, snapshot)
         return await super().recover_from_snapshot(target_ref, snapshot)
 
+    async def probe_runtime_native_health(
+        self,
+        target_ref: dict[str, Any],
+        *,
+        baseline: dict[str, Any],
+        services: list[str] | None = None,
+    ):
+        """Kubernetes workload rollout-completion probe (Req 3.5).
+
+        Healthy iff:
+        - ``status.observedGeneration >= metadata.generation`` recorded at
+          the end of the Update Phase.
+        - Workload-specific rollout completion condition has fired.
+        - Ready replicas match desired replicas.
+
+        ``services`` scopes the probe to a subset of containers for
+        grouped workloads (future use; Phase C keeps the check at the
+        workload level).
+        """
+        from .health_check.types import ProbeAttemptResult  # noqa: WPS433
+
+        del services  # Phase C evaluates at the workload level only.
+
+        mode = target_ref.get("mode")
+        if mode not in {"kubernetes_workload", "helm_release"}:
+            return ProbeAttemptResult(
+                healthy=False,
+                error_category="runtime_api_error",
+                last_error=f"unsupported target mode for runtime_native: {mode!r}",
+            )
+
+        if mode == "helm_release":
+            # Phase C delegates Helm release readiness to the HelmStatusProbe
+            # via the strategy catalog; the runtime_native strategy is a
+            # thin pass-through that expects the runner to have picked the
+            # right probe. Anything reaching here is a wiring error.
+            return ProbeAttemptResult(
+                healthy=False,
+                error_category="runtime_api_error",
+                last_error=(
+                    "helm_release runtime_native probing is only available via "
+                    "HelmStatusProbe + workload probes in Phase D"
+                ),
+            )
+
+        namespace = target_ref.get("namespace")
+        kind = target_ref.get("kind")
+        name = target_ref.get("name")
+        if not (isinstance(namespace, str) and isinstance(kind, str) and isinstance(name, str)):
+            return ProbeAttemptResult(
+                healthy=False,
+                error_category="runtime_api_error",
+                last_error="target_ref missing namespace/kind/name",
+            )
+
+        try:
+            workload = self._get_workload(kind, name, namespace)
+        except Exception as exc:
+            return ProbeAttemptResult(
+                healthy=False,
+                error_category="runtime_api_error",
+                last_error=f"failed to fetch workload: {exc}",
+            )
+
+        metadata = workload.get("metadata") if isinstance(workload, dict) else None
+        status = workload.get("status") if isinstance(workload, dict) else None
+        spec = workload.get("spec") if isinstance(workload, dict) else None
+        if not (
+            isinstance(metadata, dict) and isinstance(status, dict) and isinstance(spec, dict)
+        ):
+            return ProbeAttemptResult(
+                healthy=False,
+                error_category="runtime_api_error",
+                last_error="workload response is missing metadata/status/spec",
+            )
+
+        observed_generation = status.get("observedGeneration") or status.get(
+            "observed_generation"
+        )
+        generation = metadata.get("generation")
+        baseline_generation = baseline.get("generation")
+        effective_baseline = baseline_generation if baseline_generation is not None else generation
+
+        detail: dict[str, Any] = {
+            "kind": kind,
+            "observed_generation": observed_generation,
+            "generation": generation,
+            "baseline_generation": effective_baseline,
+        }
+
+        if (
+            observed_generation is None
+            or effective_baseline is None
+            or observed_generation < effective_baseline
+        ):
+            return ProbeAttemptResult(
+                healthy=False,
+                error_category="runtime_api_error",
+                detail=detail,
+                last_error=(
+                    f"observed_generation={observed_generation} has not caught up with "
+                    f"baseline={effective_baseline}"
+                ),
+            )
+
+        # Rollout completion per kind. Missing fields treated as "not yet".
+        if kind == "Deployment":
+            conditions = status.get("conditions")
+            rollout_done = False
+            if isinstance(conditions, list):
+                for condition in conditions:
+                    if not isinstance(condition, dict):
+                        continue
+                    if (
+                        condition.get("type") == "Progressing"
+                        and condition.get("reason") == "NewReplicaSetAvailable"
+                    ):
+                        rollout_done = True
+                        break
+            if not rollout_done:
+                return ProbeAttemptResult(
+                    healthy=False,
+                    error_category="runtime_api_error",
+                    detail=detail,
+                    last_error="Deployment rollout not yet NewReplicaSetAvailable",
+                )
+            desired = spec.get("replicas")
+            ready = status.get("readyReplicas") or status.get("ready_replicas") or 0
+            detail.update({"desired": desired, "ready": ready})
+            if desired is None or ready != desired:
+                return ProbeAttemptResult(
+                    healthy=False,
+                    error_category="runtime_api_error",
+                    detail=detail,
+                    last_error=f"ready_replicas={ready} != desired={desired}",
+                )
+            return ProbeAttemptResult(healthy=True, detail=detail)
+
+        if kind == "StatefulSet":
+            current_revision = status.get("currentRevision") or status.get("current_revision")
+            update_revision = status.get("updateRevision") or status.get("update_revision")
+            updated_replicas = status.get("updatedReplicas") or status.get("updated_replicas") or 0
+            ready_replicas = status.get("readyReplicas") or status.get("ready_replicas") or 0
+            desired = spec.get("replicas")
+            detail.update(
+                {
+                    "current_revision": current_revision,
+                    "update_revision": update_revision,
+                    "updated_replicas": updated_replicas,
+                    "ready": ready_replicas,
+                    "desired": desired,
+                }
+            )
+            if (
+                current_revision != update_revision
+                or updated_replicas != desired
+                or ready_replicas != desired
+            ):
+                return ProbeAttemptResult(
+                    healthy=False,
+                    error_category="runtime_api_error",
+                    detail=detail,
+                    last_error=(
+                        "StatefulSet rollout not complete: "
+                        f"current_revision={current_revision!r} update_revision={update_revision!r} "
+                        f"updated_replicas={updated_replicas} ready={ready_replicas} desired={desired}"
+                    ),
+                )
+            return ProbeAttemptResult(healthy=True, detail=detail)
+
+        if kind == "DaemonSet":
+            updated_scheduled = status.get("updatedNumberScheduled") or status.get(
+                "updated_number_scheduled"
+            ) or 0
+            desired_scheduled = status.get("desiredNumberScheduled") or status.get(
+                "desired_number_scheduled"
+            ) or 0
+            ready = status.get("numberReady") or status.get("number_ready") or 0
+            detail.update(
+                {
+                    "updated_scheduled": updated_scheduled,
+                    "desired_scheduled": desired_scheduled,
+                    "ready": ready,
+                }
+            )
+            if (
+                updated_scheduled != desired_scheduled
+                or ready != desired_scheduled
+                or desired_scheduled == 0
+            ):
+                return ProbeAttemptResult(
+                    healthy=False,
+                    error_category="runtime_api_error",
+                    detail=detail,
+                    last_error=(
+                        "DaemonSet rollout not complete: "
+                        f"updated_scheduled={updated_scheduled} "
+                        f"desired_scheduled={desired_scheduled} ready={ready}"
+                    ),
+                )
+            return ProbeAttemptResult(healthy=True, detail=detail)
+
+        return ProbeAttemptResult(
+            healthy=False,
+            error_category="runtime_api_error",
+            detail=detail,
+            last_error=f"unsupported workload kind: {kind!r}",
+        )
+
     def _get_apps_api(self):
         if self._apps_api is None:
             self._apps_api = self._create_apps_api()

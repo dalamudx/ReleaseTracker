@@ -22,7 +22,7 @@ from .executors import (
     PodmanRuntimeAdapter,
     PortainerRuntimeAdapter,
 )
-from .executors.base import RuntimeMutationError
+from .executors.base import BaseRuntimeAdapter, RuntimeMutationError, RuntimeUpdateResult
 from .executors.portainer import PortainerRequestTimeoutError
 from .models import (
     ExecutorDesiredState,
@@ -59,6 +59,16 @@ class ExecutorRunOutcome:
     from_version: str | None
     to_version: str | None
     message: str | None
+
+
+@dataclass(frozen=True)
+class _HealthCheckOutcome:
+    """Structured outcome returned by ``_run_post_update_health_check``."""
+
+    status: str
+    message: str | None
+    last_error: str | None
+    diagnostics: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -354,6 +364,142 @@ class ExecutorScheduler:
                 executor_id,
                 exc,
             )
+
+    async def _run_post_update_health_check(
+        self,
+        executor_config: ExecutorConfig,
+        adapter: BaseRuntimeAdapter,
+        *,
+        run_id: int,
+        update_result: "RuntimeUpdateResult",
+    ) -> "_HealthCheckOutcome | None":
+        """Drive the Health Check Phase after a successful Update Phase.
+
+        Returns ``None`` when the phase is skipped (strategy=none), which
+        is the caller's signal to finalize with pre-feature semantics
+        (Req 7.10, 22.6). Otherwise returns a structured outcome the
+        caller feeds into ``_finalize_run``.
+        """
+        profile = executor_config.health_check
+        if profile is None or profile.strategy == "none":
+            return None
+
+        # Local imports keep the scheduler lazy-coupled to the health
+        # check subsystem and avoid pulling httpx etc. until needed.
+        from .executors.health_check.factory import ProbeFactory
+        from .executors.health_check.runner import HealthCheckRunner
+        from .executors.health_check.types import HealthCheckContext
+
+        baseline = self._capture_update_phase_baseline(adapter, update_result)
+        target_mode = executor_config.target_ref.get("mode", "container")
+        probe = ProbeFactory().build(profile.strategy, target_mode)
+        runner = HealthCheckRunner(probe)
+
+        ctx = HealthCheckContext(
+            executor_config=executor_config,
+            adapter=adapter,
+            run_id=run_id,
+            update_phase_end_at=self._now_provider(),
+            baseline=baseline,
+        )
+
+        try:
+            hc_result = await runner.run(ctx)
+        except asyncio.CancelledError:
+            # Cancellation during the Health Check Phase finalizes the run
+            # as failed; Recovery Hook never fires (Req 7.11).
+            return _HealthCheckOutcome(
+                status="failed",
+                message="health check cancelled",
+                last_error="health check cancelled",
+                diagnostics={
+                    "health_check": {
+                        "strategy": profile.strategy,
+                        "outcome": "error",
+                        "last_error": "cancelled",
+                    }
+                },
+            )
+
+        diagnostics = {"health_check": hc_result.to_dict()}
+        health_last_error = hc_result.last_error
+
+        if hc_result.outcome == "healthy":
+            return _HealthCheckOutcome(
+                status="success",
+                message=update_result.message or "image updated; health check passed",
+                last_error=None,
+                diagnostics=diagnostics,
+            )
+
+        # Unhealthy path: pick the finalization semantics from the
+        # operator outcome policy. mark_failed_and_recover also invokes
+        # the Recovery Hook (Req 9.2, Req 10.*) and persists the
+        # recovery_outcome into diagnostics so notifications can surface
+        # it (Req 11.4).
+        failure_policy = profile.failure_policy
+        message_prefix = "health_check_failed"
+        if failure_policy == "mark_degraded":
+            message_prefix = "degraded"
+
+        recovery_outcome: str | None = None
+        if failure_policy == "mark_failed_and_recover" and executor_config.id is not None:
+            from .executors.health_check.recovery_hook import RecoveryHookCoordinator
+
+            coordinator = RecoveryHookCoordinator(self.storage)
+            recovery_outcome = await coordinator.recover(
+                executor_id=executor_config.id,
+                adapter=adapter,
+                target_ref=executor_config.target_ref,
+                budget_seconds=int(profile.probe_window_seconds),
+            )
+            diagnostics["recovery_outcome"] = recovery_outcome
+
+        message_body = (health_last_error or "health check failed")[:500]
+        message = f"{message_prefix}: {message_body}"
+        return _HealthCheckOutcome(
+            status="failed",
+            message=message,
+            # Req 13.7: truncate last_error that flows into Executor_Status
+            # to 500 chars so the run's last_error stays bounded.
+            last_error=(health_last_error or "health check failed")[:500],
+            diagnostics=diagnostics,
+        )
+
+    def _capture_update_phase_baseline(
+        self,
+        adapter: BaseRuntimeAdapter,
+        update_result: "RuntimeUpdateResult",
+    ) -> dict[str, Any]:
+        """Capture adapter-specific state at the end of the Update Phase.
+
+        The runtime-native probes (container restart count, Kubernetes
+        ``metadata.generation``) need a reference point from the moment
+        the update completed. Adapters opt into this by exposing a
+        ``capture_health_baseline`` coroutine; otherwise we return an
+        empty dict and the probe falls back to best-effort checks.
+        """
+        capture = getattr(adapter, "capture_health_baseline", None)
+        if callable(capture):
+            try:
+                baseline = capture(update_result)
+                if asyncio.iscoroutine(baseline):
+                    # Keep this helper sync; adapters that return a
+                    # coroutine are expected to be awaited by the caller
+                    # in a future refactor. For Phase C we simply drop
+                    # the coroutine to avoid "coroutine was never awaited"
+                    # warnings and fall back to an empty baseline.
+                    baseline.close()
+                    return {}
+                if isinstance(baseline, dict):
+                    return baseline
+            except Exception as exc:  # pragma: no cover - defensive guard
+                logger.warning(
+                    "capture_health_baseline raised on %s: %s",
+                    adapter.__class__.__name__,
+                    exc,
+                )
+        return {}
 
     def _track_background_task(self, coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
         task = asyncio.create_task(coro)
@@ -1025,13 +1171,20 @@ class ExecutorScheduler:
                     executor_config.target_ref, current_image
                 )
                 await adapter.validate_snapshot(executor_config.target_ref, snapshot_data)
+                redacted_snapshot, unredacted_persisted = (
+                    self._snapshot_service.redact_for_persist(
+                        snapshot_data,
+                        runtime_type=executor_config.runtime_type,
+                    )
+                )
                 await self.storage.create_executor_snapshot(
                     ExecutorSnapshot(
                         executor_id=executor_config.id,
-                        snapshot_data=snapshot_data,
+                        snapshot_data=redacted_snapshot,
                         trigger="pre_update",
                         image_at_capture=current_image,
                         executor_run_id=run_id,
+                        unredacted_persisted=unredacted_persisted,
                     )
                 )
                 await self._prune_snapshot_history(executor_config.id)
@@ -1060,6 +1213,29 @@ class ExecutorScheduler:
                     await self.storage.update_executor_target_ref(executor_config.id, refreshed_ref)
                     executor_config = executor_config.model_copy(
                         update={"target_ref": refreshed_ref}
+                    )
+
+                # --- Health Check Phase (Req 7.1-7.11) ---------------
+                # Only runs for container-mode executors in this branch.
+                # Grouped modes (compose / portainer stack / kubernetes
+                # workload / helm_release) go through separate pipelines
+                # and will get their own wiring in a follow-up slice.
+                health_check_outcome = await self._run_post_update_health_check(
+                    executor_config,
+                    adapter,
+                    run_id=run_id,
+                    update_result=result,
+                )
+                if health_check_outcome is not None:
+                    return await self._finalize_run(
+                        executor_config,
+                        run_id,
+                        status=health_check_outcome.status,
+                        to_version=result.new_image or target_image,
+                        message=health_check_outcome.message,
+                        last_error=health_check_outcome.last_error,
+                        from_version=current_image,
+                        diagnostics=health_check_outcome.diagnostics,
                     )
 
                 return await self._finalize_run(
@@ -1378,13 +1554,20 @@ class ExecutorScheduler:
         try:
             snapshot_data = await adapter.capture_helm_release_snapshot(executor_config.target_ref)
             await adapter.validate_helm_release_snapshot(executor_config.target_ref, snapshot_data)
+            redacted_snapshot, unredacted_persisted = (
+                self._snapshot_service.redact_for_persist(
+                    snapshot_data,
+                    runtime_type=executor_config.runtime_type,
+                )
+            )
             await self.storage.create_executor_snapshot(
                 ExecutorSnapshot(
                     executor_id=executor_config.id,
-                    snapshot_data=snapshot_data,
+                    snapshot_data=redacted_snapshot,
                     trigger="pre_update",
                     image_at_capture=current_chart_version,
                     executor_run_id=run_id,
+                    unredacted_persisted=unredacted_persisted,
                 )
             )
             await self._prune_snapshot_history(executor_config.id)
@@ -2775,6 +2958,17 @@ class ExecutorScheduler:
             payload["started_at"] = _notification_timestamp(
                 run_record.started_at, self._system_timezone
             )
+            # Req 11.1, 11.4: lift the persisted health_check and
+            # recovery_outcome diagnostics into the notification payload
+            # so webhook subscribers (Discord/Slack/plain HTTP) can show
+            # post-update readiness without calling the API.
+            diagnostics = run_record.diagnostics or {}
+            health_check = diagnostics.get("health_check")
+            if isinstance(health_check, dict):
+                payload["health_check"] = health_check
+            recovery_outcome = diagnostics.get("recovery_outcome")
+            if isinstance(recovery_outcome, str):
+                payload["recovery_outcome"] = recovery_outcome
 
         await asyncio.gather(
             *(notifier.notify(event, payload) for notifier in active_notifiers),

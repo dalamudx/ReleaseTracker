@@ -222,8 +222,8 @@ After starting the backend, open:
 
 ## Roadmap
 
-- [ ] Add executor snapshots and recovery
-- [ ] Add post-update health checks
+- [ ] Executor snapshots and recovery: multi-snapshot history storage, retention pruning, scheduler pre-update capture, and Portainer Stack snapshot / recovery adapter support are in place; snapshot list / detail APIs, manual rollback service and API, snapshot redaction, frontend snapshot panel, and rollback actions still need to be completed.
+- [ ] Post-update health checks: the `health_check` database column, backend config model, validation rules, and storage round-trip are in place; scheduler integration, runtime-native / Helm / HTTP / TCP probes, Recovery Hook, notification fields, and frontend configuration UI still need to be completed.
 - [ ] Add customizable CHANGELOG support
 - [ ] Add more notification channels
 

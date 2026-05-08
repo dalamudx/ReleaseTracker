@@ -2310,3 +2310,292 @@ async def test_clear_executor_history_returns_404_for_missing_executor(authed_cl
     response = authed_client.delete("/api/executors/999999/history")
     assert response.status_code == 404
     assert response.json()["detail"] == "执行器不存在"
+
+
+# ============================================================
+# Health Check profile API validation (Phase C, Req 1.*, 2.*)
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_create_executor_defaults_health_check_to_strategy_none(
+    authed_client, storage, monkeypatch
+):
+    runtime_id = await _create_runtime_connection(storage, name="hc-default-runtime")
+    await _create_tracker(storage, name="hc-default-tracker")
+    tracker_source_id = await _get_tracker_source_id(storage, "hc-default-tracker")
+
+    response = authed_client.post(
+        "/api/executors",
+        json={
+            "name": "hc-default-executor",
+            "runtime_type": "docker",
+            "runtime_connection_id": runtime_id,
+            "tracker_name": "hc-default-tracker",
+            "tracker_source_id": tracker_source_id,
+            "channel_name": "stable",
+            "enabled": True,
+            "update_mode": "manual",
+            "target_ref": {"mode": "container", "container_id": "hc-default"},
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["health_check"]["strategy"] == "none"
+    assert body["health_check"]["failure_policy"] == "mark_failed"
+
+
+@pytest.mark.asyncio
+async def test_create_executor_accepts_runtime_native_health_check(
+    authed_client, storage, monkeypatch
+):
+    runtime_id = await _create_runtime_connection(storage, name="hc-rn-runtime")
+    await _create_tracker(storage, name="hc-rn-tracker")
+    tracker_source_id = await _get_tracker_source_id(storage, "hc-rn-tracker")
+
+    response = authed_client.post(
+        "/api/executors",
+        json={
+            "name": "hc-rn-executor",
+            "runtime_type": "docker",
+            "runtime_connection_id": runtime_id,
+            "tracker_name": "hc-rn-tracker",
+            "tracker_source_id": tracker_source_id,
+            "channel_name": "stable",
+            "enabled": True,
+            "update_mode": "manual",
+            "target_ref": {"mode": "container", "container_id": "hc-rn"},
+            "health_check": {
+                "strategy": "runtime_native",
+                "grace_period_seconds": 10,
+                "attempt_timeout_seconds": 5,
+                "interval_seconds": 5,
+                "probe_window_seconds": 60,
+                "failure_policy": "mark_failed",
+            },
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["health_check"]["strategy"] == "runtime_native"
+
+
+@pytest.mark.asyncio
+async def test_create_executor_accepts_http_strategy_after_phase_d(
+    authed_client, storage, monkeypatch
+):
+    """Phase D enables `http`: the validator now accepts it end-to-end."""
+    runtime_id = await _create_runtime_connection(storage, name="hc-http-runtime")
+    await _create_tracker(storage, name="hc-http-tracker")
+    tracker_source_id = await _get_tracker_source_id(storage, "hc-http-tracker")
+
+    response = authed_client.post(
+        "/api/executors",
+        json={
+            "name": "hc-http-executor",
+            "runtime_type": "docker",
+            "runtime_connection_id": runtime_id,
+            "tracker_name": "hc-http-tracker",
+            "tracker_source_id": tracker_source_id,
+            "channel_name": "stable",
+            "enabled": True,
+            "update_mode": "manual",
+            "target_ref": {"mode": "container", "container_id": "hc-http"},
+            "health_check": {
+                "strategy": "http",
+                "grace_period_seconds": 5,
+                "attempt_timeout_seconds": 5,
+                "interval_seconds": 5,
+                "probe_window_seconds": 60,
+                "failure_policy": "mark_failed",
+                "http": {"path": "/healthz"},
+            },
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["health_check"]["strategy"] == "http"
+
+
+@pytest.mark.asyncio
+async def test_create_executor_rejects_helm_status_on_container(
+    authed_client, storage, monkeypatch
+):
+    """``helm_status`` belongs only to helm_release targets (Req 2.1-2.5, 2.6)."""
+    runtime_id = await _create_runtime_connection(storage, name="hc-helm-runtime")
+    await _create_tracker(storage, name="hc-helm-tracker")
+    tracker_source_id = await _get_tracker_source_id(storage, "hc-helm-tracker")
+
+    response = authed_client.post(
+        "/api/executors",
+        json={
+            "name": "hc-helm-executor",
+            "runtime_type": "docker",
+            "runtime_connection_id": runtime_id,
+            "tracker_name": "hc-helm-tracker",
+            "tracker_source_id": tracker_source_id,
+            "channel_name": "stable",
+            "enabled": True,
+            "update_mode": "manual",
+            "target_ref": {"mode": "container", "container_id": "hc-helm"},
+            "health_check": {
+                "strategy": "helm_status",
+                "grace_period_seconds": 5,
+                "attempt_timeout_seconds": 5,
+                "interval_seconds": 5,
+                "probe_window_seconds": 60,
+                "failure_policy": "mark_failed",
+            },
+        },
+    )
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "helm_status" in detail
+
+
+@pytest.mark.asyncio
+async def test_create_executor_rejects_http_profile_without_http_sub_object(
+    authed_client, storage, monkeypatch
+):
+    """``strategy=http`` requires an ``http`` sub-object (Req 1.6)."""
+    runtime_id = await _create_runtime_connection(storage, name="hc-missing-http-runtime")
+    await _create_tracker(storage, name="hc-missing-http-tracker")
+    tracker_source_id = await _get_tracker_source_id(
+        storage, "hc-missing-http-tracker"
+    )
+
+    response = authed_client.post(
+        "/api/executors",
+        json={
+            "name": "hc-missing-http-executor",
+            "runtime_type": "docker",
+            "runtime_connection_id": runtime_id,
+            "tracker_name": "hc-missing-http-tracker",
+            "tracker_source_id": tracker_source_id,
+            "channel_name": "stable",
+            "enabled": True,
+            "update_mode": "manual",
+            "target_ref": {"mode": "container", "container_id": "hc-missing-http"},
+            "health_check": {
+                "strategy": "http",
+                "grace_period_seconds": 5,
+                "attempt_timeout_seconds": 5,
+                "interval_seconds": 5,
+                "probe_window_seconds": 60,
+                "failure_policy": "mark_failed",
+            },
+        },
+    )
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "http" in detail
+
+
+@pytest.mark.asyncio
+async def test_create_executor_rejects_probe_window_shorter_than_attempt_timeout(
+    authed_client, storage, monkeypatch
+):
+    """``probe_window_seconds`` must be >= ``attempt_timeout_seconds`` (Req 1.11)."""
+    runtime_id = await _create_runtime_connection(storage, name="hc-window-runtime")
+    await _create_tracker(storage, name="hc-window-tracker")
+    tracker_source_id = await _get_tracker_source_id(storage, "hc-window-tracker")
+
+    response = authed_client.post(
+        "/api/executors",
+        json={
+            "name": "hc-window-executor",
+            "runtime_type": "docker",
+            "runtime_connection_id": runtime_id,
+            "tracker_name": "hc-window-tracker",
+            "tracker_source_id": tracker_source_id,
+            "channel_name": "stable",
+            "enabled": True,
+            "update_mode": "manual",
+            "target_ref": {"mode": "container", "container_id": "hc-window"},
+            "health_check": {
+                "strategy": "runtime_native",
+                "grace_period_seconds": 5,
+                "attempt_timeout_seconds": 30,
+                "interval_seconds": 5,
+                "probe_window_seconds": 10,  # shorter than attempt_timeout
+                "failure_policy": "mark_failed",
+            },
+        },
+    )
+    assert response.status_code == 400
+    assert "probe_window_seconds" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_create_executor_rejects_failure_policy_other_than_mark_failed_for_none_strategy(
+    authed_client, storage, monkeypatch
+):
+    """``strategy=none`` forces ``failure_policy=mark_failed`` (Req 1.9)."""
+    runtime_id = await _create_runtime_connection(storage, name="hc-none-policy-runtime")
+    await _create_tracker(storage, name="hc-none-policy-tracker")
+    tracker_source_id = await _get_tracker_source_id(
+        storage, "hc-none-policy-tracker"
+    )
+
+    response = authed_client.post(
+        "/api/executors",
+        json={
+            "name": "hc-none-policy-executor",
+            "runtime_type": "docker",
+            "runtime_connection_id": runtime_id,
+            "tracker_name": "hc-none-policy-tracker",
+            "tracker_source_id": tracker_source_id,
+            "channel_name": "stable",
+            "enabled": True,
+            "update_mode": "manual",
+            "target_ref": {"mode": "container", "container_id": "hc-none-policy"},
+            "health_check": {
+                "strategy": "none",
+                "failure_policy": "mark_degraded",
+            },
+        },
+    )
+    assert response.status_code == 400
+    assert "mark_failed" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_get_executor_response_round_trips_health_check_profile(
+    authed_client, storage, monkeypatch
+):
+    """Req 22.5: GET /api/executors/{id}/config exposes the saved health_check."""
+    runtime_id = await _create_runtime_connection(storage, name="hc-get-runtime")
+    await _create_tracker(storage, name="hc-get-tracker")
+    tracker_source_id = await _get_tracker_source_id(storage, "hc-get-tracker")
+
+    create = authed_client.post(
+        "/api/executors",
+        json={
+            "name": "hc-get-executor",
+            "runtime_type": "docker",
+            "runtime_connection_id": runtime_id,
+            "tracker_name": "hc-get-tracker",
+            "tracker_source_id": tracker_source_id,
+            "channel_name": "stable",
+            "enabled": True,
+            "update_mode": "manual",
+            "target_ref": {"mode": "container", "container_id": "hc-get"},
+            "health_check": {
+                "strategy": "runtime_native",
+                "grace_period_seconds": 15,
+                "attempt_timeout_seconds": 10,
+                "interval_seconds": 5,
+                "probe_window_seconds": 120,
+                "failure_policy": "mark_failed",
+            },
+        },
+    )
+    assert create.status_code == 200
+    executor_id = create.json()["id"]
+
+    detail = authed_client.get(f"/api/executors/{executor_id}/config")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["health_check"]["strategy"] == "runtime_native"
+    assert body["health_check"]["grace_period_seconds"] == 15
+    assert body["health_check"]["attempt_timeout_seconds"] == 10
+    assert body["health_check"]["probe_window_seconds"] == 120
+    assert body["health_check"]["failure_policy"] == "mark_failed"

@@ -510,6 +510,298 @@ class ExecutorServiceBinding(BaseModel):
         return value.strip()
 
 
+# ============================================================
+# Health Check Profile (post-update health verification config)
+# ============================================================
+
+HealthCheckStrategy = Literal["none", "runtime_native", "http", "tcp", "helm_status"]
+HealthCheckFailurePolicy = Literal[
+    "mark_failed", "mark_failed_and_recover", "mark_degraded"
+]
+
+# Per-target-mode allowed strategy catalog (Req 2.1-2.5). Publicly consumable so
+# routers, UI serializers, and tests can all read from a single source of truth.
+HEALTH_CHECK_ALLOWED_STRATEGIES: dict[str, frozenset[str]] = {
+    "container": frozenset({"none", "runtime_native", "http", "tcp"}),
+    "docker_compose": frozenset({"none", "runtime_native", "http", "tcp"}),
+    "portainer_stack": frozenset({"none", "runtime_native", "http", "tcp"}),
+    "kubernetes_workload": frozenset({"none", "runtime_native", "http", "tcp"}),
+    "helm_release": frozenset(
+        {"none", "helm_status", "runtime_native", "http", "tcp"}
+    ),
+}
+
+# Default strategy per target mode used when ``use_default_strategy=True``
+# (Req 2.8, 2.9).
+HEALTH_CHECK_DEFAULT_STRATEGY: dict[str, str] = {
+    "container": "runtime_native",
+    "docker_compose": "runtime_native",
+    "portainer_stack": "runtime_native",
+    "kubernetes_workload": "runtime_native",
+    "helm_release": "helm_status",
+}
+
+# Phase D gating: http/tcp strategies are scheduled to land in Phase D.
+# Until then the validator rejects them with a clear message so operators
+# know the option will exist soon without breaking the save path.
+_PHASE_D_ENABLED = True
+
+
+class HealthCheckHttpConfig(BaseModel):
+    """HTTP probe sub-object (Req 1.6, Req 4.*)."""
+
+    path: str
+    port: int | None = None
+    scheme: Literal["http", "https"] = "http"
+    method: Literal["GET", "HEAD"] = "GET"
+    expected_status_codes: list[int] | None = None
+    expected_body_regex: str | None = None
+    headers: dict[str, str] = Field(default_factory=dict)
+    tls_skip_verify: bool = False
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("path")
+    @classmethod
+    def _validate_path(cls, value: Any) -> str:
+        if not isinstance(value, str) or not value.startswith("/"):
+            raise ValueError("health_check.http.path must start with '/'")
+        if len(value) > 2048:
+            raise ValueError("health_check.http.path must be at most 2048 characters")
+        return value
+
+    @field_validator("port")
+    @classmethod
+    def _validate_port(cls, value: Any) -> int | None:
+        if value is None:
+            return None
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError("health_check.http.port must be an integer 1..65535")
+        if value < 1 or value > 65535:
+            raise ValueError("health_check.http.port must be in the range 1..65535")
+        return value
+
+    @field_validator("expected_status_codes")
+    @classmethod
+    def _validate_status_codes(cls, value: Any) -> list[int] | None:
+        if value is None:
+            return None
+        if not isinstance(value, list) or not (1 <= len(value) <= 20):
+            raise ValueError(
+                "health_check.http.expected_status_codes must be a list of 1..20 integers"
+            )
+        for entry in value:
+            if not isinstance(entry, int) or isinstance(entry, bool):
+                raise ValueError(
+                    "health_check.http.expected_status_codes entries must be integers"
+                )
+            if entry < 100 or entry > 599:
+                raise ValueError(
+                    "health_check.http.expected_status_codes entries must be in 100..599"
+                )
+        return value
+
+    @field_validator("expected_body_regex")
+    @classmethod
+    def _validate_body_regex(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("health_check.http.expected_body_regex must be a string")
+        if len(value) > 1024:
+            raise ValueError(
+                "health_check.http.expected_body_regex must be at most 1024 characters"
+            )
+        # Validate the regex compiles so operators see the error at save
+        # time instead of at probe time (Req 4.14).
+        import re
+
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise ValueError(
+                f"health_check.http.expected_body_regex is not a valid regex: {exc}"
+            ) from exc
+        return value
+
+    @field_validator("headers")
+    @classmethod
+    def _validate_headers(cls, value: Any) -> dict[str, str]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict) or len(value) > 50:
+            raise ValueError(
+                "health_check.http.headers must be a map with at most 50 entries"
+            )
+        for key, entry in value.items():
+            if not isinstance(key, str) or not isinstance(entry, str):
+                raise ValueError("health_check.http.headers keys and values must be strings")
+            if len(key) > 1024 or len(entry) > 1024:
+                raise ValueError(
+                    "health_check.http.headers keys and values must be at most 1024 characters"
+                )
+        return value
+
+
+class HealthCheckTcpConfig(BaseModel):
+    """TCP probe sub-object (Req 1.7, Req 5.*)."""
+
+    port: int
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("port")
+    @classmethod
+    def _validate_port(cls, value: Any) -> int:
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError("health_check.tcp.port must be an integer 1..65535")
+        if value < 1 or value > 65535:
+            raise ValueError("health_check.tcp.port must be in the range 1..65535")
+        return value
+
+
+class HealthCheckProfile(BaseModel):
+    """Per-executor post-update health check configuration (Req 1.*)."""
+
+    strategy: HealthCheckStrategy = "none"
+    use_default_strategy: bool = False
+    grace_period_seconds: int = 0
+    attempt_timeout_seconds: int = 0
+    interval_seconds: int = 0
+    probe_window_seconds: int = 0
+    failure_policy: HealthCheckFailurePolicy = "mark_failed"
+    services: list[str] | None = None
+    http: HealthCheckHttpConfig | None = None
+    tcp: HealthCheckTcpConfig | None = None
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator(
+        "grace_period_seconds",
+        "attempt_timeout_seconds",
+        "interval_seconds",
+        "probe_window_seconds",
+    )
+    @classmethod
+    def _validate_timing(cls, value: Any, info) -> int:
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError(
+                f"health_check.{info.field_name} must be an integer seconds value"
+            )
+        if value < 0 or value > 86400:
+            raise ValueError(
+                f"health_check.{info.field_name} must be in the range 0..86400 seconds"
+            )
+        return value
+
+    @field_validator("services")
+    @classmethod
+    def _validate_services(cls, value: Any) -> list[str] | None:
+        if value is None:
+            return None
+        if not isinstance(value, list) or not (1 <= len(value) <= 64):
+            raise ValueError(
+                "health_check.services must be a list of 1..64 service names"
+            )
+        normalized: list[str] = []
+        for entry in value:
+            if not isinstance(entry, str) or not entry.strip():
+                raise ValueError(
+                    "health_check.services entries must be non-empty strings"
+                )
+            normalized.append(entry.strip().lower())
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("health_check.services must not contain duplicates")
+        return normalized
+
+    @model_validator(mode="after")
+    def _validate_strategy_specific_rules(self) -> "HealthCheckProfile":
+        strategy = self.strategy
+
+        if strategy in {"runtime_native", "helm_status", "none"}:
+            if self.http is not None:
+                raise ValueError(
+                    f"health_check.http must be absent when strategy is '{strategy}'"
+                )
+            if self.tcp is not None:
+                raise ValueError(
+                    f"health_check.tcp must be absent when strategy is '{strategy}'"
+                )
+
+        if strategy == "http":
+            if self.http is None:
+                raise ValueError("health_check.http is required when strategy is 'http'")
+            if self.tcp is not None:
+                raise ValueError("health_check.tcp must be absent when strategy is 'http'")
+
+        if strategy == "tcp":
+            if self.tcp is None:
+                raise ValueError("health_check.tcp is required when strategy is 'tcp'")
+            if self.http is not None:
+                raise ValueError("health_check.http must be absent when strategy is 'tcp'")
+
+        if strategy == "none":
+            if self.failure_policy != "mark_failed":
+                raise ValueError(
+                    "health_check.failure_policy must be 'mark_failed' when strategy is 'none'"
+                )
+            # When the probe is disabled, timings and services are irrelevant.
+            # We still allow them so operators can stage configs before
+            # enabling a strategy, but the scheduler ignores them (Req 7.10).
+            return self
+
+        # Probe strategies require a usable timing envelope (Req 1.11).
+        if self.probe_window_seconds <= 0:
+            raise ValueError(
+                f"health_check.probe_window_seconds must be > 0 when strategy is '{strategy}'"
+            )
+        if self.attempt_timeout_seconds <= 0:
+            raise ValueError(
+                f"health_check.attempt_timeout_seconds must be > 0 when strategy is '{strategy}'"
+            )
+        if self.interval_seconds <= 0:
+            raise ValueError(
+                f"health_check.interval_seconds must be > 0 when strategy is '{strategy}'"
+            )
+        if self.probe_window_seconds < self.attempt_timeout_seconds:
+            raise ValueError(
+                "health_check.probe_window_seconds must be >= attempt_timeout_seconds"
+            )
+
+        # Phase C gate: http/tcp strategies are accepted schematically but
+        # the scheduler refuses to run them until Phase D flips the flag.
+        if strategy in {"http", "tcp"} and not _PHASE_D_ENABLED:
+            raise ValueError(
+                f"health_check.strategy '{strategy}' is not yet available in this build; "
+                "use 'runtime_native' or 'helm_status'"
+            )
+
+        return self
+
+    @classmethod
+    def default_for(cls, *, target_mode: str) -> "HealthCheckProfile":
+        """Return the published default profile for a target mode (Req 2.8, 2.9)."""
+        default_strategy = HEALTH_CHECK_DEFAULT_STRATEGY.get(target_mode)
+        if default_strategy is None:
+            raise ValueError(
+                f"no default strategy catalog entry for mode {target_mode!r}"
+            )
+        if default_strategy in {"runtime_native", "helm_status"}:
+            # Reasonable defaults for a real probe. Operators can tune them
+            # via the UI; keeping them here keeps Phase C's zero-config path
+            # actually usable out of the box.
+            return cls(
+                strategy=default_strategy,  # type: ignore[arg-type]
+                use_default_strategy=True,
+                grace_period_seconds=15,
+                attempt_timeout_seconds=10,
+                interval_seconds=5,
+                probe_window_seconds=180,
+                failure_policy="mark_failed",
+            )
+        return cls(strategy=default_strategy)  # type: ignore[arg-type]
+
+
 class ExecutorConfig(BaseModel):
     id: int | None = None
     name: str
@@ -529,6 +821,7 @@ class ExecutorConfig(BaseModel):
     service_bindings: list[ExecutorServiceBinding] = Field(default_factory=list)
     maintenance_window: MaintenanceWindowConfig | None = None
     description: str | None = None
+    health_check: HealthCheckProfile = Field(default_factory=HealthCheckProfile)
 
     model_config = {"extra": "allow"}
 
@@ -569,5 +862,58 @@ class ExecutorConfig(BaseModel):
                 "service_bindings are only supported for grouped executors "
                 f"({', '.join(sorted(EXECUTOR_GROUPED_BINDING_TARGET_MODES))})"
             )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_health_check_for_target(self):
+        """Cross-field health check validation (Req 1.13, 2.6, 2.7, 2.9).
+
+        - Apply the strategy catalog per target mode.
+        - If ``use_default_strategy=True`` and the stored strategy is
+          ``none`` (Pydantic's class default), swap it for the per-mode
+          default so the UI's "opt into default" flow works.
+        - Reject ``health_check.services`` entries that do not appear in
+          ``service_bindings``.
+        """
+        target_mode = self.target_ref.get("mode")
+        if target_mode is None:
+            return self
+
+        allowed = HEALTH_CHECK_ALLOWED_STRATEGIES.get(target_mode)
+        if allowed is None:
+            raise ValueError(
+                f"health_check strategy catalog does not know target mode {target_mode!r}"
+            )
+
+        profile = self.health_check
+
+        if (
+            profile.use_default_strategy
+            and profile.strategy == "none"
+            and HEALTH_CHECK_DEFAULT_STRATEGY.get(target_mode) != "none"
+        ):
+            self.health_check = HealthCheckProfile.default_for(target_mode=target_mode)
+            profile = self.health_check
+
+        if profile.strategy not in allowed:
+            raise ValueError(
+                f"health_check.strategy '{profile.strategy}' is not allowed for target mode "
+                f"'{target_mode}'; allowed: {sorted(allowed)}"
+            )
+
+        if profile.services:
+            if target_mode not in EXECUTOR_GROUPED_BINDING_TARGET_MODES:
+                raise ValueError(
+                    "health_check.services is only supported for grouped executor targets "
+                    f"({', '.join(sorted(EXECUTOR_GROUPED_BINDING_TARGET_MODES))})"
+                )
+            bound_services = {binding.service for binding in self.service_bindings}
+            unknown = [s for s in profile.services if s not in bound_services]
+            if unknown:
+                raise ValueError(
+                    "health_check.services entries must exist in service_bindings: "
+                    f"unknown={sorted(unknown)}"
+                )
 
         return self

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,6 +18,13 @@ _PORTAINER_STACK_TYPE_MAP = {
 }
 _PORTAINER_DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=20.0, write=20.0, pool=5.0)
 _PORTAINER_STACK_UPDATE_TIMEOUT = httpx.Timeout(connect=5.0, read=90.0, write=90.0, pool=5.0)
+# How long ``recover_from_snapshot`` is allowed to wait for Portainer to
+# report the restored stack as active before returning control to the
+# scheduler. The scheduler itself enforces the Recovery Hook wall-clock
+# budget (Req 10.7) — this bound only guards against Portainer getting
+# stuck mid-update.
+_PORTAINER_RECOVERY_POLL_TIMEOUT_SECONDS = 120
+_PORTAINER_RECOVERY_POLL_INTERVAL_SECONDS = 2
 
 
 class PortainerRequestTimeoutError(RuntimeError):
@@ -223,10 +231,193 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
     async def capture_snapshot(
         self, target_ref: dict[str, Any], current_image: str
     ) -> dict[str, Any]:
-        raise NotImplementedError("Portainer snapshot capture is not implemented yet")
+        """Capture enough Portainer stack state to re-apply it later.
 
-    async def validate_snapshot(self, target_ref: dict[str, Any], snapshot: dict[str, Any]) -> None:
-        raise NotImplementedError("Portainer snapshot validation is not implemented yet")
+        The snapshot persists the stack file, stack type, env vars, stack id,
+        endpoint id, and project name — everything required by
+        ``recover_from_snapshot`` when it calls ``PUT /api/stacks/{id}``
+        (Req 17.1). ``image_at_capture`` is extracted best-effort from the
+        stack file's services; when the stack declares multiple distinct
+        images the value is left null (Req 17.2).
+        """
+        normalized_target_ref = normalize_executor_target_ref(
+            target_ref, runtime_type="portainer"
+        )
+        endpoint_id = normalized_target_ref["endpoint_id"]
+        stack_id = normalized_target_ref["stack_id"]
+
+        stack = await self.fetch_stack_detail(endpoint_id=endpoint_id, stack_id=stack_id)
+
+        # Fail fast on unsupported stack kinds so a later rollback cannot
+        # resurrect an invalid configuration.
+        unsupported_reason = self._resolve_unsupported_stack_kind_reason(stack)
+        if unsupported_reason is not None:
+            raise ValueError(unsupported_reason)
+
+        stack_file = await self.fetch_stack_file(
+            endpoint_id=endpoint_id, stack_id=stack_id
+        )
+        service_metadata = self._extract_stack_service_metadata(stack_file)
+
+        env_payload = stack.get("Env")
+        if not isinstance(env_payload, list):
+            env_payload = []
+
+        resolved_stack_type = self._resolve_stack_type(stack)
+        stack_name = self._as_text(stack.get("Name") or stack.get("name")) or ""
+
+        snapshot: dict[str, Any] = {
+            "runtime_type": self.runtime_connection.type,
+            "endpoint_id": endpoint_id,
+            "stack_id": stack_id,
+            "stack_name": stack_name,
+            "stack_type": resolved_stack_type,
+            "project_name": stack_name,
+            "env": env_payload,
+            "stack_file": stack_file,
+        }
+
+        image_at_capture = current_image or self._resolve_stack_image(service_metadata)
+        if image_at_capture:
+            snapshot["image_at_capture"] = image_at_capture
+        else:
+            snapshot["image_at_capture"] = None
+
+        return snapshot
+
+    async def validate_snapshot(
+        self, target_ref: dict[str, Any], snapshot: dict[str, Any]
+    ) -> None:
+        """Validate that a Portainer snapshot can be restored against the
+        current target.
+
+        Enforces: snapshot is non-empty, stack file is a non-empty string,
+        recorded stack type is a supported Portainer variant, and the live
+        target's stack type matches the snapshot's (Req 17.3). Any mismatch
+        raises ``ValueError`` so the Recovery Hook can surface it as
+        ``invalid_snapshot`` (Req 10.4).
+        """
+        if not isinstance(snapshot, dict) or not snapshot:
+            raise ValueError("snapshot must be a non-empty dict")
+
+        stack_file = snapshot.get("stack_file")
+        if not isinstance(stack_file, str) or not stack_file.strip():
+            raise ValueError("snapshot.stack_file must be a non-empty string")
+
+        snapshot_stack_type = snapshot.get("stack_type")
+        if snapshot_stack_type not in _SUPPORTED_PORTAINER_STACK_TYPES:
+            raise ValueError(
+                "snapshot.stack_type is unsupported: "
+                f"{snapshot_stack_type}; only standalone stacks are supported"
+            )
+
+        normalized_target_ref = normalize_executor_target_ref(
+            target_ref, runtime_type="portainer"
+        )
+        endpoint_id = normalized_target_ref["endpoint_id"]
+        stack_id = normalized_target_ref["stack_id"]
+
+        live_stack = await self.fetch_stack_detail(
+            endpoint_id=endpoint_id, stack_id=stack_id
+        )
+        live_stack_type = self._resolve_stack_type(live_stack)
+        if live_stack_type != snapshot_stack_type:
+            raise ValueError(
+                "stack_type mismatch between snapshot and target "
+                f"({snapshot_stack_type} != {live_stack_type})"
+            )
+
+    async def recover_from_snapshot(
+        self, target_ref: dict[str, Any], snapshot: dict[str, Any]
+    ) -> RuntimeUpdateResult:
+        """Restore a Portainer stack from a captured snapshot.
+
+        Validates the snapshot, calls the Portainer stack update endpoint
+        with the captured stack file and env vars, then polls the live
+        stack status until it reports the active enum value (``Status`` ==
+        ``1``) or an internal timeout elapses (Req 17.4).
+        """
+        await self.validate_snapshot(target_ref, snapshot)
+
+        normalized_target_ref = normalize_executor_target_ref(
+            target_ref, runtime_type="portainer"
+        )
+        endpoint_id = normalized_target_ref["endpoint_id"]
+        stack_id = normalized_target_ref["stack_id"]
+
+        stack_file = snapshot["stack_file"]
+        env_payload = snapshot.get("env")
+        if not isinstance(env_payload, list):
+            env_payload = []
+
+        live_stack = await self.fetch_stack_detail(
+            endpoint_id=endpoint_id, stack_id=stack_id
+        )
+        # Reuse the single in-adapter update path so we get the same error
+        # handling as forward updates, but override env with the snapshot
+        # version so recovery is byte-for-byte deterministic.
+        snapshot_stack = dict(live_stack)
+        snapshot_stack["Env"] = env_payload
+
+        await self._update_stack(
+            endpoint_id=endpoint_id,
+            stack_id=stack_id,
+            stack=snapshot_stack,
+            stack_file_content=stack_file,
+        )
+
+        await self._wait_until_stack_active(
+            endpoint_id=endpoint_id,
+            stack_id=stack_id,
+            timeout_seconds=_PORTAINER_RECOVERY_POLL_TIMEOUT_SECONDS,
+        )
+
+        image_at_capture = snapshot.get("image_at_capture")
+        new_image = image_at_capture if isinstance(image_at_capture, str) else None
+
+        return RuntimeUpdateResult(
+            updated=True,
+            old_image=None,
+            new_image=new_image,
+            message="portainer stack restored from snapshot",
+        )
+
+    async def _wait_until_stack_active(
+        self,
+        *,
+        endpoint_id: int,
+        stack_id: int,
+        timeout_seconds: int,
+    ) -> None:
+        """Poll the stack detail endpoint until the stack reports active.
+
+        Portainer returns ``Status == 1`` for an active standalone stack.
+        Polling bails out on the first active reading, or when the adapter's
+        internal timeout elapses so the caller can surface a recovery-hook
+        timeout.
+        """
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + max(1, timeout_seconds)
+        last_status: Any = None
+
+        while True:
+            stack = await self.fetch_stack_detail(
+                endpoint_id=endpoint_id, stack_id=stack_id
+            )
+            last_status = stack.get("Status") if "Status" in stack else stack.get("status")
+            if isinstance(last_status, int) and last_status == 1:
+                return
+            if isinstance(last_status, str) and last_status.strip() == "1":
+                return
+
+            if loop.time() >= deadline:
+                raise RuntimeError(
+                    "Portainer stack did not reach active status within "
+                    f"{timeout_seconds} seconds after restore "
+                    f"(last Status={last_status!r})"
+                )
+
+            await asyncio.sleep(_PORTAINER_RECOVERY_POLL_INTERVAL_SECONDS)
 
     async def update_image(self, target_ref: dict[str, Any], new_image: str) -> RuntimeUpdateResult:
         raise NotImplementedError("Portainer update is not implemented yet")
