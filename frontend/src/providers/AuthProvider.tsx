@@ -1,16 +1,10 @@
-import { useState, useEffect, useCallback } from "react"
+import { useCallback, useEffect, useState } from "react"
 import type { ReactNode } from "react"
-import { api as client } from "@/api/client"
+import { api as client, clearAuthStorage } from "@/api/client"
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
 import { AuthContext } from "@/context/auth-context"
 import type { AuthUser, LoginData } from "@/types/auth"
-
-
-
-function toAuthUser(user: AuthUser): AuthUser {
-    return user
-}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
     const { t } = useTranslation()
@@ -18,12 +12,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [isLoading, setIsLoading] = useState(true)
 
     const logout = useCallback(() => {
-        localStorage.removeItem("token")
-        localStorage.removeItem("refresh_token")
-        localStorage.removeItem("user")
+        clearAuthStorage()
         setUser(null)
-        // Can call the backend logout endpoint
-        // Client-side logout logic
         toast.info(t('auth.logout.success'), { id: 'auth-logout' })
     }, [t])
 
@@ -33,11 +23,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             const loadCurrentUser = async (context: 'bootstrap' | 'oidc') => {
                 try {
                     const currentUser = await client.getCurrentUser({ suppressAuthRedirect: true })
-                    setUser(toAuthUser(currentUser))
+                    setUser(currentUser)
                     return true
                 } catch (error) {
                     if (context === 'oidc') {
-                        console.error('OIDC 登录失败', error)
+                        console.error('OIDC login failed', error)
                     } else {
                         console.error("Session expired or invalid", error)
                     }
@@ -63,8 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     if (loaded) {
                         toast.success(t('auth.oidc.loginSuccess'))
                     } else {
-                        localStorage.removeItem('token')
-                        localStorage.removeItem('refresh_token')
+                        clearAuthStorage()
                         toast.error(t('auth.oidc.loginFailed'))
                     }
                     setIsLoading(false)
@@ -84,18 +73,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []) // Intentionally omit t to avoid repeated authentication when switching languages
 
-
-    const login = async (data: LoginData) => {
+    const login = useCallback(async (data: LoginData) => {
         try {
             const response = await client.login(data)
             // response structure should match the backend: { user: User, token: { access_token: string, ... } }
-            const { user, token } = response
+            const { user: loggedInUser, token } = response
 
             localStorage.setItem("token", token.access_token)
-            localStorage.setItem("refresh_token", token.refresh_token) // If present
-            localStorage.setItem("user", JSON.stringify(user)) // Cache user information, optional
+            if (token.refresh_token) {
+                localStorage.setItem("refresh_token", token.refresh_token)
+            }
+            localStorage.setItem("user", JSON.stringify(loggedInUser))
 
-            setUser(toAuthUser(user))
+            setUser(loggedInUser)
             toast.success(t('auth.login.success'))
         } catch (error: unknown) {
             console.error("Login failed", error)
@@ -103,7 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             toast.error(errorMessage)
             throw error
         }
-    }
+    }, [t])
 
     return (
         <AuthContext.Provider
@@ -112,7 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 isLoading,
                 login,
                 logout,
-                isAuthenticated: !!user
+                isAuthenticated: !!user,
             }}
         >
             {children}

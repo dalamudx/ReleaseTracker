@@ -561,7 +561,7 @@ export function ExecutorSheetBindingSection({
                 </div>
 
                 {!hasSelectedTarget ? (
-                    <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+                    <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
                         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                         <span>{t("executors.binding.targetSelectionRequired")}</span>
                     </div>
@@ -782,7 +782,7 @@ export function ExecutorSheetTargetSection({
                 </div>
 
                 {discoveryMessage ? (
-                    <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+                    <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
                         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                         <span>{discoveryMessage}</span>
                     </div>
@@ -1016,7 +1016,7 @@ export function ExecutorSheetReviewSection({
                             <span>{validationMessage}</span>
                         </div>
                     ) : (
-                        <div className="flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+                        <div className="flex items-start gap-2 rounded-lg border border-success/30 bg-success/10 p-3 text-sm text-success">
                             <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
                             <span>{t("executors.review.ready")}</span>
                         </div>

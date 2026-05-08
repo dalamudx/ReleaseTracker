@@ -103,6 +103,7 @@
         "checkQueued": "Check has been queued.",
         "checkFailed": "Check failed",
         "check": "Check",
+        "clear": "Clear",
         "never": "Never",
         "unexpectedError": "An unexpected error occurred",
         "description": "Description",
@@ -255,17 +256,16 @@
         "title": "Dashboard",
         "description": "Release monitoring overview",
         "stats": {
-            "totalReleases": "Total Releases",
-            "activeTrackers": "Active Trackers",
-            "lastUpdate": "Last Update",
-            "recentInLast7Days": "in last 7 days",
-            "currentlyTracking": "currently tracking",
             "releaseTypeStats": "Release Type Statistics",
-            "channelStats": "Channel Version Statistics"
+            "releaseTypeStatsDescription": "Distribution between stable and pre-release artifacts",
+            "channelStats": "Channel Version Statistics",
+            "channelStatsDescription": "How releases are distributed across tracked channels"
         },
         "releaseTrend": {
             "title": "Release Trend",
-            "description": "Showing daily release activity for the last 7 days"
+            "description": "Showing daily release activity for the last 7 days",
+            "totalInRange": "Total",
+            "peakDay": "Peak day"
         },
         "recentReleases": {
             "title": "Recent Releases",
@@ -307,6 +307,7 @@
         "title": "Tracker Management",
         "description": "Configure and manage release trackers",
         "addNew": "Add Tracker",
+        "searchPlaceholder": "Search by name, description, or source",
         "table": {
             "name": "Name",
             "type": "Type",
@@ -422,6 +423,7 @@
                 "canonicalDiagramDescription": "",
                 "canonicalDiagramVersionLabel": "Comparison version (merged)",
                 "helmChartVersion": "Chart version: {{version}}",
+                "helmChartVersionLabel": "Chart",
                 "emptyCanonical": "No aggregated versions are available yet.",
                 "channelType": {
                     "github": "GitHub",
@@ -477,6 +479,7 @@
         "title": "Executor Management",
         "description": "Connect tracked versions to your runtime targets.",
         "addNew": "Add Executor",
+        "searchPlaceholder": "Search by name, description, tracker, or runtime",
         "deleteConfirm": "Are you sure you want to delete this executor?",
         "prerequisites": {
             "runtime": {
@@ -774,6 +777,7 @@
         "title": "Runtime Connections",
         "description": "Manage the connections your executors can use.",
         "addNew": "Add Runtime Connection",
+        "searchPlaceholder": "Search by name, description, type, or credential",
         "deleteConfirm": "Delete this runtime connection?",
         "toasts": {
             "loadFailed": "Failed to load runtime connections"
@@ -873,6 +877,7 @@
         "title": "Credentials",
         "description": "Manage API access credentials",
         "addNew": "Add Credential",
+        "searchPlaceholder": "Search by name, description, or type",
         "table": {
             "name": "Name",
             "type": "Type",
@@ -1057,6 +1062,7 @@
             "title": "Notifications",
             "description": "Configure webhooks to receive release update notifications",
             "add": "Add Notification Channel",
+            "searchPlaceholder": "Search by name, URL, or description",
             "table": {
                 "name": "Name",
                 "url": "Webhook URL",

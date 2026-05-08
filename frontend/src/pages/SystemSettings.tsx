@@ -535,24 +535,16 @@ export function SystemSettingsPage() {
     const hasUndecryptableValues = undecryptableCount > 0
 
     return (
-        <div className="container mx-auto max-w-5xl space-y-6 px-4 py-6">
-            <div className="space-y-1">
-                <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-                    {t("systemSettings.system.title")}
-                </h1>
-                <p className="text-sm text-muted-foreground">
-                    {t("systemSettings.system.description")}
-                </p>
-            </div>
-
-            <Tabs defaultValue="general" className="space-y-4">
+        <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col gap-4">
+            <Tabs defaultValue="general" className="flex min-h-0 flex-1 flex-col gap-4">
                 <TabsList className="w-full justify-start sm:w-fit">
                     <TabsTrigger value="general">{t("systemSettings.tabs.general")}</TabsTrigger>
                     <TabsTrigger value="security">{t("systemSettings.tabs.security")}</TabsTrigger>
                     <TabsTrigger value="oidc">{t("systemSettings.tabs.oidc")}</TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="general">
+                <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+                    <TabsContent value="general" className="mt-0">
                     <Card className="border-border/60 bg-card/80">
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2">
@@ -595,7 +587,7 @@ export function SystemSettingsPage() {
                     </Card>
                 </TabsContent>
 
-                <TabsContent value="security">
+                <TabsContent value="security" className="mt-0">
                     <Card className="border-border/60 bg-card/80">
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2">
@@ -647,11 +639,14 @@ export function SystemSettingsPage() {
                     </Card>
                 </TabsContent>
 
-                <TabsContent value="oidc">
-                    <div className="rounded-xl border border-border/50 bg-card p-6">
-                        <OIDCProvidersManagement />
-                    </div>
+                <TabsContent value="oidc" className="mt-0">
+                    <Card className="border-border/60 bg-card/80">
+                        <CardContent className="p-6">
+                            <OIDCProvidersManagement />
+                        </CardContent>
+                    </Card>
                 </TabsContent>
+                </div>
             </Tabs>
 
             <RotateSecurityKeyDialog

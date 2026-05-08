@@ -105,6 +105,7 @@
     "checkFailed": "检查失败",
     "check": "检查",
     "never": "从未",
+    "clear": "清除",
     "unexpectedError": "发生意外错误",
     "description": "描述",
     "enabled": "已启用",
@@ -255,17 +256,16 @@
     "title": "仪表盘",
     "description": "版本发布监控概览",
     "stats": {
-      "totalReleases": "总发布数",
-      "activeTrackers": "活跃追踪器",
-      "lastUpdate": "最后更新",
-      "recentInLast7Days": "最近 7 天",
-      "currentlyTracking": "当前追踪中",
       "releaseTypeStats": "发布类型统计",
-      "channelStats": "渠道版本统计"
+      "releaseTypeStatsDescription": "正式版与预发布版本的分布情况",
+      "channelStats": "渠道版本统计",
+      "channelStatsDescription": "发布在各追踪渠道中的分布"
     },
     "releaseTrend": {
       "title": "发布趋势",
-      "description": "最近 7 天的每日发布活动"
+      "description": "最近 7 天的每日发布活动",
+      "totalInRange": "合计",
+      "peakDay": "峰值"
     },
     "recentReleases": {
       "title": "最近发布",
@@ -307,6 +307,7 @@
     "title": "追踪器",
     "description": "配置和管理版本追踪器",
     "addNew": "添加追踪器",
+    "searchPlaceholder": "按名称、描述或源搜索",
     "table": {
       "name": "名称",
       "type": "类型",
@@ -423,6 +424,7 @@
         "canonicalDiagramDescription": "",
         "canonicalDiagramVersionLabel": "对比版本（合并）",
         "helmChartVersion": "Chart 版本：{{version}}",
+        "helmChartVersionLabel": "Chart",
         "emptyCanonical": "当前还没有可用的聚合版本。",
         "channelType": {
           "github": "GitHub",
@@ -478,6 +480,7 @@
     "title": "执行器",
     "description": "将追踪到的版本连接到运行时目标。",
     "addNew": "添加执行器",
+    "searchPlaceholder": "按名称、描述、追踪器或运行时搜索",
     "deleteConfirm": "确定要删除这个执行器吗？",
     "prerequisites": {
       "runtime": {
@@ -775,6 +778,7 @@
     "title": "运行时连接",
     "description": "管理执行器可用的连接。",
     "addNew": "添加运行时连接",
+    "searchPlaceholder": "按名称、描述、类型或凭证搜索",
     "deleteConfirm": "确认删除此运行时连接吗？",
     "toasts": {
       "loadFailed": "加载运行时连接失败"
@@ -874,6 +878,7 @@
     "title": "凭证",
     "description": "管理 API 访问凭证",
     "addNew": "添加凭证",
+    "searchPlaceholder": "按名称、描述或类型搜索",
     "table": {
       "name": "名称",
       "type": "类型",
@@ -1063,6 +1068,7 @@
       "title": "通知",
       "description": "配置 Webhook 以接收版本更新通知",
       "add": "添加通知渠道",
+      "searchPlaceholder": "按名称、URL 或描述搜索",
       "table": {
         "name": "名称",
         "url": "Webhook URL",

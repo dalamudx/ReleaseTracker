@@ -1,6 +1,19 @@
 import { useEffect, useMemo, useState } from "react"
-import { Search, Trash2 } from "lucide-react"
+import {
+    ArrowRight,
+    CheckCircle2,
+    CircleAlert,
+    CircleSlash,
+    Clock,
+    ListFilter,
+    Search,
+    Trash2,
+    X,
+    XCircle,
+} from "lucide-react"
 import { useTranslation } from "react-i18next"
+import { formatDistanceToNow } from "date-fns"
+import { enUS, zhCN } from "date-fns/locale"
 import { toast } from "sonner"
 
 import { api } from "@/api/client"
@@ -30,6 +43,8 @@ import {
 } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { DataPagination } from "@/components/common/DataPagination"
+import { usePageSize } from "@/hooks/use-page-size"
 import { useDateFormatter } from "@/hooks/use-date-formatter"
 import { cn } from "@/lib/utils"
 import { buildExecutorTargetDisplay, isHelmReleaseTarget } from "./executorSheetHelpers"
@@ -39,6 +54,24 @@ interface ExecutorExecutionHistoryPanelProps {
     refreshKey: number
 }
 
+type StatusKey = ExecutorRunHistory["status"]
+
+const STATUS_VARIANT_MAP: Record<StatusKey, "default" | "destructive" | "secondary" | "outline"> = {
+    queued: "secondary",
+    running: "secondary",
+    success: "default",
+    failed: "destructive",
+    skipped: "outline",
+}
+
+const STATUS_ICON_MAP: Record<StatusKey, React.ReactNode> = {
+    queued: <Clock className="h-3 w-3" />,
+    running: <Clock className="h-3 w-3 animate-pulse" />,
+    success: <CheckCircle2 className="h-3 w-3" />,
+    failed: <XCircle className="h-3 w-3" />,
+    skipped: <CircleSlash className="h-3 w-3" />,
+}
+
 interface ImageChangeRow {
     key: string
     service: string | null
@@ -46,20 +79,12 @@ interface ImageChangeRow {
     toValue: string
 }
 
-const statusVariantMap = {
-    queued: "secondary",
-    running: "secondary",
-    success: "default",
-    failed: "destructive",
-    skipped: "secondary",
-} as const
-
 function buildStructuredImageChangeRows(services: ExecutorRunServiceDiagnostic[]): ImageChangeRow[] {
     return services.map((service) => ({
         key: `service-${service.service}`,
         service: service.service,
-        fromValue: service.from_version || '-',
-        toValue: service.to_version || '-',
+        fromValue: service.from_version || "-",
+        toValue: service.to_version || "-",
     }))
 }
 
@@ -67,24 +92,39 @@ function buildImageChangeRows(
     fromVersion: string | null | undefined,
     toVersion: string | null | undefined,
 ): ImageChangeRow[] {
-    return [{
-        key: "single-image-change",
-        service: null,
-        fromValue: fromVersion?.trim() || '-',
-        toValue: toVersion?.trim() || '-',
-    }]
+    return [
+        {
+            key: "single-image-change",
+            service: null,
+            fromValue: fromVersion?.trim() || "-",
+            toValue: toVersion?.trim() || "-",
+        },
+    ]
 }
 
-function ImageCell({ label, value, testId }: { label: string; value: string; testId: string }) {
+function ChangeValue({
+    value,
+    testId,
+    tone = "default",
+}: {
+    value: string
+    testId: string
+    tone?: "from" | "to" | "default"
+}) {
     return (
-        <div className="min-w-0 space-y-1" data-testid={testId} title={value === '-' ? undefined : value}>
-            <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                {label}
-            </div>
-            <code className="block min-w-0 whitespace-pre-wrap break-all rounded-md bg-muted/50 px-2 py-1.5 font-mono text-xs leading-relaxed text-foreground [overflow-wrap:anywhere]">
-                {value}
-            </code>
-        </div>
+        <code
+            data-testid={testId}
+            className={cn(
+                "block min-w-0 rounded-md border px-2 py-1 font-mono text-[11px] leading-snug break-all [overflow-wrap:anywhere]",
+                tone === "from"
+                    ? "border-border/50 bg-muted/30 text-muted-foreground"
+                    : tone === "to"
+                        ? "border-primary/20 bg-primary/5 text-foreground"
+                        : "border-border/50 bg-muted/30 text-foreground/80",
+            )}
+        >
+            {value}
+        </code>
     )
 }
 
@@ -103,73 +143,88 @@ function ExecutorHistoryImageChangeList({
 }) {
     const rows = services ? buildStructuredImageChangeRows(services) : buildImageChangeRows(fromVersion, toVersion)
     const hasServiceColumn = rows.some((row) => row.service)
-    const titleKey = valueKind === "version" ? 'executors.review.versionChanges' : 'executors.review.imageChanges'
-    const fromLabelKey = valueKind === "version" ? 'executors.history.table.fromVersion' : 'executors.history.table.fromImage'
-    const toLabelKey = valueKind === "version" ? 'executors.history.table.toVersion' : 'executors.history.table.toImage'
+    const titleKey = valueKind === "version" ? "executors.review.versionChanges" : "executors.review.imageChanges"
+    const fromLabelKey = valueKind === "version" ? "executors.history.table.fromVersion" : "executors.history.table.fromImage"
+    const toLabelKey = valueKind === "version" ? "executors.history.table.toVersion" : "executors.history.table.toImage"
     const fromTestId = valueKind === "version" ? "executor-history-from-version" : "executor-history-from-image"
     const toTestId = valueKind === "version" ? "executor-history-to-version" : "executor-history-to-image"
 
     return (
-        <div className="min-w-0 rounded-lg bg-muted/20 p-3" data-testid="executor-history-image-change-list">
-            <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-                {t(titleKey)}
+        <div
+            className="rounded-lg border border-border/60 bg-muted/10"
+            data-testid="executor-history-image-change-list"
+        >
+            <div className="flex items-center gap-4 border-b border-border/50 px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                <span>{t(titleKey)}</span>
+                <span className="ml-auto flex items-center gap-2">
+                    <span>{t(fromLabelKey)}</span>
+                    <ArrowRight aria-hidden className="h-3 w-3 text-muted-foreground/50" />
+                    <span>{t(toLabelKey)}</span>
+                </span>
             </div>
-            <ul className="mt-2 divide-y divide-border/60 overflow-hidden rounded-lg border border-border/60 bg-background/80">
-                {rows.map((row) => (
-                    <li
-                        key={row.key}
-                        className={cn(
-                            "grid min-w-0 gap-3 p-3",
-                            hasServiceColumn ? "md:grid-cols-[10rem_minmax(0,1fr)_minmax(0,1fr)]" : "md:grid-cols-2",
-                        )}
-                    >
-                        {hasServiceColumn ? (
-                            <div className="min-w-0 space-y-1">
-                                <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                                    {t('executors.fields.service')}
-                                </div>
-                                <div className="min-w-0 truncate text-sm font-medium text-foreground" title={row.service ?? undefined}>
-                                    {row.service ?? '-'}
-                                </div>
-                            </div>
-                        ) : null}
-                        <ImageCell
-                            label={t(fromLabelKey)}
-                            value={row.fromValue}
-                            testId={fromTestId}
-                        />
-                        <ImageCell
-                            label={t(toLabelKey)}
-                            value={row.toValue}
-                            testId={toTestId}
-                        />
-                    </li>
-                ))}
-            </ul>
+                <ul className="divide-y divide-border/40">
+                    {rows.map((row) => (
+                        <li
+                            key={row.key}
+                            className="grid min-w-0 items-start gap-2 px-3 py-2 sm:grid-cols-[minmax(0,auto)_minmax(0,1fr)_auto_minmax(0,1fr)]"
+                        >
+                            {hasServiceColumn ? (
+                                <span
+                                    className="min-w-0 max-w-[12rem] truncate pt-1 text-xs font-medium text-foreground/80"
+                                    title={row.service ?? undefined}
+                                >
+                                    {row.service ?? "-"}
+                                </span>
+                            ) : (
+                                <span className="hidden sm:block" />
+                            )}
+                            <ChangeValue value={row.fromValue} testId={fromTestId} tone="from" />
+                            <ArrowRight
+                                aria-hidden
+                                className="mt-2 hidden h-3.5 w-3.5 shrink-0 text-muted-foreground/50 sm:block"
+                            />
+                            <ChangeValue value={row.toValue} testId={toTestId} tone="to" />
+                        </li>
+                    ))}
+                </ul>
         </div>
     )
 }
 
+function formatDuration(
+    startedAt: string | null | undefined,
+    finishedAt: string | null | undefined,
+): string | null {
+    if (!startedAt || !finishedAt) return null
+    const start = new Date(startedAt).getTime()
+    const end = new Date(finishedAt).getTime()
+    if (Number.isNaN(start) || Number.isNaN(end) || end < start) return null
+    const deltaMs = end - start
+    if (deltaMs < 1000) return `${deltaMs}ms`
+    const seconds = deltaMs / 1000
+    if (seconds < 60) return `${seconds.toFixed(1)}s`
+    const minutes = Math.floor(seconds / 60)
+    const remainder = Math.round(seconds - minutes * 60)
+    return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`
+}
+
 export function ExecutorExecutionHistoryPanel({ executor, refreshKey }: ExecutorExecutionHistoryPanelProps) {
-    const { t } = useTranslation()
+    const { t, i18n } = useTranslation()
     const formatDate = useDateFormatter()
+    const dateLocale = i18n?.language === "zh" ? zhCN : enUS
     const [executionHistory, setExecutionHistory] = useState<ExecutorRunHistory[]>([])
     const [loading, setLoading] = useState(false)
     const [page, setPage] = useState(1)
+    const [pageSize, setPageSize] = usePageSize("settings.executors.historyPageSize", 10)
     const [total, setTotal] = useState(0)
     const [search, setSearch] = useState("")
     const [status, setStatus] = useState<"all" | "success" | "failed" | "skipped">("all")
     const [clearDialogOpen, setClearDialogOpen] = useState(false)
     const [clearing, setClearing] = useState(false)
 
-    const pageSize = 10
-    const totalPages = Math.max(1, Math.ceil(total / pageSize))
-
+    // Reset filters when switching to a different executor.
     useEffect(() => {
-        if (!executor?.id) {
-            return
-        }
-
+        if (!executor?.id) return
         void Promise.resolve().then(() => {
             setPage(1)
             setSearch("")
@@ -187,7 +242,6 @@ export function ExecutorExecutionHistoryPanel({ executor, refreshKey }: Executor
         }
 
         const executorId = executor.id
-
         const loadExecutionHistory = async () => {
             setLoading(true)
             try {
@@ -205,24 +259,20 @@ export function ExecutorExecutionHistoryPanel({ executor, refreshKey }: Executor
                 setLoading(false)
             }
         }
-
         void loadExecutionHistory()
-    }, [executor?.id, page, refreshKey, search, status])
+    }, [executor?.id, page, pageSize, refreshKey, search, status])
 
-    const targetLabel = useMemo(() => {
-        if (!executor) {
-            return null
-        }
-
-        return buildExecutorTargetDisplay(executor.runtime_type, executor.target_ref, t)
-    }, [executor, t])
+    const targetLabel = useMemo(
+        () => (executor ? buildExecutorTargetDisplay(executor.runtime_type, executor.target_ref, t) : null),
+        [executor, t],
+    )
+    const targetKindLabel = targetLabel
+        ? targetLabel.badges.find((badge) => badge !== executor?.runtime_type) ?? targetLabel.badges[0]
+        : null
     const historyValueKind = executor && isHelmReleaseTarget(executor.target_ref) ? "version" : "image"
 
     const handleClearHistory = async () => {
-        if (!executor?.id || clearing) {
-            return
-        }
-
+        if (!executor?.id || clearing) return
         setClearing(true)
         try {
             const response = await api.clearExecutorHistory(executor.id)
@@ -230,10 +280,10 @@ export function ExecutorExecutionHistoryPanel({ executor, refreshKey }: Executor
             setTotal(0)
             setPage(1)
             setClearDialogOpen(false)
-            toast.success(t('executors.history.clearSuccess', { count: response.deleted }))
+            toast.success(t("executors.history.clearSuccess", { count: response.deleted }))
         } catch (error) {
             console.error("Failed to clear executor history", error)
-            toast.error(t('executors.history.clearFailed'))
+            toast.error(t("executors.history.clearFailed"))
         } finally {
             setClearing(false)
         }
@@ -241,160 +291,229 @@ export function ExecutorExecutionHistoryPanel({ executor, refreshKey }: Executor
 
     if (!executor) {
         return (
-            <div className="rounded-lg border border-dashed border-border/60 bg-muted/20 p-4 text-sm text-muted-foreground">
-                <p>{t('executors.history.emptySelection')}</p>
+            <div className="flex h-full min-h-[240px] items-center justify-center rounded-lg border border-dashed border-border/60 bg-muted/10 px-4 py-10 text-sm text-muted-foreground">
+                {t("executors.history.emptySelection")}
             </div>
         )
     }
 
     return (
-        <div className="space-y-4">
-            <div className="space-y-3">
-                <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-3">
-                    <div className="min-w-0 space-y-1">
-                        <div className="truncate text-sm font-semibold text-foreground">{executor.name}</div>
-                        <div className="text-xs text-muted-foreground">
-                            <span className="uppercase tracking-[0.12em]">{executor.runtime_type}</span>
-                            <span className="px-1.5">·</span>
-                            <span>{executor.runtime_connection_name || '-'}</span>
+        <div className="flex h-full min-h-0 flex-col gap-4">
+            {/* Executor identity card — name, runtime, target. */}
+            <div className="rounded-lg border border-border/60 bg-muted/10 p-3">
+                <div className="min-w-0 space-y-1.5">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="truncate text-sm font-semibold text-foreground">{executor.name}</span>
+                        <Badge variant={executor.enabled ? "secondary" : "outline"} className="h-5 text-[10px]">
+                            {executor.enabled ? t("common.enabled") : t("common.disabled")}
+                        </Badge>
+                    </div>
+                    <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <span className="shrink-0 font-medium uppercase tracking-wide">{executor.runtime_type}</span>
+                        <span aria-hidden>·</span>
+                        <span className="truncate">{executor.runtime_connection_name || "-"}</span>
+                    </div>
+                    {targetLabel ? (
+                        <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                            <span className="truncate font-medium text-foreground/80">{targetLabel.title}</span>
+                            {targetLabel.summary && targetLabel.summary !== "-" ? (
+                                <>
+                                    <span aria-hidden>·</span>
+                                    <span className="truncate">{targetLabel.summary}</span>
+                                </>
+                            ) : null}
+                            {targetKindLabel ? (
+                                <>
+                                    <span aria-hidden>·</span>
+                                    <Badge variant="outline" className="h-5 border-border/60 text-[10px]">
+                                        {targetKindLabel}
+                                    </Badge>
+                                </>
+                            ) : null}
                         </div>
-                        {targetLabel ? (
-                            <div className="min-w-0 pt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
-                                <span className="font-medium text-foreground/80">{targetLabel.title}</span>
-                                <span className="px-1.5">·</span>
-                                <span>{targetLabel.summary}</span>
-                                <span className="px-1.5">·</span>
-                                <span className="uppercase tracking-[0.12em]">{targetLabel.badges.find((badge) => badge !== executor.runtime_type) ?? targetLabel.badges[0]}</span>
-                            </div>
-                        ) : null}
-                    </div>
+                    ) : null}
                 </div>
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div className="w-full md:w-80">
-                        <InputGroup>
-                            <InputGroupAddon align="inline-start">
-                                <InputGroupText>
-                                    <Search className="h-4 w-4" />
-                                </InputGroupText>
-                            </InputGroupAddon>
-                            <InputGroupInput
-                                value={search}
-                                onChange={(event) => {
-                                    setSearch(event.target.value)
-                                    setPage(1)
-                                }}
-                                placeholder={t('executors.history.searchPlaceholder')}
-                            />
-                        </InputGroup>
-                    </div>
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                        <Select
-                            value={status}
-                            onValueChange={(value: "all" | "success" | "failed" | "skipped") => {
-                                setStatus(value)
+            </div>
+
+            {/* Filter toolbar — search, status filter, clear action. */}
+            <div className="flex flex-none flex-wrap items-center gap-2">
+                <div className="min-w-[12rem] flex-1">
+                    <InputGroup>
+                        <InputGroupAddon align="inline-start">
+                            <InputGroupText>
+                                <Search className="h-4 w-4" />
+                            </InputGroupText>
+                        </InputGroupAddon>
+                        <InputGroupInput
+                            value={search}
+                            onChange={(event) => {
+                                setSearch(event.target.value)
                                 setPage(1)
                             }}
-                        >
-                            <SelectTrigger className="w-full sm:w-44">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="all">{t('executors.history.filters.all')}</SelectItem>
-                                <SelectItem value="success">{t('executors.results.success')}</SelectItem>
-                                <SelectItem value="failed">{t('executors.results.failed')}</SelectItem>
-                                <SelectItem value="skipped">{t('executors.results.skipped')}</SelectItem>
-                            </SelectContent>
-                        </Select>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="gap-2 text-destructive hover:text-destructive"
-                            onClick={() => setClearDialogOpen(true)}
-                            disabled={loading || clearing}
-                        >
-                            <Trash2 className="h-4 w-4" />
-                            {t('executors.history.clearRecords')}
-                        </Button>
-                    </div>
+                            placeholder={t("executors.history.searchPlaceholder")}
+                        />
+                        {search ? (
+                            <InputGroupAddon align="inline-end">
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6"
+                                    onClick={() => setSearch("")}
+                                    title={t("common.clear")}
+                                >
+                                    <X className="h-3.5 w-3.5" />
+                                </Button>
+                            </InputGroupAddon>
+                        ) : null}
+                    </InputGroup>
                 </div>
+                <Select
+                    value={status}
+                    onValueChange={(value: "all" | "success" | "failed" | "skipped") => {
+                        setStatus(value)
+                        setPage(1)
+                    }}
+                >
+                    <SelectTrigger className="w-[10rem] gap-2" aria-label={t("executors.history.filters.all")}>
+                        <ListFilter className="h-3.5 w-3.5 text-muted-foreground" />
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="all">{t("executors.history.filters.all")}</SelectItem>
+                        <SelectItem value="success">{t("executors.results.success")}</SelectItem>
+                        <SelectItem value="failed">{t("executors.results.failed")}</SelectItem>
+                        <SelectItem value="skipped">{t("executors.results.skipped")}</SelectItem>
+                    </SelectContent>
+                </Select>
+                <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-9 w-9 text-destructive hover:text-destructive"
+                    onClick={() => setClearDialogOpen(true)}
+                    disabled={loading || clearing}
+                    title={t("executors.history.clearRecords")}
+                    aria-label={t("executors.history.clearRecords")}
+                >
+                    <Trash2 className="h-4 w-4" />
+                </Button>
             </div>
-            <section aria-label={t('executors.history.title')} className="space-y-3">
-                {loading ? (
-                    <div className="rounded-xl border border-border/60 bg-muted/20 p-6 text-center text-sm text-muted-foreground">
-                        {t('common.loading')}
-                    </div>
-                ) : executionHistory.length === 0 ? (
-                    <div className="rounded-xl border border-dashed border-border/60 bg-muted/20 p-6 text-center text-sm text-muted-foreground">
-                        {t('executors.history.noResults')}
-                    </div>
-                ) : (
-                    <ol className="space-y-3" data-testid="executor-history-list">
-                        {executionHistory.map((executionHistoryEntry) => (
-                            <li
-                                key={executionHistoryEntry.id ?? `${executionHistoryEntry.executor_id}-${executionHistoryEntry.started_at}`}
-                                className="rounded-xl border border-border/60 bg-card p-4 shadow-sm"
-                                data-testid="executor-history-item"
-                            >
-                                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                    <div className="min-w-0 space-y-1">
-                                        <div className="text-sm font-semibold text-foreground">{formatDate(executionHistoryEntry.started_at)}</div>
-                                        <div className="text-xs text-muted-foreground">
-                                            {executionHistoryEntry.finished_at ? formatDate(executionHistoryEntry.finished_at) : '-'}
-                                        </div>
-                                    </div>
-                                    <Badge variant={statusVariantMap[executionHistoryEntry.status]} className="w-fit capitalize">
-                                        {t(`executors.results.${executionHistoryEntry.status}`)}
-                                    </Badge>
-                                </div>
 
-                                <div className="mt-4 grid gap-3">
-                                    <ExecutorHistoryImageChangeList
-                                        fromVersion={executionHistoryEntry.from_version}
-                                        toVersion={executionHistoryEntry.to_version}
-                                        services={executionHistoryEntry.diagnostics?.services}
-                                        valueKind={historyValueKind}
-                                        t={t}
-                                    />
+            {/* History list — scrolls inside the panel. */}
+            <section
+                aria-label={t("executors.history.title")}
+                className="flex min-h-0 flex-1 flex-col"
+            >
+                <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+                    {loading ? (
+                        <div className="flex h-24 items-center justify-center text-sm text-muted-foreground">
+                            {t("common.loading")}
+                        </div>
+                    ) : executionHistory.length === 0 ? (
+                        <div className="flex h-24 items-center justify-center rounded-lg border border-dashed border-border/60 bg-muted/10 px-4 text-sm text-muted-foreground">
+                            {t("executors.history.noResults")}
+                        </div>
+                    ) : (
+                        <ol className="space-y-2" data-testid="executor-history-list">
+                            {executionHistory.map((entry) => {
+                                const startedRelative = formatDistanceToNow(new Date(entry.started_at), {
+                                    addSuffix: true,
+                                    locale: dateLocale,
+                                })
+                                const duration = formatDuration(entry.started_at, entry.finished_at)
+                                const startedAbsolute = formatDate(entry.started_at)
+                                const status = entry.status
 
-                                    <div className="min-w-0 rounded-lg border border-border/60 bg-background p-3">
-                                        <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-                                            {t('executors.history.table.message')}
+                                return (
+                                    <li
+                                        key={entry.id ?? `${entry.executor_id}-${entry.started_at}`}
+                                        className="rounded-lg border border-border/60 bg-card p-3"
+                                        data-testid="executor-history-item"
+                                    >
+                                        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                                            <div className="flex min-w-0 items-center gap-2">
+                                                <Badge
+                                                    variant={STATUS_VARIANT_MAP[status]}
+                                                    className="h-5 shrink-0 gap-1 text-[10px] capitalize"
+                                                >
+                                                    {STATUS_ICON_MAP[status]}
+                                                    {t(`executors.results.${status}`)}
+                                                </Badge>
+                                                <span
+                                                    className="truncate text-xs text-muted-foreground tabular-nums"
+                                                    title={startedAbsolute}
+                                                >
+                                                    {startedRelative}
+                                                </span>
+                                                {duration ? (
+                                                    <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground tabular-nums">
+                                                        <Clock className="h-3 w-3" />
+                                                        {duration}
+                                                    </span>
+                                                ) : null}
+                                            </div>
                                         </div>
-                                        <div
-                                            className="mt-1 min-w-0 whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]"
-                                            data-testid="executor-history-message"
-                                        >
-                                            {executionHistoryEntry.message || '-'}
+
+                                        <div className="mt-2.5 space-y-2">
+                                            <ExecutorHistoryImageChangeList
+                                                fromVersion={entry.from_version}
+                                                toVersion={entry.to_version}
+                                                services={entry.diagnostics?.services}
+                                                valueKind={historyValueKind}
+                                                t={t}
+                                            />
+
+                                            {entry.message ? (
+                                                <div
+                                                    className={cn(
+                                                        "flex items-start gap-2 rounded-lg border px-3 py-2 text-xs leading-relaxed",
+                                                        status === "failed"
+                                                            ? "border-destructive/30 bg-destructive/5 text-destructive"
+                                                            : "border-border/60 bg-muted/10 text-muted-foreground",
+                                                    )}
+                                                >
+                                                    {status === "failed" ? (
+                                                        <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                                    ) : null}
+                                                    <span
+                                                        className="min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+                                                        data-testid="executor-history-message"
+                                                    >
+                                                        {entry.message}
+                                                    </span>
+                                                </div>
+                                            ) : (
+                                                <span
+                                                    className="sr-only"
+                                                    data-testid="executor-history-message"
+                                                >
+                                                    -
+                                                </span>
+                                            )}
                                         </div>
-                                    </div>
-                                </div>
-                            </li>
-                        ))}
-                    </ol>
-                )}
+                                    </li>
+                                )
+                            })}
+                        </ol>
+                    )}
+                </div>
             </section>
-            <div className="flex items-center justify-between">
-                <div className="text-sm text-muted-foreground">
-                    {t('pagination.totalItems', { count: total })}
-                </div>
-                <div className="flex items-center gap-2">
-                    <div className="text-sm font-medium">{t('pagination.pageOf', { page, total: totalPages })}</div>
-                    <Button variant="outline" size="sm" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page <= 1}>
-                        {t('pagination.previous')}
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => setPage((current) => Math.min(totalPages, current + 1))} disabled={page >= totalPages}>
-                        {t('pagination.next')}
-                    </Button>
-                </div>
-            </div>
+
+            <DataPagination
+                page={page}
+                pageSize={pageSize}
+                total={total}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
+            />
+
             <AlertDialog open={clearDialogOpen} onOpenChange={setClearDialogOpen}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
-                        <AlertDialogTitle>{t('executors.history.clearTitle')}</AlertDialogTitle>
-                        <AlertDialogDescription>{t('executors.history.clearDescription')}</AlertDialogDescription>
+                        <AlertDialogTitle>{t("executors.history.clearTitle")}</AlertDialogTitle>
+                        <AlertDialogDescription>{t("executors.history.clearDescription")}</AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                        <AlertDialogCancel disabled={clearing}>{t('common.cancel')}</AlertDialogCancel>
+                        <AlertDialogCancel disabled={clearing}>{t("common.cancel")}</AlertDialogCancel>
                         <AlertDialogAction
                             onClick={(event) => {
                                 event.preventDefault()
@@ -403,7 +522,7 @@ export function ExecutorExecutionHistoryPanel({ executor, refreshKey }: Executor
                             disabled={clearing}
                             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                         >
-                            {clearing ? t('common.loading') : t('executors.history.clearConfirm')}
+                            {clearing ? t("common.loading") : t("executors.history.clearConfirm")}
                         </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>

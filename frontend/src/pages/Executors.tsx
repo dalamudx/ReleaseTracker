@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react"
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Plus, Search, X } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { Link } from "react-router-dom"
 
@@ -9,6 +9,12 @@ import { ExecutorExecutionHistoryPanel } from "@/components/executors/ExecutorEx
 import { ExecutorList } from "@/components/executors/ExecutorList"
 import { ExecutorSheet } from "@/components/executors/ExecutorSheet"
 import { Button } from "@/components/ui/button"
+import {
+    InputGroup,
+    InputGroupAddon,
+    InputGroupInput,
+    InputGroupText,
+} from "@/components/ui/input-group"
 import {
     Sheet,
     SheetContent,
@@ -26,13 +32,8 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select"
+import { DataPagination } from "@/components/common/DataPagination"
+import { usePageSize } from "@/hooks/use-page-size"
 import { toast } from "sonner"
 
 const SYSTEM_TIMEZONE_SETTING_KEY = "system.timezone"
@@ -65,10 +66,8 @@ export default function ExecutorsPage() {
 
     const [total, setTotal] = useState(0)
     const [page, setPage] = useState(1)
-    const [pageSize, setPageSize] = useState(() => {
-        const saved = localStorage.getItem('settings.executors.pageSize')
-        return saved ? Number(saved) : 15
-    })
+    const [pageSize, setPageSize] = usePageSize('settings.executors.pageSize')
+    const [search, setSearch] = useState("")
     const executionHistorySheetOpenRef = useRef(executionHistorySheetOpen)
     const selectedExecutorIdRef = useRef(selectedExecutorId)
     const auxiliaryLoadedRef = useRef(false)
@@ -251,8 +250,24 @@ export default function ExecutorsPage() {
         }
     }
 
-    const totalPages = Math.ceil(total / pageSize)
     const selectedExecutor = executors.find((executor) => executor.id === selectedExecutorId) ?? selectedExecutorSnapshot
+
+    // Client-side filter. The API doesn't accept a search param yet, so we
+    // filter the current page locally — good enough for the common case and a
+    // no-op when the search box is empty.
+    const filteredExecutors = useMemo(() => {
+        const term = search.trim().toLowerCase()
+        if (!term) return executors
+        return executors.filter((executor) => {
+            if (executor.name.toLowerCase().includes(term)) return true
+            if (executor.description?.toLowerCase().includes(term)) return true
+            if (executor.tracker_name?.toLowerCase().includes(term)) return true
+            if (executor.runtime_connection_name?.toLowerCase().includes(term)) return true
+            if (executor.runtime_type?.toLowerCase().includes(term)) return true
+            return false
+        })
+    }, [executors, search])
+
     const hasRuntimeConnections = runtimeConnections.length > 0
     const hasTrackers = trackers.length > 0
     const addDisabled = prerequisitesLoading || !hasRuntimeConnections || !hasTrackers
@@ -267,18 +282,48 @@ export default function ExecutorsPage() {
                     : null
 
     return (
-        <div className="flex h-full flex-col space-y-6 pr-1">
-            <div className="flex flex-shrink-0 items-center justify-end">
+        <div className="flex h-full min-h-0 flex-col gap-4">
+            {/* Toolbar — search + primary action. */}
+            <div className="flex flex-none flex-wrap items-center justify-between gap-3">
+                <div className="w-full max-w-sm">
+                    <InputGroup>
+                        <InputGroupAddon align="inline-start">
+                            <InputGroupText>
+                                <Search className="h-4 w-4" />
+                            </InputGroupText>
+                        </InputGroupAddon>
+                        <InputGroupInput
+                            placeholder={t("executors.searchPlaceholder")}
+                            value={search}
+                            onChange={(event) => setSearch(event.target.value)}
+                        />
+                        {search ? (
+                            <InputGroupAddon align="inline-end">
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6"
+                                    onClick={() => setSearch("")}
+                                    title={t("common.clear")}
+                                >
+                                    <X className="h-3.5 w-3.5" />
+                                </Button>
+                            </InputGroupAddon>
+                        ) : null}
+                    </InputGroup>
+                </div>
                 <Button onClick={handleAdd} disabled={addDisabled}>
                     <Plus className="mr-2 h-4 w-4" /> {t('executors.addNew')}
                 </Button>
             </div>
 
             {prerequisiteState ? (
-                <div className="rounded-lg border border-dashed border-border/60 bg-card/80 p-4 sm:p-5">
-                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="space-y-1.5">
-                            <div className="text-sm font-semibold">{t(`executors.prerequisites.${prerequisiteState}.title`)}</div>
+                <div className="rounded-lg border border-dashed border-border/60 bg-card/80 p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="space-y-1">
+                            <div className="text-sm font-semibold">
+                                {t(`executors.prerequisites.${prerequisiteState}.title`)}
+                            </div>
                             <p className="max-w-2xl text-sm text-muted-foreground">
                                 {t(`executors.prerequisites.${prerequisiteState}.description`)}
                             </p>
@@ -287,12 +332,16 @@ export default function ExecutorsPage() {
                         <div className="flex flex-wrap gap-2">
                             {!hasRuntimeConnections ? (
                                 <Button asChild>
-                                    <Link to="/runtime-connections">{t('executors.prerequisites.actions.runtimeConnections')}</Link>
+                                    <Link to="/runtime-connections">
+                                        {t('executors.prerequisites.actions.runtimeConnections')}
+                                    </Link>
                                 </Button>
                             ) : null}
                             {!hasTrackers ? (
                                 <Button asChild variant={!hasRuntimeConnections ? 'outline' : 'default'}>
-                                    <Link to="/trackers">{t('executors.prerequisites.actions.trackers')}</Link>
+                                    <Link to="/trackers">
+                                        {t('executors.prerequisites.actions.trackers')}
+                                    </Link>
                                 </Button>
                             ) : null}
                         </div>
@@ -300,9 +349,9 @@ export default function ExecutorsPage() {
                 </div>
             ) : null}
 
-            <div className="flex min-h-0 flex-1 flex-col space-y-4">
+            <div className="flex min-h-0 flex-1 flex-col gap-3">
                 <ExecutorList
-                    executors={executors}
+                    executors={filteredExecutors}
                     loading={loading}
                     onEdit={handleEdit}
                     onDelete={setDeleteExecutorId}
@@ -311,70 +360,14 @@ export default function ExecutorsPage() {
                     selectedExecutorId={selectedExecutorId}
                 />
 
-                <div className="flex items-center justify-between flex-shrink-0">
-                    <div className="flex-1 text-sm text-muted-foreground">
-                        {t('pagination.totalItems', { count: total })}
-                    </div>
-
-                    <div className="flex items-center space-x-6 lg:space-x-8">
-                        <div className="flex items-center space-x-2">
-                            <p className="text-sm font-medium">{t('pagination.rowsPerPage')}</p>
-                            <Select
-                                value={`${pageSize}`}
-                                onValueChange={(value) => {
-                                    const nextPageSize = Number(value)
-                                    closeExecutionHistorySheet()
-                                    setPageSize(nextPageSize)
-                                    setPage(1)
-                                    localStorage.setItem('settings.executors.pageSize', String(nextPageSize))
-                                }}
-                            >
-                                <SelectTrigger className="h-8 w-[70px]">
-                                    <SelectValue placeholder={pageSize} />
-                                </SelectTrigger>
-                                <SelectContent side="top">
-                                    {[10, 15, 20, 30, 40, 50].map((size) => (
-                                        <SelectItem key={size} value={`${size}`}>
-                                            {size}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                        <div className="flex w-auto min-w-[100px] items-center justify-center text-sm font-medium whitespace-nowrap">
-                            {t('pagination.pageOf', { page, total: totalPages || 1 })}
-                        </div>
-
-                        <div className="flex items-center space-x-2">
-                            <Button
-                                variant="outline"
-                                className="h-8 w-8 p-0"
-                                onClick={() => {
-                                    closeExecutionHistorySheet()
-                                    setPage(page - 1)
-                                }}
-                                disabled={page <= 1}
-                            >
-                                <span className="sr-only">Go to previous page</span>
-                                <ChevronLeft className="h-4 w-4" />
-                            </Button>
-                            <Button
-                                variant="outline"
-                                className="h-8 w-8 p-0"
-                                onClick={() => {
-                                    closeExecutionHistorySheet()
-                                    setPage(page + 1)
-                                }}
-                                disabled={page >= totalPages}
-                            >
-                                <span className="sr-only">Go to next page</span>
-                                <ChevronRight className="h-4 w-4" />
-                            </Button>
-                        </div>
-                    </div>
-                </div>
-
+                <DataPagination
+                    page={page}
+                    pageSize={pageSize}
+                    total={total}
+                    onPageChange={setPage}
+                    onPageSizeChange={setPageSize}
+                    onBeforeChange={closeExecutionHistorySheet}
+                />
             </div>
 
             <ExecutorSheet

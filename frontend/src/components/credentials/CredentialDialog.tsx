@@ -30,14 +30,13 @@ import {
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import type { ApiCredential, CredentialType } from "@/api/types"
-import { api } from "@/api/client"
+import { useCreateCredential, useUpdateCredential } from "@/hooks/queries"
 import { toast } from "sonner"
 import { getCredentialTypeLabel } from "./credentialTypeLabels"
 
 interface CredentialDialogProps {
     open: boolean
     onOpenChange: (open: boolean) => void
-    onSuccess: () => void
     credential?: ApiCredential | null
 }
 
@@ -57,8 +56,10 @@ interface CredentialFormData {
     description?: string
 }
 
-export function CredentialDialog({ open, onOpenChange, onSuccess, credential }: CredentialDialogProps) {
+export function CredentialDialog({ open, onOpenChange, credential }: CredentialDialogProps) {
     const [loading, setLoading] = useState(false)
+    const createCredential = useCreateCredential()
+    const updateCredential = useUpdateCredential()
 
     const form = useForm<CredentialFormData>({
         defaultValues: {
@@ -127,12 +128,11 @@ export function CredentialDialog({ open, onOpenChange, onSuccess, credential }: 
                     ...(payload.token ? { token: payload.token } : {}),
                     ...(Object.keys(payload.secrets || {}).length > 0 ? { secrets: payload.secrets } : {}),
                 }
-                await api.updateCredential(credential.id, updateData)
+                await updateCredential.mutateAsync({ id: credential.id, data: updateData })
             } else {
-                await api.createCredential(payload)
+                await createCredential.mutateAsync(payload)
             }
             toast.success(t('common.saved'))
-            onSuccess()
             onOpenChange(false)
         } catch (error: unknown) {
             console.error("Failed to save credential", error)

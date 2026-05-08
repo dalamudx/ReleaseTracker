@@ -209,7 +209,7 @@ export function OIDCProvidersManagement() {
                                         <span className="font-medium text-sm">{p.name}</span>
                                         <code className="text-xs text-muted-foreground bg-muted rounded px-1.5 py-0.5">{p.slug}</code>
                                         {p.enabled
-                                            ? <span className="text-xs text-green-600 flex items-center gap-0.5"><Check className="h-3 w-3" />{t('common.enabled')}</span>
+                                            ? <span className="text-xs text-success flex items-center gap-0.5"><Check className="h-3 w-3" />{t('common.enabled')}</span>
                                             : <span className="text-xs text-muted-foreground flex items-center gap-0.5"><X className="h-3 w-3" />{t('common.disabled')}</span>
                                         }
                                     </div>

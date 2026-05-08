@@ -1,12 +1,17 @@
-import { useCallback, useEffect, useState } from "react"
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react"
+import { useMemo, useState } from "react"
+import { Plus, Search, X } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
-import { api } from "@/api/client"
 import type { RuntimeConnection } from "@/api/types"
 import { RuntimeConnectionDialog } from "@/components/runtime-connections/RuntimeConnectionDialog"
 import { RuntimeConnectionList } from "@/components/runtime-connections/RuntimeConnectionList"
 import { Button } from "@/components/ui/button"
+import {
+    InputGroup,
+    InputGroupAddon,
+    InputGroupInput,
+    InputGroupText,
+} from "@/components/ui/input-group"
 import {
     AlertDialog,
     AlertDialogAction,
@@ -17,49 +22,45 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { DataPagination } from "@/components/common/DataPagination"
+import { usePageSize } from "@/hooks/use-page-size"
 import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select"
+    useDeleteRuntimeConnection,
+    useRuntimeConnections,
+} from "@/hooks/queries"
+import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 
 export default function RuntimeConnectionsPage() {
     const { t } = useTranslation()
-    const [runtimeConnections, setRuntimeConnections] = useState<RuntimeConnection[]>([])
-    const [loading, setLoading] = useState(true)
+    const queryClient = useQueryClient()
     const [dialogOpen, setDialogOpen] = useState(false)
     const [editingRuntimeConnection, setEditingRuntimeConnection] = useState<RuntimeConnection | null>(null)
     const [deleteId, setDeleteId] = useState<number | null>(null)
-    const [total, setTotal] = useState(0)
     const [page, setPage] = useState(1)
-    const [pageSize, setPageSize] = useState(() => {
-        const saved = localStorage.getItem('settings.runtimeConnections.pageSize')
-        return saved ? Number(saved) : 15
-    })
+    const [pageSize, setPageSize] = usePageSize("settings.runtimeConnections.pageSize")
+    const [search, setSearch] = useState("")
 
-    const loadRuntimeConnections = useCallback(async () => {
-        await Promise.resolve()
-        setLoading(true)
+    const skip = (page - 1) * pageSize
+    const { data, isLoading: loading } = useRuntimeConnections({ skip, limit: pageSize })
+    const rawRuntimeConnections = data?.items ?? []
+    const total = data?.total ?? 0
 
-        try {
-            const skip = (page - 1) * pageSize
-            const data = await api.getRuntimeConnections({ skip, limit: pageSize })
-            setRuntimeConnections(data.items)
-            setTotal(data.total)
-        } catch (error) {
-            console.error('Failed to load runtime connections', error)
-            toast.error(t('runtimeConnections.toasts.loadFailed'))
-        } finally {
-            setLoading(false)
-        }
-    }, [page, pageSize, t])
+    // Client-side filter — API doesn't accept a search param; this filters the
+    // current page locally and is a no-op when the input is empty.
+    const runtimeConnections = useMemo(() => {
+        const term = search.trim().toLowerCase()
+        if (!term) return rawRuntimeConnections
+        return rawRuntimeConnections.filter((connection) => {
+            if (connection.name.toLowerCase().includes(term)) return true
+            if (connection.description?.toLowerCase().includes(term)) return true
+            if (connection.type.toLowerCase().includes(term)) return true
+            if (connection.credential_name?.toLowerCase().includes(term)) return true
+            return false
+        })
+    }, [rawRuntimeConnections, search])
 
-    useEffect(() => {
-        void Promise.resolve().then(loadRuntimeConnections)
-    }, [loadRuntimeConnections])
+    const deleteRuntimeConnection = useDeleteRuntimeConnection()
 
     const handleAdd = () => {
         setEditingRuntimeConnection(null)
@@ -72,33 +73,55 @@ export default function RuntimeConnectionsPage() {
     }
 
     const handleConfirmDelete = async () => {
-        if (deleteId === null) {
-            return
-        }
-
+        if (deleteId === null) return
         try {
-            await api.deleteRuntimeConnection(deleteId)
-            await loadRuntimeConnections()
-            toast.success(t('common.deleted'))
+            await deleteRuntimeConnection.mutateAsync(deleteId)
+            toast.success(t("common.deleted"))
         } catch (error) {
-            console.error('Failed to delete runtime connection', error)
-            toast.error(t('common.deleteFailed'))
+            console.error("Failed to delete runtime connection", error)
+            toast.error(t("common.deleteFailed"))
         } finally {
             setDeleteId(null)
         }
     }
 
-    const totalPages = Math.ceil(total / pageSize)
-
     return (
-        <div className="flex h-full flex-col space-y-6 pr-1">
-            <div className="flex flex-shrink-0 items-center justify-end">
+        <div className="flex h-full min-h-0 flex-col gap-4">
+            {/* Toolbar — search + primary action. */}
+            <div className="flex flex-none flex-wrap items-center justify-between gap-3">
+                <div className="w-full max-w-sm">
+                    <InputGroup>
+                        <InputGroupAddon align="inline-start">
+                            <InputGroupText>
+                                <Search className="h-4 w-4" />
+                            </InputGroupText>
+                        </InputGroupAddon>
+                        <InputGroupInput
+                            placeholder={t("runtimeConnections.searchPlaceholder")}
+                            value={search}
+                            onChange={(event) => setSearch(event.target.value)}
+                        />
+                        {search ? (
+                            <InputGroupAddon align="inline-end">
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6"
+                                    onClick={() => setSearch("")}
+                                    title={t("common.clear")}
+                                >
+                                    <X className="h-3.5 w-3.5" />
+                                </Button>
+                            </InputGroupAddon>
+                        ) : null}
+                    </InputGroup>
+                </div>
                 <Button onClick={handleAdd}>
-                    <Plus className="mr-2 h-4 w-4" /> {t('runtimeConnections.addNew')}
+                    <Plus className="mr-2 h-4 w-4" /> {t("runtimeConnections.addNew")}
                 </Button>
             </div>
 
-            <div className="flex min-h-0 flex-1 flex-col space-y-4">
+            <div className="flex min-h-0 flex-1 flex-col gap-3">
                 <RuntimeConnectionList
                     runtimeConnections={runtimeConnections}
                     loading={loading}
@@ -106,80 +129,35 @@ export default function RuntimeConnectionsPage() {
                     onDelete={setDeleteId}
                 />
 
-                <div className="flex flex-shrink-0 items-center justify-between">
-                    <div className="flex-1 text-sm text-muted-foreground">
-                        {t('pagination.totalItems', { count: total })}
-                    </div>
-
-                    <div className="flex items-center space-x-6 lg:space-x-8">
-                        <div className="flex items-center space-x-2">
-                            <p className="text-sm font-medium">{t('pagination.rowsPerPage')}</p>
-                            <Select
-                                value={`${pageSize}`}
-                                onValueChange={(value) => {
-                                    const nextPageSize = Number(value)
-                                    setPageSize(nextPageSize)
-                                    setPage(1)
-                                    localStorage.setItem('settings.runtimeConnections.pageSize', String(nextPageSize))
-                                }}
-                            >
-                                <SelectTrigger className="h-8 w-[70px]">
-                                    <SelectValue placeholder={pageSize} />
-                                </SelectTrigger>
-                                <SelectContent side="top">
-                                    {[10, 15, 20, 30, 40, 50].map((size) => (
-                                        <SelectItem key={size} value={`${size}`}>
-                                            {size}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                        <div className="flex w-auto min-w-[100px] items-center justify-center text-sm font-medium whitespace-nowrap">
-                            {t('pagination.pageOf', { page, total: totalPages || 1 })}
-                        </div>
-
-                        <div className="flex items-center space-x-2">
-                            <Button
-                                variant="outline"
-                                className="h-8 w-8 p-0"
-                                onClick={() => setPage(page - 1)}
-                                disabled={page <= 1}
-                            >
-                                <span className="sr-only">Go to previous page</span>
-                                <ChevronLeft className="h-4 w-4" />
-                            </Button>
-                            <Button
-                                variant="outline"
-                                className="h-8 w-8 p-0"
-                                onClick={() => setPage(page + 1)}
-                                disabled={page >= totalPages}
-                            >
-                                <span className="sr-only">Go to next page</span>
-                                <ChevronRight className="h-4 w-4" />
-                            </Button>
-                        </div>
-                    </div>
-                </div>
+                <DataPagination
+                    page={page}
+                    pageSize={pageSize}
+                    total={total}
+                    onPageChange={setPage}
+                    onPageSizeChange={setPageSize}
+                />
             </div>
 
             <RuntimeConnectionDialog
                 open={dialogOpen}
                 onOpenChange={setDialogOpen}
                 runtimeConnection={editingRuntimeConnection}
-                onSuccess={loadRuntimeConnections}
+                onSuccess={() => queryClient.invalidateQueries({ queryKey: ["runtime-connections"] })}
             />
 
             <AlertDialog open={deleteId !== null} onOpenChange={(open) => !open && setDeleteId(null)}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
-                        <AlertDialogTitle>{t('common.confirm')}</AlertDialogTitle>
-                        <AlertDialogDescription>{t('runtimeConnections.deleteConfirm')}</AlertDialogDescription>
+                        <AlertDialogTitle>{t("common.confirm")}</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {t("runtimeConnections.deleteConfirm")}
+                        </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                        <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-                        <AlertDialogAction onClick={handleConfirmDelete}>{t('common.confirm')}</AlertDialogAction>
+                        <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+                        <AlertDialogAction onClick={handleConfirmDelete}>
+                            {t("common.confirm")}
+                        </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>

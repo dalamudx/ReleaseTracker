@@ -30,17 +30,70 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes('node_modules')) {
-            if (id.includes('recharts')) {
-              return 'chart-vendor';
-            }
-            if (id.includes('react') || id.includes('react-dom') || id.includes('react-router-dom') ||
-              id.includes('lucide-react') || id.includes('framer-motion') || id.includes('@radix-ui')) {
-              return 'react-vendor';
-            }
-            if (id.includes('date-fns')) {
-              return 'date-vendor';
-            }
+          if (!id.includes('node_modules')) {
+            return
+          }
+
+          // Chart libraries are heavy and only loaded on pages that surface
+          // visualisations.
+          if (id.includes('recharts') || id.includes('d3-')) {
+            return 'chart-vendor'
+          }
+
+          // Markdown rendering stack only pulled in by the lazy-loaded
+          // ReleaseNotesModal. Keeping it isolated allows the browser to
+          // cache it independently and skip downloading it entirely when the
+          // modal is never opened.
+          if (
+            id.includes('react-markdown')
+            || id.includes('remark-')
+            || id.includes('rehype-')
+            || id.includes('micromark')
+            || id.includes('mdast-')
+            || id.includes('hast-')
+            || id.includes('unist-')
+            || id.includes('unified')
+          ) {
+            return 'markdown-vendor'
+          }
+
+          if (id.includes('framer-motion')) {
+            return 'motion-vendor'
+          }
+
+          if (id.includes('@radix-ui') || id.includes('@base-ui') || id.includes('radix-ui')) {
+            return 'radix-vendor'
+          }
+
+          if (id.includes('@tanstack')) {
+            return 'tanstack-vendor'
+          }
+
+          if (id.includes('i18next') || id.includes('react-i18next')) {
+            return 'i18n-vendor'
+          }
+
+          if (id.includes('date-fns')) {
+            return 'date-vendor'
+          }
+
+          if (id.includes('lucide-react')) {
+            return 'icons-vendor'
+          }
+
+          if (id.includes('react-hook-form')) {
+            return 'form-vendor'
+          }
+
+          // Core React runtime shared by the entire app. Keep this last so
+          // the more specific groups above win.
+          if (
+            id.includes('/react/')
+            || id.includes('/react-dom/')
+            || id.includes('scheduler')
+            || id.includes('react-router')
+          ) {
+            return 'react-vendor'
           }
         }
       }

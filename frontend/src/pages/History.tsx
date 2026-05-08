@@ -1,8 +1,15 @@
 import { useEffect, useState } from "react"
-import { Search, ExternalLink, FileText, ChevronLeft, ChevronRight } from "lucide-react"
+import {
+    ExternalLink,
+    FileText,
+    Search,
+    X,
+} from "lucide-react"
 import { useTranslation } from "react-i18next"
-import { useDateFormatter } from "@/hooks/use-date-formatter"
+import { formatDistanceToNow } from "date-fns"
+import { enUS, zhCN } from "date-fns/locale"
 
+import { useDateFormatter } from "@/hooks/use-date-formatter"
 import { Button } from "@/components/ui/button"
 import {
     InputGroup,
@@ -18,47 +25,43 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table"
-
 import { Badge } from "@/components/ui/badge"
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+} from "@/components/ui/tooltip"
 import type { ReleaseHistoryItem, TrackerSourceType } from "@/api/types"
 import { buildReleaseIdentityPrefix } from "@/pages/historyHelpers"
-import { ReleaseNotesModal } from "@/components/dashboard/ReleaseNotesModal"
+import { ReleaseNotesModal } from "@/components/dashboard/ReleaseNotesModalLazy"
 import { getReleaseChannelDisplayLabel } from "@/components/dashboard/releaseNotesModalHelpers"
 import { getReleaseTypeLabel } from "@/lib/channel"
 import { useReleaseHistory } from "@/hooks/queries"
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select"
+import { DataPagination } from "@/components/common/DataPagination"
+import { usePageSize } from "@/hooks/use-page-size"
 
-function getSourceTypeLabel(sourceType: TrackerSourceType | null | undefined, t: ReturnType<typeof useTranslation>["t"]): string {
-    if (!sourceType) {
-        return t("trackers.aggregate.detail.channelType.unknown")
-    }
-
+// Source-type label resolution matches the other list pages.
+function getSourceTypeLabel(
+    sourceType: TrackerSourceType | null | undefined,
+    t: ReturnType<typeof useTranslation>["t"],
+): string {
+    if (!sourceType) return t("trackers.aggregate.detail.channelType.unknown")
     return t(`trackers.aggregate.detail.channelType.${sourceType}`)
 }
 
 export default function HistoryPage() {
-    const { t } = useTranslation()
+    const { t, i18n } = useTranslation()
     const formatDate = useDateFormatter()
+    const dateLocale = i18n?.language === "zh" ? zhCN : enUS
     const [page, setPage] = useState(1)
-    const [pageSize, setPageSize] = useState(() => {
-        const saved = localStorage.getItem('settings.history.pageSize')
-        return saved ? Number(saved) : 15
-    })
+    const [pageSize, setPageSize] = usePageSize("settings.history.pageSize")
     const [search, setSearch] = useState("")
     const [selectedRelease, setSelectedRelease] = useState<ReleaseHistoryItem | null>(null)
     const [modalOpen, setModalOpen] = useState(false)
     const [debouncedSearch, setDebouncedSearch] = useState("")
 
     useEffect(() => {
-        const timer = setTimeout(() => {
-            setDebouncedSearch(search)
-        }, 300)
+        const timer = setTimeout(() => setDebouncedSearch(search), 300)
         return () => clearTimeout(timer)
     }, [search])
 
@@ -72,24 +75,24 @@ export default function HistoryPage() {
     const releases = data?.items ?? []
     const total = data?.total ?? 0
 
-    const handlePageSizeChange = (value: string) => {
-        const newSize = Number(value)
-        setPageSize(newSize)
-        setPage(1)
-        localStorage.setItem('settings.history.pageSize', String(newSize))
-    }
-
     const handleViewNotes = (release: ReleaseHistoryItem) => {
         setSelectedRelease(release)
         setModalOpen(true)
     }
 
-    const totalPages = Math.ceil(total / pageSize)
+    const formatRelative = (value: string): string => {
+        try {
+            return formatDistanceToNow(new Date(value), { addSuffix: true, locale: dateLocale })
+        } catch {
+            return formatDate(value)
+        }
+    }
 
     return (
-            <div className="flex h-full flex-col space-y-6 pr-1">
-            <div className="flex flex-shrink-0 items-center justify-end">
-                <div className="w-[300px]">
+        <div className="flex h-full min-h-0 flex-col gap-4">
+            {/* Toolbar — search only (no add action on this page). */}
+            <div className="flex flex-none flex-wrap items-center justify-between gap-3">
+                <div className="w-full max-w-sm">
                     <InputGroup>
                         <InputGroupAddon align="inline-start">
                             <InputGroupText>
@@ -97,119 +100,198 @@ export default function HistoryPage() {
                             </InputGroupText>
                         </InputGroupAddon>
                         <InputGroupInput
-                            placeholder={t('history.searchPlaceholder')}
+                            placeholder={t("history.searchPlaceholder")}
                             value={search}
-                            onChange={(e) => {
-                                setSearch(e.target.value)
+                            onChange={(event) => {
+                                setSearch(event.target.value)
                                 setPage(1)
                             }}
                         />
+                        {search ? (
+                            <InputGroupAddon align="inline-end">
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6"
+                                    onClick={() => {
+                                        setSearch("")
+                                        setPage(1)
+                                    }}
+                                    title={t("common.clear")}
+                                >
+                                    <X className="h-3.5 w-3.5" />
+                                </Button>
+                            </InputGroupAddon>
+                        ) : null}
                     </InputGroup>
                 </div>
             </div>
 
-            <div className="flex min-h-0 flex-1 flex-col space-y-4">
+            <div className="flex min-h-0 flex-1 flex-col gap-3">
                 <div className="min-h-0 flex-1 overflow-auto rounded-md border">
                     <Table containerClassName="overflow-visible">
                         <TableHeader className="sticky top-0 z-10 bg-background">
                             <TableRow>
-                                <TableHead>{t('history.table.tracker')}</TableHead>
-                                <TableHead>{t('history.table.channelType')}</TableHead>
-                                <TableHead>{t('history.table.releaseChannelType')}</TableHead>
-                                <TableHead>{t('history.table.version')}</TableHead>
-                                <TableHead>{t('history.table.identity')}</TableHead>
-                                <TableHead>{t('history.table.published')}</TableHead>
-                                <TableHead className="text-right">{t('history.table.link')}</TableHead>
+                                <TableHead className="min-w-[12rem]">{t("history.table.tracker")}</TableHead>
+                                <TableHead className="min-w-[10rem]">{t("history.table.version")}</TableHead>
+                                <TableHead className="hidden md:table-cell">
+                                    {t("history.table.releaseChannelType")}
+                                </TableHead>
+                                <TableHead className="hidden lg:table-cell">
+                                    {t("history.table.identity")}
+                                </TableHead>
+                                <TableHead>{t("history.table.published")}</TableHead>
+                                <TableHead className="w-[1%] text-right">
+                                    {t("common.actions")}
+                                </TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {isLoading ? (
                                 <TableRow>
-                                    <TableCell colSpan={7} className="h-24 text-center">
-                                        {t('common.loading')}
+                                    <TableCell colSpan={6} className="h-24 text-center text-sm text-muted-foreground">
+                                        {t("common.loading")}
                                     </TableCell>
                                 </TableRow>
                             ) : releases.length === 0 ? (
                                 <TableRow>
-                                    <TableCell colSpan={7} className="h-24 text-center">
-                                        {t('history.noResults')}
+                                    <TableCell colSpan={6} className="h-24 text-center text-sm text-muted-foreground">
+                                        {t("history.noResults")}
                                     </TableCell>
                                 </TableRow>
                             ) : (
                                 releases.map((release) => {
+                                    const sourceType = release.primary_source?.source_type
+                                    const sourceTypeLabel = getSourceTypeLabel(sourceType, t)
                                     const releaseChannelLabel = getReleaseChannelDisplayLabel(release, t)
-                                    const sourceTypeLabel = getSourceTypeLabel(release.primary_source?.source_type, t)
                                     const identityPrefix = buildReleaseIdentityPrefix(release)
-                                    const identityValue = release.digest || release.commit_sha
+                                    const linkHref = release.changelog_url || release.url
+                                    const absolutePublished = formatDate(release.published_at)
+                                    const relativePublished = formatRelative(release.published_at)
 
                                     return (
-                                    <TableRow
-                                        key={`${release.tracker_release_history_id}-${release.published_at}`}
-                                        className="transition-colors hover:bg-muted/50"
-                                    >
-                                        <TableCell className="py-2.5 font-medium">{release.tracker_name}</TableCell>
-                                        <TableCell className="py-2.5">
-                                            <Badge variant="secondary" className="text-[10px] uppercase">
-                                                {sourceTypeLabel}
-                                            </Badge>
-                                        </TableCell>
-                                        <TableCell className="py-2.5">
-                                            {releaseChannelLabel ? (
-                                                <Badge variant="outline" className="text-xs">
-                                                    {releaseChannelLabel}
-                                                </Badge>
-                                            ) : (
-                                                <span className="text-xs text-muted-foreground">—</span>
-                                            )}
-                                        </TableCell>
-                                        <TableCell className="py-2.5">
-                                            <div className="relative inline-flex items-center gap-1.5">
-                                                <span className="font-mono text-sm">{release.tag_name}</span>
-                                                {release.prerelease ? (
+                                        <TableRow
+                                            key={`${release.tracker_release_history_id}-${release.published_at}`}
+                                            className="transition-colors hover:bg-muted/40"
+                                        >
+                                            {/* Tracker — name + source type label. */}
+                                            <TableCell className="py-3 align-middle">
+                                                <div className="min-w-0 space-y-0.5">
+                                                    <div
+                                                        className="truncate text-sm font-medium text-foreground"
+                                                        title={release.tracker_name}
+                                                    >
+                                                        {release.tracker_name}
+                                                    </div>
+                                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                                                        {sourceTypeLabel}
+                                                    </div>
+                                                </div>
+                                            </TableCell>
+
+                                            {/* Version tag + prerelease badge. */}
+                                            <TableCell className="py-3 align-middle">
+                                                <div className="flex flex-wrap items-center gap-1.5">
+                                                    <span
+                                                        className="max-w-[14rem] truncate font-mono text-sm text-foreground"
+                                                        title={release.tag_name}
+                                                    >
+                                                        {release.tag_name}
+                                                    </span>
+                                                    {release.prerelease ? (
+                                                        <Badge
+                                                            variant="outline"
+                                                            className="h-4 shrink-0 rounded-full border-warning bg-transparent px-1.5 text-[9px] font-medium uppercase leading-none text-warning"
+                                                        >
+                                                            {getReleaseTypeLabel("prerelease", t)}
+                                                        </Badge>
+                                                    ) : null}
+                                                </div>
+                                            </TableCell>
+
+                                            {/* Release channel (hidden on narrow screens). */}
+                                            <TableCell className="hidden py-3 align-middle md:table-cell">
+                                                {releaseChannelLabel ? (
                                                     <Badge
                                                         variant="outline"
-                                                        className="h-3.5 rounded-full border-amber-500 bg-transparent px-1 text-[9px] font-medium leading-none text-amber-500 transition-colors hover:bg-transparent"
+                                                        className="border-border/60 bg-muted/30 text-xs"
                                                     >
-                                                        {getReleaseTypeLabel('prerelease')}
+                                                        {releaseChannelLabel}
                                                     </Badge>
-                                                ) : null}
-                                            </div>
-                                        </TableCell>
-                                        <TableCell className="py-2.5">
-                                            {identityPrefix ? (
-                                                <span
-                                                    className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground"
-                                                    title={identityValue || undefined}
-                                                >
-                                                    {identityPrefix}
+                                                ) : (
+                                                    <span className="text-xs text-muted-foreground">—</span>
+                                                )}
+                                            </TableCell>
+
+                                            {/* Commit / digest prefix (hidden on narrow screens). */}
+                                            <TableCell className="hidden py-3 align-middle lg:table-cell">
+                                                {identityPrefix ? (
+                                                    <code className="rounded bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
+                                                        {identityPrefix}
+                                                    </code>
+                                                ) : (
+                                                    <span className="text-xs text-muted-foreground">—</span>
+                                                )}
+                                            </TableCell>
+
+                                            {/* Published — relative time, absolute in tooltip. */}
+                                            <TableCell className="py-3 align-middle text-xs text-muted-foreground">
+                                                <span className="whitespace-nowrap tabular-nums" title={absolutePublished}>
+                                                    {relativePublished}
                                                 </span>
-                                            ) : (
-                                                <span className="text-xs text-muted-foreground">—</span>
-                                            )}
-                                        </TableCell>
-                                        <TableCell className="py-2.5 text-sm text-muted-foreground">
-                                            {formatDate(release.published_at)}
-                                        </TableCell>
-                                        <TableCell className="py-2.5 text-right">
-                                            <div className="flex justify-end gap-1">
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    className="h-8 w-8"
-                                                    disabled={!release.body}
-                                                    onClick={() => handleViewNotes(release)}
-                                                    title="View Release Notes"
-                                                >
-                                                    <FileText className="h-4 w-4" />
-                                                </Button>
-                                                <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
-                                                    <a href={release.changelog_url || release.url} target="_blank" rel="noreferrer">
-                                                        <ExternalLink className="h-4 w-4" />
-                                                    </a>
-                                                </Button>
-                                            </div>
-                                        </TableCell>
-                                    </TableRow>
+                                            </TableCell>
+
+                                            {/* Actions. */}
+                                            <TableCell className="w-[1%] whitespace-nowrap py-3 text-right align-middle">
+                                                <div className="flex items-center justify-end gap-0.5">
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="icon"
+                                                                className="h-7 w-7"
+                                                                disabled={!release.body}
+                                                                onClick={() => handleViewNotes(release)}
+                                                            >
+                                                                <FileText className="h-3.5 w-3.5" />
+                                                                <span className="sr-only">
+                                                                    {t("dashboard.recentReleases.viewNotes")}
+                                                                </span>
+                                                            </Button>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent>
+                                                            {t("dashboard.recentReleases.viewNotes")}
+                                                        </TooltipContent>
+                                                    </Tooltip>
+                                                    {linkHref ? (
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="icon"
+                                                                    className="h-7 w-7"
+                                                                    asChild
+                                                                >
+                                                                    <a
+                                                                        href={linkHref}
+                                                                        target="_blank"
+                                                                        rel="noreferrer"
+                                                                    >
+                                                                        <ExternalLink className="h-3.5 w-3.5" />
+                                                                        <span className="sr-only">
+                                                                            {t("dashboard.releaseNotes.viewSource")}
+                                                                        </span>
+                                                                    </a>
+                                                                </Button>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent>
+                                                                {t("dashboard.releaseNotes.viewSource")}
+                                                            </TooltipContent>
+                                                        </Tooltip>
+                                                    ) : null}
+                                                </div>
+                                            </TableCell>
+                                        </TableRow>
                                     )
                                 })
                             )}
@@ -217,57 +299,13 @@ export default function HistoryPage() {
                     </Table>
                 </div>
 
-                <div className="flex flex-shrink-0 items-center justify-between">
-                    <div className="flex-1 text-sm text-muted-foreground">
-                        {t('pagination.totalItems', { count: total })}
-                    </div>
-
-                    <div className="flex items-center space-x-6 lg:space-x-8">
-                        <div className="flex items-center space-x-2">
-                            <p className="text-sm font-medium">{t('pagination.rowsPerPage')}</p>
-                            <Select
-                                value={`${pageSize}`}
-                                onValueChange={handlePageSizeChange}
-                            >
-                                <SelectTrigger className="h-8 w-[70px]">
-                                    <SelectValue placeholder={pageSize} />
-                                </SelectTrigger>
-                                <SelectContent side="top">
-                                    {[10, 15, 20, 30, 40, 50].map((size) => (
-                                        <SelectItem key={size} value={`${size}`}>
-                                            {size}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                        <div className="flex w-auto min-w-[100px] items-center justify-center whitespace-nowrap text-sm font-medium">
-                            {t('pagination.pageOf', { page, total: totalPages || 1 })}
-                        </div>
-
-                        <div className="flex items-center space-x-2">
-                            <Button
-                                variant="outline"
-                                className="h-8 w-8 p-0"
-                                onClick={() => setPage(page - 1)}
-                                disabled={page <= 1}
-                            >
-                                <span className="sr-only">{t('pagination.previousPage')}</span>
-                                <ChevronLeft className="h-4 w-4" />
-                            </Button>
-                            <Button
-                                variant="outline"
-                                className="h-8 w-8 p-0"
-                                onClick={() => setPage(page + 1)}
-                                disabled={page >= totalPages}
-                            >
-                                <span className="sr-only">{t('pagination.nextPage')}</span>
-                                <ChevronRight className="h-4 w-4" />
-                            </Button>
-                        </div>
-                    </div>
-                </div>
+                <DataPagination
+                    page={page}
+                    pageSize={pageSize}
+                    total={total}
+                    onPageChange={setPage}
+                    onPageSizeChange={setPageSize}
+                />
             </div>
 
             <ReleaseNotesModal

@@ -1,51 +1,40 @@
 import { useLatestCurrentReleases, useStats } from "@/hooks/queries"
-import { StatsCards } from "@/components/dashboard/StatsCards"
+import { StatsBreakdown } from "@/components/dashboard/StatsBreakdown"
 import { ReleaseTrendChart } from "@/components/dashboard/ReleaseTrendChart"
 import { RecentReleases } from "@/components/dashboard/RecentReleases"
-import { motion } from "framer-motion"
-
-const container = {
-    hidden: { opacity: 0 },
-    show: {
-        opacity: 1,
-        transition: {
-            staggerChildren: 0.1
-        }
-    }
-}
-
-const item = {
-    hidden: { opacity: 0, y: 20 },
-    show: { opacity: 1, y: 0 }
-}
 
 export default function DashboardPage() {
-    // Use React Query hooks with 60-second cache
-    // When switching back to this page, show cached data directly without loading if cache is fresh
+    // Both queries are cached for 60 seconds, so switching back to the page
+    // renders from cache without a perceptible loading flash.
     const { data: stats, isLoading: statsLoading } = useStats()
     const { data: releases = [], isLoading: releasesLoading } = useLatestCurrentReleases()
 
-    const loading = statsLoading || releasesLoading
+    const statsReady = !statsLoading
+    const releasesReady = !releasesLoading
 
     return (
-        <motion.div
-            variants={container}
-            initial="hidden"
-            animate="show"
-            className="space-y-4 h-full overflow-y-auto pr-1"
-        >
-            <motion.div variants={item}>
-                <StatsCards stats={stats ?? null} loading={loading} />
-            </motion.div>
+        // Dashboard fills the viewport instead of relying on the outer <main>
+        // scrollbar. Inner cards scroll on their own when their content exceeds
+        // the allotted space, so the overall page height stays constant across
+        // browser zoom levels.
+        <div className="flex h-full min-h-0 flex-col gap-4 animate-in fade-in duration-300">
+            {/* Row 1 — release-type + channel breakdown. Allowed to shrink
+                its list content with internal overflow when the viewport is short. */}
+            <section className="min-h-0 flex-[2] basis-0">
+                <StatsBreakdown stats={stats ?? null} loading={!statsReady} />
+            </section>
 
-            <div className="grid gap-4 md:grid-cols-2">
-                <motion.div variants={item}>
-                    <ReleaseTrendChart stats={stats ?? null} loading={loading} />
-                </motion.div>
-                <motion.div variants={item}>
-                    <RecentReleases releases={releases} loading={loading} />
-                </motion.div>
-            </div>
-        </motion.div>
+            {/* Row 2 — main visualisation area.
+                Trend chart and recent-releases list share equal width on xl+
+                screens for a balanced look; they stack on smaller viewports. */}
+            <section className="grid min-h-0 flex-[3] basis-0 gap-4 xl:grid-cols-2">
+                <div className="min-h-0">
+                    <ReleaseTrendChart stats={stats ?? null} loading={!statsReady} />
+                </div>
+                <div className="min-h-0">
+                    <RecentReleases releases={releases} loading={!releasesReady} />
+                </div>
+            </section>
+        </div>
     )
 }

@@ -57,7 +57,12 @@ interface RuntimeConnectionDialogProps {
     open: boolean
     onOpenChange: (open: boolean) => void
     runtimeConnection: RuntimeConnection | null
-    onSuccess: () => void
+    /**
+     * Optional hook invoked after a successful create/update so the caller can
+     * invalidate any cached queries. Prefer invalidating the React Query cache
+     * over refetching manually.
+     */
+    onSuccess?: () => void | Promise<void>
 }
 
 const DEFAULT_VALUES: RuntimeConnectionFormValues = {
@@ -164,7 +169,7 @@ export function RuntimeConnectionDialog({ open, onOpenChange, runtimeConnection,
                 toast.success(t('runtimeConnections.dialog.createSuccess'))
             }
 
-            onSuccess()
+            await onSuccess?.()
             onOpenChange(false)
         } catch (error: unknown) {
             console.error('Failed to save runtime connection', error)
