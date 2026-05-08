@@ -12,8 +12,11 @@ from zoneinfo import ZoneInfo
 
 from ..models import User
 from ..storage.sqlite import (
+    MAX_EXECUTOR_SNAPSHOT_RETENTION_COUNT,
     MAX_RELEASE_HISTORY_RETENTION_COUNT,
+    MIN_EXECUTOR_SNAPSHOT_RETENTION_COUNT,
     MIN_RELEASE_HISTORY_RETENTION_COUNT,
+    SYSTEM_EXECUTOR_SNAPSHOT_RETENTION_COUNT_SETTING_KEY,
     SYSTEM_RELEASE_HISTORY_RETENTION_COUNT_SETTING_KEY,
     SYSTEM_TIMEZONE_SETTING_KEY,
     SYSTEM_LOG_LEVEL_SETTING_KEY,
@@ -131,6 +134,30 @@ def _normalize_setting_value(key: str, value: str) -> str:
         return base_url
 
     if key != SYSTEM_RELEASE_HISTORY_RETENTION_COUNT_SETTING_KEY:
+        if key == SYSTEM_EXECUTOR_SNAPSHOT_RETENTION_COUNT_SETTING_KEY:
+            try:
+                snapshot_retention = int(normalized_value)
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail="执行器快照保留数量必须是整数",
+                )
+
+            if not (
+                MIN_EXECUTOR_SNAPSHOT_RETENTION_COUNT
+                <= snapshot_retention
+                <= MAX_EXECUTOR_SNAPSHOT_RETENTION_COUNT
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"执行器快照保留数量必须在 {MIN_EXECUTOR_SNAPSHOT_RETENTION_COUNT} 到 "
+                        f"{MAX_EXECUTOR_SNAPSHOT_RETENTION_COUNT} 之间"
+                    ),
+                )
+
+            return str(snapshot_retention)
+
         return value
 
     try:

@@ -526,6 +526,10 @@ class ExecutorSnapshot(BaseModel):
     id: int | None = None
     executor_id: int
     snapshot_data: dict[str, Any] = Field(default_factory=dict)
+    trigger: Literal["pre_update", "manual", "pre_rollback"] = "pre_update"
+    image_at_capture: str | None = None
+    executor_run_id: int | None = None
+    unredacted_persisted: bool = False
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
 

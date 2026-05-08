@@ -12,11 +12,14 @@ from db_helpers import (
 def test_dbmate_migrations_are_single_release_baseline():
     migration_files = sorted(dbmate_migrations_dir().glob("*.sql"))
 
-    assert [path.name for path in migration_files] == ["20000101000001_initial_schema.sql"]
+    # The initial baseline plus any feature migrations that ship on top of it.
+    assert migration_files, "expected at least one migration file"
+    assert migration_files[0].name == "20000101000001_initial_schema.sql"
 
-    content = migration_files[0].read_text(encoding="utf-8")
-    assert "-- migrate:up" in content
-    assert "-- migrate:down" in content
+    for path in migration_files:
+        content = path.read_text(encoding="utf-8")
+        assert "-- migrate:up" in content, f"missing migrate:up in {path.name}"
+        assert "-- migrate:down" in content, f"missing migrate:down in {path.name}"
 
 
 def test_apply_dbmate_migrations_builds_full_schema(tmp_path):
@@ -25,7 +28,8 @@ def test_apply_dbmate_migrations_builds_full_schema(tmp_path):
 
     applied_versions = apply_dbmate_migrations(db_path, migrations_dir)
 
-    assert applied_versions == ["20000101000001"]
+    assert applied_versions[0] == "20000101000001"
+    assert sorted(applied_versions) == applied_versions, "migrations must apply in order"
 
     conn = sqlite3.connect(db_path)
     try:
@@ -95,7 +99,8 @@ def test_apply_dbmate_migrations_records_baseline_version(tmp_path):
                 "SELECT version FROM schema_migrations ORDER BY version ASC"
             ).fetchall()
         ]
-        assert versions == ["20000101000001"]
+        assert versions[0] == "20000101000001"
+        assert len(versions) >= 1
     finally:
         conn.close()
 
@@ -103,10 +108,11 @@ def test_apply_dbmate_migrations_records_baseline_version(tmp_path):
 def test_full_rollback_removes_all_migrated_tables_and_versions(tmp_path):
     db_path = tmp_path / "rollback-full.db"
 
-    apply_dbmate_migrations(db_path, dbmate_migrations_dir())
+    applied_versions = apply_dbmate_migrations(db_path, dbmate_migrations_dir())
     rolled_back_versions = rollback_dbmate_migrations(db_path, dbmate_migrations_dir())
 
-    assert rolled_back_versions == ["20000101000001"]
+    # dbmate rolls back in reverse order.
+    assert rolled_back_versions == list(reversed(applied_versions))
 
     conn = sqlite3.connect(db_path)
     try:

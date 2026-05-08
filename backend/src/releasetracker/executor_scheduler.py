@@ -36,6 +36,7 @@ from .notifiers import WebhookNotifier
 from .notifiers.base import NotificationEvent
 from .scheduler_host import SchedulerHost
 from .services.runtime_credentials import materialize_runtime_connection_credentials
+from .services.snapshot_service import InFlightRollbackRegistry, SnapshotService
 from .storage.sqlite import SQLiteStorage
 
 logger = logging.getLogger(__name__)
@@ -315,6 +316,7 @@ class ExecutorScheduler:
         *,
         scheduler_host: SchedulerHost | None = None,
         now_provider: Callable[[], datetime] | None = None,
+        snapshot_service: SnapshotService | None = None,
     ):
         self.storage = storage
         self.scheduler_host = scheduler_host or SchedulerHost()
@@ -331,6 +333,27 @@ class ExecutorScheduler:
         self._desired_state_worker_id = f"executor-scheduler:{id(self)}"
         self._system_timezone = "UTC"
         self._completed_cleanup_segment_keys: set[str] = set()
+        self._snapshot_service = snapshot_service or SnapshotService(storage)
+
+    @property
+    def snapshot_service(self) -> SnapshotService:
+        return self._snapshot_service
+
+    async def _prune_snapshot_history(self, executor_id: int) -> None:
+        """Apply retention pruning after a successful snapshot insert.
+
+        Failures here never abort the run: snapshots exist purely for
+        recovery, and losing a prune pass is fixable on the next run.
+        """
+        try:
+            retention = await self.storage.get_executor_snapshot_retention_count()
+            await self._snapshot_service.prune_after_insert(executor_id, retention)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.warning(
+                "snapshot retention prune failed for executor_id=%s: %s",
+                executor_id,
+                exc,
+            )
 
     def _track_background_task(self, coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
         task = asyncio.create_task(coro)
@@ -1002,12 +1025,16 @@ class ExecutorScheduler:
                     executor_config.target_ref, current_image
                 )
                 await adapter.validate_snapshot(executor_config.target_ref, snapshot_data)
-                await self.storage.save_executor_snapshot(
+                await self.storage.create_executor_snapshot(
                     ExecutorSnapshot(
                         executor_id=executor_config.id,
                         snapshot_data=snapshot_data,
+                        trigger="pre_update",
+                        image_at_capture=current_image,
+                        executor_run_id=run_id,
                     )
                 )
+                await self._prune_snapshot_history(executor_config.id)
                 result = await adapter.update_image(executor_config.target_ref, target_image)
                 if not result.updated:
                     return await self._finalize_run(
@@ -1351,12 +1378,16 @@ class ExecutorScheduler:
         try:
             snapshot_data = await adapter.capture_helm_release_snapshot(executor_config.target_ref)
             await adapter.validate_helm_release_snapshot(executor_config.target_ref, snapshot_data)
-            await self.storage.save_executor_snapshot(
+            await self.storage.create_executor_snapshot(
                 ExecutorSnapshot(
                     executor_id=executor_config.id,
                     snapshot_data=snapshot_data,
+                    trigger="pre_update",
+                    image_at_capture=current_chart_version,
+                    executor_run_id=run_id,
                 )
             )
+            await self._prune_snapshot_history(executor_config.id)
             result = await adapter.upgrade_helm_release(
                 executor_config.target_ref,
                 chart_ref=chart_ref,

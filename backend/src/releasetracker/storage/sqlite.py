@@ -50,16 +50,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 SYSTEM_RELEASE_HISTORY_RETENTION_COUNT_SETTING_KEY = "system.release_history_retention_count"
+SYSTEM_EXECUTOR_SNAPSHOT_RETENTION_COUNT_SETTING_KEY = "system.executor_snapshot_retention_count"
 SYSTEM_TIMEZONE_SETTING_KEY = "system.timezone"
 SYSTEM_LOG_LEVEL_SETTING_KEY = "system.log_level"
 SYSTEM_BASE_URL_SETTING_KEY = "system.base_url"
 DEFAULT_RELEASE_HISTORY_RETENTION_COUNT = 20
+DEFAULT_EXECUTOR_SNAPSHOT_RETENTION_COUNT = 10
 DEFAULT_SYSTEM_TIMEZONE = "UTC"
 DEFAULT_SYSTEM_LOG_LEVEL = "INFO"
 DEFAULT_SYSTEM_BASE_URL = ""
 ALLOWED_SYSTEM_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR"})
 MIN_RELEASE_HISTORY_RETENTION_COUNT = 1
 MAX_RELEASE_HISTORY_RETENTION_COUNT = 1000
+MIN_EXECUTOR_SNAPSHOT_RETENTION_COUNT = 1
+MAX_EXECUTOR_SNAPSHOT_RETENTION_COUNT = 1000
 _DOCKER_DISPLAY_VERSION_RE = re.compile(r"^(\d+)\.(\d+)(?:\.(\d+))?([.\-].*)?$")
 
 
@@ -3909,8 +3913,39 @@ class SQLiteStorage:
     async def save_executor_snapshot(self, snapshot: ExecutorSnapshot) -> None:
         await sqlite_runtime_executors.save_executor_snapshot(self, snapshot)
 
+    async def create_executor_snapshot(self, snapshot: ExecutorSnapshot) -> int:
+        return await sqlite_runtime_executors.create_executor_snapshot(self, snapshot)
+
     async def get_executor_snapshot(self, executor_id: int) -> ExecutorSnapshot | None:
         return await sqlite_runtime_executors.get_executor_snapshot(self, executor_id)
+
+    async def list_executor_snapshots(
+        self,
+        executor_id: int,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[ExecutorSnapshot]:
+        return await sqlite_runtime_executors.list_executor_snapshots(
+            self, executor_id, limit=limit, offset=offset
+        )
+
+    async def count_executor_snapshots(self, executor_id: int) -> int:
+        return await sqlite_runtime_executors.count_executor_snapshots(self, executor_id)
+
+    async def get_executor_snapshot_by_id(
+        self, executor_id: int, snapshot_id: int
+    ) -> ExecutorSnapshot | None:
+        return await sqlite_runtime_executors.get_executor_snapshot_by_id(
+            self, executor_id, snapshot_id
+        )
+
+    async def delete_executor_snapshots(
+        self, executor_id: int, ids: list[int]
+    ) -> int:
+        return await sqlite_runtime_executors.delete_executor_snapshots(
+            self, executor_id, ids
+        )
 
     async def upsert_executor_desired_state(
         self,
@@ -4270,6 +4305,23 @@ class SQLiteStorage:
             or count > MAX_RELEASE_HISTORY_RETENTION_COUNT
         ):
             return DEFAULT_RELEASE_HISTORY_RETENTION_COUNT
+        return count
+
+    async def get_executor_snapshot_retention_count(self) -> int:
+        value = await self.get_setting(SYSTEM_EXECUTOR_SNAPSHOT_RETENTION_COUNT_SETTING_KEY)
+        try:
+            count = (
+                int(str(value).strip())
+                if value is not None
+                else DEFAULT_EXECUTOR_SNAPSHOT_RETENTION_COUNT
+            )
+        except (TypeError, ValueError):
+            return DEFAULT_EXECUTOR_SNAPSHOT_RETENTION_COUNT
+        if (
+            count < MIN_EXECUTOR_SNAPSHOT_RETENTION_COUNT
+            or count > MAX_EXECUTOR_SNAPSHOT_RETENTION_COUNT
+        ):
+            return DEFAULT_EXECUTOR_SNAPSHOT_RETENTION_COUNT
         return count
 
     async def get_system_timezone(self) -> str:

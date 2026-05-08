@@ -136,7 +136,7 @@ CREATE TABLE executors (
     maintenance_window TEXT,
     description TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL, image_selection_mode TEXT NOT NULL DEFAULT 'replace_tag_on_current_image', channel_name TEXT, tracker_source_id INTEGER, image_reference_mode TEXT NOT NULL DEFAULT 'digest',
+    updated_at TEXT NOT NULL, image_selection_mode TEXT NOT NULL DEFAULT 'replace_tag_on_current_image', channel_name TEXT, tracker_source_id INTEGER, image_reference_mode TEXT NOT NULL DEFAULT 'digest', health_check TEXT NOT NULL DEFAULT '{"strategy":"none","use_default_strategy":false,"failure_policy":"mark_failed","grace_period_seconds":0,"attempt_timeout_seconds":0,"interval_seconds":0,"probe_window_seconds":0,"services":null,"http":null,"tcp":null}',
     FOREIGN KEY (runtime_connection_id) REFERENCES runtime_connections(id) ON DELETE CASCADE
 );
 CREATE TABLE executor_status (
@@ -165,15 +165,6 @@ CREATE INDEX idx_executors_runtime_connection_id ON executors(runtime_connection
 CREATE INDEX idx_executors_tracker_name ON executors(tracker_name);
 CREATE INDEX idx_executor_status_executor_id ON executor_status(executor_id);
 CREATE INDEX idx_executor_run_history_executor_id ON executor_run_history(executor_id);
-CREATE TABLE executor_snapshots (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    executor_id INTEGER NOT NULL UNIQUE,
-    snapshot_data TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY (executor_id) REFERENCES executors(id) ON DELETE CASCADE
-);
-CREATE INDEX idx_executor_snapshots_executor_id ON executor_snapshots(executor_id);
 CREATE TABLE aggregate_trackers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
@@ -421,6 +412,28 @@ CREATE UNIQUE INDEX idx_tracker_release_history_immutable_key
     ON tracker_release_history(aggregate_tracker_id, immutable_key);
 CREATE UNIQUE INDEX idx_tracker_current_releases_immutable_key
     ON tracker_current_releases(aggregate_tracker_id, immutable_key);
+CREATE TABLE IF NOT EXISTS "executor_snapshots" (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    executor_id INTEGER NOT NULL,
+    snapshot_data TEXT NOT NULL DEFAULT '{}',
+    trigger TEXT NOT NULL DEFAULT 'pre_update'
+        CHECK (trigger IN ('pre_update', 'manual', 'pre_rollback')),
+    image_at_capture TEXT,
+    executor_run_id INTEGER,
+    unredacted_persisted INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (executor_id) REFERENCES executors(id) ON DELETE CASCADE,
+    FOREIGN KEY (executor_run_id) REFERENCES executor_run_history(id) ON DELETE SET NULL
+);
+CREATE INDEX idx_executor_snapshots_executor_id
+    ON executor_snapshots(executor_id);
+CREATE INDEX idx_executor_snapshots_executor_created
+    ON executor_snapshots(executor_id, created_at DESC);
+CREATE INDEX idx_executor_snapshots_executor_run_id
+    ON executor_snapshots(executor_run_id);
 -- Dbmate schema migrations
 INSERT INTO "schema_migrations" (version) VALUES
-  ('20000101000001');
+  ('20000101000001'),
+  ('20260508152003'),
+  ('20260508153215');

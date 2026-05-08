@@ -290,7 +290,7 @@ async def test_executor_persistence_keeps_tracker_and_release_tables_untouched(s
 
 
 @pytest.mark.asyncio
-async def test_executor_snapshot_save_overwrites_latest_snapshot_for_same_executor(storage):
+async def test_executor_snapshot_save_appends_history_row_for_same_executor(storage):
     runtime_id = await _create_runtime_connection(storage, name="prod-snapshot")
     tracker_source_id = await _create_tracker_source_id(storage)
     executor_id = await storage.save_executor_config(
@@ -339,8 +339,10 @@ async def test_executor_snapshot_save_overwrites_latest_snapshot_for_same_execut
         "target": {"container_id": "container-snapshot"},
         "runtime": {"type": "docker", "region": "prod"},
     }
-    assert latest_snapshot.created_at == first_snapshot.created_at
-    assert latest_snapshot.updated_at >= first_snapshot.updated_at
+    # Multi-row history: the latest snapshot is a distinct newer row, so the
+    # returned record is not the first capture.
+    assert latest_snapshot.id != first_snapshot.id
+    assert latest_snapshot.created_at >= first_snapshot.created_at
 
     async with aiosqlite.connect(storage.db_path) as db:
         cursor = await db.execute(
@@ -348,8 +350,9 @@ async def test_executor_snapshot_save_overwrites_latest_snapshot_for_same_execut
         )
         row = await cursor.fetchone()
 
+    # Both snapshot captures are preserved as history rows.
     assert row is not None
-    assert row[0] == 1
+    assert row[0] == 2
 
 
 @pytest.mark.asyncio

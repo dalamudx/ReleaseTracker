@@ -421,10 +421,23 @@ def _row_to_executor_run_history(storage: "SQLiteStorage", row: Any) -> Executor
 
 
 def _row_to_executor_snapshot(storage: "SQLiteStorage", row: Any) -> ExecutorSnapshot:
+    # Defensive column lookups handle fixtures produced before the
+    # multi-row history migration where the extra columns may be absent.
+    row_keys = set(row.keys())
+    trigger = row["trigger"] if "trigger" in row_keys else "pre_update"
+    image_at_capture = row["image_at_capture"] if "image_at_capture" in row_keys else None
+    executor_run_id = row["executor_run_id"] if "executor_run_id" in row_keys else None
+    unredacted_persisted = (
+        bool(row["unredacted_persisted"]) if "unredacted_persisted" in row_keys else False
+    )
     return ExecutorSnapshot(
         id=row["id"],
         executor_id=row["executor_id"],
         snapshot_data=storage._load_json(row["snapshot_data"]),
+        trigger=trigger,
+        image_at_capture=image_at_capture,
+        executor_run_id=executor_run_id,
+        unredacted_persisted=unredacted_persisted,
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
@@ -925,7 +938,15 @@ async def prune_old_executor_runs(storage: "SQLiteStorage", days: int = 90) -> i
     return deleted
 
 
-async def save_executor_snapshot(storage: "SQLiteStorage", snapshot: ExecutorSnapshot) -> None:
+async def create_executor_snapshot(
+    storage: "SQLiteStorage", snapshot: ExecutorSnapshot
+) -> int:
+    """Insert a new snapshot row as part of the multi-row history.
+
+    Returns the new snapshot id. Never overwrites an existing row;
+    callers relying on the old single-row semantics should use
+    ``get_executor_snapshot`` which still returns the most recent row.
+    """
     created_at = (
         snapshot.created_at.isoformat() if snapshot.created_at else datetime.now().isoformat()
     )
@@ -934,35 +955,128 @@ async def save_executor_snapshot(storage: "SQLiteStorage", snapshot: ExecutorSna
     )
 
     db = await storage._get_connection()
-    await db.execute(
+    cursor = await db.execute(
         """
         INSERT INTO executor_snapshots
-        (executor_id, snapshot_data, created_at, updated_at)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(executor_id) DO UPDATE SET
-            snapshot_data = excluded.snapshot_data,
-            updated_at = excluded.updated_at
+        (executor_id, snapshot_data, trigger, image_at_capture,
+         executor_run_id, unredacted_persisted, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             snapshot.executor_id,
             storage._dump_json(snapshot.snapshot_data),
+            snapshot.trigger,
+            snapshot.image_at_capture,
+            snapshot.executor_run_id,
+            1 if snapshot.unredacted_persisted else 0,
             created_at,
             updated_at,
         ),
     )
     await db.commit()
+    snapshot_id = cursor.lastrowid
+    if snapshot_id is None:
+        raise ValueError("Failed to create executor snapshot")
+    return snapshot_id
+
+
+async def save_executor_snapshot(storage: "SQLiteStorage", snapshot: ExecutorSnapshot) -> None:
+    """Backwards-compatible shim that delegates to ``create_executor_snapshot``.
+
+    The pre-feature API always overwrote the single row per executor; callers
+    that still use this name now insert a fresh history entry instead. Update
+    call sites to ``create_executor_snapshot`` when they need the new id back.
+    """
+    await create_executor_snapshot(storage, snapshot)
 
 
 async def get_executor_snapshot(
     storage: "SQLiteStorage", executor_id: int
 ) -> ExecutorSnapshot | None:
+    """Return the most-recent snapshot for an executor (history head)."""
     db = await storage._get_connection()
     db.row_factory = aiosqlite.Row
     cursor = await db.execute(
-        "SELECT * FROM executor_snapshots WHERE executor_id = ?", (executor_id,)
+        """
+        SELECT * FROM executor_snapshots
+        WHERE executor_id = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (executor_id,),
     )
     row = await cursor.fetchone()
     return _row_to_executor_snapshot(storage, row) if row else None
+
+
+async def list_executor_snapshots(
+    storage: "SQLiteStorage",
+    executor_id: int,
+    *,
+    limit: int = 20,
+    offset: int = 0,
+) -> list[ExecutorSnapshot]:
+    """Return a page of the executor's snapshot history, newest first."""
+    db = await storage._get_connection()
+    db.row_factory = aiosqlite.Row
+    cursor = await db.execute(
+        """
+        SELECT * FROM executor_snapshots
+        WHERE executor_id = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT ? OFFSET ?
+        """,
+        (executor_id, limit, offset),
+    )
+    rows = await cursor.fetchall()
+    return [_row_to_executor_snapshot(storage, row) for row in rows]
+
+
+async def count_executor_snapshots(storage: "SQLiteStorage", executor_id: int) -> int:
+    db = await storage._get_connection()
+    cursor = await db.execute(
+        "SELECT COUNT(*) FROM executor_snapshots WHERE executor_id = ?",
+        (executor_id,),
+    )
+    row = await cursor.fetchone()
+    return row[0] if row else 0
+
+
+async def get_executor_snapshot_by_id(
+    storage: "SQLiteStorage", executor_id: int, snapshot_id: int
+) -> ExecutorSnapshot | None:
+    """Return a snapshot by id, scoped to an executor.
+
+    Returns None when the snapshot does not exist OR belongs to a different
+    executor. Callers should treat both cases as 404.
+    """
+    db = await storage._get_connection()
+    db.row_factory = aiosqlite.Row
+    cursor = await db.execute(
+        "SELECT * FROM executor_snapshots WHERE id = ? AND executor_id = ?",
+        (snapshot_id, executor_id),
+    )
+    row = await cursor.fetchone()
+    return _row_to_executor_snapshot(storage, row) if row else None
+
+
+async def delete_executor_snapshots(
+    storage: "SQLiteStorage", executor_id: int, ids: list[int]
+) -> int:
+    """Delete snapshots with the given ids belonging to ``executor_id``.
+
+    Returns the number of rows deleted. A no-op when ``ids`` is empty.
+    """
+    if not ids:
+        return 0
+    db = await storage._get_connection()
+    placeholders = ",".join("?" for _ in ids)
+    result = await db.execute(
+        f"DELETE FROM executor_snapshots WHERE executor_id = ? AND id IN ({placeholders})",
+        (executor_id, *ids),
+    )
+    await db.commit()
+    return result.rowcount or 0
 
 
 async def upsert_executor_desired_state(
