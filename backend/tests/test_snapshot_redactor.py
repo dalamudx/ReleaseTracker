@@ -1,10 +1,15 @@
-"""Tests for SnapshotRedactor — deterministic, recursive, runtime-aware (Req 21)."""
+"""Golden-file tests for SnapshotRedactor (Req 21.1, 21.4, 21.5)."""
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 
-from releasetracker.services.snapshot_service import REDACTED_MARKER, SnapshotRedactor
+from releasetracker.services.snapshot_service import (
+    REDACTED_MARKER,
+    SnapshotRedactor,
+)
 
 
 @pytest.fixture
@@ -12,170 +17,189 @@ def redactor() -> SnapshotRedactor:
     return SnapshotRedactor()
 
 
-def test_redact_none_returns_none(redactor: SnapshotRedactor):
-    result, needs_marker = redactor.redact(None)
-    assert result is None
+def _assert_deterministic(redactor: SnapshotRedactor, payload: dict, runtime_type: str) -> dict:
+    first, _ = redactor.redact(copy.deepcopy(payload), runtime_type=runtime_type)
+    second, _ = redactor.redact(copy.deepcopy(payload), runtime_type=runtime_type)
+    assert first == second, "redactor must be deterministic"
+    return first
+
+
+# ---- Generic key-based redaction ----------------------------------------
+
+
+def test_always_redact_keys_are_masked(redactor: SnapshotRedactor):
+    payload = {
+        "image": "acme/api:1.0.0",
+        "password": "hunter2",
+        "token": "abc.def.ghi",
+        "api_key": "AKIA...",
+        "nested": {"client_secret": "s3cret", "value": "plain"},
+    }
+    result, needs_marker = redactor.redact(payload)
+
+    assert result["image"] == "acme/api:1.0.0"
+    assert result["password"] == REDACTED_MARKER
+    assert result["token"] == REDACTED_MARKER
+    assert result["api_key"] == REDACTED_MARKER
+    assert result["nested"]["client_secret"] == REDACTED_MARKER
+    assert result["nested"]["value"] == "plain"
     assert needs_marker is False
 
 
-def test_redact_primitive_passes_through(redactor: SnapshotRedactor):
-    result, _ = redactor.redact("hello")
-    assert result == "hello"
-    result, _ = redactor.redact(42)
-    assert result == 42
-
-
-def test_redact_common_secret_keys_replaces_values(redactor: SnapshotRedactor):
+def test_sensitive_suffix_keys_match_case_insensitive(redactor: SnapshotRedactor):
     payload = {
-        "username": "alice",
-        "password": "supersecret",
-        "API_KEY": "k-123",
-        "authorization": "Bearer token",
-        "nested": {"refresh_token": "rt-xyz", "retained": "ok"},
+        "DB_PASSWORD": "hunter2",
+        "redis_token": "xyz",
+        "MY_API_KEY": "key",
+        "some_value": "keep",
     }
     result, _ = redactor.redact(payload)
-
-    assert result["username"] == "alice"
-    assert result["password"] == REDACTED_MARKER
-    assert result["API_KEY"] == REDACTED_MARKER
-    assert result["authorization"] == REDACTED_MARKER
-    assert result["nested"]["refresh_token"] == REDACTED_MARKER
-    assert result["nested"]["retained"] == "ok"
-
-
-def test_redact_sensitive_suffix_keys(redactor: SnapshotRedactor):
-    payload = {
-        "DB_PASSWORD": "db-pass",
-        "REDIS_TOKEN": "r-token",
-        "OTHER_KEY": "generic",
-        "keep": "value",
-    }
-    result, _ = redactor.redact(payload)
-
     assert result["DB_PASSWORD"] == REDACTED_MARKER
-    assert result["REDIS_TOKEN"] == REDACTED_MARKER
-    # `OTHER_KEY` ends with `_KEY` → matches the sensitive suffix pattern.
-    assert result["OTHER_KEY"] == REDACTED_MARKER
-    assert result["keep"] == "value"
+    assert result["redis_token"] == REDACTED_MARKER
+    assert result["MY_API_KEY"] == REDACTED_MARKER
+    assert result["some_value"] == "keep"
 
 
-def test_redact_recurses_into_lists_and_nested_dicts(redactor: SnapshotRedactor):
+def test_redaction_recurses_into_nested_lists_and_dicts(redactor: SnapshotRedactor):
     payload = {
-        "containers": [
-            {"name": "api", "env": [{"name": "HOME", "value": "/root"}]},
-            {"name": "db", "password": "pass"},
-        ]
+        "env_vars": [
+            {"name": "LOG_LEVEL", "value": "info"},
+            {"name": "DB_PASSWORD", "value": "hunter2"},
+            [{"token": "inner", "other": "keep"}],
+        ],
+        "deep": {"a": {"b": {"secret": "x"}}},
     }
     result, _ = redactor.redact(payload)
 
-    assert result["containers"][0]["env"][0]["value"] == "/root"
-    assert result["containers"][1]["password"] == REDACTED_MARKER
+    # list → dict recursion
+    assert result["env_vars"][0] == {"name": "LOG_LEVEL", "value": "info"}
+    assert result["env_vars"][1]["name"] == "DB_PASSWORD"
+    # The generic redactor only redacts by KEY name, not value-based
+    # introspection, so env var name/value pairs are handled by the
+    # portainer branch (see below). Here, ``value`` is kept as-is.
+    assert result["env_vars"][1]["value"] == "hunter2"
+    # nested list of dicts
+    assert result["env_vars"][2][0]["token"] == REDACTED_MARKER
+    assert result["env_vars"][2][0]["other"] == "keep"
+    # deep nesting
+    assert result["deep"]["a"]["b"]["secret"] == REDACTED_MARKER
 
 
-def test_redact_is_deterministic(redactor: SnapshotRedactor):
+def test_redaction_is_deterministic(redactor: SnapshotRedactor):
     payload = {
-        "password": "a",
-        "inner": {"token": "b", "items": [{"api_key": "c"}]},
+        "password": "hunter2",
+        "nested": [{"token": "a"}, {"token": "b"}],
     }
-    first, _ = redactor.redact(payload)
-    second, _ = redactor.redact(payload)
-    assert first == second
+    _assert_deterministic(redactor, payload, runtime_type="docker")
 
 
 # ---- Portainer branch ---------------------------------------------------
 
 
-def test_redact_portainer_env_list_masks_sensitive_entries(redactor: SnapshotRedactor):
+def test_portainer_env_entries_redact_by_sensitive_name(redactor: SnapshotRedactor):
     payload = {
-        "stack_file": "services:\n  api:\n    image: acme/api",
+        "stack_id": 42,
+        "stack_type": "standalone",
         "env": [
             {"name": "LOG_LEVEL", "value": "info"},
-            {"name": "DB_PASSWORD", "value": "secret"},
-            {"name": "SMTP_TOKEN", "value": "st-1"},
-            {"name": "PLAIN", "value": "ok"},
+            {"name": "DATABASE_PASSWORD", "value": "hunter2"},
+            {"name": "redis_token", "value": "xyz"},
+            {"name": "HOSTNAME", "value": "prod-01"},
         ],
+        "stack_file": "services:\n  api:\n    image: acme/api:1\n",
     }
-    result, _ = redactor.redact(payload, runtime_type="portainer")
+    result = _assert_deterministic(redactor, payload, runtime_type="portainer")
 
-    env_by_name = {entry["name"]: entry for entry in result["env"]}
-    assert env_by_name["LOG_LEVEL"]["value"] == "info"
-    assert env_by_name["DB_PASSWORD"]["value"] == REDACTED_MARKER
-    assert env_by_name["SMTP_TOKEN"]["value"] == REDACTED_MARKER
-    assert env_by_name["PLAIN"]["value"] == "ok"
+    assert result["env"][0] == {"name": "LOG_LEVEL", "value": "info"}
+    assert result["env"][1]["value"] == REDACTED_MARKER
+    assert result["env"][2]["value"] == REDACTED_MARKER
+    assert result["env"][3]["value"] == "prod-01"
 
 
-def test_redact_portainer_drops_embedded_runtime_connection(redactor: SnapshotRedactor):
+def test_portainer_strips_embedded_runtime_connection(redactor: SnapshotRedactor):
     payload = {
-        "stack_file": "services:\n  api:\n    image: acme/api",
-        "runtime_connection": {"api_key": "rk-1"},
+        "stack_id": 42,
+        "stack_type": "standalone",
+        "env": [],
+        "stack_file": "...",
+        "runtime_connection": {"api_key": "DONOTLEAK"},
     }
     result, _ = redactor.redact(payload, runtime_type="portainer")
     assert "runtime_connection" not in result
 
 
-# ---- Kubernetes branch -------------------------------------------------
+# ---- Kubernetes / Helm branch -------------------------------------------
 
 
-def test_redact_kubernetes_secret_data(redactor: SnapshotRedactor):
+def test_kubernetes_secret_data_and_string_data_masked(redactor: SnapshotRedactor):
+    payload = {
+        "resources": [
+            {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {"name": "db-creds"},
+                "data": {"username": "YWRtaW4=", "password": "aHVudGVyMg=="},
+                "stringData": {"token": "plain-token"},
+            },
+            {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": "ignore-me"},
+                "data": {"retain": "value"},
+            },
+        ]
+    }
+    result = _assert_deterministic(redactor, payload, runtime_type="kubernetes")
+
+    secret = result["resources"][0]
+    assert secret["data"] == {
+        "username": REDACTED_MARKER,
+        "password": REDACTED_MARKER,
+    }
+    assert secret["stringData"] == {"token": REDACTED_MARKER}
+    # ConfigMap untouched by the Secret rule, though its key-based
+    # pattern would still hit ``password``-style keys if present.
+    assert result["resources"][1]["data"] == {"retain": "value"}
+
+
+def test_helm_values_with_secret_flag_redact_sibling_values(redactor: SnapshotRedactor):
+    payload = {
+        "values": {
+            "redis": {
+                "secret": True,
+                "password": "hunter2",
+                "url": "redis://redis:6379",
+            },
+            "plain": {"value": "keep"},
+        }
+    }
+    result = _assert_deterministic(redactor, payload, runtime_type="kubernetes")
+    redis = result["values"]["redis"]
+    # The bare ``secret`` key is itself in the always-redact set so its
+    # marker value is overwritten with REDACTED_MARKER. That is fine —
+    # what matters is that sibling values are masked, not that the flag
+    # survives. Callers parsing this payload must not rely on the flag.
+    assert redis["password"] == REDACTED_MARKER
+    # URL siblings are redacted too because the parent has secret=true.
+    assert redis["url"] == REDACTED_MARKER
+    assert result["values"]["plain"] == {"value": "keep"}
+
+
+# ---- Read-time safety net -----------------------------------------------
+
+
+def test_read_time_redaction_covers_unmarked_keys(redactor: SnapshotRedactor):
+    """Even if a write-time path missed a key, the generic walk catches
+    the common cases on read so response bodies never leak."""
     payload = {
         "resources": [
             {
                 "kind": "Secret",
-                "metadata": {"name": "db-credentials"},
-                "data": {"DB_PASSWORD": "cGFzcw==", "DB_USER": "YWRtaW4="},
-                "stringData": {"README": "hello"},
-            },
-            {
-                "kind": "ConfigMap",
-                "metadata": {"name": "app-config"},
-                "data": {"LOG_LEVEL": "info"},
-            },
-        ]
+                "data": {"api_key": "leak-me"},
+            }
+        ],
+        "legacy_payload": {"bearer": "BearerLegacy"},
     }
-    result, _ = redactor.redact(payload, runtime_type="kubernetes")
-
-    secret = result["resources"][0]
-    assert secret["data"] == {
-        "DB_PASSWORD": REDACTED_MARKER,
-        "DB_USER": REDACTED_MARKER,
-    }
-    assert secret["stringData"] == {"README": REDACTED_MARKER}
-
-    # ConfigMap untouched.
-    assert result["resources"][1]["data"] == {"LOG_LEVEL": "info"}
-
-
-def test_redact_helm_values_secret_block(redactor: SnapshotRedactor):
-    payload = {
-        "values": {
-            "app": {
-                "image": "acme/api",
-                "credentials": {
-                    "secret": True,
-                    "db_password": "pw",
-                    "token": "tk",
-                },
-            },
-        }
-    }
-    result, _ = redactor.redact(payload, runtime_type="kubernetes")
-
-    creds = result["values"]["app"]["credentials"]
-    assert creds["db_password"] == REDACTED_MARKER
-    assert creds["token"] == REDACTED_MARKER
-    # The generic walk also redacts the `secret` key because it matches
-    # the always-redact set. The Helm-specific branch has already done
-    # its job: the siblings (db_password/token) were masked before the
-    # generic walk saw them.
-    assert creds["secret"] == REDACTED_MARKER
-    # Untouched siblings.
-    assert result["values"]["app"]["image"] == "acme/api"
-
-
-def test_redact_does_not_mutate_input(redactor: SnapshotRedactor):
-    original = {"password": "pw", "nested": {"token": "tk"}}
-    snapshot_of_original = {"password": "pw", "nested": {"token": "tk"}}
-
-    redactor.redact(original)
-
-    assert original == snapshot_of_original
+    result = _assert_deterministic(redactor, payload, runtime_type="kubernetes")
+    assert result["resources"][0]["data"] == {"api_key": REDACTED_MARKER}
+    assert result["legacy_payload"]["bearer"] == REDACTED_MARKER

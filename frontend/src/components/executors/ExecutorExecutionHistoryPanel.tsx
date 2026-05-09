@@ -72,6 +72,27 @@ const STATUS_ICON_MAP: Record<StatusKey, React.ReactNode> = {
     skipped: <CircleSlash className="h-3 w-3" />,
 }
 
+// Recovery Hook outcome badge (Phase D/E, Req 10.* / 20.3).
+type RecoveryOutcomeKey =
+    | "succeeded"
+    | "failed"
+    | "not_supported"
+    | "no_snapshot"
+    | "invalid_snapshot"
+    | "timeout"
+
+const RECOVERY_OUTCOME_VARIANT_MAP: Record<
+    RecoveryOutcomeKey,
+    "default" | "destructive" | "secondary" | "outline"
+> = {
+    succeeded: "default",
+    failed: "destructive",
+    timeout: "destructive",
+    invalid_snapshot: "destructive",
+    not_supported: "outline",
+    no_snapshot: "outline",
+}
+
 interface ImageChangeRow {
     key: string
     service: string | null
@@ -438,6 +459,22 @@ export function ExecutorExecutionHistoryPanel({ executor, refreshKey }: Executor
                                                     {STATUS_ICON_MAP[status]}
                                                     {t(`executors.results.${status}`)}
                                                 </Badge>
+                                                {typeof entry.diagnostics?.recovery_outcome === "string" ? (
+                                                    <Badge
+                                                        variant={
+                                                            RECOVERY_OUTCOME_VARIANT_MAP[
+                                                                entry.diagnostics.recovery_outcome as RecoveryOutcomeKey
+                                                            ] ?? "outline"
+                                                        }
+                                                        className="h-5 shrink-0 gap-1 text-[10px]"
+                                                        data-testid="executor-history-recovery-outcome"
+                                                    >
+                                                        {t(
+                                                            `executors.history.recoveryOutcome.${entry.diagnostics.recovery_outcome}`,
+                                                            { defaultValue: entry.diagnostics.recovery_outcome },
+                                                        )}
+                                                    </Badge>
+                                                ) : null}
                                                 <span
                                                     className="truncate text-xs text-muted-foreground tabular-nums"
                                                     title={startedAbsolute}

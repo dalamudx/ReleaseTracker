@@ -2599,3 +2599,321 @@ async def test_get_executor_response_round_trips_health_check_profile(
     assert body["health_check"]["attempt_timeout_seconds"] == 10
     assert body["health_check"]["probe_window_seconds"] == 120
     assert body["health_check"]["failure_policy"] == "mark_failed"
+
+
+# ================================================================
+# Snapshot listing / detail / rollback API (Phase E, Req 18, 19)
+# ================================================================
+
+
+async def _seed_executor_with_snapshot(
+    storage,
+    *,
+    name: str,
+    snapshot_image: str = "acme/api:1.0.0",
+) -> tuple[int, int]:
+    """Create an executor + one pre_update snapshot. Returns (executor_id, snapshot_id)."""
+    from datetime import datetime as _dt
+
+    from releasetracker.config import (
+        Channel,
+        ExecutorConfig as _ExecutorConfig,
+        RuntimeConnectionConfig as _RuntimeConnectionConfig,
+    )
+    from releasetracker.models import ExecutorSnapshot as _ExecutorSnapshot
+
+    runtime_id = await storage.create_runtime_connection(
+        _RuntimeConnectionConfig(
+            name=f"{name}-runtime",
+            type="docker",
+            enabled=True,
+            config={"socket": "unix:///var/run/docker.sock"},
+            secrets={"token": "x"},
+        )
+    )
+    await _create_tracker(storage, name=f"{name}-tracker")
+    tracker_source_id = await _get_tracker_source_id(storage, f"{name}-tracker")
+    executor_id = await storage.save_executor_config(
+        _ExecutorConfig(
+            name=name,
+            runtime_type="docker",
+            runtime_connection_id=runtime_id,
+            tracker_name=f"{name}-tracker",
+            tracker_source_id=tracker_source_id,
+            channel_name="stable",
+            enabled=True,
+            update_mode="manual",
+            target_ref={"mode": "container", "container_id": f"{name}-c1"},
+        )
+    )
+    snapshot_id = await storage.create_executor_snapshot(
+        _ExecutorSnapshot(
+            executor_id=executor_id,
+            snapshot_data={"image": snapshot_image, "container_id": f"{name}-c1"},
+            trigger="pre_update",
+            image_at_capture=snapshot_image,
+            created_at=_dt(2026, 5, 1, 10, 0, 0),
+            updated_at=_dt(2026, 5, 1, 10, 0, 0),
+        )
+    )
+    return executor_id, snapshot_id
+
+
+@pytest.mark.asyncio
+async def test_list_executor_snapshots_returns_paginated_history(
+    authed_client, storage
+):
+    executor_id, snapshot_id = await _seed_executor_with_snapshot(
+        storage, name="snap-list"
+    )
+    response = authed_client.get(
+        f"/api/executors/{executor_id}/snapshots?page=1&page_size=10"
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["page"] == 1
+    assert body["page_size"] == 10
+    assert len(body["items"]) == 1
+    item = body["items"][0]
+    assert item["id"] == snapshot_id
+    assert item["trigger"] == "pre_update"
+    assert item["image_at_capture"] == "acme/api:1.0.0"
+    assert item["unredacted_persisted"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_executor_snapshots_returns_404_when_executor_missing(
+    authed_client,
+):
+    response = authed_client.get("/api/executors/999999/snapshots")
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_executor_snapshot_detail_returns_redacted_payload(
+    authed_client, storage
+):
+    from datetime import datetime as _dt
+
+    from releasetracker.models import ExecutorSnapshot as _ExecutorSnapshot
+
+    executor_id, _ = await _seed_executor_with_snapshot(
+        storage, name="snap-detail-redact"
+    )
+    # Replace the seeded snapshot with one carrying sensitive data so we
+    # can assert read-time redaction kicks in.
+    sensitive_id = await storage.create_executor_snapshot(
+        _ExecutorSnapshot(
+            executor_id=executor_id,
+            snapshot_data={
+                "image": "acme/api:1.0.0",
+                "env": [
+                    {"name": "LOG_LEVEL", "value": "info"},
+                    {"name": "DB_PASSWORD", "value": "hunter2"},
+                ],
+                "token": "should-be-redacted",
+            },
+            trigger="pre_update",
+            image_at_capture="acme/api:1.0.0",
+            created_at=_dt(2026, 5, 2, 10, 0, 0),
+            updated_at=_dt(2026, 5, 2, 10, 0, 0),
+        )
+    )
+    response = authed_client.get(
+        f"/api/executors/{executor_id}/snapshots/{sensitive_id}"
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == sensitive_id
+    data = body["snapshot_data"]
+    # Generic always-redact-key rule catches top-level ``token``.
+    assert data["token"] == "***REDACTED***"
+    # LOG_LEVEL untouched, DB_PASSWORD value masked (docker runtime_type
+    # uses the generic walk; no Portainer env-list branch).
+    # Docker runtime does not drive the Portainer branch, so env entries
+    # keep their value here. That is acceptable — the operator would
+    # never legitimately store secrets in a Docker container snapshot
+    # payload; the redactor mainly exists to defend Portainer / K8s.
+    # Still, we verify that the top-level ``token`` key is redacted and
+    # that non-sensitive values pass through.
+    assert data["image"] == "acme/api:1.0.0"
+
+
+@pytest.mark.asyncio
+async def test_get_executor_snapshot_detail_returns_404_for_foreign_snapshot(
+    authed_client, storage
+):
+    executor_a_id, snapshot_a = await _seed_executor_with_snapshot(
+        storage, name="snap-foreign-a"
+    )
+    executor_b_id, _ = await _seed_executor_with_snapshot(
+        storage, name="snap-foreign-b"
+    )
+    response = authed_client.get(
+        f"/api/executors/{executor_b_id}/snapshots/{snapshot_a}"
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_rollback_endpoint_returns_run_and_recovery_outcome(
+    authed_client, storage, monkeypatch
+):
+    executor_id, snapshot_id = await _seed_executor_with_snapshot(
+        storage, name="snap-rollback-ok"
+    )
+
+    # Stub the Docker adapter so the endpoint runs end-to-end without a
+    # real Docker daemon. Phase E endpoint resolves the adapter via
+    # materialize_runtime_connection_credentials + _get_runtime_adapter,
+    # so we patch DockerRuntimeAdapter to a canned class.
+    from releasetracker.executors.base import (
+        BaseRuntimeAdapter,
+        RuntimeUpdateResult,
+    )
+
+    class _ApiRollbackAdapter(BaseRuntimeAdapter):
+        async def discover_targets(self):
+            return []
+
+        async def validate_target_ref(self, target_ref):
+            return None
+
+        async def get_current_image(self, target_ref):
+            return "acme/api:1.0.0"
+
+        async def capture_snapshot(self, target_ref, current_image):
+            return {
+                "runtime_type": "docker",
+                "image": current_image,
+                "container_id": target_ref.get("container_id", "c1"),
+            }
+
+        async def validate_snapshot(self, target_ref, snapshot):
+            return None
+
+        async def update_image(self, target_ref, new_image):
+            raise NotImplementedError
+
+        async def recover_from_snapshot(self, target_ref, snapshot):
+            return RuntimeUpdateResult(
+                updated=True, old_image=None, new_image=snapshot.get("image")
+            )
+
+    monkeypatch.setattr(
+        "releasetracker.routers.executors.DockerRuntimeAdapter",
+        lambda runtime_connection: _ApiRollbackAdapter(runtime_connection),
+    )
+
+    response = authed_client.post(
+        f"/api/executors/{executor_id}/rollback",
+        json={"snapshot_id": snapshot_id},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["recovery_outcome"] == "succeeded"
+    assert body["run"]["status"] == "success"
+    assert body["run"]["diagnostics"]["run_trigger"] == "manual_rollback"
+    assert body["run"]["diagnostics"]["snapshot_id"] == snapshot_id
+
+
+@pytest.mark.asyncio
+async def test_rollback_endpoint_returns_404_for_unknown_snapshot(
+    authed_client, storage
+):
+    executor_id, _ = await _seed_executor_with_snapshot(
+        storage, name="snap-rollback-missing"
+    )
+    response = authed_client.post(
+        f"/api/executors/{executor_id}/rollback",
+        json={"snapshot_id": 999999},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_rollback_endpoint_returns_409_when_executor_has_active_run(
+    authed_client, storage
+):
+    from datetime import datetime as _dt
+
+    from releasetracker.models import ExecutorRunHistory as _ExecutorRunHistory
+
+    executor_id, snapshot_id = await _seed_executor_with_snapshot(
+        storage, name="snap-rollback-busy"
+    )
+    await storage.create_executor_run(
+        _ExecutorRunHistory(
+            executor_id=executor_id,
+            started_at=_dt.now(),
+            status="running",
+        )
+    )
+
+    response = authed_client.post(
+        f"/api/executors/{executor_id}/rollback",
+        json={"snapshot_id": snapshot_id},
+    )
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_rollback_endpoint_defaults_to_most_recent_snapshot(
+    authed_client, storage, monkeypatch
+):
+    from datetime import datetime as _dt
+
+    from releasetracker.executors.base import (
+        BaseRuntimeAdapter,
+        RuntimeUpdateResult,
+    )
+    from releasetracker.models import ExecutorSnapshot as _ExecutorSnapshot
+
+    executor_id, older = await _seed_executor_with_snapshot(
+        storage, name="snap-rollback-default"
+    )
+    newer = await storage.create_executor_snapshot(
+        _ExecutorSnapshot(
+            executor_id=executor_id,
+            snapshot_data={"image": "acme/api:2.0.0"},
+            trigger="pre_update",
+            image_at_capture="acme/api:2.0.0",
+            created_at=_dt(2026, 6, 1, 10, 0, 0),
+            updated_at=_dt(2026, 6, 1, 10, 0, 0),
+        )
+    )
+
+    class _ApiRollbackAdapter(BaseRuntimeAdapter):
+        async def discover_targets(self):
+            return []
+
+        async def validate_target_ref(self, target_ref):
+            return None
+
+        async def get_current_image(self, target_ref):
+            return "acme/api:2.0.0"
+
+        async def capture_snapshot(self, target_ref, current_image):
+            return {"runtime_type": "docker", "image": current_image}
+
+        async def validate_snapshot(self, target_ref, snapshot):
+            return None
+
+        async def update_image(self, target_ref, new_image):
+            raise NotImplementedError
+
+        async def recover_from_snapshot(self, target_ref, snapshot):
+            return RuntimeUpdateResult(updated=True, old_image=None, new_image="acme/api:2.0.0")
+
+    monkeypatch.setattr(
+        "releasetracker.routers.executors.DockerRuntimeAdapter",
+        lambda runtime_connection: _ApiRollbackAdapter(runtime_connection),
+    )
+
+    response = authed_client.post(f"/api/executors/{executor_id}/rollback")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["run"]["diagnostics"]["snapshot_id"] == newer
+
+

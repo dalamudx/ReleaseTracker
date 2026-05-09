@@ -8,6 +8,7 @@ import type { ExecutorListItem, RuntimeConnection, TrackerStatus } from "@/api/t
 import { ExecutorExecutionHistoryPanel } from "@/components/executors/ExecutorExecutionHistoryPanel"
 import { ExecutorList } from "@/components/executors/ExecutorList"
 import { ExecutorSheet } from "@/components/executors/ExecutorSheet"
+import { ExecutorSnapshotsPanel } from "@/components/executors/ExecutorSnapshotsPanel"
 import { Button } from "@/components/ui/button"
 import {
     InputGroup,
@@ -22,6 +23,7 @@ import {
     SheetHeader,
     SheetTitle,
 } from "@/components/ui/sheet"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
     AlertDialog,
     AlertDialogAction,
@@ -392,15 +394,34 @@ export default function ExecutorsPage() {
             >
                 <SheetContent side="right" className="flex w-full flex-col border-l sm:max-w-4xl">
                     <SheetHeader className="border-b border-border/60 pb-4">
-                        <SheetTitle>{t('executors.history.title')}</SheetTitle>
+                        <SheetTitle>{selectedExecutor?.name ?? t('executors.history.title')}</SheetTitle>
                         <SheetDescription>
                             {selectedExecutor ? t('executors.history.description') : t('executors.history.emptySelection')}
                         </SheetDescription>
                     </SheetHeader>
 
-                    <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
-                        <ExecutorExecutionHistoryPanel executor={selectedExecutor} refreshKey={executionHistoryRefreshKey} />
-                    </div>
+                    <Tabs defaultValue="history" className="flex min-h-0 flex-1 flex-col px-4 pt-3 sm:px-6">
+                        <TabsList className="shrink-0 self-start">
+                            <TabsTrigger value="history">{t('executors.history.title')}</TabsTrigger>
+                            <TabsTrigger value="snapshots">{t('executors.snapshots.tab')}</TabsTrigger>
+                        </TabsList>
+                        <TabsContent
+                            value="history"
+                            className="mt-3 min-h-0 flex-1 overflow-y-auto pb-4 data-[state=inactive]:hidden"
+                        >
+                            <ExecutorExecutionHistoryPanel executor={selectedExecutor} refreshKey={executionHistoryRefreshKey} />
+                        </TabsContent>
+                        <TabsContent
+                            value="snapshots"
+                            className="mt-3 min-h-0 flex-1 overflow-hidden pb-4 data-[state=inactive]:hidden"
+                        >
+                            <ExecutorSnapshotsPanel
+                                executor={selectedExecutor}
+                                refreshKey={executionHistoryRefreshKey}
+                                onRollbackQueued={silentlyRefreshExecutors}
+                            />
+                        </TabsContent>
+                    </Tabs>
                 </SheetContent>
             </Sheet>
 

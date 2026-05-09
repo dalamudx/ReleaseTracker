@@ -596,6 +596,12 @@ export interface ExecutorRunDiagnostics {
         group_message: string | null
     }
     services: ExecutorRunServiceDiagnostic[]
+    /** Phase C/D: health check outcome payload attached when a Health Check Phase ran. */
+    health_check?: Record<string, unknown> | null
+    /** Phase D: recovery hook outcome persisted on mark_failed_and_recover runs. */
+    recovery_outcome?: RecoveryOutcome | null
+    /** Phase E: rollback runs carry ``manual_rollback`` here. */
+    run_trigger?: string | null
 }
 
 export interface ExecutorRunHistory {
@@ -627,7 +633,90 @@ export interface ExecutorConfig {
     service_bindings?: ExecutorServiceBinding[]
     maintenance_window?: MaintenanceWindowConfig | null
     description?: string | null
+    health_check?: HealthCheckProfile | null
     invalid_config_error?: string | null
+}
+
+// -----------------------------------------------------------------
+// Health Check Profile (Phase C / D)
+// -----------------------------------------------------------------
+
+export type HealthCheckStrategy = 'none' | 'runtime_native' | 'http' | 'tcp' | 'helm_status'
+
+export type HealthCheckFailurePolicy =
+    | 'mark_failed'
+    | 'mark_failed_and_recover'
+    | 'mark_degraded'
+
+export interface HealthCheckHttpConfig {
+    path: string
+    port?: number | null
+    scheme?: 'http' | 'https'
+    method?: 'GET' | 'HEAD'
+    expected_status_codes?: number[] | null
+    expected_body_regex?: string | null
+    headers?: Record<string, string>
+    tls_skip_verify?: boolean
+}
+
+export interface HealthCheckTcpConfig {
+    port: number
+}
+
+export interface HealthCheckProfile {
+    strategy: HealthCheckStrategy
+    use_default_strategy?: boolean
+    grace_period_seconds: number
+    attempt_timeout_seconds: number
+    interval_seconds: number
+    probe_window_seconds: number
+    failure_policy: HealthCheckFailurePolicy
+    services?: string[] | null
+    http?: HealthCheckHttpConfig | null
+    tcp?: HealthCheckTcpConfig | null
+}
+
+// -----------------------------------------------------------------
+// Snapshot history + rollback (Phase E)
+// -----------------------------------------------------------------
+
+export type SnapshotTrigger = 'pre_update' | 'manual' | 'pre_rollback'
+
+export type RecoveryOutcome =
+    | 'succeeded'
+    | 'failed'
+    | 'not_supported'
+    | 'no_snapshot'
+    | 'invalid_snapshot'
+    | 'timeout'
+
+export interface SnapshotListItem {
+    id: number
+    created_at: string
+    trigger: SnapshotTrigger
+    image_at_capture: string | null
+    executor_run_id: number | null
+    unredacted_persisted: boolean
+}
+
+export interface SnapshotDetail extends SnapshotListItem {
+    snapshot_data: Record<string, unknown>
+}
+
+export interface PaginatedSnapshots {
+    items: SnapshotListItem[]
+    total: number
+    page: number
+    page_size: number
+}
+
+export interface RollbackRequest {
+    snapshot_id?: number | null
+}
+
+export interface RollbackResponse {
+    run: ExecutorRunHistory
+    recovery_outcome: RecoveryOutcome
 }
 
 export interface ExecutorListItem extends ExecutorConfig {

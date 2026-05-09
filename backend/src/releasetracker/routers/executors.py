@@ -19,11 +19,19 @@ from ..executors import (
     PodmanRuntimeAdapter,
     PortainerRuntimeAdapter,
 )
-from ..models import ExecutorStatus
+from ..models import ExecutorStatus, User
+from ..services.rollback_service import RollbackService
 from ..services.runtime_credentials import materialize_runtime_connection_credentials
+from ..services.snapshot_service import SnapshotService
 from ..storage.sqlite import SQLiteStorage
 
+from pydantic import BaseModel
+
 router = APIRouter(prefix="/api/executors", tags=["executors"])
+
+
+class RollbackRequest(BaseModel):
+    snapshot_id: int | None = None
 
 
 def _serialize_executor_config(executor: ExecutorConfig) -> dict[str, Any]:
@@ -673,3 +681,142 @@ async def run_executor(
         raise HTTPException(status_code=500, detail=f"执行失败: {exc}") from exc
 
     return {"status": "queued", "run_id": run_id}
+
+
+# ================================================================
+# Snapshot history + manual rollback endpoints (Phase E, Req 18, 19)
+# ================================================================
+
+
+def _serialize_snapshot_list_item(item) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "created_at": item.created_at.isoformat(),
+        "trigger": item.trigger,
+        "image_at_capture": item.image_at_capture,
+        "executor_run_id": item.executor_run_id,
+        "unredacted_persisted": item.unredacted_persisted,
+    }
+
+
+def _serialize_snapshot_detail(detail) -> dict[str, Any]:
+    payload = _serialize_snapshot_list_item(detail)
+    payload["snapshot_data"] = detail.snapshot_data
+    return payload
+
+
+def _serialize_run_history(run) -> dict[str, Any]:
+    return {
+        "id": run.id,
+        "executor_id": run.executor_id,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        "status": run.status,
+        "from_version": run.from_version,
+        "to_version": run.to_version,
+        "message": run.message,
+        "diagnostics": run.diagnostics,
+    }
+
+
+@router.get(
+    "/{executor_id}/snapshots",
+    dependencies=[Depends(get_current_user)],
+)
+async def list_executor_snapshots(
+    executor_id: int,
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    scheduler: Annotated[ExecutorScheduler, Depends(get_executor_scheduler)],
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """Return a paginated snapshot history for the executor (Req 19.1, 19.2)."""
+    executor = await storage.get_executor_config(executor_id)
+    if not executor:
+        raise HTTPException(status_code=404, detail="执行器不存在")
+
+    view = await scheduler.snapshot_service.list_snapshots(
+        executor_id,
+        page=page,
+        page_size=page_size,
+    )
+    return {
+        "items": [_serialize_snapshot_list_item(item) for item in view.items],
+        "total": view.total,
+        "page": view.page,
+        "page_size": view.page_size,
+    }
+
+
+@router.get(
+    "/{executor_id}/snapshots/{snapshot_id}",
+    dependencies=[Depends(get_current_user)],
+)
+async def get_executor_snapshot_detail(
+    executor_id: int,
+    snapshot_id: int,
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    scheduler: Annotated[ExecutorScheduler, Depends(get_executor_scheduler)],
+):
+    """Return a single snapshot with redacted ``snapshot_data`` (Req 19.3, 19.4)."""
+    executor = await storage.get_executor_config(executor_id)
+    if not executor:
+        raise HTTPException(status_code=404, detail="执行器不存在")
+
+    # Read-time redaction branches by runtime_type so K8s Secrets and
+    # Portainer sensitive env entries are masked on the way out.
+    detail = await scheduler.snapshot_service.get_snapshot(
+        executor_id,
+        snapshot_id,
+        runtime_type=executor.runtime_type,
+    )
+    if detail is None:
+        raise HTTPException(status_code=404, detail="快照不存在")
+    return _serialize_snapshot_detail(detail)
+
+
+@router.post(
+    "/{executor_id}/rollback",
+    dependencies=[Depends(get_current_user)],
+)
+async def rollback_executor(
+    executor_id: int,
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    scheduler: Annotated[ExecutorScheduler, Depends(get_executor_scheduler)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    payload: RollbackRequest | None = None,
+):
+    """Restore the executor to a chosen snapshot (Req 18.*).
+
+    Defaults to the most recent snapshot when ``snapshot_id`` is omitted.
+    Returns 404 when the snapshot does not belong to the executor, 409
+    when the executor already has an active run, and 200 with the
+    finalized run record on success / application-level failure.
+    """
+    executor = await storage.get_executor_config(executor_id)
+    if not executor:
+        raise HTTPException(status_code=404, detail="执行器不存在")
+
+    runtime_connection = await storage.get_runtime_connection(
+        executor.runtime_connection_id
+    )
+    if not runtime_connection:
+        raise HTTPException(status_code=400, detail="运行时连接不存在")
+
+    materialized_runtime = await materialize_runtime_connection_credentials(
+        storage, runtime_connection
+    )
+    adapter = _get_runtime_adapter(materialized_runtime)
+
+    snapshot_id = payload.snapshot_id if payload is not None else None
+    service = RollbackService(storage, scheduler.snapshot_service)
+    outcome = await service.rollback(
+        executor_config=executor,
+        adapter=adapter,
+        snapshot_id=snapshot_id,
+        actor=current_user.username if current_user else None,
+    )
+    return {
+        "run": _serialize_run_history(outcome.run),
+        "recovery_outcome": outcome.recovery_outcome,
+    }

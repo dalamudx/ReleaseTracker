@@ -28,6 +28,10 @@ import type {
     CreateRuntimeConnectionRequest,
     UpdateRuntimeConnectionRequest,
     TokenPair,
+    PaginatedSnapshots,
+    SnapshotDetail,
+    RollbackRequest,
+    RollbackResponse,
     ReleaseHistoryItem,
     LatestCurrentReleaseSummary,
     TrackerCurrentView,
@@ -318,4 +322,12 @@ export const api = {
     updateExecutor: (id: number, data: UpdateExecutorRequest) => apiClient.put(`/api/executors/${id}`, data).then(res => res.data),
     deleteExecutor: (id: number) => apiClient.delete(`/api/executors/${id}`).then(res => res.data),
     runExecutor: (id: number) => apiClient.post<ExecutorRunResponse>(`/api/executors/${id}/run`).then(res => res.data),
+
+    // Snapshot history + rollback (Phase E)
+    getExecutorSnapshots: (id: number, params?: { page?: number, page_size?: number }) =>
+        apiClient.get<PaginatedSnapshots>(`/api/executors/${id}/snapshots`, { params }).then(res => res.data),
+    getExecutorSnapshot: (executorId: number, snapshotId: number) =>
+        apiClient.get<SnapshotDetail>(`/api/executors/${executorId}/snapshots/${snapshotId}`).then(res => res.data),
+    rollbackExecutor: (id: number, payload?: RollbackRequest) =>
+        apiClient.post<RollbackResponse>(`/api/executors/${id}/rollback`, payload ?? {}).then(res => res.data),
 }

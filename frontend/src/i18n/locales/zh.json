@@ -757,6 +757,56 @@
         "fromVersion": "原版本",
         "toVersion": "目标版本",
         "message": "消息"
+      },
+      "recoveryOutcome": {
+        "succeeded": "已恢复",
+        "failed": "恢复失败",
+        "not_supported": "不支持恢复",
+        "no_snapshot": "无可用快照",
+        "invalid_snapshot": "快照无效",
+        "timeout": "恢复超时"
+      }
+    },
+    "snapshots": {
+      "tab": "快照",
+      "title": "快照历史",
+      "description": "查看更新前与回滚前捕获的快照。",
+      "emptySelection": "请选择一个执行器以查看其快照历史。",
+      "noSnapshots": "当前执行器暂无任何快照。",
+      "columns": {
+        "capturedAt": "捕获时间",
+        "trigger": "触发方式",
+        "imageAtCapture": "镜像",
+        "relatedRun": "关联执行"
+      },
+      "trigger": {
+        "pre_update": "更新前",
+        "manual": "手动",
+        "pre_rollback": "回滚前"
+      },
+      "actions": {
+        "rollback": "回滚"
+      },
+      "banners": {
+        "unredacted": "该快照包含无法自动脱敏的字段，分享前请先复核。",
+        "pruning": "已达到保留上限 — 新快照会替换最早的快照。"
+      }
+    },
+    "rollback": {
+      "dialog": {
+        "title": "回滚执行器",
+        "description": "将 {{executor}} 恢复到所选快照。系统会新建一次执行，在回滚前先捕获一份快照，再应用目标快照。",
+        "targetLabel": "目标快照",
+        "currentLabel": "当前镜像",
+        "confirmPrompt": "输入执行器名称以确认",
+        "confirmLabel": "执行回滚",
+        "cancel": "取消"
+      },
+      "toasts": {
+        "success": "回滚已入队",
+        "failed": "回滚失败",
+        "notFound": "快照已不存在",
+        "conflict": "执行器正在运行中，回滚被阻止"
       }
     },
     "sheet": {

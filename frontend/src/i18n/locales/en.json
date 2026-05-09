@@ -756,6 +756,56 @@
                 "fromVersion": "From version",
                 "toVersion": "To version",
                 "message": "Message"
+            },
+            "recoveryOutcome": {
+                "succeeded": "Recovered",
+                "failed": "Recovery failed",
+                "not_supported": "Recovery unsupported",
+                "no_snapshot": "No snapshot",
+                "invalid_snapshot": "Invalid snapshot",
+                "timeout": "Recovery timed out"
+            }
+        },
+        "snapshots": {
+            "tab": "Snapshots",
+            "title": "Snapshot History",
+            "description": "View snapshots captured before updates and rollbacks.",
+            "emptySelection": "Select an executor to view its snapshot history.",
+            "noSnapshots": "No snapshots have been captured for this executor yet.",
+            "columns": {
+                "capturedAt": "Captured",
+                "trigger": "Trigger",
+                "imageAtCapture": "Image",
+                "relatedRun": "Related run"
+            },
+            "trigger": {
+                "pre_update": "Pre-update",
+                "manual": "Manual",
+                "pre_rollback": "Pre-rollback"
+            },
+            "actions": {
+                "rollback": "Rollback"
+            },
+            "banners": {
+                "unredacted": "This snapshot contains fields that could not be redacted automatically; review before sharing.",
+                "pruning": "Retention cap reached — older snapshots are being rotated out as new ones land."
+            }
+        },
+        "rollback": {
+            "dialog": {
+                "title": "Rollback executor",
+                "description": "Restore {{executor}} to the selected snapshot. This will create a new run that captures a pre-rollback snapshot and then applies the target snapshot.",
+                "targetLabel": "Target snapshot",
+                "currentLabel": "Current image",
+                "confirmPrompt": "Type the executor name to confirm",
+                "confirmLabel": "Rollback",
+                "cancel": "Cancel"
+            },
+            "toasts": {
+                "success": "Rollback queued",
+                "failed": "Rollback failed",
+                "notFound": "Snapshot no longer exists",
+                "conflict": "Executor has an active run; rollback blocked"
             }
         },
         "sheet": {
