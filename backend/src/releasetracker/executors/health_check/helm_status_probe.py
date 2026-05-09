@@ -1,4 +1,4 @@
-"""Helm release status health probe (Req 6.*).
+"""Helm release status health probe.
 
 Dispatches ``helm status <release> --namespace <ns> --output json`` via the
 Kubernetes adapter and maps ``info.status`` to probe outcomes. The probe is
@@ -25,7 +25,7 @@ _HELM_STATUS_PENDING = {"pending-install", "pending-upgrade", "pending-rollback"
 _HELM_STATUS_FAILED = {"failed"}
 # Everything else (``superseded``, ``uninstalled``, ``uninstalling``,
 # ``unknown``, and any future status name) is treated as unhealthy but
-# non-terminal so the probe retries (Req 6.6).
+# non-terminal so the probe retries.
 
 
 class HelmStatusProbe(HealthCheckProbe):
@@ -105,7 +105,7 @@ class HelmStatusProbe(HealthCheckProbe):
             )
 
         # Unknown / unmapped status — keep retrying with the status
-        # recorded for diagnostics (Req 6.6).
+        # recorded for diagnostics.
         return ProbeAttemptResult(
             healthy=False,
             error_category="helm_unknown_status",

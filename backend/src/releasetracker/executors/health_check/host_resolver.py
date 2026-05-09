@@ -1,4 +1,4 @@
-"""Host resolution for HTTP / TCP probes (Req 4.5-4.7, 5.3-5.4).
+"""Host resolution for HTTP / TCP probes.
 
 Each adapter owns the specifics of how a target is reachable from the
 adapter's network context. The resolver below is a thin dispatcher that
@@ -6,7 +6,7 @@ asks the adapter to return a list of ``ProbeHost`` entries (one per
 evaluated service) and passes them to HTTP / TCP probes. Adapters that
 do not yet support a given runtime mode raise ``NotImplementedError``;
 the probe surface translates that into ``host_unresolvable`` outcomes
-(Req 4.13) so the runner retries rather than aborting the phase.
+so the runner retries rather than aborting the phase.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ class ProbeHost:
 
     ``service`` is ``None`` for single-target container executors and
     the service name for grouped modes so per-service diagnostics can
-    attribute results correctly (Req 8.3).
+    attribute results correctly.
     """
 
     service: str | None

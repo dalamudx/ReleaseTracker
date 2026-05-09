@@ -77,7 +77,7 @@ class EncryptionKeyRotationResponse(BaseModel):
 def get_storage(request: Request):
     storage = getattr(request.app.state, "storage", None)
     if not storage:
-        raise HTTPException(status_code=503, detail="存储服务未初始化")
+        raise HTTPException(status_code=503, detail="Storage service is not initialized")
     return storage
 
 
@@ -109,13 +109,13 @@ def _normalize_setting_value(key: str, value: str) -> str:
         try:
             ZoneInfo(timezone_value)
         except Exception:
-            raise HTTPException(status_code=400, detail="系统时区必须是有效的 IANA 时区")
+            raise HTTPException(status_code=400, detail="System timezone must be a valid IANA timezone")
         return timezone_value
 
     if key == SYSTEM_LOG_LEVEL_SETTING_KEY:
         log_level = normalized_value.upper()
         if log_level not in ALLOWED_SYSTEM_LOG_LEVELS:
-            raise HTTPException(status_code=400, detail="日志级别必须是 DEBUG、INFO、WARNING 或 ERROR")
+            raise HTTPException(status_code=400, detail="Log level must be DEBUG, INFO, WARNING, or ERROR")
         return log_level
 
     if key == SYSTEM_BASE_URL_SETTING_KEY:
@@ -130,7 +130,7 @@ def _normalize_setting_value(key: str, value: str) -> str:
             or parsed.query
             or parsed.fragment
         ):
-            raise HTTPException(status_code=400, detail="BASE URL 必须是有效的 http(s) 绝对地址")
+            raise HTTPException(status_code=400, detail="BASE URL must be a valid absolute http(s) address")
         return base_url
 
     if key != SYSTEM_RELEASE_HISTORY_RETENTION_COUNT_SETTING_KEY:
@@ -140,7 +140,7 @@ def _normalize_setting_value(key: str, value: str) -> str:
             except (TypeError, ValueError):
                 raise HTTPException(
                     status_code=400,
-                    detail="执行器快照保留数量必须是整数",
+                    detail="executor snapshot retention count must be an integer",
                 )
 
             if not (
@@ -151,8 +151,9 @@ def _normalize_setting_value(key: str, value: str) -> str:
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        f"执行器快照保留数量必须在 {MIN_EXECUTOR_SNAPSHOT_RETENTION_COUNT} 到 "
-                        f"{MAX_EXECUTOR_SNAPSHOT_RETENTION_COUNT} 之间"
+                        "executor snapshot retention count must be between "
+                        f"{MIN_EXECUTOR_SNAPSHOT_RETENTION_COUNT} and "
+                        f"{MAX_EXECUTOR_SNAPSHOT_RETENTION_COUNT}"
                     ),
                 )
 
@@ -163,7 +164,7 @@ def _normalize_setting_value(key: str, value: str) -> str:
     try:
         retention_count = int(normalized_value)
     except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="版本历史保留数量必须是整数")
+        raise HTTPException(status_code=400, detail="Release history retention count must be an integer")
 
     if not (
         MIN_RELEASE_HISTORY_RETENTION_COUNT
@@ -173,8 +174,8 @@ def _normalize_setting_value(key: str, value: str) -> str:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"版本历史保留数量必须在 {MIN_RELEASE_HISTORY_RETENTION_COUNT} 到 "
-                f"{MAX_RELEASE_HISTORY_RETENTION_COUNT} 之间"
+                f"Release history retention count must be between {MIN_RELEASE_HISTORY_RETENTION_COUNT} "
+                f"and {MAX_RELEASE_HISTORY_RETENTION_COUNT}"
             ),
         )
 

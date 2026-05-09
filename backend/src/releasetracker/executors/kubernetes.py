@@ -328,7 +328,7 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
         baseline: dict[str, Any],
         services: list[str] | None = None,
     ):
-        """Kubernetes workload rollout-completion probe (Req 3.5).
+        """Kubernetes workload rollout-completion probe.
 
         Healthy iff:
         - ``status.observedGeneration >= metadata.generation`` recorded at
@@ -337,12 +337,12 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
         - Ready replicas match desired replicas.
 
         ``services`` scopes the probe to a subset of containers for
-        grouped workloads (future use; Phase C keeps the check at the
-        workload level).
+        grouped workloads (future use; the check runs at the workload
+        level only).
         """
         from .health_check.types import ProbeAttemptResult  # noqa: WPS433
 
-        del services  # Phase C evaluates at the workload level only.
+        del services  # Evaluated at the workload level only.
 
         mode = target_ref.get("mode")
         if mode not in {"kubernetes_workload", "helm_release"}:
@@ -353,16 +353,16 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
             )
 
         if mode == "helm_release":
-            # Phase C delegates Helm release readiness to the HelmStatusProbe
-            # via the strategy catalog; the runtime_native strategy is a
-            # thin pass-through that expects the runner to have picked the
+            # Helm release readiness is delegated to HelmStatusProbe via
+            # the strategy catalog; the runtime_native strategy is a thin
+            # pass-through that expects the runner to have picked the
             # right probe. Anything reaching here is a wiring error.
             return ProbeAttemptResult(
                 healthy=False,
                 error_category="runtime_api_error",
                 last_error=(
                     "helm_release runtime_native probing is only available via "
-                    "HelmStatusProbe + workload probes in Phase D"
+                    "HelmStatusProbe + workload probes"
                 ),
             )
 

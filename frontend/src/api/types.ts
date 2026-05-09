@@ -596,11 +596,11 @@ export interface ExecutorRunDiagnostics {
         group_message: string | null
     }
     services: ExecutorRunServiceDiagnostic[]
-    /** Phase C/D: health check outcome payload attached when a Health Check Phase ran. */
+    /** Health check outcome payload attached when a Health Check Phase ran. */
     health_check?: Record<string, unknown> | null
-    /** Phase D: recovery hook outcome persisted on mark_failed_and_recover runs. */
+    /** Recovery hook outcome persisted on mark_failed_and_recover runs. */
     recovery_outcome?: RecoveryOutcome | null
-    /** Phase E: rollback runs carry ``manual_rollback`` here. */
+    /** Rollback runs carry ``manual_rollback`` here. */
     run_trigger?: string | null
 }
 
@@ -638,7 +638,7 @@ export interface ExecutorConfig {
 }
 
 // -----------------------------------------------------------------
-// Health Check Profile (Phase C / D)
+// Health Check Profile
 // -----------------------------------------------------------------
 
 export type HealthCheckStrategy = 'none' | 'runtime_native' | 'http' | 'tcp' | 'helm_status'
@@ -677,7 +677,7 @@ export interface HealthCheckProfile {
 }
 
 // -----------------------------------------------------------------
-// Snapshot history + rollback (Phase E)
+// Snapshot history + rollback
 // -----------------------------------------------------------------
 
 export type SnapshotTrigger = 'pre_update' | 'manual' | 'pre_rollback'

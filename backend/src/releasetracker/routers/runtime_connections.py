@@ -85,7 +85,7 @@ async def _build_runtime_connection_config(
     if isinstance(runtime_connection_id, int):
         existing = await storage.get_runtime_connection(runtime_connection_id)
         if existing is None:
-            raise HTTPException(status_code=404, detail="运行时连接不存在")
+            raise HTTPException(status_code=404, detail="Runtime connection not found")
 
     if existing is None:
         return RuntimeConnectionConfig(
@@ -126,7 +126,7 @@ async def get_runtime_connection(
 ):
     runtime_connection = await storage.get_runtime_connection(runtime_connection_id)
     if not runtime_connection:
-        raise HTTPException(status_code=404, detail="运行时连接不存在")
+        raise HTTPException(status_code=404, detail="Runtime connection not found")
     return await _serialize_runtime_connection(storage, runtime_connection)
 
 
@@ -138,24 +138,24 @@ async def create_runtime_connection(
     try:
         name = runtime_connection_data.get("name")
         if not isinstance(name, str) or not name.strip():
-            raise HTTPException(status_code=400, detail="创建失败: name must be a non-empty string")
+            raise HTTPException(status_code=400, detail="Create failed: name must be a non-empty string")
 
         existing = await storage.get_runtime_connection_by_name(name)
         if existing:
-            raise HTTPException(status_code=400, detail="运行时连接名称已存在")
+            raise HTTPException(status_code=400, detail="Runtime connection name already exists")
 
         runtime_connection = RuntimeConnectionConfig(
             **{key: value for key, value in runtime_connection_data.items() if key != "secrets"}
         )
         runtime_connection_id = await storage.create_runtime_connection(runtime_connection)
         return {
-            "message": f"运行时连接 {runtime_connection.name} 已创建",
+            "message": f"Runtime connection {runtime_connection.name} created",
             "id": runtime_connection_id,
         }
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"创建失败: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Create failed: {str(e)}")
 
 
 @router.put("/{runtime_connection_id}", dependencies=[Depends(get_current_user)])
@@ -167,13 +167,13 @@ async def update_runtime_connection(
     try:
         existing = await storage.get_runtime_connection(runtime_connection_id)
         if not existing:
-            raise HTTPException(status_code=404, detail="运行时连接不存在")
+            raise HTTPException(status_code=404, detail="Runtime connection not found")
 
         new_name = runtime_connection_data.get("name", existing.name)
         if new_name != existing.name:
             same_name = await storage.get_runtime_connection_by_name(new_name)
             if same_name and same_name.id != runtime_connection_id:
-                raise HTTPException(status_code=400, detail="运行时连接名称已存在")
+                raise HTTPException(status_code=400, detail="Runtime connection name already exists")
 
         runtime_connection = RuntimeConnectionConfig(
             id=runtime_connection_id,
@@ -188,13 +188,13 @@ async def update_runtime_connection(
 
         await storage.update_runtime_connection(runtime_connection_id, runtime_connection)
         return {
-            "message": f"运行时连接 {runtime_connection.name} 已更新",
+            "message": f"Runtime connection {runtime_connection.name} updated",
             "updated_at": datetime.now().isoformat(),
         }
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"更新失败: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Update failed: {str(e)}")
 
 
 @router.delete("/{runtime_connection_id}", dependencies=[Depends(get_current_user)])
@@ -203,10 +203,10 @@ async def delete_runtime_connection(
 ):
     runtime_connection = await storage.get_runtime_connection(runtime_connection_id)
     if not runtime_connection:
-        raise HTTPException(status_code=404, detail="运行时连接不存在")
+        raise HTTPException(status_code=404, detail="Runtime connection not found")
 
     await storage.delete_runtime_connection(runtime_connection_id)
-    return {"message": f"运行时连接 {runtime_connection.name} 已删除"}
+    return {"message": f"Runtime connection {runtime_connection.name} deleted"}
 
 
 @router.post("/discover-kubernetes-namespaces", dependencies=[Depends(get_current_user)])
@@ -219,7 +219,7 @@ async def discover_kubernetes_namespaces(
             storage, runtime_connection_data
         )
         if runtime_connection.type != "kubernetes":
-            raise HTTPException(status_code=400, detail="仅支持 Kubernetes 运行时连接发现命名空间")
+            raise HTTPException(status_code=400, detail="Namespace discovery is only supported for Kubernetes runtime connections")
 
         runtime_connection = await materialize_runtime_connection_credentials(
             storage,
@@ -230,6 +230,6 @@ async def discover_kubernetes_namespaces(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"命名空间发现失败: {exc}") from exc
+        raise HTTPException(status_code=400, detail=f"Namespace discovery failed: {exc}") from exc
 
     return {"items": namespaces}

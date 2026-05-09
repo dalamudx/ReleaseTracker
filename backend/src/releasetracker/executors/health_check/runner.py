@@ -1,12 +1,10 @@
 """HealthCheckRunner — Health Check Phase lifecycle.
 
-Implements the grace-period → probe-loop → outcome pipeline described in
-Req 7.5-7.11 and the observability obligations in Req 13.1-13.4.
+Implements the grace-period → probe-loop → outcome pipeline.
 
 Scheduler cancellation is respected via an optional ``cancel_event``
-passed on the context-side ``cancel`` attribute. Phase D may extend this
-to thread through the existing scheduler cancel token; today the runner
-accepts ``None`` and treats absence as "no external cancellation".
+passed on the context-side ``cancel`` attribute. The runner accepts
+``None`` and treats absence as "no external cancellation".
 """
 
 from __future__ import annotations
@@ -86,7 +84,7 @@ class HealthCheckRunner:
             ),
         )
 
-        # Grace period before the first attempt (Req 7.5).
+        # Grace period before the first attempt.
         if grace > 0:
             try:
                 await self._sleep(grace)
@@ -105,7 +103,7 @@ class HealthCheckRunner:
         last_attempt_at: datetime | None = None
         last_result: ProbeAttemptResult | None = None
 
-        # Total phase cap (Req 7.9).
+        # Total phase cap.
         deadline = phase_start + grace + window
 
         while True:
@@ -199,7 +197,6 @@ class HealthCheckRunner:
                 return outcome_result
 
             if last_result.terminate_phase:
-                # Helm ``failed`` status short-circuits the window (Req 6.4).
                 break
 
             # Wait the configured interval before the next attempt, unless

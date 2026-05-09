@@ -87,13 +87,13 @@ async def create_oidc_provider(
     if await storage.get_total_oauth_providers_count() > 0:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="仅允许配置一个 OIDC 提供商",
+            detail="Only one OIDC provider is allowed",
         )
 
     # Check slug uniqueness
     existing = await storage.get_oauth_provider(req.slug)
     if existing:
-        raise HTTPException(status_code=400, detail="Slug 已存在")
+        raise HTTPException(status_code=400, detail="Slug already exists")
 
     provider = OIDCProvider(
         name=req.name,
@@ -114,7 +114,7 @@ async def create_oidc_provider(
         updated_at=datetime.now(),
     )
     saved = await storage.save_oauth_provider(provider)
-    return {"message": "OIDC 提供商已创建", "id": saved.id}
+    return {"message": "OIDC provider created", "id": saved.id}
 
 
 @router.get("")
@@ -136,7 +136,7 @@ async def get_oidc_provider(
     """Get OIDC provider details; admin only"""
     provider = await storage.get_oauth_provider_by_id(provider_id)
     if not provider:
-        raise HTTPException(status_code=404, detail="OIDC 提供商不存在")
+        raise HTTPException(status_code=404, detail="OIDC provider not found")
     return _provider_to_response(provider)
 
 
@@ -150,7 +150,7 @@ async def update_oidc_provider(
     """Update OIDC provider configuration. Administrators only."""
     existing = await storage.get_oauth_provider_by_id(provider_id)
     if not existing:
-        raise HTTPException(status_code=404, detail="OIDC 提供商不存在")
+        raise HTTPException(status_code=404, detail="OIDC provider not found")
 
     # Merge updated fields
     updated = OIDCProvider(
@@ -181,7 +181,7 @@ async def update_oidc_provider(
         updated_at=datetime.now(),
     )
     await storage.update_oauth_provider(provider_id, updated)
-    return {"message": "OIDC 提供商已更新"}
+    return {"message": "OIDC provider updated"}
 
 
 @router.delete("/{provider_id}")
@@ -193,6 +193,6 @@ async def delete_oidc_provider(
     """Delete OIDC provider configuration. Administrators only."""
     existing = await storage.get_oauth_provider_by_id(provider_id)
     if not existing:
-        raise HTTPException(status_code=404, detail="OIDC 提供商不存在")
+        raise HTTPException(status_code=404, detail="OIDC provider not found")
     await storage.delete_oauth_provider(provider_id)
-    return {"message": "OIDC 提供商已删除"}
+    return {"message": "OIDC provider deleted"}

@@ -1508,7 +1508,7 @@ async def test_auto_check_aggregate_tracker_keeps_successful_source_data_during_
     assert status is not None
     assert status.last_version == "1.2.3"
     assert status.error == (
-        "部分来源检查失败: image-fallback: Fallback fetch_latest failed: docker registry unavailable"
+        "Partial source check failed: image-fallback: Fallback fetch_latest failed: docker registry unavailable"
     )
     assert stored_status is not None
     assert stored_status.last_version == "1.2.3"
@@ -1580,7 +1580,7 @@ async def test_manual_check_aggregate_tracker_runs_without_runtime_tracker_confi
         assert status.last_version == "2.0.0"
         assert status.type == "github"
         assert status.error == (
-            "部分来源检查失败: repo-secondary: Fallback fetch_latest failed: mirror timeout"
+            "Partial source check failed: repo-secondary: Fallback fetch_latest failed: mirror timeout"
         )
         assert len(observations) == 1
         assert observations[0].version == "2.0.0"
@@ -1811,7 +1811,7 @@ async def test_manual_check_skips_when_same_tracker_check_is_already_running(tmp
         gate.set()
         await first_task
 
-        assert second_status.error == "检查进行中，跳过重复请求"
+        assert second_status.error == "Check already in progress; skipping duplicate request"
     finally:
         await _close_storage(storage)
 
@@ -1846,7 +1846,7 @@ async def test_manual_check_skips_when_tracker_was_checked_recently(tmp_path, mo
 
         status = await scheduler.check_tracker_now_v2(tracker_name)
 
-        assert status.error == "最近已检查，跳过重复请求"
+        assert status.error == "Recently checked; skipping duplicate request"
         assert status.last_version == "1.2.3"
     finally:
         await _close_storage(storage)

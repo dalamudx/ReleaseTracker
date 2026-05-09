@@ -109,11 +109,11 @@ class BaseRuntimeAdapter(ABC):
     ) -> None:
         """Raise ``ValueError`` if the configured probe cannot be reached.
 
-        The scheduler calls this at executor save time (Req 12.4, 4.13) so
-        operators see unsupported combinations as 400 responses rather
-        than per-run failures. Adapters that cannot pre-flight the path
-        simply return ``None`` (the default) and let runtime failures
-        surface as probe-level ``host_unresolvable`` outcomes.
+        The scheduler calls this at executor save time so operators see
+        unsupported combinations as 400 responses rather than per-run
+        failures. Adapters that cannot pre-flight the path simply return
+        ``None`` (the default) and let runtime failures surface as
+        probe-level ``host_unresolvable`` outcomes.
         """
         return None
 

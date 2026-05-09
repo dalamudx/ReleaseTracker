@@ -519,8 +519,8 @@ HealthCheckFailurePolicy = Literal[
     "mark_failed", "mark_failed_and_recover", "mark_degraded"
 ]
 
-# Per-target-mode allowed strategy catalog (Req 2.1-2.5). Publicly consumable so
-# routers, UI serializers, and tests can all read from a single source of truth.
+# Per-target-mode allowed strategy catalog. Publicly consumable so routers,
+# UI serializers, and tests can all read from a single source of truth.
 HEALTH_CHECK_ALLOWED_STRATEGIES: dict[str, frozenset[str]] = {
     "container": frozenset({"none", "runtime_native", "http", "tcp"}),
     "docker_compose": frozenset({"none", "runtime_native", "http", "tcp"}),
@@ -531,8 +531,7 @@ HEALTH_CHECK_ALLOWED_STRATEGIES: dict[str, frozenset[str]] = {
     ),
 }
 
-# Default strategy per target mode used when ``use_default_strategy=True``
-# (Req 2.8, 2.9).
+# Default strategy per target mode used when ``use_default_strategy=True``.
 HEALTH_CHECK_DEFAULT_STRATEGY: dict[str, str] = {
     "container": "runtime_native",
     "docker_compose": "runtime_native",
@@ -541,14 +540,11 @@ HEALTH_CHECK_DEFAULT_STRATEGY: dict[str, str] = {
     "helm_release": "helm_status",
 }
 
-# Phase D gating: http/tcp strategies are scheduled to land in Phase D.
-# Until then the validator rejects them with a clear message so operators
-# know the option will exist soon without breaking the save path.
 _PHASE_D_ENABLED = True
 
 
 class HealthCheckHttpConfig(BaseModel):
-    """HTTP probe sub-object (Req 1.6, Req 4.*)."""
+    """HTTP probe sub-object."""
 
     path: str
     port: int | None = None
@@ -613,7 +609,7 @@ class HealthCheckHttpConfig(BaseModel):
                 "health_check.http.expected_body_regex must be at most 1024 characters"
             )
         # Validate the regex compiles so operators see the error at save
-        # time instead of at probe time (Req 4.14).
+        # time instead of at probe time.
         import re
 
         try:
@@ -644,7 +640,7 @@ class HealthCheckHttpConfig(BaseModel):
 
 
 class HealthCheckTcpConfig(BaseModel):
-    """TCP probe sub-object (Req 1.7, Req 5.*)."""
+    """TCP probe sub-object."""
 
     port: int
 
@@ -661,7 +657,7 @@ class HealthCheckTcpConfig(BaseModel):
 
 
 class HealthCheckProfile(BaseModel):
-    """Per-executor post-update health check configuration (Req 1.*)."""
+    """Per-executor post-update health check configuration."""
 
     strategy: HealthCheckStrategy = "none"
     use_default_strategy: bool = False
@@ -747,10 +743,10 @@ class HealthCheckProfile(BaseModel):
                 )
             # When the probe is disabled, timings and services are irrelevant.
             # We still allow them so operators can stage configs before
-            # enabling a strategy, but the scheduler ignores them (Req 7.10).
+            # enabling a strategy, but the scheduler ignores them.
             return self
 
-        # Probe strategies require a usable timing envelope (Req 1.11).
+        # Probe strategies require a usable timing envelope.
         if self.probe_window_seconds <= 0:
             raise ValueError(
                 f"health_check.probe_window_seconds must be > 0 when strategy is '{strategy}'"
@@ -768,8 +764,9 @@ class HealthCheckProfile(BaseModel):
                 "health_check.probe_window_seconds must be >= attempt_timeout_seconds"
             )
 
-        # Phase C gate: http/tcp strategies are accepted schematically but
-        # the scheduler refuses to run them until Phase D flips the flag.
+        # Gate for http/tcp strategies. When disabled the validator rejects
+        # them with a clear message so operators know the option will exist
+        # soon without breaking the save path.
         if strategy in {"http", "tcp"} and not _PHASE_D_ENABLED:
             raise ValueError(
                 f"health_check.strategy '{strategy}' is not yet available in this build; "
@@ -780,7 +777,7 @@ class HealthCheckProfile(BaseModel):
 
     @classmethod
     def default_for(cls, *, target_mode: str) -> "HealthCheckProfile":
-        """Return the published default profile for a target mode (Req 2.8, 2.9)."""
+        """Return the published default profile for a target mode."""
         default_strategy = HEALTH_CHECK_DEFAULT_STRATEGY.get(target_mode)
         if default_strategy is None:
             raise ValueError(
@@ -788,7 +785,7 @@ class HealthCheckProfile(BaseModel):
             )
         if default_strategy in {"runtime_native", "helm_status"}:
             # Reasonable defaults for a real probe. Operators can tune them
-            # via the UI; keeping them here keeps Phase C's zero-config path
+            # via the UI; keeping them here keeps the zero-config path
             # actually usable out of the box.
             return cls(
                 strategy=default_strategy,  # type: ignore[arg-type]
@@ -867,7 +864,7 @@ class ExecutorConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_health_check_for_target(self):
-        """Cross-field health check validation (Req 1.13, 2.6, 2.7, 2.9).
+        """Cross-field health check validation.
 
         - Apply the strategy catalog per target mode.
         - If ``use_default_strategy=True`` and the stored strategy is

@@ -1,4 +1,4 @@
-"""Recovery Hook Coordinator (Req 10.*).
+"""Recovery Hook Coordinator.
 
 When a Health Check Phase concludes unhealthy and the executor's
 ``failure_policy`` is ``mark_failed_and_recover``, the coordinator:

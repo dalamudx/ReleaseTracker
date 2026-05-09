@@ -1,12 +1,4 @@
-"""Strategy → probe dispatcher.
-
-Phase C maps ``runtime_native`` and ``helm_status`` to real probes and
-raises ``NotImplementedError`` for ``http`` / ``tcp``. The pydantic
-validator already rejects those strategies until Phase D flips the
-``_PHASE_D_ENABLED`` flag in ``config``, so in practice the factory only
-sees the supported strategies at run time. We still guard defensively
-so future phases can wire HTTP / TCP without touching the scheduler.
-"""
+"""Strategy → probe dispatcher."""
 
 from __future__ import annotations
 

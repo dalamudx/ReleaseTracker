@@ -529,7 +529,7 @@ async def get_trackers(
 async def get_tracker(tracker_name: str, storage: Annotated[SQLiteStorage, Depends(get_storage)]):
     tracker = await storage.get_aggregate_tracker(tracker_name)
     if not tracker:
-        raise HTTPException(status_code=404, detail="追踪器不存在")
+        raise HTTPException(status_code=404, detail="Tracker not found")
     return await _build_tracker_response(storage, tracker)
 
 
@@ -539,7 +539,7 @@ async def get_tracker_config_detail(
 ):
     tracker = await storage.get_aggregate_tracker(tracker_name)
     if not tracker:
-        raise HTTPException(status_code=404, detail="追踪器不存在")
+        raise HTTPException(status_code=404, detail="Tracker not found")
     return await _build_tracker_response(storage, tracker)
 
 
@@ -554,7 +554,7 @@ async def get_tracker_release_history(
 ):
     tracker = await storage.get_aggregate_tracker(tracker_name)
     if tracker is None:
-        raise HTTPException(status_code=404, detail="追踪器不存在")
+        raise HTTPException(status_code=404, detail="Tracker not found")
     if limit > 100:
         limit = 100
 
@@ -581,7 +581,7 @@ async def get_tracker_current_view(
 ):
     tracker = await storage.get_aggregate_tracker(tracker_name)
     if tracker is None:
-        raise HTTPException(status_code=404, detail="追踪器不存在")
+        raise HTTPException(status_code=404, detail="Tracker not found")
     if channel is not None:
         if storage.resolve_tracker_release_channel(tracker, channel) is None:
             raise HTTPException(
@@ -600,7 +600,7 @@ async def check_tracker(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"检查失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Check failed: {str(e)}")
 
 
 @router.post("", dependencies=[Depends(get_current_user)])
@@ -614,23 +614,23 @@ async def create_tracker(
         runtime_config = tracker_data.to_runtime_config()
         existing = await storage.get_aggregate_tracker(aggregate_tracker.name)
         if existing:
-            raise HTTPException(status_code=400, detail="追踪器名称已存在")
+            raise HTTPException(status_code=400, detail="Tracker name already exists")
 
         await storage.create_aggregate_tracker(aggregate_tracker)
         await storage.save_tracker_runtime_config(runtime_config)
         persisted_runtime = await storage.get_tracker_config(aggregate_tracker.name)
         if persisted_runtime is None:
-            raise HTTPException(status_code=500, detail="追踪器运行时配置写入失败")
+            raise HTTPException(status_code=500, detail="Failed to write tracker runtime configuration")
         await scheduler.refresh_tracker(aggregate_tracker.name)
 
         created_tracker = await storage.get_aggregate_tracker(aggregate_tracker.name)
         if created_tracker is None:
-            raise HTTPException(status_code=500, detail="追踪器创建后读取失败")
+            raise HTTPException(status_code=500, detail="Failed to read tracker after creation")
         return await _build_tracker_response(storage, created_tracker)
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"创建失败: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Create failed: {str(e)}")
 
 
 @router.put("/{tracker_name}", dependencies=[Depends(get_current_user)])
@@ -645,11 +645,11 @@ async def update_tracker(
         runtime_config = tracker_data.to_runtime_config()
         existing = await storage.get_aggregate_tracker(tracker_name)
         if not existing:
-            raise HTTPException(status_code=404, detail="追踪器不存在")
+            raise HTTPException(status_code=404, detail="Tracker not found")
 
         normalized_name = aggregate_tracker.name
         if normalized_name != tracker_name:
-            raise HTTPException(status_code=400, detail="不支持修改追踪器名称")
+            raise HTTPException(status_code=400, detail="Renaming a tracker is not supported")
 
         await storage.update_aggregate_tracker(
             aggregate_tracker.model_copy(update={"id": existing.id})
@@ -657,18 +657,18 @@ async def update_tracker(
         await storage.save_tracker_runtime_config(runtime_config)
         persisted_runtime = await storage.get_tracker_config(tracker_name)
         if persisted_runtime is None:
-            raise HTTPException(status_code=500, detail="追踪器运行时配置写入失败")
+            raise HTTPException(status_code=500, detail="Failed to write tracker runtime configuration")
         await scheduler.refresh_tracker(tracker_name)
         await scheduler.rebuild_tracker_views_from_storage(tracker_name)
 
         updated_tracker = await storage.get_aggregate_tracker(tracker_name)
         if updated_tracker is None:
-            raise HTTPException(status_code=500, detail="追踪器更新后读取失败")
+            raise HTTPException(status_code=500, detail="Failed to read tracker after update")
         return await _build_tracker_response(storage, updated_tracker)
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"更新失败: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Update failed: {str(e)}")
 
 
 @router.delete("/{tracker_name}", dependencies=[Depends(get_current_user)])
@@ -679,7 +679,7 @@ async def delete_tracker(
 ):
     existing = await storage.get_aggregate_tracker(tracker_name)
     if not existing:
-        raise HTTPException(status_code=404, detail="追踪器不存在")
+        raise HTTPException(status_code=404, detail="Tracker not found")
 
     await storage.delete_aggregate_tracker(tracker_name)
     await storage.delete_tracker_config(tracker_name)

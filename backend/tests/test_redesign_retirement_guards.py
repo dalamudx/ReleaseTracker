@@ -27,7 +27,7 @@ def test_retired_active_authority_paths_remain_retired() -> None:
 
     # Executor API/scheduler binding must not infer from tracker name.
     assert "if tracker_source_id_value is None:" in executors_router_text
-    assert "必须显式指定 tracker_source_id" in executors_router_text
+    assert "tracker_source_id must be specified" in executors_router_text
     assert "if executor_config.tracker_source_id is None:" in executor_scheduler_text
     assert "return None" in executor_scheduler_text
 

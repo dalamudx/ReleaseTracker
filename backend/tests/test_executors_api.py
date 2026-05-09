@@ -381,7 +381,7 @@ async def test_executor_discovery_and_create_validation(authed_client, storage, 
         },
     )
     assert invalid_tracker.status_code == 400
-    assert invalid_tracker.json()["detail"] == "追踪来源不存在"
+    assert invalid_tracker.json()["detail"] == "Tracker source not found"
 
     invalid_runtime = authed_client.post(
         "/api/executors",
@@ -396,7 +396,7 @@ async def test_executor_discovery_and_create_validation(authed_client, storage, 
         },
     )
     assert invalid_runtime.status_code == 400
-    assert invalid_runtime.json()["detail"] == "运行时连接不存在"
+    assert invalid_runtime.json()["detail"] == "Runtime connection not found"
 
     valid = authed_client.post(
         "/api/executors",
@@ -515,7 +515,7 @@ async def test_executor_create_rejects_non_container_tracker(authed_client, stor
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "运行时执行器必须绑定可部署的镜像来源"
+    assert response.json()["detail"] == "Runtime executors must be bound to a deployable image source"
 
 
 @pytest.mark.asyncio
@@ -1588,7 +1588,7 @@ async def test_executor_create_rejects_tracker_image_mode_without_image(authed_c
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "追踪来源镜像不能为空以使用 tracker 镜像模式"
+    assert response.json()["detail"] == "Tracker source image must not be empty when using tracker image mode"
 
 
 @pytest.mark.asyncio
@@ -1937,7 +1937,7 @@ async def test_executor_create_rejects_disabled_channel(authed_client, storage, 
         },
     )
     assert response.status_code == 400
-    assert "禁用" in response.json()["detail"]
+    assert "disabled" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -2042,7 +2042,7 @@ async def test_executor_create_rejects_non_bindable_tracker_source(
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "运行时执行器必须绑定可部署的镜像来源"
+    assert response.json()["detail"] == "Runtime executors must be bound to a deployable image source"
 
 
 @pytest.mark.asyncio
@@ -2296,7 +2296,7 @@ async def test_executor_history_can_be_cleared(authed_client, storage):
 
     clear_response = authed_client.delete(f"/api/executors/{executor_id}/history")
     assert clear_response.status_code == 200
-    assert clear_response.json() == {"message": "执行历史已清空", "deleted": 2}
+    assert clear_response.json() == {"message": "Execution history cleared", "deleted": 2}
 
     history_response = authed_client.get(f"/api/executors/{executor_id}/history")
     assert history_response.status_code == 200
@@ -2309,7 +2309,7 @@ async def test_executor_history_can_be_cleared(authed_client, storage):
 async def test_clear_executor_history_returns_404_for_missing_executor(authed_client):
     response = authed_client.delete("/api/executors/999999/history")
     assert response.status_code == 404
-    assert response.json()["detail"] == "执行器不存在"
+    assert response.json()["detail"] == "Executor not found"
 
 
 # ============================================================

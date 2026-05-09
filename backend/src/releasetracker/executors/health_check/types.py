@@ -13,14 +13,13 @@ from datetime import datetime
 from typing import Any, Literal
 
 # Maximum length of a persisted ``last_error`` string before truncation so
-# diagnostics rows stay well under the SQLite TEXT column budget (Req 8.4).
+# diagnostics rows stay well under the SQLite TEXT column budget.
 MAX_LAST_ERROR_LENGTH = 500
 
 
 # Broad classification of per-attempt probe failure causes. The taxonomy is
-# deliberately flat so Phase E log/metric queries can bucket outcomes without
-# parsing free-form strings. Additional categories land in Phase D alongside
-# HTTP / TCP probes; Phase C keeps the essentials.
+# deliberately flat so log/metric queries can bucket outcomes without
+# parsing free-form strings.
 ProbeErrorCategory = Literal[
     "ok",
     "timeout",
@@ -51,7 +50,7 @@ class HealthCheckContext:
     ``ExecutorScheduler._capture_update_phase_baseline`` — it carries
     adapter-specific state the runtime-native probe needs, for example
     Kubernetes ``metadata.generation`` or a container restart count at the
-    end of the Update Phase (Req 3.2, Req 3.5).
+    end of the Update Phase.
     """
 
     executor_config: Any  # ExecutorConfig; typed as Any to avoid import cycle
@@ -66,8 +65,8 @@ class ProbeAttemptResult:
     """Outcome of a single probe attempt.
 
     ``per_service`` is populated only for grouped target modes where the
-    probe evaluates every service independently (Req 3.3, 4.6, 5.4). The
-    aggregate attempt is healthy only when every per-service entry is.
+    probe evaluates every service independently. The aggregate attempt is
+    healthy only when every per-service entry is.
     """
 
     healthy: bool
@@ -76,7 +75,7 @@ class ProbeAttemptResult:
     last_error: str | None = None
     per_service: dict[str, "ProbeAttemptResult"] | None = None
     # Causes the runner to short-circuit the probe window without further
-    # retries (Req 6.4 — Helm ``failed`` status).
+    # retries (Helm ``failed`` status).
     terminate_phase: bool = False
 
 
@@ -94,9 +93,8 @@ class ServiceHealthResult:
 class HealthCheckResult:
     """Aggregate outcome of a Health Check Phase, ready for persistence.
 
-    The exact shape is defined by Req 8.2 (top-level diagnostics fields) and
-    Req 8.3 (per-service entries for grouped modes). ``to_dict`` emits the
-    JSON form the scheduler merges into ``executor_run_history.diagnostics``.
+    ``to_dict`` emits the JSON form the scheduler merges into
+    ``executor_run_history.diagnostics``.
     """
 
     strategy: str
@@ -168,8 +166,7 @@ def truncate_error(value: str | None) -> str | None:
 
 
 # Case-insensitive names of header keys and config keys whose values we MUST
-# strip before they ever reach a log record. Kept conservative; Phase E
-# adds more specific patterns when snapshot redaction lands.
+# strip before they ever reach a log record.
 _SECRET_KEY_NAMES = (
     "authorization",
     "auth",
@@ -186,7 +183,7 @@ _SECRET_KEY_NAMES = (
 
 # Header values that still fall through should get their token-looking parts
 # masked. Anything looking like ``Bearer <opaque>`` or a JWT triple stays
-# behind a fixed marker (Req 13.5).
+# behind a fixed marker.
 _TOKEN_PATTERNS = (
     re.compile(r"(Bearer|Basic|Token)\s+\S+", re.IGNORECASE),
     re.compile(r"eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"),

@@ -37,10 +37,10 @@ export interface ExecutorFormValues {
     maintenance_days: string[]
     maintenance_start_time: string
     maintenance_end_time: string
-    // Health check profile (Req 1.*). Strings for form inputs so the
-    // wizard can round-trip through <input type="number"> without
-    // fighting React Hook Form defaults; parsed back to integers when
-    // the payload is built.
+    // Health check profile. Strings for form inputs so the wizard can
+    // round-trip through <input type="number"> without fighting React
+    // Hook Form defaults; parsed back to integers when the payload is
+    // built.
     health_check_strategy: HealthCheckStrategy
     health_check_failure_policy: HealthCheckFailurePolicy
     health_check_grace_period_seconds: string
@@ -1188,7 +1188,7 @@ function buildHealthCheckPayload(values: ExecutorFormValues): HealthCheckProfile
     // stay controlled; parse back here. Empty / non-numeric values fall
     // back to zero so the backend validator sees a well-formed payload
     // and surfaces a clear 400 when zero is incompatible with the
-    // selected strategy (Req 1.11).
+    // selected strategy.
     const toInt = (value: string): number => {
         const parsed = Number.parseInt(value, 10)
         return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0

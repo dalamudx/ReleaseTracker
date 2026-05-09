@@ -21,8 +21,8 @@ _PORTAINER_STACK_UPDATE_TIMEOUT = httpx.Timeout(connect=5.0, read=90.0, write=90
 # How long ``recover_from_snapshot`` is allowed to wait for Portainer to
 # report the restored stack as active before returning control to the
 # scheduler. The scheduler itself enforces the Recovery Hook wall-clock
-# budget (Req 10.7) — this bound only guards against Portainer getting
-# stuck mid-update.
+# budget — this bound only guards against Portainer getting stuck
+# mid-update.
 _PORTAINER_RECOVERY_POLL_TIMEOUT_SECONDS = 120
 _PORTAINER_RECOVERY_POLL_INTERVAL_SECONDS = 2
 
@@ -235,10 +235,10 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
 
         The snapshot persists the stack file, stack type, env vars, stack id,
         endpoint id, and project name — everything required by
-        ``recover_from_snapshot`` when it calls ``PUT /api/stacks/{id}``
-        (Req 17.1). ``image_at_capture`` is extracted best-effort from the
-        stack file's services; when the stack declares multiple distinct
-        images the value is left null (Req 17.2).
+        ``recover_from_snapshot`` when it calls ``PUT /api/stacks/{id}``.
+        ``image_at_capture`` is extracted best-effort from the stack file's
+        services; when the stack declares multiple distinct images the
+        value is left null.
         """
         normalized_target_ref = normalize_executor_target_ref(
             target_ref, runtime_type="portainer"
@@ -293,9 +293,9 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
 
         Enforces: snapshot is non-empty, stack file is a non-empty string,
         recorded stack type is a supported Portainer variant, and the live
-        target's stack type matches the snapshot's (Req 17.3). Any mismatch
-        raises ``ValueError`` so the Recovery Hook can surface it as
-        ``invalid_snapshot`` (Req 10.4).
+        target's stack type matches the snapshot's. Any mismatch raises
+        ``ValueError`` so the Recovery Hook can surface it as
+        ``invalid_snapshot``.
         """
         if not isinstance(snapshot, dict) or not snapshot:
             raise ValueError("snapshot must be a non-empty dict")
@@ -335,7 +335,7 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         Validates the snapshot, calls the Portainer stack update endpoint
         with the captured stack file and env vars, then polls the live
         stack status until it reports the active enum value (``Status`` ==
-        ``1``) or an internal timeout elapses (Req 17.4).
+        ``1``) or an internal timeout elapses.
         """
         await self.validate_snapshot(target_ref, snapshot)
 

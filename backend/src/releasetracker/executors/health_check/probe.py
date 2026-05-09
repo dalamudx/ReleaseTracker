@@ -1,9 +1,4 @@
-"""Abstract HealthCheckProbe + RuntimeNativeProbe implementation.
-
-Phase C ships the runtime-native strategy and the Helm status strategy;
-Phase D adds ``HTTPProbe`` / ``TCPProbe`` implementations on top of the
-same ABC defined here.
-"""
+"""Abstract HealthCheckProbe + RuntimeNativeProbe implementation."""
 
 from __future__ import annotations
 
@@ -30,8 +25,7 @@ class RuntimeNativeProbe(HealthCheckProbe):
     The actual readiness semantics live on each adapter (container /
     kubernetes / portainer) so the probe can stay thin and
     per-runtime-agnostic. Adapters raising ``NotImplementedError`` surface
-    as a ``runtime_api_error`` so the runner retries on the next interval
-    (Req 3.7).
+    as a ``runtime_api_error`` so the runner retries on the next interval.
     """
 
     async def attempt(self, ctx: "HealthCheckContext") -> ProbeAttemptResult:

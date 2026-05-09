@@ -449,7 +449,7 @@ class ReleaseScheduler:
 
         runtime_source = self.storage._select_runtime_source(aggregate_tracker)
         if runtime_source is None or runtime_source.id is None:
-            raise ValueError("未找到可用的数据源")
+            raise ValueError("No available data source found")
 
         sort_mode = tracker_config.version_sort_mode if tracker_config else "published_at"
         fetched_releases = [
@@ -556,7 +556,7 @@ class ReleaseScheduler:
 
         error = None
         if fallback_hint:
-            error = f"部分来源检查失败: {runtime_source.source_key}: {fallback_hint}"
+            error = f"Partial source check failed: {runtime_source.source_key}: {fallback_hint}"
 
         return {
             "releases": projection_releases,
@@ -580,7 +580,7 @@ class ReleaseScheduler:
                 f"Legacy-only tracker state is not supported for live checks: {tracker_name}"
             )
         if not self._should_use_aggregate_path(aggregate_tracker):
-            raise ValueError(f"聚合追踪器没有启用的数据源: {tracker_name}")
+            raise ValueError(f"Aggregate tracker has no enabled data sources: {tracker_name}")
         return aggregate_tracker
 
     @staticmethod
@@ -669,9 +669,9 @@ class ReleaseScheduler:
     ) -> dict[str, Any]:
         enabled_sources = [source for source in aggregate_tracker.sources if source.enabled]
         if not enabled_sources:
-            raise ValueError("聚合追踪器没有启用的数据源")
+            raise ValueError("Aggregate tracker has no enabled data sources")
         if aggregate_tracker.id is None:
-            raise ValueError("聚合追踪器缺少持久化 ID")
+            raise ValueError("Aggregate tracker is missing a persisted ID")
 
         projection_releases = await self.storage.get_tracker_current_releases(aggregate_tracker.id)
         for release in projection_releases:
@@ -745,7 +745,7 @@ class ReleaseScheduler:
                 enabled=False,
                 last_check=preserved_last_check,
                 last_version=latest_version,
-                error="追踪器已禁用",
+                error="Tracker is disabled",
             )
             await self.storage.update_tracker_status(status)
             return status
@@ -769,7 +769,7 @@ class ReleaseScheduler:
             error=(
                 result.get("error")
                 if releases or latest_version
-                else (result.get("error") or "未找到版本信息")
+                else (result.get("error") or "No version information found")
             ),
             channel_count=_tracker_channel_count(config),
         )
@@ -787,9 +787,9 @@ class ReleaseScheduler:
     ) -> dict[str, Any]:
         enabled_sources = [source for source in aggregate_tracker.sources if source.enabled]
         if not enabled_sources:
-            raise ValueError("聚合追踪器没有启用的数据源")
+            raise ValueError("Aggregate tracker has no enabled data sources")
         if aggregate_tracker.id is None:
-            raise ValueError("聚合追踪器缺少持久化 ID")
+            raise ValueError("Aggregate tracker is missing a persisted ID")
 
         source_errors: list[str] = []
         selection_candidates: list[Release] = []
@@ -988,7 +988,7 @@ class ReleaseScheduler:
 
         error = None
         if source_errors:
-            error = f"部分来源检查失败: {'; '.join(source_errors)}"
+            error = f"Partial source check failed: {'; '.join(source_errors)}"
 
         return {
             "releases": projection_releases,
@@ -1019,7 +1019,7 @@ class ReleaseScheduler:
                 enabled=False,
                 last_check=datetime.now(),
                 last_version=None,  # or keep the previous value
-                error="追踪器已禁用",
+                error="Tracker is disabled",
             )
             await self.storage.update_tracker_status(status)
             return status
@@ -1055,7 +1055,7 @@ class ReleaseScheduler:
                     enabled=True,
                     last_check=datetime.now(),
                     last_version=None,
-                    error=error or "未找到版本信息",
+                    error=error or "No version information found",
                 )
 
             await self.storage.update_tracker_status(status)
@@ -1182,7 +1182,7 @@ class ReleaseScheduler:
                 timeout=config.fetch_timeout,
             )
         else:
-            raise ValueError(f"不支持的追踪器类型: {config.type}")
+            raise ValueError(f"Unsupported tracker type: {config.type}")
 
     async def check_tracker_now_v2(self, name: str) -> TrackerStatus:
         """Check the specified tracker immediately (V2)"""
@@ -1206,7 +1206,7 @@ class ReleaseScheduler:
                 enabled=enabled,
                 last_check=current_status.last_check if current_status else None,
                 last_version=current_status.last_version if current_status else None,
-                error="检查进行中，跳过重复请求",
+                error="Check already in progress; skipping duplicate request",
                 channel_count=_tracker_channel_count(config),
             )
 
@@ -1222,7 +1222,7 @@ class ReleaseScheduler:
                 enabled=enabled,
                 last_check=current_status.last_check,
                 last_version=current_status.last_version,
-                error="最近已检查，跳过重复请求",
+                error="Recently checked; skipping duplicate request",
                 channel_count=_tracker_channel_count(config),
             )
 
@@ -1255,7 +1255,7 @@ class ReleaseScheduler:
                 ),
                 last_check=datetime.now(),
                 last_version=latest_version,
-                error=error if releases or latest_version else (error or "未找到版本信息"),
+                error=error if releases or latest_version else (error or "No version information found"),
                 channel_count=_tracker_channel_count(config),
             )
             await self.storage.update_tracker_status(status)

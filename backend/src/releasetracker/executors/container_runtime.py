@@ -94,7 +94,7 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
         baseline: dict[str, Any],
         services: list[str] | None = None,
     ):
-        """Container runtime-native readiness (Req 3.1, 3.2).
+        """Container runtime-native readiness.
 
         Healthy iff the container state is ``running`` AND either the image
         reports ``healthy`` via Docker/Podman HEALTHCHECK or (when no
@@ -220,7 +220,7 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
             # Last-resort host-port fallback: if the container publishes
             # a matching port we probe localhost. Useful when
             # ``tls_skip_verify`` or ``scheme=https`` signals the
-            # operator expects an externally-reachable address (Req 4.5).
+            # operator expects an externally-reachable address.
             host_port = self._extract_published_host_port(attrs, default_port)
             if host_port is not None:
                 return [

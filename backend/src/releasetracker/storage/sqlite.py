@@ -98,7 +98,7 @@ class SQLiteStorage:
             # Increase cache size in pages; default is 4KB per page, here about 16MB
             await self._db.execute("PRAGMA cache_size=-16384")
             await self._db.commit()
-            logger.info(f"SQLite 持久化连接已建立，WAL 模式已启用：{self.db_path}")
+            logger.info(f"SQLite persistent connection established with WAL mode enabled: {self.db_path}")
         return self._db
 
     async def close(self) -> None:
@@ -107,7 +107,7 @@ class SQLiteStorage:
             await self._db.close()
             self._db = None
             await asyncio.sleep(0)
-            logger.info("SQLite 持久化连接已关闭")
+            logger.info("SQLite persistent connection closed")
 
     def invalidate_notifiers_cache(self) -> None:
         """Invalidate notifier in-memory cache after CRUD operations"""

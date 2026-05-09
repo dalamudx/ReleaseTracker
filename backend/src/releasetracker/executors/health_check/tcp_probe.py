@@ -1,4 +1,4 @@
-"""TCP probe (Req 5.*).
+"""TCP probe.
 
 Performs one TCP connect + immediate close per service per attempt. No
 application bytes are exchanged — the goal is to confirm the service
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from .types import HealthCheckContext
 
 
-# Handshake-complete → close budget (Req 5.1).
+# Handshake-complete → close budget.
 _POST_HANDSHAKE_CLOSE_BUDGET_SECONDS = 1
 
 

@@ -1,4 +1,4 @@
-"""HTTP probe (Req 4.*).
+"""HTTP probe.
 
 Evaluates one HTTP request per service per attempt. Grouped modes probe
 every resolved service and only report healthy when every per-service
@@ -20,9 +20,9 @@ if TYPE_CHECKING:
     from .types import HealthCheckContext
 
 
-# Request body cap (Req 4.10). Anything beyond this size is truncated
-# in-place; the regex still runs against the truncated bytes but the
-# attempt result carries ``body_truncated=True`` so operators know.
+# Request body cap. Anything beyond this size is truncated in-place; the
+# regex still runs against the truncated bytes but the attempt result
+# carries ``body_truncated=True`` so operators know.
 _BODY_READ_CAP_BYTES = 65_536
 
 

@@ -63,7 +63,7 @@ def _get_runtime_adapter(runtime_connection):
         return KubernetesRuntimeAdapter(runtime_connection)
     if runtime_connection.type == "portainer":
         return PortainerRuntimeAdapter(runtime_connection)
-    raise HTTPException(status_code=400, detail=f"不支持的运行时类型: {runtime_connection.type}")
+    raise HTTPException(status_code=400, detail=f"Unsupported runtime type: {runtime_connection.type}")
 
 
 def _resolve_bound_release_channels(aggregate_tracker, tracker_config, binding_source) -> list:
@@ -153,10 +153,10 @@ async def _validate_executor_payload(
 
     runtime_connection = await storage.get_runtime_connection(runtime_connection_id)
     if not runtime_connection:
-        raise HTTPException(status_code=400, detail="运行时连接不存在")
+        raise HTTPException(status_code=400, detail="Runtime connection not found")
 
     if runtime_type != runtime_connection.type:
-        raise HTTPException(status_code=400, detail="执行器运行时类型必须与运行时连接一致")
+        raise HTTPException(status_code=400, detail="Executor runtime_type must match the runtime connection type")
 
     try:
         normalized_target_ref = normalize_executor_target_ref(target_ref, runtime_type=runtime_type)
@@ -184,29 +184,29 @@ async def _validate_executor_payload(
         channel_name_value: Any,
     ) -> tuple[str, Any, Any, Any, int, str]:
         if tracker_source_id_value is None:
-            raise HTTPException(status_code=400, detail="必须显式指定 tracker_source_id")
+            raise HTTPException(status_code=400, detail="tracker_source_id must be specified")
         if not isinstance(tracker_source_id_value, int):
-            raise HTTPException(status_code=400, detail="tracker_source_id 必须是整数")
+            raise HTTPException(status_code=400, detail="tracker_source_id must be an integer")
 
         binding = await storage.get_executor_binding(tracker_source_id_value)
         if binding is None:
-            raise HTTPException(status_code=400, detail="追踪来源不存在")
+            raise HTTPException(status_code=400, detail="Tracker source not found")
         aggregate_tracker, binding_source = binding
         binding_tracker_name = aggregate_tracker.name
 
         if binding_source is None or binding_source.id is None:
-            raise HTTPException(status_code=400, detail="追踪来源不存在")
+            raise HTTPException(status_code=400, detail="Tracker source not found")
         if binding_source.source_type not in EXECUTOR_BINDABLE_SOURCE_TYPES:
-            raise HTTPException(status_code=400, detail="运行时执行器必须绑定可部署的镜像来源")
+            raise HTTPException(status_code=400, detail="Runtime executors must be bound to a deployable image source")
         if not binding_source.enabled:
-            raise HTTPException(status_code=400, detail="追踪来源已禁用")
+            raise HTTPException(status_code=400, detail="Tracker source is disabled")
 
         tracker = await storage.get_tracker_config(binding_tracker_name)
         if not tracker:
-            raise HTTPException(status_code=400, detail="追踪器不存在")
+            raise HTTPException(status_code=400, detail="Tracker not found")
 
         if not isinstance(channel_name_value, str) or not channel_name_value.strip():
-            raise HTTPException(status_code=400, detail="channel_name 不能为空")
+            raise HTTPException(status_code=400, detail="channel_name must not be empty")
         normalized_channel_name = channel_name_value.strip()
 
         return (
@@ -222,10 +222,10 @@ async def _validate_executor_payload(
         source_type = getattr(binding_source, "source_type", None)
         if target_mode == "helm_release":
             if source_type != "helm":
-                raise HTTPException(status_code=400, detail="Helm release 执行器必须绑定 Helm 来源")
+                raise HTTPException(status_code=400, detail="Helm release executors must be bound to a Helm source")
             return
         if source_type != "container":
-            raise HTTPException(status_code=400, detail="运行时执行器必须绑定 Docker 镜像来源")
+            raise HTTPException(status_code=400, detail="Runtime executors must be bound to a Docker image source")
 
     def _validate_bound_channel(
         *,
@@ -245,10 +245,10 @@ async def _validate_executor_payload(
         if not matched_channels:
             raise HTTPException(
                 status_code=400,
-                detail=f"追踪器 '{binding_tracker_name_value}' 不存在渠道 '{channel_name_value}'",
+                detail=f"Tracker '{binding_tracker_name_value}' has no channel '{channel_name_value}'",
             )
         if not matched_channels[0].enabled:
-            raise HTTPException(status_code=400, detail=f"渠道 '{channel_name_value}' 已禁用")
+            raise HTTPException(status_code=400, detail=f"Channel '{channel_name_value}' is disabled")
 
     binding_tracker_name = tracker_name
     binding_source = None
@@ -312,7 +312,7 @@ async def _validate_executor_payload(
             and not binding_source.source_config.get("image")
         ):
             raise HTTPException(
-                status_code=400, detail="追踪来源镜像不能为空以使用 tracker 镜像模式"
+                status_code=400, detail="Tracker source image must not be empty when using tracker image mode"
             )
 
         for (
@@ -345,7 +345,7 @@ async def _validate_executor_payload(
 
         if target_mode == "helm_release" and (service_bindings_payload or []):
             raise HTTPException(
-                status_code=400, detail="Helm release 执行器不支持 service_bindings"
+                status_code=400, detail="Helm release executors do not support service_bindings"
             )
 
         if (
@@ -355,7 +355,7 @@ async def _validate_executor_payload(
             and not binding_source.source_config.get("image")
         ):
             raise HTTPException(
-                status_code=400, detail="追踪来源镜像不能为空以使用 tracker 镜像模式"
+                status_code=400, detail="Tracker source image must not be empty when using tracker image mode"
             )
 
         _validate_bound_channel(
@@ -389,14 +389,8 @@ async def _validate_executor_payload(
     try:
         executor = ExecutorConfig(**executor_kwargs)
     except ValueError as exc:
-        # Surface pydantic / cross-field validation errors (health check
-        # strategy/timings, services-not-in-bindings, etc.) as 400s so the
-        # UI and API consumers can display the offending field.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Save-time network-path pre-flight (Req 12.4). Non-fatal when the
-    # adapter does not override ``validate_probe_network_path`` — the
-    # default implementation returns None.
     if executor.health_check.strategy in {"http", "tcp"}:
         try:
             runtime_connection = await storage.get_runtime_connection(
@@ -415,8 +409,6 @@ async def _validate_executor_payload(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except NotImplementedError:
-            # Adapter does not yet support pre-flight; runtime errors
-            # surface as probe-level host_unresolvable outcomes instead.
             pass
 
     try:
@@ -433,7 +425,7 @@ async def _validate_executor_payload(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"目标校验失败: {exc}") from exc
+        raise HTTPException(status_code=400, detail=f"Target validation failed: {exc}") from exc
 
     return executor
 
@@ -458,7 +450,7 @@ async def discover_runtime_targets(
 ):
     runtime_connection = await storage.get_runtime_connection(runtime_connection_id)
     if not runtime_connection:
-        raise HTTPException(status_code=404, detail="运行时连接不存在")
+        raise HTTPException(status_code=404, detail="Runtime connection not found")
 
     try:
         runtime_connection = await materialize_runtime_connection_credentials(
@@ -479,7 +471,7 @@ async def discover_runtime_targets(
                 raise ValueError("namespace filter is only supported for Kubernetes runtimes")
             targets = await adapter.discover_targets()
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"运行时发现失败: {exc}") from exc
+        raise HTTPException(status_code=400, detail=f"Runtime discovery failed: {exc}") from exc
 
     return {
         "items": [
@@ -501,7 +493,7 @@ async def get_executor_status_detail(
 ):
     executor = await storage.get_executor_config(executor_id)
     if not executor:
-        raise HTTPException(status_code=404, detail="执行器不存在")
+        raise HTTPException(status_code=404, detail="Executor not found")
 
     status = await storage.get_executor_status(executor_id)
     latest_run = await storage.get_latest_executor_run(executor_id)
@@ -536,7 +528,7 @@ async def get_executor_config_detail(
 ):
     executor = await storage.get_executor_config(executor_id)
     if not executor:
-        raise HTTPException(status_code=404, detail="执行器不存在")
+        raise HTTPException(status_code=404, detail="Executor not found")
     return _serialize_executor_config(executor)
 
 
@@ -551,7 +543,7 @@ async def get_executor_history(
 ):
     executor = await storage.get_executor_config(executor_id)
     if not executor:
-        raise HTTPException(status_code=404, detail="执行器不存在")
+        raise HTTPException(status_code=404, detail="Executor not found")
     history = await storage.get_executor_run_history(
         executor_id,
         skip=skip,
@@ -579,10 +571,10 @@ async def clear_executor_history(
 ):
     executor = await storage.get_executor_config(executor_id)
     if not executor:
-        raise HTTPException(status_code=404, detail="执行器不存在")
+        raise HTTPException(status_code=404, detail="Executor not found")
 
     deleted = await storage.delete_executor_run_history(executor_id)
-    return {"message": "执行历史已清空", "deleted": deleted}
+    return {"message": "Execution history cleared", "deleted": deleted}
 
 
 @router.post("", dependencies=[Depends(get_current_user)])
@@ -594,24 +586,24 @@ async def create_executor(
     try:
         name = executor_data.get("name")
         if not isinstance(name, str) or not name.strip():
-            raise HTTPException(status_code=400, detail="创建失败: name must be a non-empty string")
+            raise HTTPException(status_code=400, detail="Create failed: name must be a non-empty string")
 
         existing = await storage.get_executor_config_by_name(name)
         if existing:
-            raise HTTPException(status_code=400, detail="执行器名称已存在")
+            raise HTTPException(status_code=400, detail="Executor name already exists")
 
         executor = await _validate_executor_payload(storage, executor_data)
         executor_id = await storage.create_executor_config(executor)
         await scheduler.refresh_executor(executor_id)
         return {
-            "message": f"执行器 {executor.name} 已创建",
+            "message": f"Executor {executor.name} created",
             "id": executor_id,
             "health_check": executor.health_check.model_dump(mode="json"),
         }
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"创建失败: {exc}") from exc
+        raise HTTPException(status_code=400, detail=f"Create failed: {exc}") from exc
 
 
 @router.put("/{executor_id}", dependencies=[Depends(get_current_user)])
@@ -624,12 +616,12 @@ async def update_executor(
     try:
         existing = await storage.get_executor_config(executor_id)
         if not existing:
-            raise HTTPException(status_code=404, detail="执行器不存在")
+            raise HTTPException(status_code=404, detail="Executor not found")
 
         new_name = executor_data.get("name", existing.name)
         same_name = await storage.get_executor_config_by_name(new_name)
         if same_name and same_name.id != executor_id:
-            raise HTTPException(status_code=400, detail="执行器名称已存在")
+            raise HTTPException(status_code=400, detail="Executor name already exists")
 
         executor = await _validate_executor_payload(
             storage, executor_data, existing_executor=existing
@@ -637,13 +629,13 @@ async def update_executor(
         await storage.update_executor_config(executor_id, executor)
         await scheduler.refresh_executor(executor_id)
         return {
-            "message": f"执行器 {executor.name} 已更新",
+            "message": f"Executor {executor.name} updated",
             "health_check": executor.health_check.model_dump(mode="json"),
         }
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"更新失败: {exc}") from exc
+        raise HTTPException(status_code=400, detail=f"Update failed: {exc}") from exc
 
 
 @router.delete("/{executor_id}", dependencies=[Depends(get_current_user)])
@@ -654,13 +646,13 @@ async def delete_executor(
 ):
     executor = await storage.get_executor_config(executor_id)
     if not executor:
-        raise HTTPException(status_code=404, detail="执行器不存在")
+        raise HTTPException(status_code=404, detail="Executor not found")
 
     await storage.delete_executor_config(executor_id)
     await storage.delete_executor_status(executor_id)
     await storage.delete_executor_run_history(executor_id)
     await scheduler.remove_executor(executor_id)
-    return {"message": f"执行器 {executor.name} 已删除"}
+    return {"message": f"Executor {executor.name} deleted"}
 
 
 @router.post("/{executor_id}/run", dependencies=[Depends(get_current_user)])
@@ -671,22 +663,16 @@ async def run_executor(
 ):
     executor = await storage.get_executor_config(executor_id)
     if not executor:
-        raise HTTPException(status_code=404, detail="执行器不存在")
+        raise HTTPException(status_code=404, detail="Executor not found")
 
     try:
         run_id = await scheduler.run_executor_now_async(executor_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"执行失败: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Run failed: {exc}") from exc
 
     return {"status": "queued", "run_id": run_id}
-
-
-# ================================================================
-# Snapshot history + manual rollback endpoints (Phase E, Req 18, 19)
-# ================================================================
-
 
 def _serialize_snapshot_list_item(item) -> dict[str, Any]:
     return {
@@ -730,10 +716,9 @@ async def list_executor_snapshots(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
-    """Return a paginated snapshot history for the executor (Req 19.1, 19.2)."""
     executor = await storage.get_executor_config(executor_id)
     if not executor:
-        raise HTTPException(status_code=404, detail="执行器不存在")
+        raise HTTPException(status_code=404, detail="Executor not found")
 
     view = await scheduler.snapshot_service.list_snapshots(
         executor_id,
@@ -758,20 +743,17 @@ async def get_executor_snapshot_detail(
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
     scheduler: Annotated[ExecutorScheduler, Depends(get_executor_scheduler)],
 ):
-    """Return a single snapshot with redacted ``snapshot_data`` (Req 19.3, 19.4)."""
     executor = await storage.get_executor_config(executor_id)
     if not executor:
-        raise HTTPException(status_code=404, detail="执行器不存在")
+        raise HTTPException(status_code=404, detail="Executor not found")
 
-    # Read-time redaction branches by runtime_type so K8s Secrets and
-    # Portainer sensitive env entries are masked on the way out.
     detail = await scheduler.snapshot_service.get_snapshot(
         executor_id,
         snapshot_id,
         runtime_type=executor.runtime_type,
     )
     if detail is None:
-        raise HTTPException(status_code=404, detail="快照不存在")
+        raise HTTPException(status_code=404, detail="Snapshot not found")
     return _serialize_snapshot_detail(detail)
 
 
@@ -786,22 +768,15 @@ async def rollback_executor(
     current_user: Annotated[User, Depends(get_current_user)],
     payload: RollbackRequest | None = None,
 ):
-    """Restore the executor to a chosen snapshot (Req 18.*).
-
-    Defaults to the most recent snapshot when ``snapshot_id`` is omitted.
-    Returns 404 when the snapshot does not belong to the executor, 409
-    when the executor already has an active run, and 200 with the
-    finalized run record on success / application-level failure.
-    """
     executor = await storage.get_executor_config(executor_id)
     if not executor:
-        raise HTTPException(status_code=404, detail="执行器不存在")
+        raise HTTPException(status_code=404, detail="Executor not found")
 
     runtime_connection = await storage.get_runtime_connection(
         executor.runtime_connection_id
     )
     if not runtime_connection:
-        raise HTTPException(status_code=400, detail="运行时连接不存在")
+        raise HTTPException(status_code=400, detail="Runtime connection not found")
 
     materialized_runtime = await materialize_runtime_connection_credentials(
         storage, runtime_connection

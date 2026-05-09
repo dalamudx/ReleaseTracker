@@ -61,7 +61,7 @@ async def oidc_authorize(
     # Check whether the provider exists
     provider = await storage.get_oauth_provider(provider_slug)
     if not provider or not provider.enabled:
-        raise HTTPException(status_code=404, detail="OIDC 提供商不存在或已禁用")
+        raise HTTPException(status_code=404, detail="OIDC provider does not exist or is disabled")
 
     # Generate state for CSRF protection and a PKCE pair
     state = secrets.token_urlsafe(32)
@@ -72,7 +72,7 @@ async def oidc_authorize(
 
     callback_path = request.app.url_path_for("oidc_callback", provider_slug=provider_slug)
     redirect_uri = await _build_public_url(storage, request, callback_path)
-    logger.info(f"OIDC 授权 redirect_uri: {redirect_uri}")
+    logger.info(f"OIDC authorize redirect_uri: {redirect_uri}")
 
     # Generate the authorization URL
     auth_url = await oidc_service.get_authorization_url(
@@ -98,11 +98,11 @@ async def oidc_callback(
     # 2. Validate and consume state atomically to prevent replay attacks
     oauth_state = await storage.get_and_delete_oauth_state(state)
     if not oauth_state:
-        logger.warning(f"无效或过期的 OIDC state: {state[:8]}...")
+        logger.warning(f"Invalid or expired OIDC state: {state[:8]}...")
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
 
     if oauth_state.provider_slug != provider_slug:
-        logger.warning(f"OIDC state 提供商不匹配: {oauth_state.provider_slug} != {provider_slug}")
+        logger.warning(f"OIDC state provider mismatch: {oauth_state.provider_slug} != {provider_slug}")
         raise HTTPException(status_code=400, detail="Provider mismatch")
 
     # Check whether state is expired
@@ -126,11 +126,11 @@ async def oidc_callback(
             ip_address=request.client.host if request.client else None,
         )
     except ValueError as e:
-        logger.error(f"OIDC 回调处理失败: {e}")
+        logger.error(f"OIDC callback handling failed: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"OIDC 回调意外错误: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="OIDC 认证失败")
+        logger.error(f"OIDC callback unexpected error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="OIDC authentication failed")
 
     # 5. Redirect to the frontend with the token in the URL hash so it does not appear in server logs
     frontend_url = await _build_public_url(storage, request, "")

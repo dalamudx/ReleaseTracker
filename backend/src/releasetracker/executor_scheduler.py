@@ -376,9 +376,9 @@ class ExecutorScheduler:
         """Drive the Health Check Phase after a successful Update Phase.
 
         Returns ``None`` when the phase is skipped (strategy=none), which
-        is the caller's signal to finalize with pre-feature semantics
-        (Req 7.10, 22.6). Otherwise returns a structured outcome the
-        caller feeds into ``_finalize_run``.
+        is the caller's signal to finalize with pre-feature semantics.
+        Otherwise returns a structured outcome the caller feeds into
+        ``_finalize_run``.
         """
         profile = executor_config.health_check
         if profile is None or profile.strategy == "none":
@@ -407,7 +407,7 @@ class ExecutorScheduler:
             hc_result = await runner.run(ctx)
         except asyncio.CancelledError:
             # Cancellation during the Health Check Phase finalizes the run
-            # as failed; Recovery Hook never fires (Req 7.11).
+            # as failed; Recovery Hook never fires.
             return _HealthCheckOutcome(
                 status="failed",
                 message="health check cancelled",
@@ -434,9 +434,8 @@ class ExecutorScheduler:
 
         # Unhealthy path: pick the finalization semantics from the
         # operator outcome policy. mark_failed_and_recover also invokes
-        # the Recovery Hook (Req 9.2, Req 10.*) and persists the
-        # recovery_outcome into diagnostics so notifications can surface
-        # it (Req 11.4).
+        # the Recovery Hook and persists the recovery_outcome into
+        # diagnostics so notifications can surface it.
         failure_policy = profile.failure_policy
         message_prefix = "health_check_failed"
         if failure_policy == "mark_degraded":
@@ -460,8 +459,8 @@ class ExecutorScheduler:
         return _HealthCheckOutcome(
             status="failed",
             message=message,
-            # Req 13.7: truncate last_error that flows into Executor_Status
-            # to 500 chars so the run's last_error stays bounded.
+            # Truncate last_error that flows into Executor_Status to 500
+            # chars so the run's last_error stays bounded.
             last_error=(health_last_error or "health check failed")[:500],
             diagnostics=diagnostics,
         )
@@ -486,8 +485,8 @@ class ExecutorScheduler:
                 if asyncio.iscoroutine(baseline):
                     # Keep this helper sync; adapters that return a
                     # coroutine are expected to be awaited by the caller
-                    # in a future refactor. For Phase C we simply drop
-                    # the coroutine to avoid "coroutine was never awaited"
+                    # in a future refactor. For now we simply drop the
+                    # coroutine to avoid "coroutine was never awaited"
                     # warnings and fall back to an empty baseline.
                     baseline.close()
                     return {}
@@ -1215,7 +1214,7 @@ class ExecutorScheduler:
                         update={"target_ref": refreshed_ref}
                     )
 
-                # --- Health Check Phase (Req 7.1-7.11) ---------------
+                # --- Health Check Phase --------------------------------
                 # Only runs for container-mode executors in this branch.
                 # Grouped modes (compose / portainer stack / kubernetes
                 # workload / helm_release) go through separate pipelines
@@ -2958,10 +2957,10 @@ class ExecutorScheduler:
             payload["started_at"] = _notification_timestamp(
                 run_record.started_at, self._system_timezone
             )
-            # Req 11.1, 11.4: lift the persisted health_check and
-            # recovery_outcome diagnostics into the notification payload
-            # so webhook subscribers (Discord/Slack/plain HTTP) can show
-            # post-update readiness without calling the API.
+            # Lift the persisted health_check and recovery_outcome
+            # diagnostics into the notification payload so webhook
+            # subscribers (Discord/Slack/plain HTTP) can show post-update
+            # readiness without calling the API.
             diagnostics = run_record.diagnostics or {}
             health_check = diagnostics.get("health_check")
             if isinstance(health_check, dict):

@@ -1,16 +1,4 @@
-"""Manual rollback orchestration (Req 18.*).
-
-Phase E wiring: accepts a snapshot id (or defaults to the most recent
-snapshot), rejects runs while the executor is active, captures a fresh
-``pre_rollback`` snapshot so the rollback itself is reversible, then
-calls ``adapter.recover_from_snapshot``. The resulting recovery_outcome
-is persisted into the rollback run's diagnostics so the UI can surface
-it consistently with Recovery Hook runs (Req 10.5, Req 18.4).
-
-Rollback runs do not execute the Health Check Phase in the initial
-version (Req 18.7); outcome is derived directly from the adapter's
-``RuntimeUpdateResult``.
-"""
+"""Manual rollback orchestration."""
 
 from __future__ import annotations
 
@@ -68,13 +56,10 @@ class RollbackService:
 
         executor_id = executor_config.id
 
-        # 1. Resolve the snapshot (explicit id or most-recent fallback).
         snapshot = await self._resolve_snapshot(executor_id, snapshot_id)
 
-        # 2. Refuse to start when the executor already has an active run.
         await self._reject_when_active(executor_id)
 
-        # 3. Create the rollback run row.
         run = ExecutorRunHistory(
             executor_id=executor_id,
             started_at=datetime.now(),
@@ -93,8 +78,6 @@ class RollbackService:
 
         await self._storage.set_executor_run_status(run_id, "running")
 
-        # 4. Register the chosen snapshot so retention pruning cannot
-        #    delete it while this rollback is in flight (Req 16.3).
         registry = self._snapshot_service.registry
         if snapshot.id is not None:
             await registry.register(snapshot.id)
@@ -102,8 +85,6 @@ class RollbackService:
         diagnostics: dict = dict(run.diagnostics or {})
         recovery_outcome: RecoveryOutcome = "failed"
         try:
-            # 5. Capture a fresh ``pre_rollback`` snapshot so the
-            #    rollback itself is reversible (Req 18.5).
             pre_rollback_captured = await self._capture_pre_rollback_snapshot(
                 executor_config=executor_config,
                 adapter=adapter,
@@ -118,9 +99,6 @@ class RollbackService:
                     message="pre-rollback snapshot capture failed",
                 )
 
-            # 6. Delegate the actual restore to the shared Recovery
-            #    Hook so manual and automatic rollbacks share the same
-            #    error taxonomy and timeout semantics.
             coordinator = RecoveryHookCoordinator(self._storage)
             recovery_outcome = await coordinator.recover(
                 executor_id=executor_id,
@@ -194,10 +172,6 @@ class RollbackService:
         try:
             current_image = await adapter.get_current_image(target_ref)
         except Exception as exc:
-            # Some runtimes (K8s workloads, Helm) don't support the
-            # single-container ``get_current_image`` API. That is fine
-            # — we still capture a snapshot with an empty image tag so
-            # the rollback is reversible.
             logger.debug(
                 "rollback could not resolve current image for executor_id=%s: %s",
                 executor_config.id,
@@ -233,9 +207,6 @@ class RollbackService:
 
         try:
             retention = await self._storage.get_executor_snapshot_retention_count()
-            # Exclude every currently-registered snapshot id (the one
-            # we're rolling back to, plus anything another rollback
-            # might be consuming in parallel).
             exclude = await self._snapshot_service.registry.snapshot_ids()
             await self._snapshot_service.prune_after_insert(
                 executor_config.id, retention, exclude_ids=exclude
@@ -292,9 +263,6 @@ class RollbackService:
         profile = executor_config.health_check
         if profile is not None and profile.probe_window_seconds > 0:
             return profile.probe_window_seconds
-        # Sensible default when the executor has no health check
-        # profile: matches the adapter's internal Portainer poll cap
-        # so operators see consistent behaviour.
         return 120
 
 

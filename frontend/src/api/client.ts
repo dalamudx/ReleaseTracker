@@ -323,7 +323,7 @@ export const api = {
     deleteExecutor: (id: number) => apiClient.delete(`/api/executors/${id}`).then(res => res.data),
     runExecutor: (id: number) => apiClient.post<ExecutorRunResponse>(`/api/executors/${id}/run`).then(res => res.data),
 
-    // Snapshot history + rollback (Phase E)
+    // Snapshot history + rollback
     getExecutorSnapshots: (id: number, params?: { page?: number, page_size?: number }) =>
         apiClient.get<PaginatedSnapshots>(`/api/executors/${id}/snapshots`, { params }).then(res => res.data),
     getExecutorSnapshot: (executorId: number, snapshotId: number) =>

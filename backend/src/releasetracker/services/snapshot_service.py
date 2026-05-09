@@ -1,15 +1,4 @@
-"""Snapshot service: history listing, pruning, and redaction (Req 19, 21).
-
-The module now covers:
-
-- ``InFlightRollbackRegistry`` — Phase A in-memory set used by retention
-  pruning to avoid deleting a snapshot that a running rollback relies on.
-- ``SnapshotRedactor`` — recursive, deterministic redactor applied both
-  at write time (in the scheduler capture path) and at read time (when
-  listing or fetching snapshots through the API).
-- ``SnapshotService`` — public facade: ``list_snapshots``, ``get_snapshot``,
-  ``prune_after_insert``, and the redactor helper.
-"""
+"""Snapshot service: history listing, pruning, and redaction."""
 
 from __future__ import annotations
 
@@ -29,14 +18,9 @@ if TYPE_CHECKING:  # pragma: no cover - import cycle guard
 logger = logging.getLogger(__name__)
 
 
-# Fixed non-reversible marker the redactor substitutes for every secret
-# value it identifies (Req 21.3). Keeping it a constant makes golden
-# snapshots deterministic for testing (Req 21.5).
 REDACTED_MARKER = "***REDACTED***"
 
 
-# Dict key names whose values are replaced unconditionally, no matter how
-# deeply nested. Lower-cased comparison.
 _ALWAYS_REDACT_KEYS = frozenset(
     {
         "password",
@@ -57,30 +41,15 @@ _ALWAYS_REDACT_KEYS = frozenset(
 )
 
 
-# Case-insensitive suffix matches for env-var style naming conventions
-# used by Portainer stacks (Req 21.1). Each suffix is matched against
-# the full key / ``name`` field.
 _SENSITIVE_SUFFIX_PATTERN = re.compile(
     r".*(?:_password|_token|_secret|_key|_api_key|_auth)$",
     re.IGNORECASE,
 )
 
 
-# Runtime-specific branches apply additional rules beyond the always-redact
-# keys above: Kubernetes Secret fields, Portainer Env list entries, Helm
-# ``.Values.*.secret=true`` markers, and runtime_connection embedded
-# material. The runtime_type passed to ``redact`` selects the branch.
-
-
 @dataclass
 class InFlightRollbackRegistry:
-    """Registry of snapshot ids currently consumed by a running rollback.
-
-    Retention pruning (:meth:`SnapshotService.prune_after_insert`) excludes
-    any ids registered here so that a rollback in progress cannot race
-    with a concurrent capture and lose its source-of-truth snapshot
-    (Req 16.3).
-    """
+    """Registry of snapshot ids currently consumed by a running rollback."""
 
     _ids: set[int] = field(default_factory=set)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -94,15 +63,12 @@ class InFlightRollbackRegistry:
             self._ids.discard(snapshot_id)
 
     async def snapshot_ids(self) -> set[int]:
-        """Return a copy of the registered ids at call time."""
         async with self._lock:
             return set(self._ids)
 
 
 @dataclass(frozen=True)
 class SnapshotListItemView:
-    """Thin DTO used by list endpoints and UI tables."""
-
     id: int
     created_at: datetime
     trigger: str
@@ -113,8 +79,6 @@ class SnapshotListItemView:
 
 @dataclass(frozen=True)
 class SnapshotDetailView(SnapshotListItemView):
-    """List item + the redacted ``snapshot_data`` payload."""
-
     snapshot_data: dict[str, Any]
 
 
@@ -127,15 +91,7 @@ class PaginatedSnapshotsView:
 
 
 class SnapshotRedactor:
-    """Deterministic redactor applied to ``snapshot_data`` payloads.
-
-    Write-time use (in the scheduler / adapter capture path) substitutes
-    secrets in-place so persisted rows carry no plaintext material.
-    Read-time use (in :meth:`SnapshotService.get_snapshot`) protects
-    against older rows captured before the write-time hook landed; those
-    rows also get the ``unredacted_persisted=true`` marker at write time
-    so operators can be warned.
-    """
+    """Deterministic redactor applied to ``snapshot_data`` payloads."""
 
     def redact(
         self,
@@ -143,30 +99,17 @@ class SnapshotRedactor:
         *,
         runtime_type: str | None = None,
     ) -> tuple[Any, bool]:
-        """Return ``(redacted_payload, needs_unredacted_marker)``.
-
-        ``needs_unredacted_marker`` is set to True when the adapter is
-        one that currently cannot exhaustively identify secrets at
-        persistence time (e.g., Helm rendered values). Phase E leaves
-        the flag conservatively False because the built-in patterns
-        cover the common cases; follow-up work may flip specific
-        runtimes once golden fixtures validate them.
-        """
         if snapshot_data is None:
             return None, False
 
         needs_marker = False
 
-        # Apply runtime-specific branches first so they can delete
-        # entire sub-objects before the generic walk runs.
         if runtime_type == "portainer":
             snapshot_data = self._redact_portainer(snapshot_data)
         elif runtime_type == "kubernetes":
             snapshot_data = self._redact_kubernetes(snapshot_data)
 
         return self._walk(snapshot_data), needs_marker
-
-    # ---- Generic walk ----------------------------------------------------
 
     def _walk(self, node: Any) -> Any:
         if isinstance(node, dict):
@@ -188,15 +131,7 @@ class SnapshotRedactor:
             return True
         return _SENSITIVE_SUFFIX_PATTERN.fullmatch(lowered) is not None
 
-    # ---- Portainer stack -------------------------------------------------
-
     def _redact_portainer(self, snapshot_data: dict[str, Any]) -> dict[str, Any]:
-        """Portainer stack snapshots carry Env lists with ``{name, value}`` pairs.
-
-        We redact any entry whose ``name`` matches a sensitive suffix or
-        exact name, and we drop any embedded ``runtime_connection`` block
-        (it should never be persisted inside a snapshot; defense in depth).
-        """
         if not isinstance(snapshot_data, dict):
             return snapshot_data
         result = copy.deepcopy(snapshot_data)
@@ -216,12 +151,7 @@ class SnapshotRedactor:
         result.pop("runtime_connection", None)
         return result
 
-    # ---- Kubernetes -----------------------------------------------------
-
     def _redact_kubernetes(self, snapshot_data: dict[str, Any]) -> dict[str, Any]:
-        """Kubernetes / Helm snapshots may include Secret objects and Helm
-        values whose top-level ``.Values.*.secret`` signals sensitive data.
-        """
         if not isinstance(snapshot_data, dict):
             return snapshot_data
         result = copy.deepcopy(snapshot_data)
@@ -238,11 +168,6 @@ class SnapshotRedactor:
 
         helm_values = result.get("values")
         if isinstance(helm_values, dict):
-            # Naive walk: any key named ``secret`` or where a sibling
-            # ``secret: true`` appears triggers redaction of the sibling
-            # values. Phase E's heuristic is deliberately conservative;
-            # a richer .Values.*.secret parser can land when golden
-            # fixtures validate it.
             self._redact_helm_values(helm_values)
 
         result.pop("runtime_connection", None)
@@ -326,8 +251,6 @@ class SnapshotService:
                 )
         return prune_ids
 
-    # ---- Read APIs -------------------------------------------------------
-
     async def list_snapshots(
         self,
         executor_id: int,
@@ -367,7 +290,7 @@ class SnapshotService:
             snapshot.snapshot_data,
             runtime_type=runtime_type,
         )
-        del needs_marker  # Read-time redaction never flips the persisted flag.
+        del needs_marker
         return SnapshotDetailView(
             id=snapshot.id or 0,
             created_at=snapshot.created_at,
@@ -377,8 +300,6 @@ class SnapshotService:
             unredacted_persisted=snapshot.unredacted_persisted,
             snapshot_data=redacted_payload if isinstance(redacted_payload, dict) else {},
         )
-
-    # ---- Helpers --------------------------------------------------------
 
     def _to_list_item(self, snapshot: "ExecutorSnapshot") -> SnapshotListItemView:
         return SnapshotListItemView(
@@ -390,21 +311,12 @@ class SnapshotService:
             unredacted_persisted=snapshot.unredacted_persisted,
         )
 
-    # ---- Write-time redaction helper ------------------------------------
-
     def redact_for_persist(
         self,
         snapshot_data: dict[str, Any],
         *,
         runtime_type: str,
     ) -> tuple[dict[str, Any], bool]:
-        """Apply write-time redaction and return the flag for the row.
-
-        The returned ``needs_unredacted_marker`` is stored on the
-        ``executor_snapshots`` row as ``unredacted_persisted`` so the UI
-        can warn operators that the adapter could not guarantee full
-        redaction (Req 21.2).
-        """
         redacted, needs_marker = self._redactor.redact(
             snapshot_data, runtime_type=runtime_type
         )

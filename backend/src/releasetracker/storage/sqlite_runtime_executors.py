@@ -946,7 +946,7 @@ async def prune_old_executor_runs(storage: "SQLiteStorage", days: int = 90) -> i
     await db.commit()
     deleted = result.rowcount or 0
     if deleted > 0:
-        logger.info(f"历史执行记录清理完成：已删除 {deleted} 条超过 {days} 天的记录")
+        logger.info(f"Executor run history cleanup complete: deleted {deleted} records older than {days} days")
     return deleted
 
 

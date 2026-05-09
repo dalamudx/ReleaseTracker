@@ -70,7 +70,7 @@ async def get_credential(
 
     credential = await storage.get_credential(credential_id)
     if not credential:
-        raise HTTPException(status_code=404, detail="凭证不存在")
+        raise HTTPException(status_code=404, detail="Credential not found")
 
     return _serialize_credential(credential)
 
@@ -85,16 +85,16 @@ async def create_credential(
         # Check whether the name is duplicated
         existing = await storage.get_credential_by_name(credential_data.name)
         if existing:
-            raise HTTPException(status_code=400, detail="凭证名称已存在")
+            raise HTTPException(status_code=400, detail="Credential name already exists")
 
         credential = Credential(**credential_data.model_dump())
         credential_id = await storage.create_credential(credential)
 
-        return {"message": f"凭证 {credential.name} 已创建", "id": credential_id}
+        return {"message": f"Credential {credential.name} created", "id": credential_id}
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"创建失败: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Create failed: {str(e)}")
 
 
 @router.get("/{credential_id}/references", dependencies=[Depends(get_current_user)])
@@ -103,7 +103,7 @@ async def get_credential_references(
 ):
     credential = await storage.get_credential(credential_id)
     if not credential:
-        raise HTTPException(status_code=404, detail="凭证不存在")
+        raise HTTPException(status_code=404, detail="Credential not found")
 
     references = await storage.get_credential_references(credential)
     return {
@@ -125,7 +125,7 @@ async def update_credential(
     try:
         existing = await storage.get_credential(credential_id)
         if not existing:
-            raise HTTPException(status_code=404, detail="凭证不存在")
+            raise HTTPException(status_code=404, detail="Credential not found")
 
         payload = credential_data.model_dump(exclude_unset=True)
 
@@ -151,11 +151,11 @@ async def update_credential(
 
         await storage.update_credential(credential_id, credential)
 
-        return {"message": f"凭证 {existing.name} 已更新"}
+        return {"message": f"Credential {existing.name} updated"}
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"更新失败: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Update failed: {str(e)}")
 
 
 @router.delete("/{credential_id}", dependencies=[Depends(get_current_user)])
@@ -166,7 +166,7 @@ async def delete_credential(
 
     credential = await storage.get_credential(credential_id)
     if not credential:
-        raise HTTPException(status_code=404, detail="凭证不存在")
+        raise HTTPException(status_code=404, detail="Credential not found")
 
     references = await storage.get_credential_references(credential)
     reference_counts = _credential_reference_counts(references)
@@ -174,7 +174,7 @@ async def delete_credential(
         raise HTTPException(
             status_code=409,
             detail={
-                "message": "凭证正在被使用，不能删除",
+                "message": "Credential is in use and cannot be deleted",
                 "references": references,
                 "counts": reference_counts,
             },
@@ -182,4 +182,4 @@ async def delete_credential(
 
     await storage.delete_credential(credential_id)
 
-    return {"message": f"凭证 {credential.name} 已删除"}
+    return {"message": f"Credential {credential.name} deleted"}

@@ -38,7 +38,7 @@ async def test_create_oidc_provider_enforces_single_provider_limit(client, auth_
     )
 
     assert first_response.status_code == 201, first_response.text
-    assert first_response.json()["message"] == "OIDC 提供商已创建"
+    assert first_response.json()["message"] == "OIDC provider created"
     assert isinstance(first_response.json()["id"], int)
 
     second_response = client.post(
@@ -48,7 +48,7 @@ async def test_create_oidc_provider_enforces_single_provider_limit(client, auth_
     )
 
     assert second_response.status_code == 409
-    assert second_response.json()["detail"] == "仅允许配置一个 OIDC 提供商"
+    assert second_response.json()["detail"] == "Only one OIDC provider is allowed"
 
 
 @pytest.mark.asyncio
@@ -67,7 +67,7 @@ async def test_delete_then_recreate_oidc_provider(client, auth_service):
 
     delete_resp = client.delete(f"/api/oidc-providers/{provider_id}", headers=headers)
     assert delete_resp.status_code == 200
-    assert delete_resp.json()["message"] == "OIDC 提供商已删除"
+    assert delete_resp.json()["message"] == "OIDC provider deleted"
 
     recreate_resp = client.post(
         "/api/oidc-providers",
@@ -98,7 +98,7 @@ async def test_update_sole_oidc_provider(client, auth_service):
         headers=headers,
     )
     assert update_resp.status_code == 200
-    assert update_resp.json()["message"] == "OIDC 提供商已更新"
+    assert update_resp.json()["message"] == "OIDC provider updated"
 
     get_resp = client.get(f"/api/oidc-providers/{provider_id}", headers=headers)
     assert get_resp.status_code == 200
@@ -121,7 +121,7 @@ async def test_delete_sole_oidc_provider(client, auth_service):
 
     delete_resp = client.delete(f"/api/oidc-providers/{provider_id}", headers=headers)
     assert delete_resp.status_code == 200
-    assert delete_resp.json()["message"] == "OIDC 提供商已删除"
+    assert delete_resp.json()["message"] == "OIDC provider deleted"
 
     list_resp = client.get("/api/oidc-providers", headers=headers)
     assert list_resp.status_code == 200

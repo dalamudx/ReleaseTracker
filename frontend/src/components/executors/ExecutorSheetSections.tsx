@@ -973,12 +973,12 @@ interface ExecutorSheetHealthCheckFieldsProps {
 /**
  * Inline Health Check Profile editor rendered inside the Policy step.
  *
- * Phase E keeps the scope pragmatic: strategy + failure policy + timings
- * are covered end-to-end so operators can opt into runtime_native,
- * helm_status, http, and tcp strategies. HTTP / TCP sub-object editing
- * (path, expected status codes, headers, regex) is deferred — the API
- * accepts the full payload for power users, and this panel surfaces
- * the essentials that cover the common case.
+ * Scope: strategy + failure policy + timings are covered end-to-end so
+ * operators can opt into runtime_native, helm_status, http, and tcp
+ * strategies. HTTP / TCP sub-object editing (path, expected status
+ * codes, headers, regex) is deferred — the API accepts the full
+ * payload for power users, and this panel surfaces the essentials that
+ * cover the common case.
  */
 export function ExecutorSheetHealthCheckFields({
     form,
@@ -1015,7 +1015,7 @@ export function ExecutorSheetHealthCheckFields({
                                 value={field.value}
                                 onValueChange={(value) => {
                                     field.onChange(value)
-                                    // strategy=none forces mark_failed (Req 1.9).
+                                    // strategy=none forces mark_failed.
                                     if (value === "none") {
                                         form.setValue("health_check_failure_policy", "mark_failed")
                                     }

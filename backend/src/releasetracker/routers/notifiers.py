@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/notifiers", tags=["notifiers"])
 def get_storage(request):
     storage = getattr(request.app.state, "storage", None)
     if not storage:
-        raise HTTPException(status_code=503, detail="存储服务未初始化")
+        raise HTTPException(status_code=503, detail="Storage service is not initialized")
     return storage
 
 

@@ -322,7 +322,7 @@ async def test_create_tracker_trims_name_and_blocks_trimmed_duplicate(authed_cli
     assert trimmed_lookup.json()["name"] == "dup-tracker"
     assert padded_lookup.status_code == 404
     assert duplicate_response.status_code == 400
-    assert "名称已存在" in duplicate_response.json()["detail"]
+    assert "name already exists" in duplicate_response.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -873,7 +873,7 @@ async def test_local_rebuild_status_ignores_canonical_only_rows_without_redesign
     status = await scheduler.rebuild_tracker_views_from_storage("local-rebuild-canonical-only")
 
     assert status.last_version is None
-    assert status.error == "未找到版本信息"
+    assert status.error == "No version information found"
 
 
 @pytest.mark.asyncio
@@ -1069,7 +1069,7 @@ async def test_update_tracker_still_rejects_true_rename(authed_client):
     )
 
     assert response.status_code == 400
-    assert "不支持修改追踪器名称" in response.json()["detail"]
+    assert "Renaming a tracker is not supported" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -1141,7 +1141,7 @@ async def test_create_duplicate_failure(authed_client):
 
     response = authed_client.post("/api/trackers", json=data)
     assert response.status_code == 400
-    assert "名称已存在" in response.json()["detail"]
+    assert "name already exists" in response.json()["detail"]
 
 
 @pytest.mark.asyncio

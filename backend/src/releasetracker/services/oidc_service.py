@@ -55,11 +55,11 @@ class OIDCService:
                 provider.token_url = config["token_endpoint"]
                 provider.userinfo_url = config.get("userinfo_endpoint") or provider.userinfo_url
                 provider.jwks_uri = config.get("jwks_uri") or provider.jwks_uri
-                logger.info(f"OIDC Discovery 成功：{provider.name}")
+                logger.info(f"OIDC Discovery succeeded: {provider.name}")
             except Exception as e:
-                logger.warning(f"OIDC Discovery 失败（{provider.name}）：{e}")
+                logger.warning(f"OIDC Discovery failed ({provider.name}): {e}")
                 if not (provider.authorization_url and provider.token_url):
-                    raise ValueError("OIDC Discovery 失败且未配置手动端点")
+                    raise ValueError("OIDC Discovery failed and no manual endpoints configured")
         return provider
 
     async def get_authorization_url(
@@ -68,7 +68,7 @@ class OIDCService:
         """Generate an OAuth2 authorization URL and store state/PKCE"""
         provider = await self.storage.get_oauth_provider(provider_slug)
         if not provider or not provider.enabled:
-            raise ValueError(f"提供商 {provider_slug} 不存在或已禁用")
+            raise ValueError(f"Provider {provider_slug} does not exist or is disabled")
 
         provider = await self._get_provider_endpoints(provider)
 
@@ -98,7 +98,7 @@ class OIDCService:
         """Handle OIDC callback: exchange token, fetch user info, create or link user"""
         provider = await self.storage.get_oauth_provider(provider_slug)
         if not provider:
-            raise ValueError(f"提供商 {provider_slug} 不存在")
+            raise ValueError(f"Provider {provider_slug} does not exist")
 
         provider = await self._get_provider_endpoints(provider)
 
@@ -129,8 +129,8 @@ class OIDCService:
                 token_resp.raise_for_status()
                 token = token_resp.json()
             except httpx.HTTPStatusError as e:
-                logger.error(f"Token 换取失败：{e.response.status_code} {e.response.text}")
-                raise ValueError(f"Token 换取失败：{e.response.status_code}")
+                logger.error(f"Token exchange failed: {e.response.status_code} {e.response.text}")
+                raise ValueError(f"Token exchange failed: {e.response.status_code}")
 
         # 2. Fetch user information
         userinfo = self._parse_id_token(token["id_token"], provider_slug) if token.get("id_token") else None
@@ -144,7 +144,7 @@ class OIDCService:
                 userinfo_from_endpoint = self._normalize_userinfo(ui_resp.json(), provider_slug)
                 userinfo = self._merge_userinfo(userinfo, userinfo_from_endpoint)
         if userinfo is None:
-            raise ValueError("OIDC 用户信息缺失")
+            raise ValueError("OIDC user info missing")
 
         # 3. Create or link user
         user = await self._get_or_create_user(userinfo)
@@ -179,7 +179,7 @@ class OIDCService:
         """Parse JWT ID Token without signature verification, only to read claims"""
         parts = id_token.split(".")
         if len(parts) != 3:
-            raise ValueError("ID Token 格式无效")
+            raise ValueError("Invalid ID Token format")
         payload = parts[1]
         # Add Base64 padding
         payload += "=" * (4 - len(payload) % 4)

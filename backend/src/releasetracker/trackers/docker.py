@@ -175,7 +175,7 @@ class DockerTracker(BaseTracker):
             resp.raise_for_status()
             return resp.json().get("token") or resp.json().get("access_token")
         except Exception as e:
-            logger.warning(f"DockerTracker: Fetch Bearer token 失败: {e}")
+            logger.warning(f"DockerTracker: Fetch Bearer token failed: {e}")
             return None
 
     def _get_auth_header(self, bearer_token: str | None) -> dict:
@@ -200,13 +200,13 @@ class DockerTracker(BaseTracker):
                 resp = await client.get(url, headers=headers, timeout=self.timeout)
                 resp.raise_for_status()
             except httpx.TimeoutException:
-                logger.error(f"DockerTracker: 请求 Registry 超时。URL={url}")
-                raise ValueError("连接容器仓库超时")
+                logger.error(f"DockerTracker: Registry request timed out. URL={url}")
+                raise ValueError("Container registry connection timed out")
 
             try:
                 data = resp.json()
             except ValueError:
-                logger.error(f"DockerTracker: 解析 Tags 失败，返回的并不是合法的 JSON。URL={url}")
+                logger.error(f"DockerTracker: Failed to parse tags, response is not valid JSON. URL={url}")
                 break
 
             tags.extend(data.get("tags") or [])
@@ -481,7 +481,7 @@ class DockerTracker(BaseTracker):
         """
         scope = f"repository:{self.image}:pull"
 
-        logger.info(f"DockerTracker: 从 {self.registry}/{self.image} 获取 Tags（limit={limit}）")
+        logger.info(f"DockerTracker: Fetching tags from {self.registry}/{self.image} (limit={limit})")
 
         async with httpx.AsyncClient(follow_redirects=True) as client:
             # 1. Fetch Bearer token
@@ -492,12 +492,12 @@ class DockerTracker(BaseTracker):
                 all_tags = await self._fetch_tags(client, bearer_token)
             except httpx.HTTPStatusError as e:
                 logger.error(
-                    f"DockerTracker: Fetch tag list失败 {e.response.status_code}: {e.response.text}"
+                    f"DockerTracker: Fetch tag list failed {e.response.status_code}: {e.response.text}"
                 )
-                raise ValueError(f"获取镜像 Tag 失败: {e.response.status_code} {e.response.text}")
+                raise ValueError(f"Failed to fetch image tags: {e.response.status_code} {e.response.text}")
             except httpx.TimeoutException:
-                logger.error(f"DockerTracker: Fetch tag list超时 (Repository {self.image})")
-                raise ValueError("连接容器仓库超时，请检查网络或增加超时设定")
+                logger.error(f"DockerTracker: Fetch tag list timed out (Repository {self.image})")
+                raise ValueError("Container registry connection timed out; check the network or increase the timeout setting")
 
             if not all_tags:
                 return []

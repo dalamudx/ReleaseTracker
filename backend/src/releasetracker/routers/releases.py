@@ -375,7 +375,7 @@ def _removed_mode_error() -> HTTPException:
 async def _load_aggregate_tracker_or_404(storage: SQLiteStorage, tracker_name: str):
     aggregate_tracker = await storage.get_aggregate_tracker(tracker_name)
     if aggregate_tracker is None:
-        raise HTTPException(status_code=404, detail="追踪器不存在")
+        raise HTTPException(status_code=404, detail="Tracker not found")
     return aggregate_tracker
 
 
