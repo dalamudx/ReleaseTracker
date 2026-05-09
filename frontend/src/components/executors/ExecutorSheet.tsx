@@ -4,7 +4,7 @@ import { useForm, useWatch } from "react-hook-form"
 import { useTranslation } from "react-i18next"
 
 import { api } from "@/api/client"
-import type { RuntimeConnection, RuntimeTargetDiscoveryItem, TrackerStatus } from "@/api/types"
+import type { HealthCheckProfile, RuntimeConnection, RuntimeTargetDiscoveryItem, TrackerStatus } from "@/api/types"
 import { Button } from "@/components/ui/button"
 import {
     Sheet,
@@ -88,6 +88,7 @@ export function ExecutorSheet({
     const [selectedDiscoveryNamespace, setSelectedDiscoveryNamespace] = useState("")
     const [selectedTargetRef, setSelectedTargetRef] = useState<Record<string, unknown>>(EMPTY_TARGET_REF)
     const [serviceBindings, setServiceBindings] = useState<ExecutorServiceBindingFormValue[]>([])
+    const [existingHealthCheck, setExistingHealthCheck] = useState<HealthCheckProfile | null>(null)
     const stepScrollRef = useRef<HTMLDivElement | null>(null)
 
     const form = useForm<ExecutorFormValues>({
@@ -319,6 +320,7 @@ export function ExecutorSheet({
             setDiscoveredTargets([])
             setSelectedTargetRef(EMPTY_TARGET_REF)
             setServiceBindings([])
+            setExistingHealthCheck(null)
         })
 
         if (executorId === null) {
@@ -339,6 +341,7 @@ export function ExecutorSheet({
                 })
                 setSelectedTargetRef(config.target_ref ?? EMPTY_TARGET_REF)
                 setServiceBindings(buildExecutorServiceBindingValues(config, trackers))
+                setExistingHealthCheck(config.health_check ?? null)
             } catch (error) {
                 console.error("Failed to load executor config", error)
                 toast.error(t("executors.toasts.loadConfigFailed"))
@@ -632,6 +635,7 @@ export function ExecutorSheet({
                 selectedTargetRef,
                 trackers: containerCompatibleTrackers,
                 serviceBindings,
+                existingHealthCheck,
             })
 
             if (executorId === null) {

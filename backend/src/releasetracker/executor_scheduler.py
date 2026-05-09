@@ -446,13 +446,26 @@ class ExecutorScheduler:
             from .executors.health_check.recovery_hook import RecoveryHookCoordinator
 
             coordinator = RecoveryHookCoordinator(self.storage)
-            recovery_outcome = await coordinator.recover(
+            recovery_result = await coordinator.recover_detailed(
                 executor_id=executor_config.id,
                 adapter=adapter,
                 target_ref=executor_config.target_ref,
                 budget_seconds=int(profile.probe_window_seconds),
             )
+            recovery_outcome = recovery_result.outcome
             diagnostics["recovery_outcome"] = recovery_outcome
+            if recovery_result.error:
+                diagnostics["recovery_error"] = recovery_result.error
+            target_mode = executor_config.target_ref.get("mode", "container")
+            if recovery_result.new_container_id and target_mode == "container":
+                refreshed_ref = {
+                    **executor_config.target_ref,
+                    "container_id": recovery_result.new_container_id,
+                }
+                await self.storage.update_executor_target_ref(
+                    executor_config.id,
+                    refreshed_ref,
+                )
 
         message_body = (health_last_error or "health check failed")[:500]
         message = f"{message_prefix}: {message_body}"

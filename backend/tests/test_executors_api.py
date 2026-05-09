@@ -2814,8 +2814,59 @@ async def test_rollback_endpoint_returns_run_and_recovery_outcome(
     body = response.json()
     assert body["recovery_outcome"] == "succeeded"
     assert body["run"]["status"] == "success"
+    assert body["run"]["from_version"] == "acme/api:1.0.0"
+    assert body["run"]["to_version"] == "acme/api:1.0.0"
     assert body["run"]["diagnostics"]["run_trigger"] == "manual_rollback"
     assert body["run"]["diagnostics"]["snapshot_id"] == snapshot_id
+
+
+@pytest.mark.asyncio
+async def test_rollback_endpoint_returns_failed_recovery_error(
+    authed_client, storage, monkeypatch
+):
+    executor_id, snapshot_id = await _seed_executor_with_snapshot(
+        storage, name="snap-rollback-failed"
+    )
+
+    from releasetracker.executors.base import BaseRuntimeAdapter
+
+    class _ApiRollbackFailingAdapter(BaseRuntimeAdapter):
+        async def discover_targets(self):
+            return []
+
+        async def validate_target_ref(self, target_ref):
+            return None
+
+        async def get_current_image(self, target_ref):
+            return "acme/api:2.0.0"
+
+        async def capture_snapshot(self, target_ref, current_image):
+            return {"runtime_type": "docker", "image": current_image}
+
+        async def validate_snapshot(self, target_ref, snapshot):
+            return None
+
+        async def update_image(self, target_ref, new_image):
+            raise NotImplementedError
+
+        async def recover_from_snapshot(self, target_ref, snapshot):
+            raise RuntimeError("container name already in use")
+
+    monkeypatch.setattr(
+        "releasetracker.routers.executors.DockerRuntimeAdapter",
+        lambda runtime_connection: _ApiRollbackFailingAdapter(runtime_connection),
+    )
+
+    response = authed_client.post(
+        f"/api/executors/{executor_id}/rollback",
+        json={"snapshot_id": snapshot_id},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["recovery_outcome"] == "failed"
+    assert body["recovery_error"] == "container name already in use"
+    assert body["run"]["status"] == "failed"
+    assert body["run"]["diagnostics"]["recovery_error"] == "container name already in use"
 
 
 @pytest.mark.asyncio

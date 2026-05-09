@@ -63,10 +63,29 @@ export function ExecutorRollbackDialog({
         }
         setSubmitting(true)
         try {
-            await api.rollbackExecutor(executor.id, { snapshot_id: snapshot.id })
-            toast.success(t("executors.rollback.toasts.success"))
-            onSuccess?.()
-            onOpenChange(false)
+            const result = await api.rollbackExecutor(executor.id, { snapshot_id: snapshot.id })
+            if (result.recovery_outcome === "succeeded") {
+                toast.success(t("executors.rollback.toasts.success"))
+                onSuccess?.()
+                onOpenChange(false)
+            } else {
+                const outcomeLabel = t(
+                    `executors.history.recoveryOutcome.${result.recovery_outcome}`,
+                    { defaultValue: result.recovery_outcome },
+                )
+                const detail = result.recovery_error ?? result.run?.message ?? ""
+                const description = detail
+                    ? `${outcomeLabel}: ${detail}`
+                    : outcomeLabel
+                toast.error(t("executors.rollback.toasts.failed"), {
+                    description,
+                    duration: 10000,
+                })
+                // Refresh the caller so the snapshot list + history reload
+                // with the just-finalized rollback run visible.
+                onSuccess?.()
+                onOpenChange(false)
+            }
         } catch (error: unknown) {
             const status = (error as { response?: { status?: number } })?.response?.status
             if (status === 404) {

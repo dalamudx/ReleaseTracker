@@ -624,6 +624,34 @@ async def test_docker_adapter_requires_recreate_metadata_when_image_only_update_
 
 
 @pytest.mark.asyncio
+async def test_docker_adapter_update_cleans_up_failed_replacement_container():
+    runtime = RuntimeConnectionConfig(
+        name="docker-prod",
+        type="docker",
+        config={"socket": "unix:///var/run/docker.sock"},
+        secrets={},
+    )
+    container = FakeContainer(
+        "abc",
+        "sample-web",
+        FakeImage(tags=["sample-web:1.25"]),
+        attrs={
+            "Config": {"Image": "sample-web:1.25"},
+            "HostConfig": {"NetworkMode": "bridge"},
+        },
+    )
+    client = FakeDockerRecreateClient([container])
+    client.containers.fail_start_for_images.add("sample-web:1.26")
+    adapter = DockerRuntimeAdapter(runtime, client=client)
+
+    with pytest.raises(RuntimeMutationError, match="docker update failed after destructive steps began"):
+        await adapter.update_image({"container_name": "sample-web"}, "sample-web:1.26")
+
+    assert len(client.containers._created) == 1
+    assert len(client.containers._created[0].remove_calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_podman_adapter_recreates_container_with_new_image():
     runtime = RuntimeConnectionConfig(
         name="podman-prod",

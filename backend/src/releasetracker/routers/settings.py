@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import Literal, List, Optional
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -53,6 +53,27 @@ class EncryptionKeyState(SecurityKeyState):
 class SecurityKeysStatus(BaseModel):
     jwt_secret: JwtSecretState
     encryption_key: EncryptionKeyState
+
+
+class ReleaseHistoryCleanupResponse(BaseModel):
+    action: Literal["release_history_cleanup"]
+    retention_count: int
+    trackers_scanned: int
+    tracker_release_history_deleted: int
+    tracker_release_history_sources_deleted: int
+    source_release_history_deleted: int
+    source_release_run_observations_deleted: int
+    sqlite_optimize_performed: bool
+    wal_checkpoint_performed: bool
+    vacuum_performed: bool
+
+
+class SnapshotHistoryCleanupResponse(BaseModel):
+    action: Literal["snapshot_history_cleanup"]
+    retention_count: int
+    executors_scanned: int
+    executors_pruned: int
+    snapshots_deleted: int
 
 
 class SecurityKeyRotationRequest(BaseModel):
@@ -240,6 +261,64 @@ async def rotate_encryption_key_endpoint(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/actions/cleanup-release-history",
+    response_model=ReleaseHistoryCleanupResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def cleanup_release_history_endpoint(
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    storage: SQLiteStorage = get_storage(request)
+    result = await storage.cleanup_release_history()
+    return ReleaseHistoryCleanupResponse(
+        action="release_history_cleanup",
+        **result,
+    )
+
+
+@router.post(
+    "/actions/cleanup-snapshot-history",
+    response_model=SnapshotHistoryCleanupResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def cleanup_snapshot_history_endpoint(
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    storage: SQLiteStorage = get_storage(request)
+    executor_scheduler = getattr(request.app.state, "executor_scheduler", None)
+    snapshot_service = getattr(executor_scheduler, "snapshot_service", None)
+    if snapshot_service is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Snapshot cleanup service is not initialized",
+        )
+
+    retention = await storage.get_executor_snapshot_retention_count()
+    executors = await storage.get_all_executor_configs()
+    executors_scanned = 0
+    executors_pruned = 0
+    snapshots_deleted = 0
+    for executor in executors:
+        if executor.id is None:
+            continue
+        executors_scanned += 1
+        deleted = await snapshot_service.prune_after_insert(executor.id, retention)
+        if deleted:
+            executors_pruned += 1
+            snapshots_deleted += len(deleted)
+
+    return SnapshotHistoryCleanupResponse(
+        action="snapshot_history_cleanup",
+        retention_count=retention,
+        executors_scanned=executors_scanned,
+        executors_pruned=executors_pruned,
+        snapshots_deleted=snapshots_deleted,
+    )
 
 
 @router.get("", response_model=List[SettingItem], dependencies=[Depends(get_current_user)])

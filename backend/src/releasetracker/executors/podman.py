@@ -290,17 +290,71 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
             raise ValueError("snapshot.create_config must be a dict")
 
         client = self._get_client()
-        recovered_container = client.containers.create(**create_config)
-        recovered_container.start()
-
         recovered_image = snapshot.get("image") if isinstance(snapshot.get("image"), str) else None
+        images = getattr(client, "images", None)
+        if recovered_image and images is not None and hasattr(images, "pull"):
+            try:
+                images.pull(recovered_image)
+            except Exception:
+                pass
+
+        existing_container = self._cleanup_replacement_conflict(
+            client, snapshot, create_config
+        )
+        if existing_container is not None:
+            state = getattr(existing_container, "attrs", {}) or {}
+            is_running = bool((state.get("State") or {}).get("Running"))
+            if not is_running:
+                existing_container.start()
+            return RuntimeUpdateResult(
+                updated=True,
+                old_image=None,
+                new_image=recovered_image,
+                message="runtime recovered from snapshot",
+                new_container_id=getattr(existing_container, "id", None),
+            )
+
+        recovered_container = None
+        try:
+            recovered_container = client.containers.create(**create_config)
+            recovered_container.start()
+        except Exception:
+            if recovered_container is not None:
+                self._remove_container_if_present(recovered_container)
+            raise
+
         return RuntimeUpdateResult(
             updated=True,
             old_image=None,
             new_image=recovered_image,
             message="runtime recovered from snapshot",
-            new_container_id=recovered_container.id,
+            new_container_id=getattr(recovered_container, "id", None),
         )
+
+    def _cleanup_replacement_conflict(
+        self,
+        client,
+        snapshot: dict[str, Any],
+        create_config: dict[str, Any],
+    ):
+        container_name = create_config.get("name")
+        if not isinstance(container_name, str) or not container_name.strip():
+            return None
+
+        try:
+            existing_container = client.containers.get(container_name)
+        except Exception:
+            return None
+
+        snapshot_container_id = snapshot.get("container_id")
+        recovered_image = snapshot.get("image") if isinstance(snapshot.get("image"), str) else None
+        existing_container_id = getattr(existing_container, "id", None)
+        existing_image = self._extract_image(existing_container)
+        if existing_container_id == snapshot_container_id and existing_image == recovered_image:
+            return existing_container
+
+        self._remove_container_if_present(existing_container)
+        return None
 
     def _extract_create_kwargs(self, container, new_image: str) -> dict[str, Any]:
         attrs = getattr(container, "attrs", {}) or {}
@@ -419,10 +473,42 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         return None
 
     def _remove_container_if_present(self, container) -> None:
+        # Force-remove so a still-running container doesn't block the
+        # create call with a confusing "name already in use" error.
+        # Older SDKs without the ``force`` keyword fall back to explicit
+        # stop+remove.
         try:
-            container.remove()
-        except Exception:
+            container.remove(force=True)
+            return
+        except TypeError:
+            # SDK signature doesn't accept ``force``. Fall through.
             pass
+        except Exception:
+            # Remove failed — most commonly because the container is
+            # still running. Fall through to stop+remove and let the
+            # final remove propagate its error.
+            pass
+
+        if self._container_looks_running(container):
+            try:
+                container.stop()
+            except Exception:
+                pass
+        container.remove()
+
+    @staticmethod
+    def _container_looks_running(container) -> bool:
+        attrs = getattr(container, "attrs", {}) or {}
+        state = attrs.get("State") if isinstance(attrs, dict) else None
+        if not isinstance(state, dict):
+            return False
+        running = state.get("Running")
+        if isinstance(running, bool):
+            return running
+        status = state.get("Status")
+        if isinstance(status, str):
+            return status.strip().lower() == "running"
+        return False
 
     def _stop_grouped_container_with_sdk_decode_tolerance(self, client, container) -> None:
         try:

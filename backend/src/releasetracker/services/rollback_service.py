@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from ..executors.health_check.recovery_hook import (
     RecoveryHookCoordinator,
     RecoveryOutcome,
+    RecoveryResult,
 )
 from ..models import ExecutorRunHistory, ExecutorSnapshot
 
@@ -32,6 +33,7 @@ _ROLLBACK_ACTIVE_STATES = frozenset({"queued", "running", "health_checking"})
 class RollbackOutcome:
     run: ExecutorRunHistory
     recovery_outcome: RecoveryOutcome
+    recovery_error: str | None = None
 
 
 class RollbackService:
@@ -85,7 +87,7 @@ class RollbackService:
         diagnostics: dict = dict(run.diagnostics or {})
         recovery_outcome: RecoveryOutcome = "failed"
         try:
-            pre_rollback_captured = await self._capture_pre_rollback_snapshot(
+            pre_rollback_captured, from_version = await self._capture_pre_rollback_snapshot(
                 executor_config=executor_config,
                 adapter=adapter,
                 run_id=run_id,
@@ -93,33 +95,56 @@ class RollbackService:
             )
             if not pre_rollback_captured:
                 recovery_outcome = "failed"
+                capture_error = diagnostics.get("pre_rollback_capture_error")
+                capture_detail = (
+                    capture_error if isinstance(capture_error, str) else None
+                )
+                base_message = "pre-rollback snapshot capture failed"
+                if capture_detail:
+                    base_message = f"{base_message}: {capture_detail}"
                 return await self._finalize_failed(
                     run_id=run_id,
                     diagnostics=diagnostics,
-                    message="pre-rollback snapshot capture failed",
+                    message=base_message,
+                    recovery_error=capture_detail,
+                    from_version=from_version,
                 )
 
             coordinator = RecoveryHookCoordinator(self._storage)
-            recovery_outcome = await coordinator.recover(
+            recovery_result = await coordinator.recover_detailed(
                 executor_id=executor_id,
                 adapter=adapter,
                 target_ref=executor_config.target_ref,
                 budget_seconds=self._rollback_budget_seconds(executor_config),
+                snapshot=snapshot,
             )
+            recovery_outcome = recovery_result.outcome
+            recovery_error = recovery_result.error
             diagnostics["recovery_outcome"] = recovery_outcome
+            if recovery_error:
+                diagnostics["recovery_error"] = recovery_error
+            await self._refresh_container_target_ref(
+                executor_config=executor_config,
+                new_container_id=recovery_result.new_container_id,
+            )
 
             status = "success" if recovery_outcome == "succeeded" else "failed"
-            message = (
-                f"rollback to snapshot {snapshot.id} {recovery_outcome}"
-            )
+            message = f"rollback to snapshot {snapshot.id} {recovery_outcome}"
+            if status == "failed" and recovery_error:
+                message = f"{message}: {recovery_error}"
             finalized_run = await self._finalize_run(
                 run_id=run_id,
                 status=status,
                 diagnostics=diagnostics,
                 message=message,
+                from_version=from_version,
                 to_version=snapshot.image_at_capture,
             )
-            return RollbackOutcome(run=finalized_run, recovery_outcome=recovery_outcome)
+            return RollbackOutcome(
+                run=finalized_run,
+                recovery_outcome=recovery_outcome,
+                recovery_error=recovery_error,
+            )
         finally:
             if snapshot.id is not None:
                 await registry.unregister(snapshot.id)
@@ -167,7 +192,7 @@ class RollbackService:
         adapter: "BaseRuntimeAdapter",
         run_id: int,
         diagnostics: dict,
-    ) -> bool:
+    ) -> tuple[bool, str | None]:
         target_ref = executor_config.target_ref
         try:
             current_image = await adapter.get_current_image(target_ref)
@@ -186,10 +211,10 @@ class RollbackService:
             diagnostics["pre_rollback_capture_error"] = (
                 f"adapter does not support snapshot capture: {exc}"
             )
-            return False
+            return False, current_image or None
         except Exception as exc:
             diagnostics["pre_rollback_capture_error"] = str(exc)
-            return False
+            return False, current_image or None
 
         redacted, unredacted = self._snapshot_service.redact_for_persist(
             snapshot_data, runtime_type=executor_config.runtime_type
@@ -217,7 +242,25 @@ class RollbackService:
                 executor_config.id,
                 exc,
             )
-        return True
+        return True, current_image or None
+
+    async def _refresh_container_target_ref(
+        self,
+        *,
+        executor_config: "ExecutorConfig",
+        new_container_id: str | None,
+    ) -> None:
+        if (
+            not new_container_id
+            or executor_config.id is None
+            or executor_config.target_ref.get("mode", "container") != "container"
+        ):
+            return
+        refreshed_ref = {
+            **executor_config.target_ref,
+            "container_id": new_container_id,
+        }
+        await self._storage.update_executor_target_ref(executor_config.id, refreshed_ref)
 
     async def _finalize_failed(
         self,
@@ -225,15 +268,22 @@ class RollbackService:
         run_id: int,
         diagnostics: dict,
         message: str,
+        recovery_error: str | None = None,
+        from_version: str | None = None,
     ) -> RollbackOutcome:
         run = await self._finalize_run(
             run_id=run_id,
             status="failed",
             diagnostics=diagnostics,
             message=message,
+            from_version=from_version,
             to_version=None,
         )
-        return RollbackOutcome(run=run, recovery_outcome="failed")
+        return RollbackOutcome(
+            run=run,
+            recovery_outcome="failed",
+            recovery_error=recovery_error,
+        )
 
     async def _finalize_run(
         self,
@@ -242,13 +292,14 @@ class RollbackService:
         status: Literal["success", "failed"],
         diagnostics: dict,
         message: str,
+        from_version: str | None,
         to_version: str | None,
     ) -> ExecutorRunHistory:
         finished_at = datetime.now()
         await self._storage.finalize_executor_run(
             run_id,
             status=status,
-            from_version=None,
+            from_version=from_version,
             finished_at=finished_at,
             to_version=to_version,
             message=message,

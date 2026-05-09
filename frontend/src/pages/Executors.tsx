@@ -202,6 +202,15 @@ export default function ExecutorsPage() {
         void loadExecutors({ showLoading: false, showErrorToast: false })
     }, [loadExecutors])
 
+    const handleRollbackQueued = useCallback(() => {
+        silentlyRefreshExecutors()
+        setExecutionHistoryRefreshKey((value) => value + 1)
+        setTimeout(() => {
+            silentlyRefreshExecutors()
+            setExecutionHistoryRefreshKey((value) => value + 1)
+        }, 2000)
+    }, [silentlyRefreshExecutors])
+
     const handleRun = (executorId: number) => {
         const executor = executors.find((item) => item.id === executorId) ?? null
         if (executor && !executor.enabled) {
@@ -418,7 +427,7 @@ export default function ExecutorsPage() {
                             <ExecutorSnapshotsPanel
                                 executor={selectedExecutor}
                                 refreshKey={executionHistoryRefreshKey}
-                                onRollbackQueued={silentlyRefreshExecutors}
+                                onRollbackQueued={handleRollbackQueued}
                             />
                         </TabsContent>
                     </Tabs>

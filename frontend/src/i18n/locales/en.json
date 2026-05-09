@@ -143,11 +143,23 @@
                 "label": "Backend log level",
                 "description": "Controls backend application logging after startup."
             },
-            "releaseHistoryRetention": {
-                "title": "Release history retention",
+            "releaseHistoryCount": {
+                "title": "Release history count",
                 "label": "Versions per release channel",
                 "description": "Keep the latest N versions for each release channel. Cleanup runs after executor maintenance windows finish, or daily at 02:00 when no maintenance windows exist.",
-                "invalid": "Enter an integer from 1 to 1000."
+                "invalid": "Enter an integer from 1 to 1000.",
+                "cleanupSuccess": "Release history cleanup completed. Deleted {{count}} records."
+            },
+            "snapshotHistoryCount": {
+                "title": "Snapshot history count",
+                "label": "Snapshots per executor",
+                "description": "Keep the latest N snapshots for each executor. Older snapshots are pruned after new snapshots are saved.",
+                "invalid": "Enter an integer from 1 to 1000.",
+                "cleanupSuccess": "Snapshot history cleanup completed. Deleted {{count}} snapshots."
+            },
+            "cleanup": {
+                "cleanNow": "Clean now",
+                "cleaning": "Cleaning..."
             }
         },
         "securityKeys": {

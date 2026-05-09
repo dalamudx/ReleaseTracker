@@ -794,6 +794,7 @@ interface BuildExecutorPayloadParams {
     selectedTargetRef: ExecutorTargetRef
     trackers?: TrackerStatus[]
     serviceBindings?: ExecutorServiceBindingFormValue[]
+    existingHealthCheck?: HealthCheckProfile | null
 }
 
 export function createDefaultExecutorValues(defaultRuntimeConnection?: RuntimeConnection): ExecutorFormValues {
@@ -1150,6 +1151,7 @@ export function buildExecutorPayload({
     selectedTargetRef,
     trackers = [],
     serviceBindings = [],
+    existingHealthCheck = null,
 }: BuildExecutorPayloadParams): ExecutorConfig {
     const resolvedComposeBindings = usesGroupedServiceBindings(selectedTargetRef)
         ? buildExecutorServiceBindingsPayload(serviceBindings, trackers)
@@ -1179,31 +1181,28 @@ export function buildExecutorPayload({
             }
             : null,
         description: values.description || null,
-        health_check: buildHealthCheckPayload(values),
+        health_check: buildHealthCheckPayload(values, existingHealthCheck),
     }
 }
 
-function buildHealthCheckPayload(values: ExecutorFormValues): HealthCheckProfile {
-    // Form stores integer-valued timings as strings so the <input> can
-    // stay controlled; parse back here. Empty / non-numeric values fall
-    // back to zero so the backend validator sees a well-formed payload
-    // and surfaces a clear 400 when zero is incompatible with the
-    // selected strategy.
+function buildHealthCheckPayload(values: ExecutorFormValues, existingHealthCheck: HealthCheckProfile | null): HealthCheckProfile {
     const toInt = (value: string): number => {
         const parsed = Number.parseInt(value, 10)
         return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
     }
+
+    const strategy = values.health_check_strategy
     return {
-        strategy: values.health_check_strategy,
+        strategy,
         use_default_strategy: false,
-        failure_policy: values.health_check_failure_policy,
+        failure_policy: strategy === "none" ? "mark_failed" : values.health_check_failure_policy,
         grace_period_seconds: toInt(values.health_check_grace_period_seconds),
         attempt_timeout_seconds: toInt(values.health_check_attempt_timeout_seconds),
         interval_seconds: toInt(values.health_check_interval_seconds),
         probe_window_seconds: toInt(values.health_check_probe_window_seconds),
-        services: null,
-        http: null,
-        tcp: null,
+        services: strategy === "none" ? null : (existingHealthCheck?.services ?? null),
+        http: strategy === "http" ? (existingHealthCheck?.http ?? null) : null,
+        tcp: strategy === "tcp" ? (existingHealthCheck?.tcp ?? null) : null,
     }
 }
 

@@ -40,6 +40,8 @@ import type {
     RotateSecurityKeyRequest,
     RotateJwtSecretResponse,
     RotateEncryptionKeyResponse,
+    ReleaseHistoryCleanupResponse,
+    SnapshotHistoryCleanupResponse,
 } from "./types"
 
 const API_BASE = '' // Vite proxy handles /api
@@ -295,6 +297,8 @@ export const api = {
     getSettings: () => apiClient.get<SettingItem[]>('/api/settings').then(res => res.data),
     updateSetting: (data: UpdateSettingRequest) => apiClient.post<SettingItem>('/api/settings', data).then(res => res.data),
     deleteSetting: (key: string) => apiClient.delete(`/api/settings/${key}`).then(res => res.data),
+    cleanupReleaseHistory: () => apiClient.post<ReleaseHistoryCleanupResponse>('/api/settings/actions/cleanup-release-history').then(res => res.data),
+    cleanupSnapshotHistory: () => apiClient.post<SnapshotHistoryCleanupResponse>('/api/settings/actions/cleanup-snapshot-history').then(res => res.data),
     getSecurityKeys: () => apiClient.get<SecurityKeysStatus>('/api/settings/security-keys').then(res => res.data),
     rotateJwtSecret: (data: RotateSecurityKeyRequest) => apiClient.post<RotateJwtSecretResponse>('/api/settings/security-keys/jwt-secret', data).then(res => res.data),
     rotateEncryptionKey: (data: RotateSecurityKeyRequest) => apiClient.post<RotateEncryptionKeyResponse>('/api/settings/security-keys/encryption-key', data).then(res => res.data),

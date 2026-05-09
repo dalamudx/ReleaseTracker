@@ -761,6 +761,76 @@ describe("executor binding edit state helpers", () => {
         expect(message).toBe("executors.validation.duplicateServiceBinding")
     })
 
+    it("preserves hidden health-check probe config when editing basic fields", () => {
+        const payload = buildExecutorPayload({
+            values: createValues({
+                health_check_strategy: "http",
+                health_check_failure_policy: "mark_failed_and_recover",
+                health_check_grace_period_seconds: "5",
+                health_check_attempt_timeout_seconds: "2",
+                health_check_interval_seconds: "3",
+                health_check_probe_window_seconds: "30",
+            }),
+            effectiveTrackerSourceId: "1",
+            selectedTargetRef: { mode: "container", container_name: "api" },
+            existingHealthCheck: {
+                strategy: "http",
+                use_default_strategy: false,
+                failure_policy: "mark_failed",
+                grace_period_seconds: 0,
+                attempt_timeout_seconds: 1,
+                interval_seconds: 1,
+                probe_window_seconds: 10,
+                services: ["api"],
+                http: { path: "/health", port: 8080, expected_status_codes: [204] },
+                tcp: null,
+            },
+        })
+
+        expect(payload.health_check).toMatchObject({
+            strategy: "http",
+            failure_policy: "mark_failed_and_recover",
+            grace_period_seconds: 5,
+            attempt_timeout_seconds: 2,
+            interval_seconds: 3,
+            probe_window_seconds: 30,
+            services: ["api"],
+            http: { path: "/health", port: 8080, expected_status_codes: [204] },
+            tcp: null,
+        })
+    })
+
+    it("clears hidden health-check probe config when disabling health checks", () => {
+        const payload = buildExecutorPayload({
+            values: createValues({
+                health_check_strategy: "none",
+                health_check_failure_policy: "mark_failed_and_recover",
+            }),
+            effectiveTrackerSourceId: "1",
+            selectedTargetRef: { mode: "container", container_name: "api" },
+            existingHealthCheck: {
+                strategy: "tcp",
+                use_default_strategy: false,
+                failure_policy: "mark_failed_and_recover",
+                grace_period_seconds: 5,
+                attempt_timeout_seconds: 2,
+                interval_seconds: 3,
+                probe_window_seconds: 30,
+                services: ["api"],
+                http: null,
+                tcp: { port: 8080 },
+            },
+        })
+
+        expect(payload.health_check).toMatchObject({
+            strategy: "none",
+            failure_policy: "mark_failed",
+            services: null,
+            http: null,
+            tcp: null,
+        })
+    })
+
     it("builds portainer stack executor payloads with child service bindings", () => {
         const trackerA = createTracker({
             name: "tracker-a",

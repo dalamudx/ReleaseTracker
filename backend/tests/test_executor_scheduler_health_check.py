@@ -447,6 +447,43 @@ class _RecoveringAdapter(_FakeAdapter):
         return self._recover_result
 
 
+async def _run_unhealthy_recovering_executor(
+    storage,
+    scheduler,
+    *,
+    tracker_name: str,
+    recover_raises: Exception | None = None,
+    recover_result: RuntimeUpdateResult | None = None,
+):
+    executor = await _build_executor(
+        storage,
+        tracker_name=tracker_name,
+        profile=HealthCheckProfile(
+            strategy="runtime_native",
+            grace_period_seconds=0,
+            attempt_timeout_seconds=1,
+            interval_seconds=1,
+            probe_window_seconds=2,
+            failure_policy="mark_failed_and_recover",
+        ),
+    )
+    adapter = _RecoveringAdapter(
+        await storage.get_runtime_connection(executor.runtime_connection_id),
+        current_image=f"{tracker_name}:1.0.0",
+        update_result=RuntimeUpdateResult(
+            updated=True,
+            old_image=f"{tracker_name}:1.0.0",
+            new_image=f"{tracker_name}:2.0.0",
+        ),
+        health_results=[ProbeAttemptResult(healthy=False, last_error="still unready")] * 5,
+        recover_raises=recover_raises,
+        recover_result=recover_result,
+    )
+    scheduler._adapters[executor.id] = adapter
+    await scheduler.run_executor_now(executor.id)
+    return await scheduler.storage.get_latest_executor_run(executor.id), adapter
+
+
 @pytest.mark.asyncio
 async def test_mark_failed_and_recover_invokes_recovery_hook_and_records_outcome(
     storage, scheduler
@@ -496,34 +533,51 @@ async def test_mark_failed_and_recover_invokes_recovery_hook_and_records_outcome
 async def test_mark_failed_and_recover_records_not_supported_when_adapter_cannot_recover(
     storage, scheduler
 ):
-    executor = await _build_executor(
+    run, _adapter = await _run_unhealthy_recovering_executor(
         storage,
+        scheduler,
         tracker_name="hc-recover-notimpl",
-        profile=HealthCheckProfile(
-            strategy="runtime_native",
-            grace_period_seconds=0,
-            attempt_timeout_seconds=1,
-            interval_seconds=1,
-            probe_window_seconds=2,
-            failure_policy="mark_failed_and_recover",
-        ),
-    )
-    adapter = _RecoveringAdapter(
-        await storage.get_runtime_connection(executor.runtime_connection_id),
-        current_image="hc-recover-notimpl:1.0.0",
-        update_result=RuntimeUpdateResult(
-            updated=True,
-            old_image="hc-recover-notimpl:1.0.0",
-            new_image="hc-recover-notimpl:2.0.0",
-        ),
-        health_results=[
-            ProbeAttemptResult(healthy=False, last_error="still unready")
-        ]
-        * 5,
         recover_raises=NotImplementedError("adapter cannot recover"),
     )
-    scheduler._adapters[executor.id] = adapter
-
-    await scheduler.run_executor_now(executor.id)
-    run = await scheduler.storage.get_latest_executor_run(executor.id)
     assert run.diagnostics["recovery_outcome"] == "not_supported"
+    assert "recovery_error" not in run.diagnostics
+
+
+@pytest.mark.asyncio
+async def test_mark_failed_and_recover_refreshes_container_id_after_recreate(
+    storage, scheduler
+):
+    run, _adapter = await _run_unhealthy_recovering_executor(
+        storage,
+        scheduler,
+        tracker_name="hc-recover-container-id",
+        recover_result=RuntimeUpdateResult(
+            updated=True,
+            old_image=None,
+            new_image="hc-recover-container-id:1.0.0",
+            new_container_id="recovered-container-id",
+        ),
+    )
+
+    refreshed = await scheduler.storage.get_executor_config(run.executor_id)
+    assert refreshed.target_ref["container_id"] == "recovered-container-id"
+
+
+@pytest.mark.asyncio
+async def test_mark_failed_and_recover_records_recovery_error_when_recovery_fails(
+    storage, scheduler
+):
+    run, adapter = await _run_unhealthy_recovering_executor(
+        storage,
+        scheduler,
+        tracker_name="hc-recover-failed",
+        recover_raises=RuntimeError("container name already in use"),
+    )
+    assert adapter.recover_calls == 1
+    assert run.status == "failed"
+    assert run.diagnostics["health_check"]["outcome"] == "unhealthy"
+    assert run.diagnostics["recovery_outcome"] == "failed"
+    assert run.diagnostics["recovery_error"] == "container name already in use"
+
+    history = await scheduler.storage.get_executor_run_history(run.executor_id, skip=0, limit=10)
+    assert history[0].diagnostics["recovery_error"] == "container name already in use"

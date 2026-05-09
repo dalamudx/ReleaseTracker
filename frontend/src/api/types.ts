@@ -399,6 +399,27 @@ export interface SettingItem {
     updated_at?: string
 }
 
+export interface ReleaseHistoryCleanupResponse {
+    action: "release_history_cleanup"
+    retention_count: number
+    trackers_scanned: number
+    tracker_release_history_deleted: number
+    tracker_release_history_sources_deleted: number
+    source_release_history_deleted: number
+    source_release_run_observations_deleted: number
+    sqlite_optimize_performed: boolean
+    wal_checkpoint_performed: boolean
+    vacuum_performed: boolean
+}
+
+export interface SnapshotHistoryCleanupResponse {
+    action: "snapshot_history_cleanup"
+    retention_count: number
+    executors_scanned: number
+    executors_pruned: number
+    snapshots_deleted: number
+}
+
 export interface SecurityKeyInventory {
     credentials_token: number
     credentials_secrets: number
@@ -600,6 +621,8 @@ export interface ExecutorRunDiagnostics {
     health_check?: Record<string, unknown> | null
     /** Recovery hook outcome persisted on mark_failed_and_recover runs. */
     recovery_outcome?: RecoveryOutcome | null
+    /** Underlying adapter error when recovery_outcome is not 'succeeded'. */
+    recovery_error?: string | null
     /** Rollback runs carry ``manual_rollback`` here. */
     run_trigger?: string | null
 }
@@ -717,6 +740,7 @@ export interface RollbackRequest {
 export interface RollbackResponse {
     run: ExecutorRunHistory
     recovery_outcome: RecoveryOutcome
+    recovery_error?: string | null
 }
 
 export interface ExecutorListItem extends ExecutorConfig {

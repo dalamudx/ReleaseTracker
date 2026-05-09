@@ -26,6 +26,8 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
+    useCleanupReleaseHistory,
+    useCleanupSnapshotHistory,
     useRotateEncryptionKey,
     useRotateJwtSecret,
     useSecurityKeys,
@@ -37,12 +39,16 @@ export const SYSTEM_TIMEZONE_SETTING_KEY = "system.timezone"
 export const SYSTEM_LOG_LEVEL_SETTING_KEY = "system.log_level"
 export const SYSTEM_BASE_URL_SETTING_KEY = "system.base_url"
 export const SYSTEM_RELEASE_HISTORY_RETENTION_COUNT_SETTING_KEY = "system.release_history_retention_count"
+export const SYSTEM_EXECUTOR_SNAPSHOT_RETENTION_COUNT_SETTING_KEY = "system.executor_snapshot_retention_count"
 
 const DEFAULT_LOG_LEVEL = "INFO"
 const LOG_LEVEL_OPTIONS = ["DEBUG", "INFO", "WARNING", "ERROR"]
-const DEFAULT_RELEASE_HISTORY_RETENTION_COUNT = 20
-const MIN_RELEASE_HISTORY_RETENTION_COUNT = 1
-const MAX_RELEASE_HISTORY_RETENTION_COUNT = 1000
+const DEFAULT_RELEASE_HISTORY_COUNT = 20
+const MIN_RELEASE_HISTORY_COUNT = 1
+const MAX_RELEASE_HISTORY_COUNT = 1000
+const DEFAULT_EXECUTOR_SNAPSHOT_HISTORY_COUNT = 10
+const MIN_EXECUTOR_SNAPSHOT_HISTORY_COUNT = 1
+const MAX_EXECUTOR_SNAPSHOT_HISTORY_COUNT = 1000
 
 const FALLBACK_TIMEZONES = [
     "UTC",
@@ -160,12 +166,16 @@ function LogLevelSettingItem({
     )
 }
 
-function ReleaseHistoryRetentionSettingItem({
-    retentionDraft,
-    onRetentionDraftChange,
+function ReleaseHistoryCountSettingItem({
+    countDraft,
+    cleanupPending,
+    onCountDraftChange,
+    onCleanup,
 }: {
-    retentionDraft: string
-    onRetentionDraftChange: (value: string) => void
+    countDraft: string
+    cleanupPending: boolean
+    onCountDraftChange: (value: string) => void
+    onCleanup: () => void
 }) {
     const { t } = useTranslation()
 
@@ -177,26 +187,96 @@ function ReleaseHistoryRetentionSettingItem({
                 </div>
                 <div className="min-w-0 space-y-1">
                     <h3 className="text-sm font-semibold text-foreground">
-                        {t("systemSettings.global.releaseHistoryRetention.title")}
+                        {t("systemSettings.global.releaseHistoryCount.title")}
                     </h3>
                     <p className="text-sm leading-relaxed text-muted-foreground">
-                        {t("systemSettings.global.releaseHistoryRetention.description")}
+                        {t("systemSettings.global.releaseHistoryCount.description")}
                     </p>
                 </div>
             </div>
             <div className="min-w-0 space-y-2">
-                <label className="text-sm font-medium" htmlFor="release-history-retention-count">
-                    {t("systemSettings.global.releaseHistoryRetention.label")}
+                <label className="text-sm font-medium" htmlFor="release-history-count">
+                    {t("systemSettings.global.releaseHistoryCount.label")}
                 </label>
-                <Input
-                    id="release-history-retention-count"
-                    type="number"
-                    min={MIN_RELEASE_HISTORY_RETENTION_COUNT}
-                    max={MAX_RELEASE_HISTORY_RETENTION_COUNT}
-                    value={retentionDraft}
-                    onChange={(event) => onRetentionDraftChange(event.target.value)}
-                    className="min-w-0"
-                />
+                <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
+                    <Input
+                        id="release-history-count"
+                        type="number"
+                        min={MIN_RELEASE_HISTORY_COUNT}
+                        max={MAX_RELEASE_HISTORY_COUNT}
+                        value={countDraft}
+                        onChange={(event) => onCountDraftChange(event.target.value)}
+                        className="min-w-0"
+                    />
+                    <Button
+                        type="button"
+                        variant="outline"
+                        disabled={cleanupPending}
+                        onClick={onCleanup}
+                    >
+                        {cleanupPending
+                            ? t("systemSettings.global.cleanup.cleaning")
+                            : t("systemSettings.global.cleanup.cleanNow")}
+                    </Button>
+                </div>
+            </div>
+        </div>
+    )
+}
+
+function SnapshotHistoryCountSettingItem({
+    countDraft,
+    cleanupPending,
+    onCountDraftChange,
+    onCleanup,
+}: {
+    countDraft: string
+    cleanupPending: boolean
+    onCountDraftChange: (value: string) => void
+    onCleanup: () => void
+}) {
+    const { t } = useTranslation()
+
+    return (
+        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] md:items-start">
+            <div className="flex min-w-0 gap-3">
+                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <Database className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 space-y-1">
+                    <h3 className="text-sm font-semibold text-foreground">
+                        {t("systemSettings.global.snapshotHistoryCount.title")}
+                    </h3>
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                        {t("systemSettings.global.snapshotHistoryCount.description")}
+                    </p>
+                </div>
+            </div>
+            <div className="min-w-0 space-y-2">
+                <label className="text-sm font-medium" htmlFor="snapshot-history-count">
+                    {t("systemSettings.global.snapshotHistoryCount.label")}
+                </label>
+                <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
+                    <Input
+                        id="snapshot-history-count"
+                        type="number"
+                        min={MIN_EXECUTOR_SNAPSHOT_HISTORY_COUNT}
+                        max={MAX_EXECUTOR_SNAPSHOT_HISTORY_COUNT}
+                        value={countDraft}
+                        onChange={(event) => onCountDraftChange(event.target.value)}
+                        className="min-w-0"
+                    />
+                    <Button
+                        type="button"
+                        variant="outline"
+                        disabled={cleanupPending}
+                        onClick={onCleanup}
+                    >
+                        {cleanupPending
+                            ? t("systemSettings.global.cleanup.cleaning")
+                            : t("systemSettings.global.cleanup.cleanNow")}
+                    </Button>
+                </div>
             </div>
         </div>
     )
@@ -395,6 +475,8 @@ export function SystemSettingsPage() {
     const { data: settings = [] } = useSettings()
     const { data: securityKeys } = useSecurityKeys()
     const updateSetting = useUpdateSetting()
+    const cleanupReleaseHistory = useCleanupReleaseHistory()
+    const cleanupSnapshotHistory = useCleanupSnapshotHistory()
     const rotateJwtSecret = useRotateJwtSecret()
     const rotateEncryptionKey = useRotateEncryptionKey()
     const [jwtDialogOpen, setJwtDialogOpen] = useState(false)
@@ -412,43 +494,66 @@ export function SystemSettingsPage() {
         const value = settings.find((item) => item.key === SYSTEM_BASE_URL_SETTING_KEY)?.value
         return typeof value === "string" ? value.trim() : ""
     }, [settings])
-    const currentRetentionCount = useMemo(() => {
+    const currentReleaseHistoryCount = useMemo(() => {
         const value = settings.find(
             (item) => item.key === SYSTEM_RELEASE_HISTORY_RETENTION_COUNT_SETTING_KEY,
         )?.value
         const parsed = Number.parseInt(String(value ?? ""), 10)
         return Number.isInteger(parsed) &&
-            parsed >= MIN_RELEASE_HISTORY_RETENTION_COUNT &&
-            parsed <= MAX_RELEASE_HISTORY_RETENTION_COUNT
+            parsed >= MIN_RELEASE_HISTORY_COUNT &&
+            parsed <= MAX_RELEASE_HISTORY_COUNT
             ? parsed
-            : DEFAULT_RELEASE_HISTORY_RETENTION_COUNT
+            : DEFAULT_RELEASE_HISTORY_COUNT
+    }, [settings])
+    const currentSnapshotHistoryCount = useMemo(() => {
+        const value = settings.find(
+            (item) => item.key === SYSTEM_EXECUTOR_SNAPSHOT_RETENTION_COUNT_SETTING_KEY,
+        )?.value
+        const parsed = Number.parseInt(String(value ?? ""), 10)
+        return Number.isInteger(parsed) &&
+            parsed >= MIN_EXECUTOR_SNAPSHOT_HISTORY_COUNT &&
+            parsed <= MAX_EXECUTOR_SNAPSHOT_HISTORY_COUNT
+            ? parsed
+            : DEFAULT_EXECUTOR_SNAPSHOT_HISTORY_COUNT
     }, [settings])
     const [timezoneDraft, setTimezoneDraft] = useState<string | null>(null)
     const [logLevelDraft, setLogLevelDraft] = useState<string | null>(null)
     const [baseUrlDraft, setBaseUrlDraft] = useState<string | null>(null)
-    const [retentionDraft, setRetentionDraft] = useState<string | null>(null)
+    const [releaseHistoryCountDraft, setReleaseHistoryCountDraft] = useState<string | null>(null)
+    const [snapshotHistoryCountDraft, setSnapshotHistoryCountDraft] = useState<string | null>(null)
     const timezone = timezoneDraft ?? currentTimezone
     const logLevel = logLevelDraft ?? currentLogLevel
     const baseUrl = baseUrlDraft ?? currentBaseUrl
-    const retentionValue = retentionDraft ?? String(currentRetentionCount)
+    const releaseHistoryCountValue = releaseHistoryCountDraft ?? String(currentReleaseHistoryCount)
+    const snapshotHistoryCountValue = snapshotHistoryCountDraft ?? String(currentSnapshotHistoryCount)
     const timezoneOptions = useMemo(() => {
         const options = new Set(getSupportedTimezones())
         options.add(currentTimezone)
         options.add("UTC")
         return [...options].sort((left, right) => left.localeCompare(right))
     }, [currentTimezone])
-    const normalizedRetention = Number.parseInt(retentionValue, 10)
-    const isValidRetention =
-        Number.isInteger(normalizedRetention) &&
-        normalizedRetention >= MIN_RELEASE_HISTORY_RETENTION_COUNT &&
-        normalizedRetention <= MAX_RELEASE_HISTORY_RETENTION_COUNT &&
-        String(normalizedRetention) === retentionValue.trim()
+    const normalizedReleaseHistoryCount = Number.parseInt(releaseHistoryCountValue, 10)
+    const isValidReleaseHistoryCount =
+        Number.isInteger(normalizedReleaseHistoryCount) &&
+        normalizedReleaseHistoryCount >= MIN_RELEASE_HISTORY_COUNT &&
+        normalizedReleaseHistoryCount <= MAX_RELEASE_HISTORY_COUNT &&
+        String(normalizedReleaseHistoryCount) === releaseHistoryCountValue.trim()
+    const normalizedSnapshotHistoryCount = Number.parseInt(snapshotHistoryCountValue, 10)
+    const isValidSnapshotHistoryCount =
+        Number.isInteger(normalizedSnapshotHistoryCount) &&
+        normalizedSnapshotHistoryCount >= MIN_EXECUTOR_SNAPSHOT_HISTORY_COUNT &&
+        normalizedSnapshotHistoryCount <= MAX_EXECUTOR_SNAPSHOT_HISTORY_COUNT &&
+        String(normalizedSnapshotHistoryCount) === snapshotHistoryCountValue.trim()
     const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, "")
     const isValidBaseUrl = !normalizedBaseUrl || /^https?:\/\/[^\s/?#]+[^\s?#]*$/i.test(normalizedBaseUrl)
 
     const handleSaveGlobalSettings = async () => {
-        if (!isValidRetention) {
-            toast.error(t("systemSettings.global.releaseHistoryRetention.invalid"))
+        if (!isValidReleaseHistoryCount) {
+            toast.error(t("systemSettings.global.releaseHistoryCount.invalid"))
+            return
+        }
+        if (!isValidSnapshotHistoryCount) {
+            toast.error(t("systemSettings.global.snapshotHistoryCount.invalid"))
             return
         }
         if (!isValidBaseUrl) {
@@ -472,16 +577,49 @@ export function SystemSettingsPage() {
                 }),
                 updateSetting.mutateAsync({
                     key: SYSTEM_RELEASE_HISTORY_RETENTION_COUNT_SETTING_KEY,
-                    value: String(normalizedRetention),
+                    value: String(normalizedReleaseHistoryCount),
+                }),
+                updateSetting.mutateAsync({
+                    key: SYSTEM_EXECUTOR_SNAPSHOT_RETENTION_COUNT_SETTING_KEY,
+                    value: String(normalizedSnapshotHistoryCount),
                 }),
             ])
             setTimezoneDraft(null)
             setLogLevelDraft(null)
             setBaseUrlDraft(null)
-            setRetentionDraft(null)
+            setReleaseHistoryCountDraft(null)
+            setSnapshotHistoryCountDraft(null)
             toast.success(t("common.saved"))
         } catch (error) {
             console.error("Failed to save global settings", error)
+            toast.error(t("common.unexpectedError"))
+        }
+    }
+
+    const handleCleanupReleaseHistory = async () => {
+        try {
+            const result = await cleanupReleaseHistory.mutateAsync()
+            toast.success(
+                t("systemSettings.global.releaseHistoryCount.cleanupSuccess", {
+                    count: result.tracker_release_history_deleted,
+                }),
+            )
+        } catch (error) {
+            console.error("Failed to clean release history", error)
+            toast.error(t("common.unexpectedError"))
+        }
+    }
+
+    const handleCleanupSnapshotHistory = async () => {
+        try {
+            const result = await cleanupSnapshotHistory.mutateAsync()
+            toast.success(
+                t("systemSettings.global.snapshotHistoryCount.cleanupSuccess", {
+                    count: result.snapshots_deleted,
+                }),
+            )
+        } catch (error) {
+            console.error("Failed to clean snapshot history", error)
             toast.error(t("common.unexpectedError"))
         }
     }
@@ -568,9 +706,17 @@ export function SystemSettingsPage() {
                                     logLevel={logLevel}
                                     onLogLevelChange={setLogLevelDraft}
                                 />
-                                <ReleaseHistoryRetentionSettingItem
-                                    retentionDraft={retentionValue}
-                                    onRetentionDraftChange={setRetentionDraft}
+                                <ReleaseHistoryCountSettingItem
+                                    countDraft={releaseHistoryCountValue}
+                                    cleanupPending={cleanupReleaseHistory.isPending}
+                                    onCountDraftChange={setReleaseHistoryCountDraft}
+                                    onCleanup={handleCleanupReleaseHistory}
+                                />
+                                <SnapshotHistoryCountSettingItem
+                                    countDraft={snapshotHistoryCountValue}
+                                    cleanupPending={cleanupSnapshotHistory.isPending}
+                                    onCountDraftChange={setSnapshotHistoryCountDraft}
+                                    onCleanup={handleCleanupSnapshotHistory}
                                 />
                             </div>
                             <div className="flex justify-end border-t border-border/60 pt-5">

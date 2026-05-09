@@ -354,6 +354,31 @@ export function useUpdateSetting() {
   })
 }
 
+export function useCleanupReleaseHistory() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.cleanupReleaseHistory(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.settings })
+      queryClient.invalidateQueries({ queryKey: ["releases"] })
+      queryClient.invalidateQueries({ queryKey: ["trackers"] })
+      queryClient.invalidateQueries({ queryKey: queryKeys.latestCurrentReleases })
+      queryClient.invalidateQueries({ queryKey: queryKeys.stats })
+    },
+  })
+}
+
+export function useCleanupSnapshotHistory() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.cleanupSnapshotHistory(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.settings })
+      queryClient.invalidateQueries({ queryKey: ["executors"] })
+    },
+  })
+}
+
 export function useSecurityKeys() {
   return useQuery({
     queryKey: queryKeys.securityKeys,

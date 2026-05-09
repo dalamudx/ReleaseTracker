@@ -295,21 +295,86 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         except Exception:
             return None
 
-        snapshot_container_id = snapshot.get("container_id")
-        recovered_image = snapshot.get("image") if isinstance(snapshot.get("image"), str) else None
-        existing_container_id = getattr(existing_container, "id", None)
-        existing_image = self._extract_image(existing_container)
-        if existing_container_id == snapshot_container_id and existing_image == recovered_image:
+        # Decide whether the live container is already at the snapshot's
+        # state. We compare live image tags / digest to the snapshot's
+        # recorded image; stored ``container_id`` is not a reliable
+        # signal because every recreate assigns a new id.
+        recovered_image = (
+            snapshot.get("image") if isinstance(snapshot.get("image"), str) else None
+        )
+        if recovered_image and self._container_matches_image(
+            existing_container, recovered_image
+        ):
             return existing_container
 
         self._remove_container_if_present(existing_container)
         return None
 
+    @staticmethod
+    def _container_matches_image(container, target_image: str) -> bool:
+        """Return True when the live container is already serving ``target_image``.
+
+        Checks the SDK-level image helpers first, then falls back to
+        ``attrs.Config.Image`` / ``attrs.Image`` (digest) so we tolerate
+        both tag-pinned and digest-pinned runtimes.
+        """
+        candidates: list[str] = []
+
+        image = getattr(container, "image", None)
+        if image is not None:
+            tags = getattr(image, "tags", None)
+            if isinstance(tags, list):
+                candidates.extend(tag for tag in tags if isinstance(tag, str))
+            image_id = getattr(image, "id", None)
+            if isinstance(image_id, str):
+                candidates.append(image_id)
+
+        attrs = getattr(container, "attrs", {}) or {}
+        if isinstance(attrs, dict):
+            config = attrs.get("Config")
+            if isinstance(config, dict):
+                config_image = config.get("Image")
+                if isinstance(config_image, str):
+                    candidates.append(config_image)
+            attrs_image = attrs.get("Image")
+            if isinstance(attrs_image, str):
+                candidates.append(attrs_image)
+
+        for candidate in candidates:
+            if candidate == target_image:
+                return True
+
+        return False
+
     def _remove_container_if_present(self, container) -> None:
         try:
-            container.remove()
+            container.remove(force=True)
+            return
+        except TypeError:
+            pass
         except Exception:
             pass
+
+        if self._container_looks_running(container):
+            try:
+                container.stop()
+            except Exception:
+                pass
+        container.remove()
+
+    @staticmethod
+    def _container_looks_running(container) -> bool:
+        attrs = getattr(container, "attrs", {}) or {}
+        state = attrs.get("State") if isinstance(attrs, dict) else None
+        if not isinstance(state, dict):
+            return False
+        running = state.get("Running")
+        if isinstance(running, bool):
+            return running
+        status = state.get("Status")
+        if isinstance(status, str):
+            return status.strip().lower() == "running"
+        return False
 
     async def _recover_grouped_compose_runtime_update(
         self,

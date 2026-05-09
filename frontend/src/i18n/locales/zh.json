@@ -143,11 +143,23 @@
         "label": "后端日志级别",
         "description": "控制应用启动后的后端日志输出级别。"
       },
-      "releaseHistoryRetention": {
-        "title": "版本历史保留",
+      "releaseHistoryCount": {
+        "title": "版本历史数量",
         "label": "每个发布渠道保留版本数",
-        "description": "清理会在执行器维护窗口完成后执行；如果没有维护窗口，则每天 02:00 执行。",
-        "invalid": "请输入 1 到 1000 之间的整数。"
+        "description": "每个发布渠道保留最新 N 个版本；清理会在执行器维护窗口完成后执行，如果没有维护窗口，则每天 02:00 执行。",
+        "invalid": "请输入 1 到 1000 之间的整数。",
+        "cleanupSuccess": "版本历史清理完成，已删除 {{count}} 条记录。"
+      },
+      "snapshotHistoryCount": {
+        "title": "快照历史数量",
+        "label": "每个执行器保留快照数",
+        "description": "每个执行器保留最新 N 个快照；新快照写入后会按数量裁剪旧快照。",
+        "invalid": "请输入 1 到 1000 之间的整数。",
+        "cleanupSuccess": "快照历史清理完成，已删除 {{count}} 个快照。"
+      },
+      "cleanup": {
+        "cleanNow": "立即清理",
+        "cleaning": "清理中..."
       }
     },
     "securityKeys": {

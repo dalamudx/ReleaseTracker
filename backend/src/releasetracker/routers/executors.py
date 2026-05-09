@@ -794,4 +794,5 @@ async def rollback_executor(
     return {
         "run": _serialize_run_history(outcome.run),
         "recovery_outcome": outcome.recovery_outcome,
+        "recovery_error": outcome.recovery_error,
     }
