@@ -119,6 +119,12 @@ function createValues(overrides: Partial<ExecutorFormValues>): ExecutorFormValue
         maintenance_days: overrides.maintenance_days ?? [],
         maintenance_start_time: overrides.maintenance_start_time ?? "02:00",
         maintenance_end_time: overrides.maintenance_end_time ?? "05:00",
+        health_check_strategy: overrides.health_check_strategy ?? "none",
+        health_check_failure_policy: overrides.health_check_failure_policy ?? "mark_failed",
+        health_check_grace_period_seconds: overrides.health_check_grace_period_seconds ?? "0",
+        health_check_attempt_timeout_seconds: overrides.health_check_attempt_timeout_seconds ?? "0",
+        health_check_interval_seconds: overrides.health_check_interval_seconds ?? "0",
+        health_check_probe_window_seconds: overrides.health_check_probe_window_seconds ?? "0",
     }
 }
 

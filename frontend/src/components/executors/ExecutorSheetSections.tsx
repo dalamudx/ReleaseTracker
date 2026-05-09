@@ -2,7 +2,7 @@ import { AlertTriangle, CheckCircle2, Layers3, Loader2, Plus, Search, Trash2 } f
 import type { UseFormReturn } from "react-hook-form"
 import { useTranslation } from "react-i18next"
 
-import type { RuntimeConnection, RuntimeTargetDiscoveryItem, TrackerStatus } from "@/api/types"
+import type { ExecutorTargetRef, RuntimeConnection, RuntimeTargetDiscoveryItem, TrackerStatus } from "@/api/types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -956,8 +956,208 @@ export function ExecutorSheetPolicySection({
                         </div>
                     </>
                 ) : null}
+
+                <ExecutorSheetHealthCheckFields form={form} selectedTargetRef={selectedTargetRef} />
             </CardContent>
         </Card>
+    )
+}
+
+
+interface ExecutorSheetHealthCheckFieldsProps {
+    form: UseFormReturn<ExecutorFormValues>
+    selectedTargetRef: ExecutorTargetRef | Record<string, unknown>
+}
+
+
+/**
+ * Inline Health Check Profile editor rendered inside the Policy step.
+ *
+ * Phase E keeps the scope pragmatic: strategy + failure policy + timings
+ * are covered end-to-end so operators can opt into runtime_native,
+ * helm_status, http, and tcp strategies. HTTP / TCP sub-object editing
+ * (path, expected status codes, headers, regex) is deferred — the API
+ * accepts the full payload for power users, and this panel surfaces
+ * the essentials that cover the common case.
+ */
+export function ExecutorSheetHealthCheckFields({
+    form,
+    selectedTargetRef,
+}: ExecutorSheetHealthCheckFieldsProps) {
+    const { t } = useTranslation()
+    const strategy = form.watch("health_check_strategy")
+    const isHelmRelease = typeof selectedTargetRef === "object"
+        && selectedTargetRef !== null
+        && (selectedTargetRef as { mode?: string }).mode === "helm_release"
+    const probeActive = strategy !== "none"
+
+    return (
+        <div className="mt-2 rounded-lg border border-border/60 bg-muted/10 p-4">
+            <div className="flex items-center justify-between">
+                <div>
+                    <div className="text-sm font-medium">
+                        {t("executors.healthCheck.title")}
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                        {t("executors.healthCheck.description")}
+                    </p>
+                </div>
+            </div>
+
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <FormField
+                    control={form.control}
+                    name="health_check_strategy"
+                    render={({ field }) => (
+                        <FormItem>
+                            <FormLabel>{t("executors.healthCheck.fields.strategy")}</FormLabel>
+                            <Select
+                                value={field.value}
+                                onValueChange={(value) => {
+                                    field.onChange(value)
+                                    // strategy=none forces mark_failed (Req 1.9).
+                                    if (value === "none") {
+                                        form.setValue("health_check_failure_policy", "mark_failed")
+                                    }
+                                }}
+                            >
+                                <FormControl>
+                                    <SelectTrigger>
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                    <SelectItem value="none">
+                                        {t("executors.healthCheck.strategy.none")}
+                                    </SelectItem>
+                                    <SelectItem value="runtime_native">
+                                        {t("executors.healthCheck.strategy.runtime_native")}
+                                    </SelectItem>
+                                    <SelectItem value="http">
+                                        {t("executors.healthCheck.strategy.http")}
+                                    </SelectItem>
+                                    <SelectItem value="tcp">
+                                        {t("executors.healthCheck.strategy.tcp")}
+                                    </SelectItem>
+                                    {isHelmRelease ? (
+                                        <SelectItem value="helm_status">
+                                            {t("executors.healthCheck.strategy.helm_status")}
+                                        </SelectItem>
+                                    ) : null}
+                                </SelectContent>
+                            </Select>
+                            <FormMessage />
+                        </FormItem>
+                    )}
+                />
+
+                <FormField
+                    control={form.control}
+                    name="health_check_failure_policy"
+                    render={({ field }) => (
+                        <FormItem>
+                            <FormLabel>
+                                {t("executors.healthCheck.fields.failurePolicy")}
+                            </FormLabel>
+                            <Select
+                                value={field.value}
+                                onValueChange={field.onChange}
+                                disabled={!probeActive}
+                            >
+                                <FormControl>
+                                    <SelectTrigger>
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                    <SelectItem value="mark_failed">
+                                        {t("executors.healthCheck.failurePolicy.mark_failed")}
+                                    </SelectItem>
+                                    <SelectItem value="mark_failed_and_recover">
+                                        {t("executors.healthCheck.failurePolicy.mark_failed_and_recover")}
+                                    </SelectItem>
+                                    <SelectItem value="mark_degraded">
+                                        {t("executors.healthCheck.failurePolicy.mark_degraded")}
+                                    </SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <FormMessage />
+                        </FormItem>
+                    )}
+                />
+            </div>
+
+            {probeActive ? (
+                <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <FormField
+                        control={form.control}
+                        name="health_check_grace_period_seconds"
+                        render={({ field }) => (
+                            <FormItem>
+                                <FormLabel>
+                                    {t("executors.healthCheck.fields.gracePeriod")}
+                                </FormLabel>
+                                <FormControl>
+                                    <Input type="number" min={0} step={1} {...field} />
+                                </FormControl>
+                                <FormMessage />
+                            </FormItem>
+                        )}
+                    />
+                    <FormField
+                        control={form.control}
+                        name="health_check_attempt_timeout_seconds"
+                        render={({ field }) => (
+                            <FormItem>
+                                <FormLabel>
+                                    {t("executors.healthCheck.fields.attemptTimeout")}
+                                </FormLabel>
+                                <FormControl>
+                                    <Input type="number" min={0} step={1} {...field} />
+                                </FormControl>
+                                <FormMessage />
+                            </FormItem>
+                        )}
+                    />
+                    <FormField
+                        control={form.control}
+                        name="health_check_interval_seconds"
+                        render={({ field }) => (
+                            <FormItem>
+                                <FormLabel>
+                                    {t("executors.healthCheck.fields.interval")}
+                                </FormLabel>
+                                <FormControl>
+                                    <Input type="number" min={0} step={1} {...field} />
+                                </FormControl>
+                                <FormMessage />
+                            </FormItem>
+                        )}
+                    />
+                    <FormField
+                        control={form.control}
+                        name="health_check_probe_window_seconds"
+                        render={({ field }) => (
+                            <FormItem>
+                                <FormLabel>
+                                    {t("executors.healthCheck.fields.probeWindow")}
+                                </FormLabel>
+                                <FormControl>
+                                    <Input type="number" min={0} step={1} {...field} />
+                                </FormControl>
+                                <FormMessage />
+                            </FormItem>
+                        )}
+                    />
+                </div>
+            ) : null}
+
+            {strategy === "http" || strategy === "tcp" ? (
+                <div className="mt-3 rounded-lg border border-amber-400/50 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200">
+                    {t("executors.healthCheck.hints.subObjectViaApi")}
+                </div>
+            ) : null}
+        </div>
     )
 }
 

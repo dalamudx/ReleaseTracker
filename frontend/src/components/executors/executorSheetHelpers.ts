@@ -4,6 +4,9 @@ import type {
     ContainerExecutorTargetRef,
     DockerComposeExecutorTargetRef,
     ExecutorConfig,
+    HealthCheckFailurePolicy,
+    HealthCheckProfile,
+    HealthCheckStrategy,
     HelmReleaseExecutorTargetRef,
     ExecutorServiceBinding,
     ExecutorTargetRef,
@@ -34,6 +37,16 @@ export interface ExecutorFormValues {
     maintenance_days: string[]
     maintenance_start_time: string
     maintenance_end_time: string
+    // Health check profile (Req 1.*). Strings for form inputs so the
+    // wizard can round-trip through <input type="number"> without
+    // fighting React Hook Form defaults; parsed back to integers when
+    // the payload is built.
+    health_check_strategy: HealthCheckStrategy
+    health_check_failure_policy: HealthCheckFailurePolicy
+    health_check_grace_period_seconds: string
+    health_check_attempt_timeout_seconds: string
+    health_check_interval_seconds: string
+    health_check_probe_window_seconds: string
 }
 
 export type StepKey = "target" | "binding" | "policy" | "review"
@@ -808,10 +821,17 @@ export function createDefaultExecutorValues(defaultRuntimeConnection?: RuntimeCo
         maintenance_days: [],
         maintenance_start_time: "02:00",
         maintenance_end_time: "05:00",
+        health_check_strategy: "none",
+        health_check_failure_policy: "mark_failed",
+        health_check_grace_period_seconds: "0",
+        health_check_attempt_timeout_seconds: "0",
+        health_check_interval_seconds: "0",
+        health_check_probe_window_seconds: "0",
     }
 }
 
 export function buildExecutorFormValues(config: ExecutorConfig): ExecutorFormValues {
+    const health = config.health_check ?? null
     return {
         name: config.name,
         runtime_type: config.runtime_type,
@@ -828,6 +848,12 @@ export function buildExecutorFormValues(config: ExecutorConfig): ExecutorFormVal
         maintenance_days: (config.maintenance_window?.days_of_week ?? []).map((day) => String(day)),
         maintenance_start_time: config.maintenance_window?.start_time ?? "02:00",
         maintenance_end_time: config.maintenance_window?.end_time ?? "05:00",
+        health_check_strategy: health?.strategy ?? "none",
+        health_check_failure_policy: health?.failure_policy ?? "mark_failed",
+        health_check_grace_period_seconds: String(health?.grace_period_seconds ?? 0),
+        health_check_attempt_timeout_seconds: String(health?.attempt_timeout_seconds ?? 0),
+        health_check_interval_seconds: String(health?.interval_seconds ?? 0),
+        health_check_probe_window_seconds: String(health?.probe_window_seconds ?? 0),
     }
 }
 
@@ -1153,6 +1179,31 @@ export function buildExecutorPayload({
             }
             : null,
         description: values.description || null,
+        health_check: buildHealthCheckPayload(values),
+    }
+}
+
+function buildHealthCheckPayload(values: ExecutorFormValues): HealthCheckProfile {
+    // Form stores integer-valued timings as strings so the <input> can
+    // stay controlled; parse back here. Empty / non-numeric values fall
+    // back to zero so the backend validator sees a well-formed payload
+    // and surfaces a clear 400 when zero is incompatible with the
+    // selected strategy (Req 1.11).
+    const toInt = (value: string): number => {
+        const parsed = Number.parseInt(value, 10)
+        return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
+    }
+    return {
+        strategy: values.health_check_strategy,
+        use_default_strategy: false,
+        failure_policy: values.health_check_failure_policy,
+        grace_period_seconds: toInt(values.health_check_grace_period_seconds),
+        attempt_timeout_seconds: toInt(values.health_check_attempt_timeout_seconds),
+        interval_seconds: toInt(values.health_check_interval_seconds),
+        probe_window_seconds: toInt(values.health_check_probe_window_seconds),
+        services: null,
+        http: null,
+        tcp: null,
     }
 }
 

@@ -767,6 +767,33 @@
         "timeout": "恢复超时"
       }
     },
+    "healthCheck": {
+      "title": "更新后健康检查",
+      "description": "在执行器运行标记为成功之前，验证更新后的服务是否健康。",
+      "strategy": {
+        "none": "关闭",
+        "runtime_native": "运行时原生就绪",
+        "http": "HTTP 探针",
+        "tcp": "TCP 探针",
+        "helm_status": "Helm 发布状态"
+      },
+      "failurePolicy": {
+        "mark_failed": "标记为失败",
+        "mark_failed_and_recover": "失败并回滚",
+        "mark_degraded": "标记为降级"
+      },
+      "fields": {
+        "strategy": "策略",
+        "failurePolicy": "失败时",
+        "gracePeriod": "等待期（秒）",
+        "attemptTimeout": "单次超时（秒）",
+        "interval": "探测间隔（秒）",
+        "probeWindow": "总探测窗口（秒）"
+      },
+      "hints": {
+        "subObjectViaApi": "HTTP 路径 / 状态码 / 正则以及 TCP 端口目前通过 API 配置，这里聚焦于策略、失败处理与时序。"
+      }
+    },
     "snapshots": {
       "tab": "快照",
       "title": "快照历史",

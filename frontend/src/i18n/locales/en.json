@@ -766,6 +766,33 @@
                 "timeout": "Recovery timed out"
             }
         },
+        "healthCheck": {
+            "title": "Post-update health check",
+            "description": "Verify the updated service is healthy before marking the run successful.",
+            "strategy": {
+                "none": "Disabled",
+                "runtime_native": "Runtime native readiness",
+                "http": "HTTP probe",
+                "tcp": "TCP probe",
+                "helm_status": "Helm release status"
+            },
+            "failurePolicy": {
+                "mark_failed": "Mark run as failed",
+                "mark_failed_and_recover": "Mark as failed and roll back",
+                "mark_degraded": "Mark as degraded"
+            },
+            "fields": {
+                "strategy": "Strategy",
+                "failurePolicy": "On failure",
+                "gracePeriod": "Grace period (s)",
+                "attemptTimeout": "Attempt timeout (s)",
+                "interval": "Interval (s)",
+                "probeWindow": "Probe window (s)"
+            },
+            "hints": {
+                "subObjectViaApi": "HTTP path / status / regex and TCP port are configured via the API for now; the core timing and failure policy can be set here."
+            }
+        },
         "snapshots": {
             "tab": "Snapshots",
             "title": "Snapshot History",
