@@ -143,6 +143,22 @@ def _extract_create_kwargs(
     if hostname:
         kwargs["hostname"] = hostname
 
+    tty = config.get("Tty")
+    if isinstance(tty, bool):
+        kwargs["tty"] = tty
+
+    open_stdin = config.get("OpenStdin")
+    if isinstance(open_stdin, bool):
+        kwargs["stdin_open"] = open_stdin
+
+    stop_signal = config.get("StopSignal")
+    if isinstance(stop_signal, str) and stop_signal.strip():
+        kwargs["stop_signal"] = stop_signal
+
+    stop_timeout = config.get("StopTimeout")
+    if isinstance(stop_timeout, int) and stop_timeout >= 0:
+        kwargs["stop_timeout"] = stop_timeout
+
     healthcheck = config.get("Healthcheck")
     if healthcheck and isinstance(healthcheck, dict):
         kwargs["healthcheck"] = dict(healthcheck)
@@ -217,6 +233,10 @@ def _extract_create_kwargs(
     if dns and isinstance(dns, list):
         kwargs["dns"] = list(dns)
 
+    dns_search = host_config.get("DnsSearch")
+    if dns_search and isinstance(dns_search, list):
+        kwargs["dns_search"] = list(dns_search)
+
     tmpfs = host_config.get("Tmpfs")
     if tmpfs and isinstance(tmpfs, dict):
         kwargs["tmpfs"] = dict(tmpfs)
@@ -241,6 +261,42 @@ def _extract_create_kwargs(
     if devices and isinstance(devices, list):
         kwargs["devices"] = list(devices)
 
+    pids_limit = host_config.get("PidsLimit")
+    if isinstance(pids_limit, int) and pids_limit > 0:
+        kwargs["pids_limit"] = pids_limit
+
+    memory = host_config.get("Memory")
+    if isinstance(memory, int) and memory > 0:
+        kwargs["mem_limit"] = memory
+
+    memory_reservation = host_config.get("MemoryReservation")
+    if isinstance(memory_reservation, int) and memory_reservation > 0:
+        kwargs["mem_reservation"] = memory_reservation
+
+    cpu_shares = host_config.get("CpuShares")
+    if isinstance(cpu_shares, int) and cpu_shares > 0:
+        kwargs["cpu_shares"] = cpu_shares
+
+    nano_cpus = host_config.get("NanoCpus")
+    if isinstance(nano_cpus, int) and nano_cpus > 0:
+        kwargs["nano_cpus"] = nano_cpus
+
+    cpu_period = host_config.get("CpuPeriod")
+    if isinstance(cpu_period, int) and cpu_period > 0:
+        kwargs["cpu_period"] = cpu_period
+
+    cpu_quota = host_config.get("CpuQuota")
+    if isinstance(cpu_quota, int) and cpu_quota > 0:
+        kwargs["cpu_quota"] = cpu_quota
+
+    sysctls = host_config.get("Sysctls") or host_config.get("Sysctl")
+    if isinstance(sysctls, dict) and sysctls:
+        kwargs["sysctls"] = dict(sysctls)
+
+    shm_size = host_config.get("ShmSize")
+    if isinstance(shm_size, int) and shm_size > 0:
+        kwargs["shm_size"] = shm_size
+
     labels = config.get("Labels")
     if labels:
         kwargs["labels"] = labels
@@ -257,11 +313,18 @@ def _extract_network_config(
         result["network_mode"] = network_mode
     networks = network_settings.get("Networks")
     if isinstance(networks, dict) and networks:
+        dropped_empty_network_count = sum(
+            1
+            for name, endpoint in networks.items()
+            if isinstance(name, str) and not name.strip() and isinstance(endpoint, dict)
+        )
         result["endpoints"] = {
             name: dict(endpoint)
             for name, endpoint in networks.items()
             if isinstance(name, str) and name.strip() and isinstance(endpoint, dict)
         }
+        if dropped_empty_network_count:
+            result["dropped_empty_network_count"] = dropped_empty_network_count
     return result
 
 

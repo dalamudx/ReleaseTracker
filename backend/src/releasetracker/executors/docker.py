@@ -177,8 +177,8 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
             client.update_container_image(container.id, new_image)
             return RuntimeUpdateResult(updated=True, old_image=old_image, new_image=new_image)
 
-        create_kwargs = self._extract_create_kwargs(container, new_image)
-        if not create_kwargs:
+        recreate_spec = self._build_recreate_spec_from_inspect(container, new_image)
+        if recreate_spec is None:
             raise ValueError(
                 f"Docker cannot recreate container '{container.id}' without a restorable create configuration"
             )
@@ -191,7 +191,8 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         try:
             container.stop()
             container.remove()
-            new_container = client.containers.create(**create_kwargs)
+            new_container = client.containers.create(**dict(recreate_spec.create_config))
+            self._restore_container_networks(client, new_container, recreate_spec)
             new_container.start()
         except Exception as exc:
             if new_container is not None:
@@ -212,16 +213,15 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         self, target_ref: dict[str, Any], current_image: str
     ) -> dict[str, Any]:
         container = self._get_container(target_ref)
-        snapshot = {
-            "runtime_type": self.runtime_connection.type,
-            "container_id": getattr(container, "id", None),
-            "container_name": getattr(container, "name", None),
-            "image": current_image,
-        }
-        create_config = self._extract_create_kwargs(container, current_image)
-        if create_config:
-            snapshot["create_config"] = create_config
-        return snapshot
+        spec = self._build_recreate_spec_from_inspect(container, current_image)
+        if spec is None:
+            return {
+                "runtime_type": self.runtime_connection.type,
+                "container_id": getattr(container, "id", None),
+                "container_name": getattr(container, "name", None),
+                "image": current_image,
+            }
+        return dict(spec.snapshot_payload)
 
     async def validate_snapshot(self, target_ref: dict[str, Any], snapshot: dict[str, Any]) -> None:
         await super().validate_snapshot(target_ref, snapshot)
@@ -299,12 +299,8 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         # state. We compare live image tags / digest to the snapshot's
         # recorded image; stored ``container_id`` is not a reliable
         # signal because every recreate assigns a new id.
-        recovered_image = (
-            snapshot.get("image") if isinstance(snapshot.get("image"), str) else None
-        )
-        if recovered_image and self._container_matches_image(
-            existing_container, recovered_image
-        ):
+        recovered_image = snapshot.get("image") if isinstance(snapshot.get("image"), str) else None
+        if recovered_image and self._container_matches_image(existing_container, recovered_image):
             return existing_container
 
         self._remove_container_if_present(existing_container)
@@ -421,19 +417,24 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         return target_ref
 
     def _extract_create_kwargs(self, container, image: str) -> dict[str, Any]:
+        spec = self._build_recreate_spec_from_inspect(container, image)
+        return dict(spec.create_config) if spec is not None else {}
+
+    def _build_recreate_spec_from_inspect(
+        self, container, image: str
+    ) -> GroupedRuntimeRecreateSpec | None:
         attrs = getattr(container, "attrs", {}) or {}
         config = attrs.get("Config")
         host_config = attrs.get("HostConfig")
         if not isinstance(config, dict) or not isinstance(host_config, dict):
-            return {}
+            return None
 
-        spec = build_grouped_runtime_recreate_spec(
+        return build_grouped_runtime_recreate_spec(
             container,
             runtime_type=self.runtime_connection.type,
             target_image=image,
             current_image=self._extract_image(container),
         )
-        return dict(spec.create_config)
 
     def _find_compose_service_containers(self, project: str) -> dict[str, list[Any]]:
         containers_by_service: dict[str, list[Any]] = {}
