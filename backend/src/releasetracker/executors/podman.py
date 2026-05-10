@@ -1205,10 +1205,58 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         if isinstance(command, str):
             payload["command"] = [command]
 
+        self._render_podman_environment(payload)
+        self._render_podman_healthcheck(payload)
+        self._render_podman_stdio(payload)
+        self._render_podman_workdir(payload)
+        self._render_podman_networking(payload)
+        self._render_podman_logging(payload)
+        self._render_podman_storage(payload)
+        self._render_podman_resources(payload)
+        self._render_podman_security(payload)
+        self._render_podman_devices(payload)
+        self._render_podman_pod(payload)
+
+        return self._filter_empty_podman_payload_values(payload)
+
+    def _render_podman_environment(self, payload: dict[str, Any]) -> None:
+        environment = payload.pop("environment", None)
+        if environment is None:
+            return
+        if isinstance(environment, Mapping):
+            payload["env"] = dict(environment)
+            return
+        if not isinstance(environment, list):
+            return
+        env: dict[str, str] = {}
+        for item in environment:
+            if not isinstance(item, str) or "=" not in item:
+                continue
+            key, _, value = item.partition("=")
+            if key.strip():
+                env[key] = value
+        if env:
+            payload["env"] = env
+
+    def _render_podman_healthcheck(self, payload: dict[str, Any]) -> None:
+        healthcheck = payload.pop("healthcheck", None)
+        if isinstance(healthcheck, Mapping) and healthcheck:
+            payload["healthconfig"] = dict(healthcheck)
+
+    def _render_podman_stdio(self, payload: dict[str, Any]) -> None:
+        tty = payload.pop("tty", None)
+        if isinstance(tty, bool):
+            payload["terminal"] = tty
+        stdin_open = payload.pop("stdin_open", None)
+        if isinstance(stdin_open, bool):
+            payload["stdin"] = stdin_open
+
+    def _render_podman_workdir(self, payload: dict[str, Any]) -> None:
         working_dir = payload.pop("working_dir", None)
         if working_dir is not None:
             payload["work_dir"] = working_dir
 
+    def _render_podman_networking(self, payload: dict[str, Any]) -> None:
         networks = payload.pop("networks", None)
         if networks is not None:
             payload["networks"] = networks
@@ -1216,14 +1264,25 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         if network is not None:
             payload["cni_networks"] = [network]
 
-        pod = payload.get("pod")
-        if pod is not None and not isinstance(pod, str):
-            pod_id = getattr(pod, "id", None)
-            pod_name = getattr(pod, "name", None)
-            if isinstance(pod_id, str) and pod_id.strip():
-                payload["pod"] = pod_id.strip()
-            elif isinstance(pod_name, str) and pod_name.strip():
-                payload["pod"] = pod_name.strip()
+        dns = payload.pop("dns", None)
+        if isinstance(dns, list) and dns:
+            payload["dns_server"] = list(dns)
+        dns_opt = payload.pop("dns_opt", None)
+        if isinstance(dns_opt, list) and dns_opt:
+            payload["dns_option"] = list(dns_opt)
+        dns_search = payload.get("dns_search")
+        if isinstance(dns_search, list) and dns_search:
+            payload["dns_search"] = list(dns_search)
+
+        extra_hosts = payload.pop("extra_hosts", None)
+        hostadd = self._pod_extra_hosts_from_create_config({"extra_hosts": extra_hosts})
+        if hostadd:
+            payload["hostadd"] = hostadd
+
+        ports = payload.pop("ports", None)
+        portmappings = self._pod_portmappings_from_create_config({"ports": ports})
+        if portmappings:
+            payload["portmappings"] = portmappings
 
         network_mode = payload.pop("network_mode", None)
         if isinstance(network_mode, str) and network_mode.strip():
@@ -1233,7 +1292,181 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
             else:
                 payload["netns"] = {"nsmode": network_mode}
 
-        return self._filter_empty_podman_payload_values(payload)
+    def _render_podman_logging(self, payload: dict[str, Any]) -> None:
+        log_config = payload.pop("log_config", None)
+        if not isinstance(log_config, Mapping):
+            return
+        log_payload: dict[str, Any] = {}
+        driver = log_config.get("Type") or log_config.get("driver")
+        if isinstance(driver, str) and driver.strip():
+            log_payload["driver"] = driver.strip()
+        config = log_config.get("Config") or log_config.get("config")
+        if isinstance(config, Mapping):
+            log_options: dict[str, Any] = {}
+            for source_key, target_key in (
+                ("path", "path"),
+                ("size", "size"),
+                ("options", "options"),
+                ("tag", "tag"),
+            ):
+                value = config.get(source_key)
+                if value not in (None, ""):
+                    log_payload[target_key] = dict(value) if isinstance(value, Mapping) else value
+            for key, value in config.items():
+                if key in {"path", "size", "options", "tag"} or value in (None, ""):
+                    continue
+                log_options[key] = dict(value) if isinstance(value, Mapping) else value
+            if log_options:
+                options = dict(log_payload.get("options") or {})
+                options.update(log_options)
+                log_payload["options"] = options
+        tag = log_config.get("Tag") or log_config.get("tag")
+        if isinstance(tag, str) and tag.strip():
+            options = dict(log_payload.get("options") or {})
+            options["tag"] = tag.strip()
+            log_payload["options"] = options
+        if log_payload:
+            payload["log_configuration"] = log_payload
+
+    def _render_podman_storage(self, payload: dict[str, Any]) -> None:
+        mounts = payload.get("mounts")
+        if isinstance(mounts, list):
+            rendered_mounts: list[dict[str, Any]] = []
+            for mount in mounts:
+                if not isinstance(mount, Mapping):
+                    continue
+                rendered = self._render_podman_mount(mount)
+                if rendered is not None:
+                    rendered_mounts.append(rendered)
+            if rendered_mounts:
+                payload["mounts"] = rendered_mounts
+            else:
+                payload.pop("mounts", None)
+
+    def _render_podman_mount(self, mount: Mapping[str, Any]) -> dict[str, Any] | None:
+        destination = self._podman_storage_destination_value(mount, PODMAN_MOUNT_DESTINATION_KEYS)
+        destination = self._normalize_podman_container_mount_destination(destination)
+        if destination is None:
+            return None
+        rendered: dict[str, Any] = {
+            "type": mount.get("type"),
+            "destination": destination,
+            "options": [],
+        }
+        source = mount.get("source")
+        if isinstance(source, str) and source.strip():
+            rendered["source"] = source
+        options = rendered["options"]
+        raw_options = mount.get("options")
+        if isinstance(raw_options, list):
+            for option in raw_options:
+                if isinstance(option, str) and option.strip():
+                    self._append_unique_podman_option(options, option.strip())
+        elif isinstance(raw_options, str) and raw_options.strip():
+            for option in raw_options.split(","):
+                if option.strip():
+                    self._append_unique_podman_option(options, option.strip())
+        if mount.get("read_only") is True:
+            self._append_unique_podman_option(options, "ro")
+        for source_key, target_option in (("propagation", None), ("relabel", None)):
+            value = mount.get(source_key)
+            if isinstance(value, str) and value.strip():
+                self._append_unique_podman_option(
+                    options, value.strip() if target_option is None else target_option
+                )
+        size = mount.get("size")
+        if isinstance(size, str | int) and str(size).strip():
+            self._append_unique_podman_option(options, f"size={size}")
+        if not options:
+            rendered.pop("options", None)
+        return rendered
+
+    def _append_unique_podman_option(self, options: list[str], option: str) -> None:
+        if option not in options:
+            options.append(option)
+
+    def _render_podman_resources(self, payload: dict[str, Any]) -> None:
+        resource_limits: dict[str, Any] = {}
+        pids_limit = payload.pop("pids_limit", None)
+        if isinstance(pids_limit, int) and pids_limit > 0:
+            resource_limits["pids"] = {"limit": pids_limit}
+
+        cpu_fields = {
+            "cpus": payload.pop("cpuset_cpus", None),
+            "mems": payload.pop("cpuset_mems", None),
+            "period": payload.pop("cpu_period", None),
+            "quota": payload.pop("cpu_quota", None),
+            "realtimePeriod": payload.pop("cpu_rt_period", None),
+            "realtimeRuntime": payload.pop("cpu_rt_runtime", None),
+            "shares": payload.pop("cpu_shares", None),
+        }
+        cpu_limits = {key: value for key, value in cpu_fields.items() if value not in (None, "")}
+        if cpu_limits:
+            resource_limits["cpu"] = cpu_limits
+
+        memory_fields = {
+            "disableOOMKiller": payload.pop("oom_kill_disable", None),
+            "kernel": payload.pop("kernel_memory", None),
+            "kernelTCP": payload.pop("kernel_memory_tcp", None),
+            "limit": payload.pop("mem_limit", None),
+            "reservation": payload.pop("mem_reservation", None),
+            "swap": payload.pop("memswap_limit", None),
+            "swappiness": payload.pop("mem_swappiness", None),
+            "useHierarchy": payload.pop("mem_use_hierarchy", None),
+        }
+        memory_limits = {
+            key: value for key, value in memory_fields.items() if value not in (None, "")
+        }
+        if memory_limits:
+            resource_limits["memory"] = memory_limits
+
+        if resource_limits:
+            payload["resource_limits"] = resource_limits
+
+        ulimits = payload.pop("ulimits", None)
+        if isinstance(ulimits, list):
+            r_limits: list[dict[str, Any]] = []
+            for item in ulimits:
+                if not isinstance(item, Mapping):
+                    continue
+                name = item.get("Name") or item.get("type")
+                hard = item.get("Hard") if "Hard" in item else item.get("hard")
+                soft = item.get("Soft") if "Soft" in item else item.get("soft")
+                if isinstance(name, str) and name.strip():
+                    r_limits.append({"type": name.strip(), "hard": hard, "soft": soft})
+            if r_limits:
+                payload["r_limits"] = r_limits
+
+    def _render_podman_security(self, payload: dict[str, Any]) -> None:
+        security_opt = payload.pop("security_opt", None)
+        if isinstance(security_opt, list) and security_opt:
+            payload["selinux_opts"] = list(security_opt)
+
+    def _render_podman_devices(self, payload: dict[str, Any]) -> None:
+        devices = payload.get("devices")
+        if not isinstance(devices, list):
+            return
+        rendered_devices: list[dict[str, Any]] = []
+        for device in devices:
+            if isinstance(device, Mapping):
+                rendered_devices.append(dict(device))
+            elif isinstance(device, str) and device.strip():
+                rendered_devices.append({"path": device})
+        if rendered_devices:
+            payload["devices"] = rendered_devices
+        else:
+            payload.pop("devices", None)
+
+    def _render_podman_pod(self, payload: dict[str, Any]) -> None:
+        pod = payload.get("pod")
+        if pod is None or isinstance(pod, str):
+            return
+        pod_id = getattr(pod, "id", None)
+        pod_name = getattr(pod, "name", None)
+        if isinstance(pod_id, str) and pod_id.strip():
+            payload["pod"] = pod_id.strip()
+        elif isinstance(pod_name, str) and pod_name.strip():
+            payload["pod"] = pod_name.strip()
 
     def _filter_empty_podman_payload_values(self, payload: dict[str, Any]) -> dict[str, Any]:
         filtered: dict[str, Any] = {}
@@ -2081,6 +2314,8 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                         "source": host_path,
                         "destination": container_path,
                     }
+                    if option_tokens:
+                        mount_payload["options"] = list(option_tokens)
                     if "ro" in option_tokens:
                         mount_payload["read_only"] = True
                     for token in option_tokens:
@@ -2092,10 +2327,12 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                     updated_mounts = True
                     continue
 
-                normalized_volumes[host_path] = {
-                    "bind": container_path,
-                    "mode": "ro" if "ro" in option_tokens else "rw",
-                }
+                volume_payload: dict[str, Any] = {"bind": container_path}
+                if option_tokens:
+                    volume_payload["extended_mode"] = list(option_tokens)
+                else:
+                    volume_payload["mode"] = "rw"
+                normalized_volumes[host_path] = volume_payload
                 updated_volumes = True
             if updated_volumes and normalized_volumes:
                 create_config["volumes"] = normalized_volumes
@@ -2267,19 +2504,15 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                     network.disconnect(new_container, force=True)
                 except Exception:
                     pass
-            connect_kwargs = self._network_connect_kwargs(container_id, endpoint)
-            logger.debug(
-                "Podman network restore SDK boundary: phase=%s boundary=networks.connect "
-                "container_name=%s container_id=%s network_mode=%s endpoint_network=%s "
-                "connect_kwarg_keys=%s",
-                phase or "unknown",
-                self._safe_identifier(getattr(new_container, "name", None)),
-                self._safe_identifier(container_id),
-                self._classify_network_mode(network_mode),
+            self._connect_podman_network(
+                client,
+                network,
+                new_container,
                 normalized_network_name,
-                sorted(connect_kwargs),
+                container_id=container_id,
+                endpoint=endpoint,
+                phase=phase or "unknown",
             )
-            network.connect(new_container, **connect_kwargs)
 
         if dropped_empty_network_count:
             logger.warning(
@@ -2603,6 +2836,82 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
             return "preserved"
         return "omitted_for_low_level_create"
 
+    def _connect_podman_network(
+        self,
+        client,
+        network,
+        new_container,
+        network_name: str,
+        *,
+        container_id: str | None,
+        endpoint: dict[str, Any],
+        phase: str,
+    ) -> None:
+        raw_api_post = self._raw_network_connect_post(client)
+        if raw_api_post is not None:
+            connect_payload = self._raw_network_connect_body(
+                new_container,
+                container_id=container_id,
+                endpoint=endpoint,
+            )
+            self._log_network_restore_connect_attempt(
+                phase,
+                new_container,
+                network_name,
+                connect_strategy="raw_api",
+                connect_payload=connect_payload,
+            )
+            raw_api_post(
+                f"networks/{network_name}/connect",
+                compatible=False,
+                data=json.dumps(connect_payload),
+                headers={"Content-Type": "application/json"},
+            )
+            return
+
+        connect_kwargs = self._network_connect_kwargs(container_id, endpoint)
+        self._log_network_restore_connect_attempt(
+            phase,
+            new_container,
+            network_name,
+            connect_strategy="sdk",
+            connect_payload=connect_kwargs,
+        )
+        network.connect(new_container, **connect_kwargs)
+
+    def _raw_network_connect_post(self, client):
+        api = getattr(client, "api", None)
+        post = getattr(api, "post", None)
+        if callable(post):
+            return post
+        return None
+
+    def _raw_network_connect_body(
+        self,
+        new_container,
+        *,
+        container_id: str | None,
+        endpoint: dict[str, Any],
+    ) -> dict[str, Any]:
+        body = {"container": self._container_connect_identifier(new_container)}
+        aliases = self._network_aliases(container_id, endpoint)
+        if aliases:
+            body["aliases"] = aliases
+        static_ips = self._network_static_ips(endpoint)
+        if static_ips:
+            body["static_ips"] = static_ips
+        return body
+
+    def _network_static_ips(self, endpoint: dict[str, Any]) -> list[str]:
+        static_ips: list[str] = []
+        ipv4_address = self._network_ipv4_address(endpoint)
+        if ipv4_address:
+            static_ips.append(ipv4_address)
+        ipv6_address = self._network_ipv6_address(endpoint)
+        if ipv6_address:
+            static_ips.append(ipv6_address)
+        return static_ips
+
     def _network_connect_kwargs(
         self,
         container_id: str | None,
@@ -2670,14 +2979,68 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         }
         normalized_aliases: list[str] = []
         for alias in aliases:
-            if (
-                isinstance(alias, str)
-                and alias.strip()
-                and alias not in container_id_aliases
-                and alias not in normalized_aliases
-            ):
-                normalized_aliases.append(alias)
+            if not isinstance(alias, str):
+                continue
+            normalized_alias = alias.strip()
+            if not normalized_alias or normalized_alias in container_id_aliases:
+                continue
+            if normalized_alias not in normalized_aliases:
+                normalized_aliases.append(normalized_alias)
         return normalized_aliases
+
+    def _container_connect_identifier(self, container) -> str:
+        container_id = getattr(container, "id", None)
+        if isinstance(container_id, str) and container_id.strip():
+            return container_id.strip()
+        container_name = getattr(container, "name", None)
+        if isinstance(container_name, str) and container_name.strip():
+            return container_name.strip()
+        raise ValueError("replacement container missing id/name for network restore")
+
+    def _log_network_restore_connect_attempt(
+        self,
+        phase: str,
+        new_container,
+        network_name: str,
+        *,
+        connect_strategy: str,
+        connect_payload: dict[str, Any],
+    ) -> None:
+        aliases = connect_payload.get("aliases")
+        if aliases is None:
+            aliases = connect_payload.get("Aliases")
+        static_ips = connect_payload.get("static_ips")
+        has_ipv4 = False
+        has_ipv6 = False
+        if isinstance(static_ips, list):
+            has_ipv4 = any(isinstance(ip, str) and ":" not in ip for ip in static_ips)
+            has_ipv6 = any(isinstance(ip, str) and ":" in ip for ip in static_ips)
+        has_ipv4 = has_ipv4 or bool(connect_payload.get("ipv4_address"))
+        has_ipv6 = has_ipv6 or bool(connect_payload.get("ipv6_address"))
+        logger.info(
+            "Podman network restore connect attempt: phase=%s container=%s network=%s "
+            "connect_strategy=%s alias_count=%s has_ipv4=%s has_ipv6=%s "
+            "connect_payload_keys=%s",
+            phase,
+            self._container_log_identifier(new_container),
+            network_name,
+            connect_strategy,
+            len(aliases or []),
+            has_ipv4,
+            has_ipv6,
+            sorted(connect_payload),
+        )
+
+    def _container_log_identifier(self, container) -> str:
+        container_name = getattr(container, "name", None)
+        container_id = getattr(container, "id", None)
+        if isinstance(container_name, str) and container_name.strip():
+            if isinstance(container_id, str) and container_id.strip():
+                return f"{container_name.strip()} ({container_id.strip()})"
+            return container_name.strip()
+        if isinstance(container_id, str) and container_id.strip():
+            return container_id.strip()
+        return "unknown"
 
     def _normalize_podman_ulimit_name(self, value: str) -> str:
         normalized = value.strip()

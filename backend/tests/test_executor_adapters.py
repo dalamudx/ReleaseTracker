@@ -323,6 +323,7 @@ class FakePodmanApi:
     def __init__(self, container_manager):
         self._container_manager = container_manager
         self.post_calls: list[dict] = []
+        self.network_connect_posts: list[dict] = []
         self.not_found_once_paths: set[str] = set()
         self.fail_empty_network_mode_for_attempts: list[str] = []
         self.reject_compatible_kwarg = False
@@ -341,6 +342,18 @@ class FakePodmanApi:
         if path in self.not_found_once_paths:
             self.not_found_once_paths.remove(path)
             raise FakePodmanNotFoundError()
+        if isinstance(path, str) and path.startswith("networks/") and path.endswith("/connect"):
+            if kwargs.get("compatible") is False:
+                assert isinstance(payload, dict)
+                assert "container" in payload
+                assert "Container" not in payload
+                assert "EndpointConfig" not in payload
+                assert "IPAddress" not in payload
+                assert "IPAMConfig" not in payload
+            self.network_connect_posts.append(
+                {"path": path, "data": payload, "headers": headers or {}, "kwargs": kwargs}
+            )
+            return FakePodmanResponse({})
         if path not in {"/containers/create", "containers/create", "libpod/containers/create"}:
             raise AssertionError(f"unexpected path: {path}")
         restart_policy = payload.get("restart_policy") if isinstance(payload, dict) else None
@@ -635,9 +648,16 @@ class FakePodmanContainerManager:
 
 
 class FakePodmanClient:
-    def __init__(self, containers, pull_should_fail: bool = False, network_names=None):
+    def __init__(
+        self,
+        containers,
+        pull_should_fail: bool = False,
+        network_names=None,
+        raw_api_available: bool = True,
+    ):
         self.containers = FakePodmanContainerManager(containers)
-        self.api = FakePodmanApi(self.containers)
+        if raw_api_available:
+            self.api = FakePodmanApi(self.containers)
         self.images = FakePodmanImageManager(should_fail=pull_should_fail)
         self.networks = FakePodmanNetworkManager(network_names or [])
         self.pods = FakePodmanPodManager()
@@ -1096,9 +1116,11 @@ async def test_podman_adapter_recreates_container_with_new_image():
     assert len(client.containers.create_calls) == 1
     create_kwargs = client.containers.create_calls[0]
     assert create_kwargs["image"] == "sample-cache:7.4"
-    assert create_kwargs["environment"] == ["FOO=bar"]
+    assert create_kwargs["env"] == {"FOO": "bar"}
     assert create_kwargs["command"] == ["sample-cache-server"]
-    assert create_kwargs["ports"] == {"6379/tcp": ["", 6379]}
+    assert create_kwargs["portmappings"] == [
+        {"container_port": 6379, "host_port": 6379, "protocol": "tcp"}
+    ]
     assert create_kwargs["mounts"] == [
         {
             "type": "bind",
@@ -1115,6 +1137,160 @@ async def test_podman_adapter_recreates_container_with_new_image():
     recreated = client.containers._created[0]
     assert len(recreated.stop_calls) == 0
     assert recreated.image.tags == ["sample-cache:7.4"]
+
+
+@pytest.mark.asyncio
+async def test_podman_adapter_recreates_container_restoring_networks_with_raw_api(caplog):
+    runtime = RuntimeConnectionConfig(
+        name="podman-prod",
+        type="podman",
+        config={"socket": "unix:///run/podman/podman.sock"},
+        secrets={},
+    )
+    container = FakeContainer(
+        "def1234567890",
+        "sample-cache",
+        FakeImage(tags=["sample-cache:7.2"]),
+        attrs={
+            "Pod": "",
+            "Config": {"Image": "sample-cache:7.2"},
+            "HostConfig": {"NetworkMode": "sample-net"},
+            "NetworkSettings": {
+                "Networks": {
+                    "sample-net": {
+                        "Aliases": [
+                            "sample-cache.local",
+                            "sample-cache",
+                            "def1234567890",
+                            "def123456789",
+                        ],
+                        "IPAddress": "10.89.20.3",
+                        "GlobalIPv6Address": "fd00::10",
+                        "IPAMConfig": {
+                            "IPv4Address": "10.89.20.3",
+                            "IPv6Address": "fd00::10",
+                        },
+                    }
+                }
+            },
+        },
+    )
+    client = FakePodmanClient([container], network_names=["sample-net", "podman"])
+    adapter = PodmanRuntimeAdapter(runtime, client=client)
+
+    with caplog.at_level(logging.INFO, logger="releasetracker.executors.podman"):
+        result = await adapter.update_image({"container_name": "sample-cache"}, "sample-cache:7.4")
+
+    assert result.updated is True
+    assert client.networks.disconnect_calls == [
+        ("sample-net", "sample-cache", True),
+        ("podman", "sample-cache", True),
+    ]
+    assert client.networks.connect_calls == []
+    assert len(client.api.network_connect_posts) == 1
+    connect_post = client.api.network_connect_posts[0]
+    assert connect_post["path"] == "networks/sample-net/connect"
+    assert connect_post["kwargs"] == {"compatible": False}
+    assert connect_post["headers"] == {"Content-Type": "application/json"}
+    assert connect_post["data"] == {
+        "container": "new-id",
+        "aliases": ["sample-cache.local", "sample-cache"],
+        "static_ips": ["10.89.20.3", "fd00::10"],
+    }
+    assert "connect_strategy=raw_api" in caplog.text
+    assert "alias_count=2" in caplog.text
+    assert "has_ipv4=True" in caplog.text
+    assert "has_ipv6=True" in caplog.text
+    assert "connect_payload_keys=" in caplog.text
+    assert "endpoint_config_keys=" not in caplog.text
+    assert "sample-cache.local" not in caplog.text
+    assert "10.89.20.3" not in caplog.text
+    assert "fd00::10" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_podman_adapter_recreates_container_falls_back_to_sdk_network_connect():
+    runtime = RuntimeConnectionConfig(
+        name="podman-prod",
+        type="podman",
+        config={"socket": "unix:///run/podman/podman.sock"},
+        secrets={},
+    )
+    container = FakeContainer(
+        "old-id",
+        "sample-cache",
+        FakeImage(tags=["sample-cache:7.2"]),
+        attrs={
+            "Pod": "",
+            "Config": {"Image": "sample-cache:7.2"},
+            "HostConfig": {"NetworkMode": "sample-net"},
+            "NetworkSettings": {
+                "Networks": {
+                    "sample-net": {
+                        "Aliases": ["sample-cache.local", "old-id"],
+                        "IPAMConfig": {"IPv4Address": "10.89.20.3"},
+                    }
+                }
+            },
+        },
+    )
+    client = FakePodmanClient(
+        [container], network_names=["sample-net", "podman"], raw_api_available=False
+    )
+    adapter = PodmanRuntimeAdapter(runtime, client=client)
+
+    result = await adapter.update_image({"container_name": "sample-cache"}, "sample-cache:7.4")
+
+    assert result.updated is True
+    assert client.networks.connect_calls == [
+        (
+            "sample-net",
+            "sample-cache",
+            {"aliases": ["sample-cache.local"], "ipv4_address": "10.89.20.3"},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_podman_adapter_recovery_restores_networks_with_raw_api():
+    runtime = RuntimeConnectionConfig(
+        name="podman-prod",
+        type="podman",
+        config={"socket": "unix:///run/podman/podman.sock"},
+        secrets={},
+    )
+    client = FakePodmanClient([], network_names=["sample-net", "podman"])
+    adapter = PodmanRuntimeAdapter(runtime, client=client)
+
+    result = await adapter.recover_from_snapshot(
+        {"container_name": "sample-cache"},
+        {
+            "runtime_type": "podman",
+            "container_id": "def1234567890",
+            "container_name": "sample-cache",
+            "image": "sample-cache:7.2",
+            "create_config": {"image": "sample-cache:7.2", "name": "sample-cache"},
+            "network_config": {
+                "network_mode": "sample-net",
+                "endpoints": {
+                    "sample-net": {
+                        "Aliases": ["sample-cache.local", "def1234567890"],
+                        "IPAddress": "10.89.20.3",
+                        "IPAMConfig": {"IPv4Address": "10.89.20.3"},
+                    }
+                },
+            },
+            "pod_id": None,
+        },
+    )
+
+    assert result.updated is True
+    assert client.networks.connect_calls == []
+    assert client.api.network_connect_posts[0]["data"] == {
+        "container": "new-id",
+        "aliases": ["sample-cache.local"],
+        "static_ips": ["10.89.20.3"],
+    }
 
 
 @pytest.mark.asyncio
@@ -2441,7 +2617,9 @@ async def test_podman_adapter_update_sanitizes_blank_mount_destination_from_low_
     assert result.updated is True
     payload = client.api.post_calls[0]["data"]
     create_kwargs = client.containers.create_calls[0]
-    assert payload["mounts"] == [{"type": "bind", "source": "/srv/valid", "destination": "/data"}]
+    assert payload["mounts"] == [
+        {"destination": "/data", "options": ["rw"], "source": "/srv/valid", "type": "bind"}
+    ]
     assert create_kwargs["mounts"] == payload["mounts"]
     assert "Podman low-level create payload summary" in caplog.text
     assert "raw_mount_destination_is_blank=False" in caplog.text
@@ -2519,8 +2697,16 @@ async def test_podman_adapter_named_volume_mode_flags_are_sanitized():
 
     assert result.updated is True
     create_kwargs = client.containers.create_calls[0]
-    assert create_kwargs["volumes"] == [{"Name": "test-buntu", "Dest": "/data/", "Options": ["rw"]}]
-    assert create_kwargs["ports"] == {"80/tcp": ["", 80]}
+    assert create_kwargs["volumes"] == [
+        {
+            "Name": "test-buntu",
+            "Dest": "/data/",
+            "Options": ["rw", "rprivate", "nosuid", "nodev", "rbind"],
+        }
+    ]
+    assert create_kwargs["portmappings"] == [
+        {"container_port": 80, "host_port": 80, "protocol": "tcp"}
+    ]
 
 
 def test_podman_fake_api_rejects_legacy_named_volume_key_shape():
@@ -2616,7 +2802,7 @@ async def test_podman_adapter_low_level_create_converts_named_volumes_to_raw_vol
     payload = client.api.post_calls[0]["data"]
     assert payload["volumes"] == [{"Name": "test-buntu", "Dest": "/data", "Options": ["rw"]}]
     assert payload["mounts"] == [
-        {"size": "16m", "destination": "/tmp", "type": "tmpfs"},
+        {"destination": "/tmp", "options": ["size=16m"], "type": "tmpfs"},
         {"options": ["ro"], "source": "/srv/config", "destination": "/config", "type": "bind"},
     ]
     create_kwargs = client.containers.create_calls[0]
@@ -2631,7 +2817,7 @@ async def test_podman_adapter_low_level_create_converts_named_volumes_to_raw_vol
     assert "mounts_count=2" in caplog.text
     assert "volume_mount_count=0" in caplog.text
     assert "relative_storage_destination_normalized_count=0" in caplog.text
-    assert "raw_mount_destination_key_count=0" in caplog.text
+    assert "raw_mount_destination_key_count=1" in caplog.text
     assert "mount_target_key_count=0" in caplog.text
     assert "mount_destination_key_count=2" in caplog.text
     assert "'volume':" not in caplog.text
@@ -2675,9 +2861,9 @@ async def test_podman_adapter_low_level_create_absolutizes_relative_storage_dest
         {"Name": "nginx-podman-cache", "Dest": "/var/cache/nginx", "Options": ["rw"]}
     ]
     assert payload["mounts"] == [
-        {"type": "bind", "source": "/srv/html", "destination": "/usr/share/nginx/html"},
-        {"type": "tmpfs", "destination": "/run/nginx", "size": "16m"},
-        {"type": "bind", "source": "/srv/logs", "destination": "/var/log/nginx"},
+        {"destination": "/usr/share/nginx/html", "source": "/srv/html", "type": "bind"},
+        {"destination": "/run/nginx", "options": ["size=16m"], "type": "tmpfs"},
+        {"destination": "/var/log/nginx", "source": "/srv/logs", "type": "bind"},
         {
             "options": ["ro"],
             "source": "/srv/nginx-conf",
@@ -2687,8 +2873,8 @@ async def test_podman_adapter_low_level_create_absolutizes_relative_storage_dest
     ]
     assert client.containers.create_calls[0]["volumes"] == payload["volumes"]
     assert client.containers.create_calls[0]["mounts"] == payload["mounts"]
-    assert "raw_relative_storage_destination_count=5" in caplog.text
-    assert "relative_storage_destination_normalized_count=5" in caplog.text
+    assert "raw_relative_storage_destination_count=2" in caplog.text
+    assert "relative_storage_destination_normalized_count=2" in caplog.text
     assert "relative_storage_destination_count=0" in caplog.text
     assert "volume_entry_key_patterns={'Dest,Name,Options': 1}" in caplog.text
     assert "volume_mount_count=0" in caplog.text
@@ -2716,13 +2902,13 @@ async def test_podman_adapter_low_level_create_normalizes_legacy_mount_destinati
             {
                 "image": "sample-base:22.04",
                 "name": "storage-app",
-                "mounts": [{"type": "bind", "source": "/srv/config", "destination": "/config"}],
+                "mounts": [{"destination": "/config", "source": "/srv/config", "type": "bind"}],
             },
         )
 
     payload = client.api.post_calls[0]["data"]
     assert payload["mounts"] == [
-        {"type": "bind", "source": "/srv/config", "destination": "/config"}
+        {"destination": "/config", "source": "/srv/config", "type": "bind"}
     ]
     assert client.containers.create_calls[0]["mounts"] == payload["mounts"]
     assert "raw_mount_destination_key_count=1" in caplog.text
@@ -2764,8 +2950,8 @@ async def test_podman_adapter_low_level_create_drops_rendered_volume_without_sou
     payload = client.api.post_calls[0]["data"]
     assert "volumes" not in payload
     assert payload["mounts"] == [
-        {"type": "bind", "source": "/srv/config", "destination": "/config"},
-        {"type": "tmpfs", "destination": "/tmp", "size": "16m"},
+        {"destination": "/config", "source": "/srv/config", "type": "bind"},
+        {"destination": "/tmp", "options": ["size=16m"], "type": "tmpfs"},
     ]
     create_kwargs = client.containers.create_calls[0]
     assert "volumes" not in create_kwargs
@@ -2815,19 +3001,19 @@ async def test_podman_adapter_low_level_create_drops_blank_storage_destinations(
     payload = client.api.post_calls[0]["data"]
     assert "volumes" not in payload
     assert payload["mounts"] == [
-        {"type": "bind", "source": "/srv/config", "destination": "/config"},
-        {"type": "tmpfs", "destination": "/tmp", "size": "16m"},
+        {"destination": "/config", "source": "/srv/config", "type": "bind"},
+        {"destination": "/tmp", "options": ["size=16m"], "type": "tmpfs"},
     ]
     assert "volumes" not in client.containers.create_calls[0]
     assert client.containers.create_calls[0]["mounts"] == payload["mounts"]
     assert "raw_volumes_count=3" in caplog.text
     assert "source_named_volume_count=0" in caplog.text
     assert "dropped_rendered_volume_count=1" in caplog.text
-    assert "raw_mounts_count=4" in caplog.text
-    assert "raw_tmpfs_count=2" in caplog.text
-    assert "raw_mount_destination_is_blank=True" in caplog.text
+    assert "raw_mounts_count=2" in caplog.text
+    assert "raw_tmpfs_count=1" in caplog.text
+    assert "raw_mount_destination_is_blank=False" in caplog.text
     assert "raw_named_volume_dest_is_blank=True" in caplog.text
-    assert "raw_mount_destination_key_count=0" in caplog.text
+    assert "raw_mount_destination_key_count=2" in caplog.text
     assert "mount_target_key_count=0" in caplog.text
     assert "mount_destination_key_count=2" in caplog.text
     assert " volumes_count=0" in caplog.text
@@ -2926,8 +3112,8 @@ async def test_podman_adapter_recovery_absolutizes_relative_storage_destinations
         {"Name": "nginx-podman-cache", "Dest": "/var/cache/nginx", "Options": ["rw"]}
     ]
     assert payload["mounts"] == [
-        {"type": "bind", "source": "/srv/html", "destination": "/usr/share/nginx/html"},
-        {"type": "tmpfs", "destination": "/run/nginx", "size": "16m"},
+        {"destination": "/usr/share/nginx/html", "source": "/srv/html", "type": "bind"},
+        {"destination": "/run/nginx", "options": ["size=16m"], "type": "tmpfs"},
     ]
     assert client.containers.create_calls[0]["volumes"] == payload["volumes"]
     assert client.containers.create_calls[0]["mounts"] == payload["mounts"]
@@ -3037,11 +3223,10 @@ async def test_podman_adapter_bind_mount_ro_flag_is_preserved():
     create_kwargs = client.containers.create_calls[0]
     assert create_kwargs["mounts"] == [
         {
-            "type": "bind",
-            "source": "/etc/config",
             "destination": "/etc/config",
-            "read_only": True,
-            "propagation": "rprivate",
+            "options": ["ro", "rprivate"],
+            "source": "/etc/config",
+            "type": "bind",
         }
     ]
     assert "ports" not in create_kwargs
@@ -3162,12 +3347,12 @@ async def test_podman_adapter_update_normalizes_relative_hostconfig_bind_and_tmp
     ]
     assert create_kwargs["mounts"] == [
         {
-            "type": "bind",
-            "source": "/srv/nginx-conf",
             "destination": "/etc/nginx/conf.d",
-            "read_only": True,
+            "options": ["ro"],
+            "source": "/srv/nginx-conf",
+            "type": "bind",
         },
-        {"type": "tmpfs", "destination": "/run/nginx", "size": "16m"},
+        {"destination": "/run/nginx", "options": ["size=16m"], "type": "tmpfs"},
     ]
 
 
@@ -3179,10 +3364,11 @@ async def test_podman_adapter_update_restores_custom_networks():
         config={"socket": "unix:///run/podman/podman.sock"},
         secrets={},
     )
+    old_container_id = "a0debec2a247f00dbabe"
     container = FakeContainer(
-        "net-1",
-        "net-app",
-        FakeImage(tags=["ghcr.io/acme/net-app:1.0"]),
+        old_container_id,
+        "nginx-podman-run",
+        FakeImage(tags=["nginx:1.25"]),
         attrs={
             "Pod": "",
             "Config": {"Env": None, "Cmd": None, "Entrypoint": None, "Labels": None},
@@ -3195,7 +3381,15 @@ async def test_podman_adapter_update_restores_custom_networks():
             "NetworkSettings": {
                 "Networks": {
                     "app-net": {
-                        "Aliases": ["net-app", "net-1", "net-1"[:12]],
+                        "Aliases": [
+                            "nginx.local",
+                            "nginx-podman-run",
+                            old_container_id,
+                            old_container_id[:12],
+                            "nginx-podman-run-host",
+                            " nginx.local ",
+                            "",
+                        ],
                         "IPAddress": "10.89.20.10",
                     }
                 }
@@ -3206,22 +3400,82 @@ async def test_podman_adapter_update_restores_custom_networks():
     adapter = PodmanRuntimeAdapter(runtime, client=client)
 
     result = await adapter.update_image(
-        {"container_id": "net-1", "container_name": "net-app"},
-        "ghcr.io/acme/net-app:1.1",
+        {"container_id": old_container_id, "container_name": "nginx-podman-run"},
+        "nginx:1.26",
     )
 
     assert result.updated is True
-    assert client.networks.connect_calls == [
-        (
-            "app-net",
-            "net-app",
-            {"aliases": ["net-app"], "ipv4_address": "10.89.20.10"},
-        )
+    assert client.networks.connect_calls == []
+    assert client.api.network_connect_posts == [
+        {
+            "path": "networks/app-net/connect",
+            "data": {
+                "container": "new-id",
+                "aliases": [
+                    "nginx.local",
+                    "nginx-podman-run",
+                    "nginx-podman-run-host",
+                ],
+                "static_ips": ["10.89.20.10"],
+            },
+            "headers": {"Content-Type": "application/json"},
+            "kwargs": {"compatible": False},
+        }
     ]
     assert client.networks.disconnect_calls == [
-        ("app-net", "net-app", True),
-        ("podman", "net-app", True),
+        ("app-net", "nginx-podman-run", True),
+        ("podman", "nginx-podman-run", True),
     ]
+
+
+@pytest.mark.asyncio
+async def test_podman_adapter_snapshot_includes_non_pod_network_config():
+    runtime = RuntimeConnectionConfig(
+        name="podman-prod",
+        type="podman",
+        config={"socket": "unix:///run/podman/podman.sock"},
+        secrets={},
+    )
+    container = FakeContainer(
+        "snapshot-net-1",
+        "snapshot-net-app",
+        FakeImage(tags=["ghcr.io/acme/snapshot-net-app:1.0"]),
+        attrs={
+            "Pod": "",
+            "Config": {"Env": None, "Cmd": None, "Entrypoint": None, "Labels": None},
+            "HostConfig": {
+                "PortBindings": {},
+                "Binds": [],
+                "RestartPolicy": {"Name": ""},
+                "NetworkMode": "bridge",
+            },
+            "NetworkSettings": {
+                "Networks": {
+                    "app-net": {
+                        "Aliases": ["snapshot.local", "snapshot-net-app"],
+                        "IPAMConfig": {"IPv4Address": "10.89.20.10"},
+                    }
+                }
+            },
+        },
+    )
+    client = FakePodmanClient([container], network_names=["app-net", "podman"])
+    adapter = PodmanRuntimeAdapter(runtime, client=client)
+
+    snapshot = await adapter.capture_snapshot(
+        {"container_id": "snapshot-net-1", "container_name": "snapshot-net-app"},
+        "ghcr.io/acme/snapshot-net-app:1.0",
+    )
+
+    assert snapshot["network_config"] == {
+        "network_mode": "bridge",
+        "endpoints": {
+            "app-net": {
+                "Aliases": ["snapshot.local", "snapshot-net-app"],
+                "IPAMConfig": {"IPv4Address": "10.89.20.10"},
+            }
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -3263,12 +3517,18 @@ async def test_podman_adapter_recovery_omits_tmpfs_create_kwarg_and_restores_net
     assert result.updated is True
     create_kwargs = client.containers.create_calls[0]
     assert "tmpfs" not in create_kwargs
-    assert client.networks.connect_calls == [
-        (
-            "app-net",
-            "tmpfs-app",
-            {"aliases": ["tmpfs-app"], "ipv4_address": "10.89.20.10"},
-        )
+    assert client.networks.connect_calls == []
+    assert client.api.network_connect_posts == [
+        {
+            "path": "networks/app-net/connect",
+            "data": {
+                "container": "new-id",
+                "aliases": ["tmpfs-app"],
+                "static_ips": ["10.89.20.10"],
+            },
+            "headers": {"Content-Type": "application/json"},
+            "kwargs": {"compatible": False},
+        }
     ]
 
 
@@ -3318,10 +3578,10 @@ async def test_podman_adapter_normalizes_extra_hosts_for_sdk_create():
 
     assert result.updated is True
     create_kwargs = client.containers.create_calls[0]
-    assert create_kwargs["extra_hosts"] == {
-        "host.containers.internal": "host-gateway",
-        "example.local": "127.0.0.1",
-    }
+    assert create_kwargs["hostadd"] == [
+        "example.local:127.0.0.1",
+        "host.containers.internal:host-gateway",
+    ]
 
 
 @pytest.mark.asyncio
@@ -4315,10 +4575,10 @@ async def test_podman_compose_grouped_update_recreates_pod_backed_targets_in_sam
             "name": "core-worker-1",
             "mounts": [
                 {
-                    "type": "bind",
-                    "source": "/data/podman/sample-worker/agent",
                     "destination": "/home/sample-ci/agent",
-                    "relabel": "Z",
+                    "options": ["Z"],
+                    "source": "/data/podman/sample-worker/agent",
+                    "type": "bind",
                 }
             ],
             "labels": worker_labels,
@@ -4476,7 +4736,7 @@ async def test_podman_compose_grouped_recovery_uses_low_level_create_after_empty
             "create_config": {
                 "image": "ghcr.io/acme/api:1.0",
                 "name": "core-api-1",
-                "environment": ["API_TOKEN=super-secret-token"],
+                "env": {"API_TOKEN": "super-secret-token"},
             },
             "pod_id": "0123456789abcdef",
             "pod_name": "core-pod",
@@ -4574,17 +4834,17 @@ async def test_podman_compose_grouped_update_drops_blank_storage_destinations_fr
     payload = client.api.post_calls[0]["data"]
     assert "volumes" not in payload
     assert payload["mounts"] == [
-        {"type": "bind", "source": "/srv/config", "destination": "/config"}
+        {"destination": "/config", "source": "/srv/config", "type": "bind"}
     ]
     assert "volumes" not in client.containers.create_calls[0]
     assert client.containers.create_calls[0]["mounts"] == payload["mounts"]
     assert "raw_volumes_count=2" in caplog.text
     assert "source_named_volume_count=0" in caplog.text
     assert "dropped_rendered_volume_count=1" in caplog.text
-    assert "raw_mounts_count=2" in caplog.text
-    assert "raw_mount_destination_is_blank=True" in caplog.text
+    assert "raw_mounts_count=1" in caplog.text
+    assert "raw_mount_destination_is_blank=False" in caplog.text
     assert "raw_named_volume_dest_is_blank=True" in caplog.text
-    assert "raw_mount_destination_key_count=0" in caplog.text
+    assert "raw_mount_destination_key_count=1" in caplog.text
     assert "mount_target_key_count=0" in caplog.text
     assert "mount_destination_key_count=1" in caplog.text
     assert " mount_destination_is_blank=False" in caplog.text
@@ -4633,17 +4893,17 @@ async def test_podman_compose_grouped_recovery_drops_blank_storage_destinations_
     assert result.updated is True
     payload = client.api.post_calls[0]["data"]
     assert "volumes" not in payload
-    assert payload["mounts"] == [{"type": "tmpfs", "destination": "/tmp", "size": "16m"}]
+    assert payload["mounts"] == [{"destination": "/tmp", "options": ["size=16m"], "type": "tmpfs"}]
     assert "volumes" not in client.containers.create_calls[0]
     assert client.containers.create_calls[0]["mounts"] == payload["mounts"]
     assert "raw_volumes_count=2" in caplog.text
     assert "source_named_volume_count=0" in caplog.text
     assert "dropped_rendered_volume_count=1" in caplog.text
-    assert "raw_mounts_count=2" in caplog.text
-    assert "raw_tmpfs_count=2" in caplog.text
-    assert "raw_mount_destination_is_blank=True" in caplog.text
+    assert "raw_mounts_count=1" in caplog.text
+    assert "raw_tmpfs_count=1" in caplog.text
+    assert "raw_mount_destination_is_blank=False" in caplog.text
     assert "raw_named_volume_dest_is_blank=True" in caplog.text
-    assert "raw_mount_target_key_count=2" in caplog.text
+    assert "raw_mount_target_key_count=0" in caplog.text
     assert "mount_target_key_count=0" in caplog.text
     assert "mount_destination_key_count=1" in caplog.text
     assert " tmpfs_count=1" in caplog.text
@@ -4905,7 +5165,10 @@ async def test_podman_adapter_recreates_container_preserving_compose_matrix_fiel
             "HostConfig": {
                 "PortBindings": {"8000/tcp": [{"HostIp": "", "HostPort": "8080"}]},
                 "Binds": ["/srv/api:/app/data:rw"],
-                "LogConfig": {"Type": "k8s-file", "Config": {"path": "/var/log/api.log"}},
+                "LogConfig": {
+                    "Type": "k8s-file",
+                    "Config": {"path": "/var/log/api.log", "max-size": "10m"},
+                },
                 "RestartPolicy": {"Name": "always", "MaximumRetryCount": 0},
                 "NetworkMode": "bridge",
                 "ExtraHosts": ["db.internal:10.88.0.2"],
@@ -4929,33 +5192,38 @@ async def test_podman_adapter_recreates_container_preserving_compose_matrix_fiel
         {
             "image": "ghcr.io/acme/api:1.1",
             "name": "core-api-1",
-            "environment": ["APP_ENV=prod"],
+            "env": {"APP_ENV": "prod"},
             "entrypoint": ["python", "-m"],
             "command": ["app.main"],
             "user": "1000:1000",
             "work_dir": "/srv/app",
             "hostname": "core-api",
-            "healthcheck": {"Test": ["CMD-SHELL", "curl -f http://127.0.0.1/health || exit 1"]},
-            "ports": {"8000/tcp": ["", 8080]},
+            "healthconfig": {"Test": ["CMD-SHELL", "curl -f http://127.0.0.1/health || exit 1"]},
+            "portmappings": [{"container_port": 8000, "host_port": 8080, "protocol": "tcp"}],
             "mounts": [
                 {
-                    "type": "bind",
-                    "source": "/srv/api",
                     "destination": "/app/data",
+                    "options": ["rw"],
+                    "source": "/srv/api",
+                    "type": "bind",
                 },
-                {"type": "tmpfs", "destination": "/tmp", "size": "64m"},
+                {"destination": "/tmp", "options": ["size=64m"], "type": "tmpfs"},
             ],
-            "log_config": {"Type": "k8s-file", "Config": {"path": "/var/log/api.log"}},
+            "log_configuration": {
+                "driver": "k8s-file",
+                "path": "/var/log/api.log",
+                "options": {"max-size": "10m"},
+            },
             "restart_policy": "always",
             "restart_tries": 0,
             "netns": {"nsmode": "bridge"},
-            "extra_hosts": {"db.internal": "10.88.0.2"},
-            "dns": ["8.8.4.4"],
-            "ulimits": [{"Name": "nofile", "Soft": 4096, "Hard": 8192}],
-            "security_opt": ["label=disable"],
+            "hostadd": ["db.internal:10.88.0.2"],
+            "dns_server": ["8.8.4.4"],
+            "r_limits": [{"hard": 8192, "soft": 4096, "type": "nofile"}],
+            "selinux_opts": ["label=disable"],
             "cap_add": ["NET_ADMIN"],
             "cap_drop": ["AUDIT_WRITE"],
-            "devices": ["/dev/net/tun:/dev/net/tun:rwm"],
+            "devices": [{"path": "/dev/net/tun:/dev/net/tun:rwm"}],
             "labels": {"app": "api"},
         }
     ]
@@ -4999,7 +5267,11 @@ async def test_podman_compose_grouped_update_preserves_high_fidelity_runtime_fie
                 "DnsSearch": ["local.test"],
                 "ExtraHosts": ["host.containers.internal:host-gateway", "example.local:127.0.0.1"],
                 "SecurityOpt": ["no-new-privileges"],
-                "LogConfig": {"Type": "journald", "Config": None, "Tag": "core-web-1"},
+                "LogConfig": {
+                    "Type": "journald",
+                    "Config": {"mode": "non-blocking"},
+                    "Tag": "core-web-1",
+                },
                 "Tmpfs": {"/tmp/nginx-tmpfs": "size=16777216,rw,rprivate"},
                 "Memory": 134217728,
                 "MemoryReservation": 67108864,
@@ -5035,23 +5307,31 @@ async def test_podman_compose_grouped_update_preserves_high_fidelity_runtime_fie
         {
             "image": "ghcr.io/acme/web:1.1",
             "name": "core-web-1",
-            "tty": True,
-            "stdin_open": False,
+            "terminal": True,
+            "stdin": False,
             "stop_signal": 3,
             "stop_timeout": 10,
             "restart_policy": "unless-stopped",
             "restart_tries": 0,
-            "log_config": {"Type": "journald", "Config": {"options": {"tag": "core-web-1"}}},
-            "ulimits": [{"Name": "nofile", "Soft": 1024, "Hard": 2048}],
-            "pids_limit": 256,
-            "mem_limit": 134217728,
-            "mem_reservation": 67108864,
-            "cpu_shares": 512,
+            "log_configuration": {
+                "driver": "journald",
+                "options": {"mode": "non-blocking", "tag": "core-web-1"},
+            },
+            "r_limits": [{"hard": 2048, "soft": 1024, "type": "nofile"}],
+            "resource_limits": {
+                "cpu": {"period": 100000, "quota": 50000, "shares": 512},
+                "memory": {"limit": 134217728, "reservation": 67108864},
+                "pids": {"limit": 256},
+            },
             "labels": labels,
-            "mounts": [{"type": "tmpfs", "destination": "/tmp/nginx-tmpfs", "size": "16777216"}],
+            "mounts": [
+                {
+                    "destination": "/tmp/nginx-tmpfs",
+                    "options": ["size=16777216"],
+                    "type": "tmpfs",
+                }
+            ],
             "no_new_privileges": True,
-            "cpu_period": 100000,
-            "cpu_quota": 50000,
             "pod": "core-pod",
         }
     ]
@@ -5130,7 +5410,7 @@ async def test_podman_compose_grouped_update_normalizes_null_log_config_for_sdk_
             "image": "ghcr.io/acme/worker:9.2",
             "name": "core-worker-1",
             "labels": labels,
-            "log_config": {"Type": "journald", "Config": {}},
+            "log_configuration": {"driver": "journald"},
             "pod": "core-pod",
         }
     ]
@@ -5333,13 +5613,13 @@ async def test_podman_compose_grouped_update_recovery_uses_snapshot_payload_not_
     assert payloads[0] == {
         "image": "ghcr.io/acme/api:1.1",
         "name": "core-api-1",
-        "environment": ["APP_MODE=stable"],
+        "env": {"APP_MODE": "stable"},
         "mounts": [
             {
                 "type": "bind",
                 "source": "/srv/api",
                 "destination": "/app/data",
-                "read_only": True,
+                "options": ["ro"],
             }
         ],
         "restart_policy": "unless-stopped",
@@ -5350,13 +5630,13 @@ async def test_podman_compose_grouped_update_recovery_uses_snapshot_payload_not_
     assert payloads[1] == {
         "image": "ghcr.io/acme/api:1.0",
         "name": "core-api-1",
-        "environment": ["APP_MODE=stable"],
+        "env": {"APP_MODE": "stable"},
         "mounts": [
             {
                 "type": "bind",
                 "source": "/srv/api",
                 "destination": "/app/data",
-                "read_only": True,
+                "options": ["ro"],
             }
         ],
         "restart_policy": "unless-stopped",
@@ -5427,7 +5707,7 @@ async def test_podman_compose_grouped_update_drops_empty_network_values_from_pod
         {
             "image": "docker.io/library/nginx:1.26",
             "name": "nginx-podman-compose",
-            "environment": ["API_TOKEN=super-secret-token"],
+            "env": {"API_TOKEN": "super-secret-token"},
             "labels": labels,
             "pod": "nginx-podman-compose",
         }
