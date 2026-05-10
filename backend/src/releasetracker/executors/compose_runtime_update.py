@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+DOCKER_CREATE_MOUNT_TYPES = {"bind", "volume", "tmpfs", "npipe"}
+
 
 @dataclass(frozen=True)
 class GroupedRuntimeRecreateSpec:
@@ -45,12 +47,19 @@ def build_grouped_runtime_recreate_spec(
     host_config = host_config if isinstance(host_config, dict) else {}
     network_settings = network_settings if isinstance(network_settings, dict) else {}
 
-    create_config = _extract_create_kwargs(container, target_image, config, host_config)
+    create_config = _extract_create_kwargs(
+        container,
+        target_image,
+        config,
+        host_config,
+        runtime_type=runtime_type,
+    )
     snapshot_create_config = _extract_create_kwargs(
         container,
         current_image or target_image,
         config,
         host_config,
+        runtime_type=runtime_type,
     )
     if isinstance(create_config_labels_override, dict) and create_config_labels_override:
         merged_create_labels = dict(create_config.get("labels") or {})
@@ -112,6 +121,8 @@ def _extract_create_kwargs(
     image: str,
     config: dict[str, Any],
     host_config: dict[str, Any],
+    *,
+    runtime_type: str,
 ) -> dict[str, Any]:
     kwargs: dict[str, Any] = {"image": image}
 
@@ -143,6 +154,14 @@ def _extract_create_kwargs(
     if hostname:
         kwargs["hostname"] = hostname
 
+    domainname = config.get("Domainname")
+    if isinstance(domainname, str) and domainname.strip():
+        kwargs["domainname"] = domainname
+
+    exposed_ports = _extract_exposed_only_ports(config, host_config)
+    if exposed_ports:
+        kwargs["_releasetracker_exposed_ports"] = exposed_ports
+
     tty = config.get("Tty")
     if isinstance(tty, bool):
         kwargs["tty"] = tty
@@ -155,21 +174,16 @@ def _extract_create_kwargs(
     if isinstance(stop_signal, str) and stop_signal.strip():
         kwargs["stop_signal"] = stop_signal
 
-    stop_timeout = config.get("StopTimeout")
-    if isinstance(stop_timeout, int) and stop_timeout >= 0:
-        kwargs["stop_timeout"] = stop_timeout
+    if runtime_type == "podman":
+        stop_timeout = config.get("StopTimeout")
+        if isinstance(stop_timeout, int) and stop_timeout >= 0:
+            kwargs["stop_timeout"] = stop_timeout
 
     healthcheck = config.get("Healthcheck")
     if healthcheck and isinstance(healthcheck, dict):
         kwargs["healthcheck"] = dict(healthcheck)
 
-    exposed_ports = config.get("ExposedPorts")
     normalized_ports: dict[str, Any] = {}
-    if exposed_ports and isinstance(exposed_ports, dict):
-        for proto_port in exposed_ports:
-            if isinstance(proto_port, str) and proto_port.strip():
-                normalized_ports[proto_port] = None
-
     port_bindings = host_config.get("PortBindings")
     if port_bindings and isinstance(port_bindings, dict):
         for proto_port, bindings in port_bindings.items():
@@ -196,6 +210,7 @@ def _extract_create_kwargs(
     if normalized_ports:
         kwargs["ports"] = normalized_ports
 
+    bind_targets = _extract_bind_targets(host_config)
     binds = host_config.get("Binds")
     if binds and isinstance(binds, list):
         normalized_volumes: dict[str, Any] = {}
@@ -212,6 +227,10 @@ def _extract_create_kwargs(
             normalized_volumes[host_path] = {"bind": container_path, "mode": mode}
         if normalized_volumes:
             kwargs["volumes"] = normalized_volumes
+
+    mounts = _extract_docker_create_mounts(host_config, bind_targets=bind_targets)
+    if mounts:
+        kwargs["mounts"] = mounts
 
     restart_policy = host_config.get("RestartPolicy")
     if restart_policy and isinstance(restart_policy, dict) and restart_policy.get("Name"):
@@ -297,11 +316,154 @@ def _extract_create_kwargs(
     if isinstance(shm_size, int) and shm_size > 0:
         kwargs["shm_size"] = shm_size
 
+    init = host_config.get("Init")
+    if isinstance(init, bool):
+        kwargs["init"] = init
+
     labels = config.get("Labels")
     if labels:
         kwargs["labels"] = labels
 
     return kwargs
+
+
+def _extract_exposed_only_ports(config: dict[str, Any], host_config: dict[str, Any]) -> list[str]:
+    exposed_ports = config.get("ExposedPorts")
+    if not isinstance(exposed_ports, dict):
+        return []
+
+    port_bindings = host_config.get("PortBindings")
+    bound_ports = set(port_bindings) if isinstance(port_bindings, dict) else set()
+    return sorted(
+        port
+        for port in exposed_ports
+        if isinstance(port, str) and port.strip() and port not in bound_ports
+    )
+
+
+def _extract_bind_targets(host_config: dict[str, Any]) -> set[str]:
+    binds = host_config.get("Binds")
+    if not isinstance(binds, list):
+        return set()
+
+    targets: set[str] = set()
+    for bind in binds:
+        if not isinstance(bind, str):
+            continue
+        parts = bind.split(":")
+        if len(parts) < 2:
+            continue
+        container_path = parts[1]
+        if isinstance(container_path, str) and container_path.strip():
+            targets.add(container_path.strip())
+    return targets
+
+
+def _extract_docker_create_mounts(
+    host_config: dict[str, Any], *, bind_targets: set[str]
+) -> list[dict[str, Any]]:
+    raw_mounts = host_config.get("Mounts")
+    if not isinstance(raw_mounts, list):
+        return []
+
+    mounts: list[dict[str, Any]] = []
+    for raw_mount in raw_mounts:
+        if not isinstance(raw_mount, dict):
+            continue
+        target = raw_mount.get("Target") or raw_mount.get("Destination")
+        if not isinstance(target, str) or not target.strip():
+            continue
+        target = target.strip()
+        if target in bind_targets:
+            continue
+        mount_type = raw_mount.get("Type")
+        if not isinstance(mount_type, str):
+            continue
+        mount_type = mount_type.strip().lower()
+        if mount_type not in DOCKER_CREATE_MOUNT_TYPES:
+            continue
+
+        source = raw_mount.get("Source") or raw_mount.get("Name")
+        if mount_type in {"bind", "volume", "npipe"} and (
+            not isinstance(source, str) or not source.strip()
+        ):
+            continue
+
+        mount: dict[str, Any] = {"Target": target, "Type": mount_type}
+        if isinstance(source, str) and source.strip():
+            mount["Source"] = source.strip()
+        elif mount_type == "tmpfs":
+            mount["Source"] = None
+
+        read_only = _extract_docker_mount_read_only(raw_mount)
+        if read_only is not None:
+            mount["ReadOnly"] = read_only
+
+        bind_options = _extract_docker_bind_options(raw_mount)
+        if bind_options:
+            mount["BindOptions"] = bind_options
+        volume_options = _extract_docker_volume_options(raw_mount)
+        if volume_options:
+            mount["VolumeOptions"] = volume_options
+        tmpfs_options = _extract_docker_tmpfs_options(raw_mount)
+        if tmpfs_options:
+            mount["TmpfsOptions"] = tmpfs_options
+
+        mounts.append(mount)
+    return mounts
+
+
+def _extract_docker_mount_read_only(raw_mount: dict[str, Any]) -> bool | None:
+    read_only = raw_mount.get("ReadOnly")
+    if isinstance(read_only, bool):
+        return read_only
+    rw = raw_mount.get("RW")
+    if isinstance(rw, bool):
+        return not rw
+    return None
+
+
+def _extract_docker_bind_options(raw_mount: dict[str, Any]) -> dict[str, Any]:
+    bind_options = raw_mount.get("BindOptions")
+    if not isinstance(bind_options, dict):
+        return {}
+    propagation = bind_options.get("Propagation")
+    if isinstance(propagation, str) and propagation.strip():
+        return {"Propagation": propagation.strip()}
+    return {}
+
+
+def _extract_docker_volume_options(raw_mount: dict[str, Any]) -> dict[str, Any]:
+    volume_options = raw_mount.get("VolumeOptions")
+    if not isinstance(volume_options, dict):
+        return {}
+
+    normalized: dict[str, Any] = {}
+    no_copy = volume_options.get("NoCopy")
+    if isinstance(no_copy, bool):
+        normalized["NoCopy"] = no_copy
+    labels = volume_options.get("Labels")
+    if isinstance(labels, dict) and labels:
+        normalized["Labels"] = dict(labels)
+    driver_config = volume_options.get("DriverConfig")
+    if isinstance(driver_config, dict) and driver_config:
+        normalized["DriverConfig"] = dict(driver_config)
+    return normalized
+
+
+def _extract_docker_tmpfs_options(raw_mount: dict[str, Any]) -> dict[str, Any]:
+    tmpfs_options = raw_mount.get("TmpfsOptions")
+    if not isinstance(tmpfs_options, dict):
+        return {}
+
+    normalized: dict[str, Any] = {}
+    size_bytes = tmpfs_options.get("SizeBytes")
+    if isinstance(size_bytes, int) and size_bytes > 0:
+        normalized["SizeBytes"] = size_bytes
+    mode = tmpfs_options.get("Mode")
+    if isinstance(mode, int) and mode >= 0:
+        normalized["Mode"] = mode
+    return normalized
 
 
 def _extract_network_config(

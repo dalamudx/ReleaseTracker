@@ -85,6 +85,7 @@ class FakeContainerManager:
         self._containers = list(containers)
         self.event_log: list[str] = []
         self.create_calls: list[dict] = []
+        self.low_level_create_calls: list[dict] = []
         self._created: list[FakeContainer] = []
         self.fail_start_for_images: set[str] = set()
         for container in self._containers:
@@ -108,25 +109,66 @@ class FakeContainerManager:
 
     def create(self, **kwargs) -> FakeContainer:
         self.create_calls.append(kwargs)
-        self.event_log.append(f"create:{kwargs.get('name', 'recreated')}")
-        created = FakeContainer(
+        host_config = {
+            "PortBindings": kwargs.get("ports"),
+            "Binds": kwargs.get("volumes"),
+            "RestartPolicy": kwargs.get("restart_policy"),
+            "NetworkMode": kwargs.get("network_mode"),
+            "Init": kwargs.get("init"),
+        }
+        normalized_mounts = _fake_docker_inspect_mounts(kwargs.get("mounts"))
+        return self._create_from_docker_payload(
+            kwargs,
             container_id="docker-new-id",
+            host_config=host_config,
+            normalized_mounts=normalized_mounts,
+        )
+
+    def create_from_low_level(self, **kwargs) -> FakeContainer:
+        self.low_level_create_calls.append(kwargs)
+        host_config = kwargs.get("host_config")
+        if not isinstance(host_config, dict):
+            host_config = {}
+        normalized_mounts = _fake_docker_inspect_mounts(host_config.get("Mounts"))
+        return self._create_from_docker_payload(
+            kwargs,
+            container_id="docker-low-level-id",
+            host_config=dict(host_config),
+            normalized_mounts=normalized_mounts,
+            config_ports=kwargs.get("ports"),
+        )
+
+    def _create_from_docker_payload(
+        self,
+        kwargs: dict,
+        *,
+        container_id: str,
+        host_config: dict,
+        normalized_mounts: list[dict],
+        config_ports=None,
+    ) -> FakeContainer:
+        self.event_log.append(f"create:{kwargs.get('name', 'recreated')}")
+        config = {
+            "Env": kwargs.get("environment"),
+            "Entrypoint": kwargs.get("entrypoint"),
+            "Cmd": kwargs.get("command"),
+            "Labels": kwargs.get("labels"),
+            "Healthcheck": kwargs.get("healthcheck"),
+            "Domainname": kwargs.get("domainname"),
+        }
+        exposed_ports = _fake_docker_exposed_ports(config_ports)
+        if exposed_ports:
+            config["ExposedPorts"] = exposed_ports
+        if normalized_mounts:
+            host_config["Mounts"] = normalized_mounts
+        created = FakeContainer(
+            container_id=container_id,
             name=kwargs.get("name", "recreated"),
             image=FakeImage(tags=[kwargs["image"]]),
             attrs={
-                "Config": {
-                    "Env": kwargs.get("environment"),
-                    "Entrypoint": kwargs.get("entrypoint"),
-                    "Cmd": kwargs.get("command"),
-                    "Labels": kwargs.get("labels"),
-                    "Healthcheck": kwargs.get("healthcheck"),
-                },
-                "HostConfig": {
-                    "PortBindings": kwargs.get("ports"),
-                    "Binds": kwargs.get("volumes"),
-                    "RestartPolicy": kwargs.get("restart_policy"),
-                    "NetworkMode": kwargs.get("network_mode"),
-                },
+                "Config": config,
+                "HostConfig": host_config,
+                "Mounts": _fake_docker_runtime_mounts(normalized_mounts),
             },
             event_log=self.event_log,
         )
@@ -142,6 +184,87 @@ class FakeContainerManager:
         self._containers.append(created)
         created._on_remove = lambda: self._forget_container(created)
         return created
+
+
+def _fake_docker_exposed_ports(raw_ports) -> dict[str, dict]:
+    if not isinstance(raw_ports, list):
+        return {}
+    exposed_ports: dict[str, dict] = {}
+    for raw_port in raw_ports:
+        if not isinstance(raw_port, tuple) or len(raw_port) != 2:
+            continue
+        port, protocol = raw_port
+        exposed_ports[f"{port}/{protocol}"] = {}
+    return exposed_ports
+
+
+def _fake_docker_inspect_mounts(raw_mounts) -> list[dict]:
+    if not isinstance(raw_mounts, list):
+        return []
+    normalized_mounts: list[dict] = []
+    for mount in raw_mounts:
+        if not isinstance(mount, dict):
+            continue
+        target = mount.get("Target") or mount.get("target") or mount.get("Destination")
+        mount_type = mount.get("Type") or mount.get("type")
+        if not isinstance(target, str) or not target.strip():
+            continue
+        if not isinstance(mount_type, str) or not mount_type.strip():
+            continue
+        normalized = {"Target": target, "Type": mount_type}
+        if "Source" in mount or "source" in mount:
+            normalized["Source"] = mount.get("Source") if "Source" in mount else mount.get("source")
+        read_only = mount.get("ReadOnly") if "ReadOnly" in mount else mount.get("read_only")
+        if isinstance(read_only, bool):
+            normalized["ReadOnly"] = read_only
+        consistency = (
+            mount.get("Consistency") if "Consistency" in mount else mount.get("consistency")
+        )
+        if isinstance(consistency, str) and consistency.strip():
+            normalized["Consistency"] = consistency
+        for source_key, target_key in (
+            ("BindOptions", "BindOptions"),
+            ("bind_options", "BindOptions"),
+            ("VolumeOptions", "VolumeOptions"),
+            ("volume_options", "VolumeOptions"),
+            ("TmpfsOptions", "TmpfsOptions"),
+            ("tmpfs_options", "TmpfsOptions"),
+        ):
+            value = mount.get(source_key)
+            if isinstance(value, dict):
+                normalized[target_key] = dict(value)
+        tmpfs_options = normalized.get("TmpfsOptions")
+        if not isinstance(tmpfs_options, dict):
+            tmpfs_options = {}
+        tmpfs_size = mount.get("tmpfs_size")
+        if isinstance(tmpfs_size, int) and tmpfs_size > 0:
+            tmpfs_options["SizeBytes"] = tmpfs_size
+        tmpfs_mode = mount.get("tmpfs_mode")
+        if isinstance(tmpfs_mode, int) and tmpfs_mode >= 0:
+            tmpfs_options["Mode"] = tmpfs_mode
+        if tmpfs_options:
+            normalized["TmpfsOptions"] = tmpfs_options
+        normalized_mounts.append(normalized)
+    return normalized_mounts
+
+
+def _fake_docker_runtime_mounts(host_mounts: list[dict]) -> list[dict]:
+    runtime_mounts: list[dict] = []
+    for mount in host_mounts:
+        target = mount.get("Target")
+        mount_type = mount.get("Type")
+        if not isinstance(target, str) or not isinstance(mount_type, str):
+            continue
+        runtime_mount = {"Destination": target, "Type": mount_type}
+        if "Source" in mount:
+            runtime_mount["Source"] = mount.get("Source")
+        read_only = mount.get("ReadOnly")
+        runtime_mount["RW"] = not read_only if isinstance(read_only, bool) else True
+        tmpfs_options = mount.get("TmpfsOptions")
+        if isinstance(tmpfs_options, dict):
+            runtime_mount["TmpfsOptions"] = dict(tmpfs_options)
+        runtime_mounts.append(runtime_mount)
+    return runtime_mounts
 
 
 class FakeContainerClient:
@@ -164,11 +287,30 @@ class FakeDockerImageManager:
             raise RuntimeError(f"pull failed: {image}")
 
 
+class FakeDockerLowLevelApi:
+    def __init__(self, container_manager: FakeContainerManager):
+        self._container_manager = container_manager
+        self._version = "1.45"
+
+    def create_container(self, **kwargs) -> dict[str, str]:
+        created = self._container_manager.create_from_low_level(**kwargs)
+        return {"Id": created.id}
+
+
 class FakeDockerRecreateClient:
-    def __init__(self, containers, *, pull_should_fail: bool = False, network_names=None):
+    def __init__(
+        self,
+        containers,
+        *,
+        pull_should_fail: bool = False,
+        network_names=None,
+        low_level_api: bool = False,
+    ):
         self.containers = FakeContainerManager(containers)
         self.images = FakeDockerImageManager(should_fail=pull_should_fail)
         self.networks = FakeDockerNetworkManager(network_names or [])
+        if low_level_api:
+            self.api = FakeDockerLowLevelApi(self.containers)
 
 
 class FakeDockerNetwork:
@@ -1013,6 +1155,58 @@ async def test_docker_adapter_recreates_container_when_image_only_update_is_unav
 
 
 @pytest.mark.asyncio
+async def test_docker_adapter_recreate_omits_exposed_only_ports():
+    runtime = RuntimeConnectionConfig(
+        name="docker-prod",
+        type="docker",
+        config={"socket": "unix:///var/run/docker.sock"},
+        secrets={},
+    )
+    container = FakeContainer(
+        "abc",
+        "sample-web",
+        FakeImage(tags=["sample-web:1.25"]),
+        attrs={
+            "Config": {
+                "Image": "sample-web:1.25",
+                "Domainname": "local.test",
+                "ExposedPorts": {"80/tcp": {}, "443/tcp": {}},
+            },
+            "HostConfig": {
+                "PortBindings": {"443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]},
+                "NetworkMode": "bridge",
+                "Init": True,
+            },
+        },
+    )
+    client = FakeDockerRecreateClient([container], low_level_api=True)
+    adapter = DockerRuntimeAdapter(runtime, client=client)
+
+    snapshot = await adapter.capture_snapshot({"container_name": "sample-web"}, "sample-web:1.25")
+    result = await adapter.update_image({"container_name": "sample-web"}, "sample-web:1.26")
+
+    assert result.updated is True
+    assert snapshot["create_config"]["ports"] == {"443/tcp": ("127.0.0.1", 8443)}
+    assert snapshot["create_config"]["domainname"] == "local.test"
+    assert snapshot["create_config"]["init"] is True
+    assert snapshot["create_config"]["_releasetracker_exposed_ports"] == ["80/tcp"]
+    assert client.containers.create_calls == []
+    low_level_create = client.containers.low_level_create_calls[0]
+    assert low_level_create["domainname"] == "local.test"
+    assert low_level_create["host_config"]["Init"] is True
+    assert low_level_create["ports"] == [("443", "tcp"), ("80", "tcp")]
+    assert low_level_create["host_config"]["PortBindings"] == {
+        "443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]
+    }
+    assert "80/tcp" not in low_level_create["host_config"]["PortBindings"]
+    assert "stop_timeout" not in low_level_create
+    recreated = client.containers.get("sample-web")
+    assert recreated.attrs["Config"]["Domainname"] == "local.test"
+    assert recreated.attrs["Config"]["ExposedPorts"] == {"443/tcp": {}, "80/tcp": {}}
+    assert recreated.attrs["HostConfig"]["Init"] is True
+
+
+@pytest.mark.asyncio
 async def test_docker_adapter_requires_recreate_metadata_when_image_only_update_is_unavailable():
     runtime = RuntimeConnectionConfig(
         name="docker-prod",
@@ -1197,11 +1391,6 @@ async def test_podman_adapter_recreates_container_restoring_networks_with_raw_ap
         "aliases": ["sample-cache.local", "sample-cache"],
         "static_ips": ["10.89.20.3", "fd00::10"],
     }
-    assert "connect_strategy=raw_api" in caplog.text
-    assert "alias_count=2" in caplog.text
-    assert "has_ipv4=True" in caplog.text
-    assert "has_ipv6=True" in caplog.text
-    assert "connect_payload_keys=" in caplog.text
     assert "endpoint_config_keys=" not in caplog.text
     assert "sample-cache.local" not in caplog.text
     assert "10.89.20.3" not in caplog.text
@@ -2309,6 +2498,100 @@ async def test_docker_adapter_recovery_uses_snapshot_for_multi_binding_ports():
 
 
 @pytest.mark.asyncio
+async def test_docker_adapter_recovery_preserves_snapshot_mounts():
+    runtime = RuntimeConnectionConfig(
+        name="docker-prod",
+        type="docker",
+        config={"socket": "unix:///var/run/docker.sock"},
+        secrets={},
+    )
+    container = FakeContainer(
+        "old-id",
+        "api",
+        FakeImage(tags=["api:1.0"]),
+        attrs={
+            "Config": {"Image": "api:1.0", "Labels": {"app": "api"}},
+            "HostConfig": {
+                "Binds": [],
+                "Mounts": [
+                    {
+                        "Type": "bind",
+                        "Source": "/srv/api/config",
+                        "Target": "/etc/api",
+                        "RW": False,
+                        "BindOptions": {"Propagation": "rshared"},
+                    },
+                    {
+                        "Type": "volume",
+                        "Name": "api-data",
+                        "Source": "api-data",
+                        "Target": "/var/lib/api",
+                        "RW": True,
+                    },
+                    {
+                        "Type": "tmpfs",
+                        "Target": "/run/api",
+                        "TmpfsOptions": {"SizeBytes": 33554432, "Mode": 0o1777},
+                    },
+                ],
+            },
+        },
+    )
+    capture_client = FakeDockerRecreateClient([container])
+    capture_adapter = DockerRuntimeAdapter(runtime, client=capture_client)
+
+    snapshot = await capture_adapter.capture_snapshot({"container_name": "api"}, "api:1.0")
+    recovery_client = FakeDockerRecreateClient([])
+    recovery_adapter = DockerRuntimeAdapter(runtime, client=recovery_client)
+
+    result = await recovery_adapter.recover_from_snapshot({"container_name": "api"}, snapshot)
+
+    assert result.updated is True
+    assert recovery_client.containers.create_calls[0]["mounts"] == [
+        {
+            "Target": "/etc/api",
+            "Source": "/srv/api/config",
+            "Type": "bind",
+            "ReadOnly": True,
+            "BindOptions": {"Propagation": "rshared"},
+        },
+        {
+            "Target": "/var/lib/api",
+            "Source": "api-data",
+            "Type": "volume",
+            "ReadOnly": False,
+        },
+        {
+            "Target": "/run/api",
+            "Type": "tmpfs",
+            "Source": None,
+            "TmpfsOptions": {"SizeBytes": 33554432, "Mode": 0o1777},
+        },
+    ]
+    recovered = recovery_client.containers._created[0]
+    assert (
+        recovered.attrs["HostConfig"]["Mounts"]
+        == recovery_client.containers.create_calls[0]["mounts"]
+    )
+    assert recovered.attrs["Mounts"] == [
+        {
+            "Destination": "/etc/api",
+            "Type": "bind",
+            "Source": "/srv/api/config",
+            "RW": False,
+        },
+        {"Destination": "/var/lib/api", "Type": "volume", "Source": "api-data", "RW": True},
+        {
+            "Destination": "/run/api",
+            "Type": "tmpfs",
+            "Source": None,
+            "RW": True,
+            "TmpfsOptions": {"SizeBytes": 33554432, "Mode": 0o1777},
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_docker_adapter_recovery_restores_snapshot_networks():
     runtime = RuntimeConnectionConfig(
         name="docker-prod",
@@ -2499,8 +2782,6 @@ async def test_podman_adapter_recovery_omits_blank_working_dir_from_low_level_pa
     assert "work_dir" not in create_payload
     assert "working_dir" not in create_kwargs
     assert "work_dir" not in create_kwargs
-    assert "has_work_dir=False" in caplog.text
-    assert "work_dir_is_blank=False" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -2539,8 +2820,6 @@ async def test_podman_adapter_recovery_preserves_nonblank_working_dir_in_low_lev
     assert "working_dir" not in create_payload
     assert create_kwargs["work_dir"] == "/srv/app"
     assert "working_dir" not in create_kwargs
-    assert "has_work_dir=True" in caplog.text
-    assert "work_dir_is_blank=False" in caplog.text
     assert "/srv/app" not in caplog.text
 
 
@@ -2621,11 +2900,6 @@ async def test_podman_adapter_update_sanitizes_blank_mount_destination_from_low_
         {"destination": "/data", "options": ["rw"], "source": "/srv/valid", "type": "bind"}
     ]
     assert create_kwargs["mounts"] == payload["mounts"]
-    assert "Podman low-level create payload summary" in caplog.text
-    assert "raw_mount_destination_is_blank=False" in caplog.text
-    assert "mount_destination_is_blank=False" in caplog.text
-    assert "mount_target_key_count=0" in caplog.text
-    assert "mount_destination_key_count=1" in caplog.text
     assert "/srv/invalid" not in caplog.text
     assert "/srv/valid" not in caplog.text
     assert "/data" not in caplog.text
@@ -2808,18 +3082,6 @@ async def test_podman_adapter_low_level_create_converts_named_volumes_to_raw_vol
     create_kwargs = client.containers.create_calls[0]
     assert create_kwargs["volumes"] == payload["volumes"]
     assert create_kwargs["mounts"] == payload["mounts"]
-    assert "volumes_type=list" in caplog.text
-    assert "raw_volumes_count=0" in caplog.text
-    assert "source_named_volume_count=1" in caplog.text
-    assert "dropped_rendered_volume_count=0" in caplog.text
-    assert "volume_entry_key_patterns={'Dest,Name,Options': 1}" in caplog.text
-    assert "volumes_count=1" in caplog.text
-    assert "mounts_count=2" in caplog.text
-    assert "volume_mount_count=0" in caplog.text
-    assert "relative_storage_destination_normalized_count=0" in caplog.text
-    assert "raw_mount_destination_key_count=1" in caplog.text
-    assert "mount_target_key_count=0" in caplog.text
-    assert "mount_destination_key_count=2" in caplog.text
     assert "'volume':" not in caplog.text
     assert "/srv/config" not in caplog.text
     assert "/data" not in caplog.text
@@ -2873,13 +3135,6 @@ async def test_podman_adapter_low_level_create_absolutizes_relative_storage_dest
     ]
     assert client.containers.create_calls[0]["volumes"] == payload["volumes"]
     assert client.containers.create_calls[0]["mounts"] == payload["mounts"]
-    assert "raw_relative_storage_destination_count=2" in caplog.text
-    assert "relative_storage_destination_normalized_count=2" in caplog.text
-    assert "relative_storage_destination_count=0" in caplog.text
-    assert "volume_entry_key_patterns={'Dest,Name,Options': 1}" in caplog.text
-    assert "volume_mount_count=0" in caplog.text
-    assert "mount_target_key_count=0" in caplog.text
-    assert "mount_destination_key_count=4" in caplog.text
     assert "var/cache/nginx" not in caplog.text
     assert "/var/cache/nginx" not in caplog.text
     assert "/srv/nginx-conf" not in caplog.text
@@ -2911,9 +3166,6 @@ async def test_podman_adapter_low_level_create_normalizes_legacy_mount_destinati
         {"destination": "/config", "source": "/srv/config", "type": "bind"}
     ]
     assert client.containers.create_calls[0]["mounts"] == payload["mounts"]
-    assert "raw_mount_destination_key_count=1" in caplog.text
-    assert "mount_target_key_count=0" in caplog.text
-    assert "mount_destination_key_count=1" in caplog.text
     assert "/srv/config" not in caplog.text
     assert "/config" not in caplog.text
 
@@ -2956,12 +3208,6 @@ async def test_podman_adapter_low_level_create_drops_rendered_volume_without_sou
     create_kwargs = client.containers.create_calls[0]
     assert "volumes" not in create_kwargs
     assert create_kwargs["mounts"] == payload["mounts"]
-    assert "raw_volumes_count=1" in caplog.text
-    assert "source_named_volume_count=0" in caplog.text
-    assert "dropped_rendered_volume_count=1" in caplog.text
-    assert "raw_volume_entry_key_patterns={'dest,name,options': 1}" in caplog.text
-    assert " volumes_count=0" in caplog.text
-    assert " mounts_count=2" in caplog.text
     assert "/image-declared" not in caplog.text
     assert "/srv/config" not in caplog.text
     assert "/tmp" not in caplog.text
@@ -3006,21 +3252,6 @@ async def test_podman_adapter_low_level_create_drops_blank_storage_destinations(
     ]
     assert "volumes" not in client.containers.create_calls[0]
     assert client.containers.create_calls[0]["mounts"] == payload["mounts"]
-    assert "raw_volumes_count=3" in caplog.text
-    assert "source_named_volume_count=0" in caplog.text
-    assert "dropped_rendered_volume_count=1" in caplog.text
-    assert "raw_mounts_count=2" in caplog.text
-    assert "raw_tmpfs_count=1" in caplog.text
-    assert "raw_mount_destination_is_blank=False" in caplog.text
-    assert "raw_named_volume_dest_is_blank=True" in caplog.text
-    assert "raw_mount_destination_key_count=2" in caplog.text
-    assert "mount_target_key_count=0" in caplog.text
-    assert "mount_destination_key_count=2" in caplog.text
-    assert " volumes_count=0" in caplog.text
-    assert " mounts_count=2" in caplog.text
-    assert " tmpfs_count=1" in caplog.text
-    assert " mount_destination_is_blank=False" in caplog.text
-    assert " named_volume_dest_is_blank=False" in caplog.text
     assert "/secret" not in caplog.text
     assert "/srv/config" not in caplog.text
     assert "/data" not in caplog.text
@@ -3057,18 +3288,6 @@ async def test_podman_adapter_low_level_create_drops_named_volumes_with_missing_
     payload = client.api.post_calls[0]["data"]
     assert "volumes" not in payload
     assert "volumes" not in client.containers.create_calls[0]
-    assert "raw_volumes_count=4" in caplog.text
-    assert "source_named_volume_count=0" in caplog.text
-    assert "dropped_rendered_volume_count=1" in caplog.text
-    assert "raw_volumes_with_blank_name_count=2" in caplog.text
-    assert "raw_volumes_with_missing_name_count=1" in caplog.text
-    assert "raw_volumes_with_blank_dest_count=0" in caplog.text
-    assert "raw_volumes_with_missing_dest_count=0" in caplog.text
-    assert "volumes_with_blank_name_count=0" in caplog.text
-    assert "volumes_with_missing_name_count=0" in caplog.text
-    assert "volumes_with_blank_dest_count=0" in caplog.text
-    assert "volumes_with_missing_dest_count=0" in caplog.text
-    assert "volume_entry_key_patterns=" in caplog.text
     assert "/image-declared" not in caplog.text
     assert "/blank-name" not in caplog.text
     assert "/blank-name-destination" not in caplog.text
@@ -3686,6 +3905,20 @@ async def test_docker_compose_grouped_update_recreates_targeted_services_with_sh
             "HostConfig": {
                 "PortBindings": {},
                 "Binds": ["/srv/worker:/app/data:rw"],
+                "Mounts": [
+                    {
+                        "Type": "bind",
+                        "Source": "/srv/worker/public",
+                        "Target": "/usr/share/nginx/html",
+                        "ReadOnly": True,
+                        "BindOptions": {"Propagation": "rprivate"},
+                    },
+                    {
+                        "Type": "tmpfs",
+                        "Target": "/var/cache/nginx",
+                        "TmpfsOptions": {"SizeBytes": 16777216, "Mode": 0o1777},
+                    },
+                ],
                 "LogConfig": {"Type": "json-file", "Config": {"max-size": "10m"}},
                 "RestartPolicy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
                 "NetworkMode": "release-stack_default",
@@ -3734,6 +3967,19 @@ async def test_docker_compose_grouped_update_recreates_targeted_services_with_sh
                     ]
                 },
                 "Binds": ["/srv/api:/app/data:ro"],
+                "Mounts": [
+                    {
+                        "Type": "bind",
+                        "Source": "/srv/api/conf.d",
+                        "Target": "/etc/nginx/conf.d",
+                        "ReadOnly": True,
+                    },
+                    {
+                        "Type": "tmpfs",
+                        "Target": "/tmp/nginx-tmpfs",
+                        "TmpfsOptions": {"SizeBytes": 16777216, "Mode": 0o700},
+                    },
+                ],
                 "LogConfig": {"Type": "syslog", "Config": {"syslog-address": "udp://log:514"}},
                 "RestartPolicy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
                 "NetworkMode": "release-stack_default",
@@ -3803,8 +4049,23 @@ async def test_docker_compose_grouped_update_recreates_targeted_services_with_sh
     assert worker_create["user"] == "1000:1000"
     assert worker_create["working_dir"] == "/app"
     assert worker_create["hostname"] == "worker-host"
-    assert worker_create["ports"] == {"9000/tcp": None}
+    assert "ports" not in worker_create
     assert worker_create["volumes"] == {"/srv/worker": {"bind": "/app/data", "mode": "rw"}}
+    assert worker_create["mounts"] == [
+        {
+            "Target": "/usr/share/nginx/html",
+            "Source": "/srv/worker/public",
+            "Type": "bind",
+            "ReadOnly": True,
+            "BindOptions": {"Propagation": "rprivate"},
+        },
+        {
+            "Target": "/var/cache/nginx",
+            "Type": "tmpfs",
+            "Source": None,
+            "TmpfsOptions": {"SizeBytes": 16777216, "Mode": 0o1777},
+        },
+    ]
     assert worker_create["log_config"] == {"Type": "json-file", "Config": {"max-size": "10m"}}
     assert worker_create["restart_policy"] == {"Name": "unless-stopped", "MaximumRetryCount": 0}
     assert worker_create["network_mode"] == "release-stack_default"
@@ -3826,11 +4087,22 @@ async def test_docker_compose_grouped_update_recreates_targeted_services_with_sh
     assert api_create["user"] == "1001:1001"
     assert api_create["working_dir"] == "/srv/api"
     assert api_create["hostname"] == "api-host"
-    assert api_create["ports"] == {
-        "8000/tcp": [("", 8080), ("127.0.0.1", 18080)],
-        "9000/tcp": None,
-    }
+    assert api_create["ports"] == {"8000/tcp": [("", 8080), ("127.0.0.1", 18080)]}
     assert api_create["volumes"] == {"/srv/api": {"bind": "/app/data", "mode": "ro"}}
+    assert api_create["mounts"] == [
+        {
+            "Target": "/etc/nginx/conf.d",
+            "Source": "/srv/api/conf.d",
+            "Type": "bind",
+            "ReadOnly": True,
+        },
+        {
+            "Target": "/tmp/nginx-tmpfs",
+            "Type": "tmpfs",
+            "Source": None,
+            "TmpfsOptions": {"SizeBytes": 16777216, "Mode": 0o700},
+        },
+    ]
     assert api_create["log_config"] == {
         "Type": "syslog",
         "Config": {"syslog-address": "udp://log:514"},
@@ -3849,6 +4121,40 @@ async def test_docker_compose_grouped_update_recreates_targeted_services_with_sh
     assert api_create["healthcheck"] == {
         "Test": ["CMD", "curl", "-f", "http://localhost:8000/health"]
     }
+    worker_recreated = client.containers.get("release-stack-worker-1")
+    assert worker_recreated.attrs["HostConfig"]["Mounts"] == worker_create["mounts"]
+    assert worker_recreated.attrs["Mounts"] == [
+        {
+            "Destination": "/usr/share/nginx/html",
+            "Type": "bind",
+            "Source": "/srv/worker/public",
+            "RW": False,
+        },
+        {
+            "Destination": "/var/cache/nginx",
+            "Type": "tmpfs",
+            "Source": None,
+            "RW": True,
+            "TmpfsOptions": {"SizeBytes": 16777216, "Mode": 0o1777},
+        },
+    ]
+    api_recreated = client.containers.get("release-stack-api-1")
+    assert api_recreated.attrs["HostConfig"]["Mounts"] == api_create["mounts"]
+    assert api_recreated.attrs["Mounts"] == [
+        {
+            "Destination": "/etc/nginx/conf.d",
+            "Type": "bind",
+            "Source": "/srv/api/conf.d",
+            "RW": False,
+        },
+        {
+            "Destination": "/tmp/nginx-tmpfs",
+            "Type": "tmpfs",
+            "Source": None,
+            "RW": True,
+            "TmpfsOptions": {"SizeBytes": 16777216, "Mode": 0o700},
+        },
+    ]
     assert client.networks.disconnect_calls == [
         ("release-stack_default", "release-stack-worker-1", True),
         ("frontend", "release-stack-api-1", True),
@@ -3873,6 +4179,99 @@ async def test_docker_compose_grouped_update_recreates_targeted_services_with_sh
             "release-stack-api-1",
             {"aliases": ["api", "release-stack-api-1"]},
         ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_docker_compose_grouped_update_preserves_hostconfig_mounts_without_exposed_ports():
+    runtime = RuntimeConnectionConfig(
+        name="docker-prod",
+        type="docker",
+        config={"socket": "unix:///var/run/docker.sock"},
+        secrets={},
+    )
+    labels = {
+        "com.docker.compose.project": "release-stack",
+        "com.docker.compose.service": "web",
+        "com.docker.compose.container-number": "1",
+    }
+    web = FakeContainer(
+        "web-1",
+        "release-stack-web-1",
+        FakeImage(tags=["nginx:1.25"]),
+        attrs={
+            "Config": {
+                "Image": "nginx:1.25",
+                "Labels": labels,
+                "ExposedPorts": {"80/tcp": {}, "8443/tcp": {}},
+            },
+            "HostConfig": {
+                "PortBindings": {"8443/tcp": [{"HostIp": "", "HostPort": "18443"}]},
+                "Binds": [],
+                "Mounts": [
+                    {
+                        "Type": "bind",
+                        "Source": "/srv/nginx/conf.d",
+                        "Target": "/etc/nginx/conf.d",
+                        "RW": False,
+                        "BindOptions": {"Propagation": "rprivate"},
+                    },
+                    {
+                        "Type": "volume",
+                        "Name": "nginx-cache",
+                        "Source": "nginx-cache",
+                        "Target": "/var/cache/nginx",
+                        "RW": True,
+                        "VolumeOptions": {"NoCopy": True},
+                    },
+                    {
+                        "Type": "tmpfs",
+                        "Target": "/run/nginx",
+                        "RW": True,
+                        "TmpfsOptions": {"SizeBytes": 16777216, "Mode": 0o1777},
+                    },
+                ],
+                "NetworkMode": "release-stack_default",
+                "RestartPolicy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
+            },
+            "NetworkSettings": {"Networks": {}},
+        },
+    )
+    client = FakeDockerRecreateClient([web])
+    adapter = DockerRuntimeAdapter(runtime, client=client)
+
+    result = await adapter.update_compose_services(
+        {"mode": "docker_compose", "project": "release-stack"},
+        {"web": "nginx:1.26"},
+    )
+
+    assert result.updated is True
+    create_kwargs = client.containers.create_calls[0]
+    assert create_kwargs["ports"] == {"8443/tcp": ("", 18443)}
+    assert "80/tcp" not in create_kwargs["ports"]
+    assert "volumes" not in create_kwargs
+    assert create_kwargs["mounts"] == [
+        {
+            "Target": "/etc/nginx/conf.d",
+            "Source": "/srv/nginx/conf.d",
+            "Type": "bind",
+            "ReadOnly": True,
+            "BindOptions": {"Propagation": "rprivate"},
+        },
+        {
+            "Target": "/var/cache/nginx",
+            "Source": "nginx-cache",
+            "Type": "volume",
+            "ReadOnly": False,
+            "VolumeOptions": {"NoCopy": True},
+        },
+        {
+            "Target": "/run/nginx",
+            "Type": "tmpfs",
+            "Source": None,
+            "ReadOnly": False,
+            "TmpfsOptions": {"SizeBytes": 16777216, "Mode": 0o1777},
+        },
     ]
 
 
@@ -4652,16 +5051,6 @@ async def test_podman_compose_grouped_update_uses_low_level_create_after_empty_n
     create_kwargs = client.containers.create_calls[0]
     assert create_kwargs["pod"] == "core-pod"
     _assert_podman_pod_member_create_kwargs(create_kwargs)
-    assert "create_strategy=podman_py_low_level_rendered_create" in caplog.text
-    assert "create_endpoint=containers/create" in caplog.text
-    assert "compatible_requested=False" in caplog.text
-    assert "compatible_accepted=True" in caplog.text
-    assert "network_mode_avoidance=omitted_for_low_level_create" in caplog.text
-    assert "pod_value_class=FakePodmanPod" in caplog.text
-    assert "pod_join_strategy=recreated_pod_object" in caplog.text
-    assert "has_infra_id=False" in caplog.text
-    assert "netns_nsmode=None" in caplog.text
-    assert "netns_value_class=missing" in caplog.text
     assert "API_TOKEN" not in caplog.text
     assert "super-secret-token" not in caplog.text
 
@@ -4838,17 +5227,6 @@ async def test_podman_compose_grouped_update_drops_blank_storage_destinations_fr
     ]
     assert "volumes" not in client.containers.create_calls[0]
     assert client.containers.create_calls[0]["mounts"] == payload["mounts"]
-    assert "raw_volumes_count=2" in caplog.text
-    assert "source_named_volume_count=0" in caplog.text
-    assert "dropped_rendered_volume_count=1" in caplog.text
-    assert "raw_mounts_count=1" in caplog.text
-    assert "raw_mount_destination_is_blank=False" in caplog.text
-    assert "raw_named_volume_dest_is_blank=True" in caplog.text
-    assert "raw_mount_destination_key_count=1" in caplog.text
-    assert "mount_target_key_count=0" in caplog.text
-    assert "mount_destination_key_count=1" in caplog.text
-    assert " mount_destination_is_blank=False" in caplog.text
-    assert " named_volume_dest_is_blank=False" in caplog.text
     assert "/srv/config" not in caplog.text
     assert "/data" not in caplog.text
 
@@ -4896,19 +5274,6 @@ async def test_podman_compose_grouped_recovery_drops_blank_storage_destinations_
     assert payload["mounts"] == [{"destination": "/tmp", "options": ["size=16m"], "type": "tmpfs"}]
     assert "volumes" not in client.containers.create_calls[0]
     assert client.containers.create_calls[0]["mounts"] == payload["mounts"]
-    assert "raw_volumes_count=2" in caplog.text
-    assert "source_named_volume_count=0" in caplog.text
-    assert "dropped_rendered_volume_count=1" in caplog.text
-    assert "raw_mounts_count=1" in caplog.text
-    assert "raw_tmpfs_count=1" in caplog.text
-    assert "raw_mount_destination_is_blank=False" in caplog.text
-    assert "raw_named_volume_dest_is_blank=True" in caplog.text
-    assert "raw_mount_target_key_count=0" in caplog.text
-    assert "mount_target_key_count=0" in caplog.text
-    assert "mount_destination_key_count=1" in caplog.text
-    assert " tmpfs_count=1" in caplog.text
-    assert " mount_destination_is_blank=False" in caplog.text
-    assert " named_volume_dest_is_blank=False" in caplog.text
     assert "/data" not in caplog.text
     assert "/tmp" not in caplog.text
 
@@ -5735,20 +6100,10 @@ async def test_podman_compose_grouped_update_drops_empty_network_values_from_pod
         for call in client.containers.create_calls
     )
     assert client.networks.connect_calls == []
-    assert "phase=forward boundary=pods.create" in caplog.text
-    assert "phase=forward boundary=containers.create" in caplog.text
-    assert "create_endpoint=containers/create" in caplog.text
     assert "boundary=networks.get" not in caplog.text
     assert "boundary=networks.connect" not in caplog.text
-    assert "dropped_empty_network_count=1" in caplog.text
-    assert "network_mode=missing" in caplog.text
-    assert "pod_payload_network_names=['nginx-net']" in caplog.text
-    assert "network_endpoint_names=['nginx-net']" in caplog.text
-    assert "pod_payload_keys=" in caplog.text
-    assert "create_config_keys=['environment', 'image', 'labels', 'name', 'pod']" in caplog.text
     assert "API_TOKEN" not in caplog.text
     assert "super-secret-token" not in caplog.text
-    assert "create_config_keys=['environment', 'image', 'labels', 'name', 'pod']" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -5894,7 +6249,31 @@ async def test_podman_compose_grouped_update_uses_resolved_recreated_pod_after_n
     assert create_call["pod"] == "new-pod-id"
     assert client.api.post_calls[0]["data"]["pod"] == "new-pod-id"
     assert client.api.post_calls[0]["data"]["pod"] != "old-pod-id"
-    assert "pod_join_strategy=recreated_pod_object" in caplog.text
+
+
+def test_podman_safe_exception_message_redacts_json_style_secret_payloads():
+    runtime = RuntimeConnectionConfig(
+        name="podman-prod",
+        type="podman",
+        config={"socket": "unix:///run/podman/podman.sock"},
+        secrets={},
+    )
+    adapter = PodmanRuntimeAdapter(runtime, client=FakePodmanClient([]))
+
+    message = adapter._safe_exception_message(
+        RuntimeError(
+            'server echoed {"env":{"API_TOKEN":"super-secret-token",'
+            '"password":"hunter2"},"access_key":"AKIA-secret"}'
+        )
+    )
+
+    assert "API_TOKEN" not in message
+    assert "super-secret-token" not in message
+    assert "password" not in message
+    assert "hunter2" not in message
+    assert "access_key" not in message
+    assert "AKIA-secret" not in message
+    assert "credential=***REDACTED***" in message
 
 
 @pytest.mark.asyncio
@@ -5974,17 +6353,11 @@ async def test_podman_compose_grouped_update_recovery_drops_empty_network_values
         }
     ]
     assert client.networks.connect_calls == []
-    assert "phase=forward boundary=containers.create" in caplog.text
-    assert "phase=recovery boundary=containers.create" in caplog.text
-    assert "create_endpoint=containers/create" in caplog.text
     assert "phase=recovery boundary=networks.get" not in caplog.text
     assert "phase=recovery boundary=networks.connect" not in caplog.text
     assert "exception_class=RuntimeError" in caplog.text
-    assert "dropped_empty_network_count=1" in caplog.text
-    assert "network_endpoint_names=['nginx-net']" in caplog.text
     assert "API_TOKEN" not in caplog.text
     assert "super-secret-token" not in caplog.text
-    assert "create_config_keys=['environment', 'image', 'labels', 'name', 'pod']" in caplog.text
 
 
 def test_podman_recreate_pod_for_grouped_replacement_drops_empty_network_endpoint(caplog):
@@ -6032,9 +6405,6 @@ def test_podman_recreate_pod_for_grouped_replacement_drops_empty_network_endpoin
             "networks": {"nginx-net": {"aliases": ["nginx"], "static_ips": ["10.88.0.20"]}},
         }
     ]
-    assert "phase=forward boundary=pods.create" in caplog.text
-    assert "pod_payload_network_names=['nginx-net']" in caplog.text
-    assert "dropped_empty_network_count=1" in caplog.text
     assert "should-not-be-used" not in caplog.text
 
 

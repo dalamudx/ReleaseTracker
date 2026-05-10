@@ -132,39 +132,20 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                 create_config = self._podman_grouped_create_config_for_spec(spec, client=client)
                 self._stop_grouped_container_with_sdk_decode_tolerance(client, container)
                 backup_name = self._podman_replacement_backup_name(spec)
-                pod_join_strategy: str | None = None
                 if spec.pod_id or spec.pod_name:
                     self._rename_grouped_container_for_replacement(container, backup_name)
                     self._remove_grouped_container_with_sdk_decode_tolerance(client, container)
                     pod_name_hint = create_config.get("pod")
-                    recreated_pod_ref, pod_join_strategy = (
-                        self._recreate_pod_for_grouped_replacement(
-                            client,
-                            spec,
-                            pod_name_hint=(
-                                pod_name_hint if isinstance(pod_name_hint, str) else None
-                            ),
-                        )
+                    recreated_pod_ref, _ = self._recreate_pod_for_grouped_replacement(
+                        client,
+                        spec,
+                        pod_name_hint=pod_name_hint if isinstance(pod_name_hint, str) else None,
                     )
                     if recreated_pod_ref is not None:
                         create_config["pod"] = recreated_pod_ref
                 else:
                     self._remove_grouped_container_with_sdk_decode_tolerance(client, container)
 
-                create_compatible_requested, create_compatible_accepted = (
-                    self._podman_low_level_create_compatibility_summary(client)
-                )
-                self._log_podman_grouped_create_boundary(
-                    "forward",
-                    spec,
-                    create_config,
-                    boundary="containers.create",
-                    create_strategy="podman_py_low_level_rendered_create",
-                    create_endpoint=PODMAN_LIBPOD_CONTAINER_CREATE_ENDPOINT,
-                    create_compatible_requested=create_compatible_requested,
-                    create_compatible_accepted=create_compatible_accepted,
-                    pod_join_strategy=pod_join_strategy,
-                )
                 replacement = self._create_podman_grouped_container(client, create_config)
                 if not self._is_pod_backed_grouped_spec(spec):
                     self._restore_container_networks(client, replacement, spec, phase="forward")
@@ -176,25 +157,11 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                     new_container_ids.append(replacement_id)
         except Exception as exc:
             logger.warning(
-                "Podman grouped compose update failed after SDK boundary: "
-                "exception_class=%s exception_message=%s specs=%s",
+                "Podman grouped compose update failed after destructive steps began: "
+                "exception_class=%s exception_message=%s affected_container_count=%s",
                 exc.__class__.__name__,
                 self._safe_exception_message(exc),
-                [
-                    {
-                        "container_name": self._safe_identifier(spec.container_name),
-                        "container_id": self._safe_identifier(spec.container_id),
-                        "pod_name": self._safe_identifier(spec.pod_name),
-                        "pod_id": self._safe_identifier(spec.pod_id),
-                        "network_endpoint_names": self._safe_network_names(
-                            self._endpoint_names_from_network_config(spec.network_config)
-                        ),
-                        "dropped_empty_network_count": self._dropped_empty_endpoint_count(
-                            spec.network_config
-                        ),
-                    }
-                    for spec in specs
-                ],
+                len(specs),
             )
             backup_recovery_error = self._recover_renamed_grouped_backups(client, renamed_backups)
             if backup_recovery_error is None and renamed_backups:
@@ -541,18 +508,6 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
 
         recovered_container = None
         try:
-            create_compatible_requested, create_compatible_accepted = (
-                self._podman_low_level_create_compatibility_summary(client)
-            )
-            self._log_podman_grouped_recovery_create_boundary(
-                snapshot,
-                restorable_create_config,
-                boundary="containers.create",
-                create_strategy="podman_py_low_level_rendered_create",
-                create_endpoint=PODMAN_LIBPOD_CONTAINER_CREATE_ENDPOINT,
-                create_compatible_requested=create_compatible_requested,
-                create_compatible_accepted=create_compatible_accepted,
-            )
             recovered_container = self._create_podman_grouped_container(
                 client,
                 restorable_create_config,
@@ -630,13 +585,6 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         pod_payload = self._pod_create_payload_from_spec(spec)
         pod_payload["name"] = pod_name
         pod_name = pod_payload.pop("name")
-        self._log_podman_grouped_pod_create_boundary(
-            "forward",
-            spec,
-            pod_name,
-            pod_payload,
-            boundary="pods.create",
-        )
         created_pod = client.pods.create(pod_name, **pod_payload)
         if created_pod is not None:
             return created_pod, "recreated_pod_object"
@@ -999,121 +947,17 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         create_kwargs = self._podman_container_create_config(create_config)
         source_named_volume_names = self._podman_source_named_volume_names(create_kwargs)
         payload = self._render_podman_create_payload(create_kwargs)
-        raw_storage_shape = self._podman_storage_shape_summary(payload)
-        raw_relative_storage_destination_count = self._podman_relative_storage_destination_count(
-            payload
-        )
-        raw_relative_volume_mount_destination_count = (
-            self._podman_relative_volume_mount_destination_count(payload)
-        )
-        dropped_rendered_volume_count = self._sanitize_podman_rendered_create_payload(
+        self._sanitize_podman_rendered_create_payload(
             payload,
             source_named_volume_names=source_named_volume_names,
         )
-        final_payload_normalized_count = self._sanitize_podman_final_mount_payload(payload)
-        storage_shape = self._podman_storage_shape_summary(payload)
-        relative_storage_destination_count = self._podman_relative_storage_destination_count(
-            payload
-        )
-        relative_volume_mount_destination_count = (
-            self._podman_relative_volume_mount_destination_count(payload)
-        )
-        relative_storage_destination_normalized_count = max(
-            0,
-            raw_relative_storage_destination_count - relative_storage_destination_count,
-        )
+        self._sanitize_podman_final_mount_payload(payload)
 
         api_client = getattr(client, "api", None)
         if api_client is None or not hasattr(api_client, "post"):
             return client.containers.create(**create_kwargs)
 
         compatibility = self._podman_low_level_create_compatibility(api_client)
-        logger.info(
-            "Podman low-level create payload summary: create_endpoint=%s "
-            "compatible_requested=%s compatible_accepted=%s container_name=%s "
-            "payload_keys=%s restart_policy_type=%s restart_tries_type=%s "
-            "volumes_type=%s raw_volumes_count=%s source_named_volume_count=%s "
-            "dropped_rendered_volume_count=%s raw_mounts_count=%s raw_tmpfs_count=%s "
-            "raw_mount_destination_is_blank=%s raw_named_volume_dest_is_blank=%s "
-            "raw_volumes_with_blank_name_count=%s raw_volumes_with_missing_name_count=%s "
-            "raw_volumes_with_blank_dest_count=%s raw_volumes_with_missing_dest_count=%s "
-            "raw_volume_entry_key_patterns=%s raw_mount_key_patterns_by_type=%s "
-            "raw_mount_target_key_count=%s raw_mount_destination_key_count=%s "
-            "raw_mount_dest_key_count=%s raw_volume_dest_key_count=%s "
-            "raw_volume_destination_key_count=%s raw_volume_mount_count=%s "
-            "raw_relative_storage_destination_count=%s "
-            "raw_relative_volume_mount_destination_count=%s "
-            "relative_storage_destination_normalized_count=%s "
-            "final_payload_normalized_count=%s volumes_count=%s "
-            "mounts_count=%s tmpfs_count=%s volume_mount_count=%s "
-            "relative_storage_destination_count=%s "
-            "relative_volume_mount_destination_count=%s "
-            "mount_destination_is_blank=%s named_volume_dest_is_blank=%s "
-            "volumes_with_blank_name_count=%s volumes_with_missing_name_count=%s "
-            "volumes_with_blank_dest_count=%s volumes_with_missing_dest_count=%s "
-            "volume_entry_key_patterns=%s mount_key_patterns_by_type=%s "
-            "mount_target_key_count=%s mount_destination_key_count=%s mount_dest_key_count=%s "
-            "volume_dest_key_count=%s volume_destination_key_count=%s has_work_dir=%s "
-            "work_dir_is_blank=%s has_rootfs=%s rootfs_is_blank=%s volumes_from_count=%s "
-            "has_blank_volumes_from=%s",
-            compatibility["endpoint"],
-            compatibility["compatible_requested"],
-            compatibility["compatible_accepted"],
-            self._safe_identifier(payload.get("name")),
-            self._safe_create_config_keys(payload),
-            self._safe_payload_value_type(payload.get("restart_policy")),
-            self._safe_payload_value_type(payload.get("restart_tries")),
-            self._safe_payload_value_type(payload.get("volumes")),
-            raw_storage_shape["volumes_count"],
-            len(source_named_volume_names),
-            dropped_rendered_volume_count,
-            raw_storage_shape["mounts_count"],
-            raw_storage_shape["tmpfs_count"],
-            raw_storage_shape["mount_destination_is_blank"],
-            raw_storage_shape["named_volume_dest_is_blank"],
-            raw_storage_shape["volumes_with_blank_name_count"],
-            raw_storage_shape["volumes_with_missing_name_count"],
-            raw_storage_shape["volumes_with_blank_dest_count"],
-            raw_storage_shape["volumes_with_missing_dest_count"],
-            raw_storage_shape["volume_entry_key_patterns"],
-            raw_storage_shape["mount_key_patterns_by_type"],
-            raw_storage_shape["mount_target_key_count"],
-            raw_storage_shape["mount_destination_key_count"],
-            raw_storage_shape["mount_dest_key_count"],
-            raw_storage_shape["volume_dest_key_count"],
-            raw_storage_shape["volume_destination_key_count"],
-            raw_storage_shape["volume_mount_count"],
-            raw_relative_storage_destination_count,
-            raw_relative_volume_mount_destination_count,
-            relative_storage_destination_normalized_count,
-            final_payload_normalized_count,
-            storage_shape["volumes_count"],
-            storage_shape["mounts_count"],
-            storage_shape["tmpfs_count"],
-            storage_shape["volume_mount_count"],
-            relative_storage_destination_count,
-            relative_volume_mount_destination_count,
-            storage_shape["mount_destination_is_blank"],
-            storage_shape["named_volume_dest_is_blank"],
-            storage_shape["volumes_with_blank_name_count"],
-            storage_shape["volumes_with_missing_name_count"],
-            storage_shape["volumes_with_blank_dest_count"],
-            storage_shape["volumes_with_missing_dest_count"],
-            storage_shape["volume_entry_key_patterns"],
-            storage_shape["mount_key_patterns_by_type"],
-            storage_shape["mount_target_key_count"],
-            storage_shape["mount_destination_key_count"],
-            storage_shape["mount_dest_key_count"],
-            storage_shape["volume_dest_key_count"],
-            storage_shape["volume_destination_key_count"],
-            self._has_podman_work_dir_field(payload),
-            self._podman_work_dir_is_blank(payload),
-            "rootfs" in payload,
-            self._string_field_is_blank(payload.get("rootfs")),
-            self._safe_payload_item_count(payload.get("volumes_from")),
-            self._podman_volumes_from_has_blank(payload),
-        )
-
         response = self._post_podman_libpod_create(api_client, payload, compatibility=compatibility)
         if hasattr(response, "raise_for_status"):
             response.raise_for_status()
@@ -2077,6 +1921,7 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         create_config: dict[str, Any],
     ) -> dict[str, Any]:
         sanitized = dict(create_config)
+        sanitized.pop("_releasetracker_exposed_ports", None)
         self._sanitize_podman_create_config(sanitized)
         self._filter_podman_exposed_only_ports(sanitized)
         self._convert_podman_tmpfs_to_mounts(sanitized)
@@ -2143,12 +1988,11 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                 logger.warning(
                     "Dropped empty Podman container network entries before SDK payload: "
                     "container_name=%s network_mode=%s dropped_empty_network_count=%s "
-                    "network_names=%s create_config_keys=%s",
+                    "network_names=%s",
                     self._safe_identifier(create_config.get("name")),
                     self._classify_network_mode(create_config.get("network_mode")),
                     dropped_empty_network_count,
                     self._safe_network_names(normalized_networks),
-                    self._safe_create_config_keys(create_config),
                 )
         elif isinstance(networks, dict):
             dropped_empty_network_count = sum(
@@ -2169,12 +2013,11 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                 logger.warning(
                     "Dropped empty Podman container network entries before SDK payload: "
                     "container_name=%s network_mode=%s dropped_empty_network_count=%s "
-                    "network_names=%s create_config_keys=%s",
+                    "network_names=%s",
                     self._safe_identifier(create_config.get("name")),
                     self._classify_network_mode(create_config.get("network_mode")),
                     dropped_empty_network_count,
                     self._safe_network_names(normalized_network_map),
-                    self._safe_create_config_keys(create_config),
                 )
 
     def _sanitize_podman_namespace_payloads(self, create_config: dict[str, Any]) -> None:
@@ -2489,15 +2332,6 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                 continue
             normalized_network_name = network_name.strip()
             normalized_endpoint_names.add(normalized_network_name)
-            logger.debug(
-                "Podman network restore SDK boundary: phase=%s boundary=networks.get "
-                "container_name=%s container_id=%s network_mode=%s endpoint_network=%s",
-                phase or "unknown",
-                self._safe_identifier(getattr(new_container, "name", None)),
-                self._safe_identifier(container_id),
-                self._classify_network_mode(network_mode),
-                normalized_network_name,
-            )
             network = networks.get(normalized_network_name)
             if hasattr(network, "disconnect"):
                 try:
@@ -2534,161 +2368,6 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
             except Exception:
                 pass
 
-    def _log_podman_grouped_create_boundary(
-        self,
-        phase: str,
-        spec: GroupedRuntimeRecreateSpec,
-        create_config: dict[str, Any],
-        *,
-        boundary: str,
-        create_strategy: str,
-        create_endpoint: str,
-        create_compatible_requested: bool,
-        create_compatible_accepted: bool,
-        pod_join_strategy: str | None = None,
-    ) -> None:
-        pod_join_shape = self._pod_join_shape_summary(
-            create_config,
-            pod_name=spec.pod_name,
-            pod_id=spec.pod_id,
-            pod_relation_payload=spec.pod_relation_payload,
-            pod_join_strategy=pod_join_strategy,
-        )
-        logger.info(
-            "Podman grouped compose SDK boundary: phase=%s boundary=%s create_strategy=%s "
-            "create_endpoint=%s compatible_requested=%s compatible_accepted=%s "
-            "container_name=%s container_id=%s pod_name=%s pod_id=%s "
-            "pod_value_class=%s pod_join_strategy=%s has_infra_id=%s "
-            "netns_nsmode=%s netns_value_class=%s "
-            "has_network_mode=%s network_mode_is_blank=%s network_mode=%s "
-            "network_mode_avoidance=%s "
-            "has_network=%s network_is_blank=%s has_networks=%s network_names=%s "
-            "has_work_dir=%s work_dir_is_blank=%s "
-            "network_endpoint_names=%s dropped_empty_network_count=%s create_config_keys=%s",
-            phase,
-            boundary,
-            create_strategy,
-            create_endpoint,
-            create_compatible_requested,
-            create_compatible_accepted,
-            self._safe_identifier(spec.container_name),
-            self._safe_identifier(spec.container_id),
-            self._safe_identifier(spec.pod_name),
-            self._safe_identifier(spec.pod_id),
-            pod_join_shape["pod_value_class"],
-            pod_join_shape["pod_join_strategy"],
-            pod_join_shape["has_infra_id"],
-            pod_join_shape["netns_nsmode"],
-            pod_join_shape["netns_value_class"],
-            "network_mode" in create_config,
-            self._network_mode_is_blank(create_config.get("network_mode")),
-            self._classify_network_mode(create_config.get("network_mode")),
-            self._podman_network_mode_avoidance(create_config),
-            "network" in create_config,
-            self._network_mode_is_blank(create_config.get("network")),
-            "networks" in create_config,
-            self._safe_network_names(create_config.get("networks")),
-            self._has_podman_work_dir_field(create_config),
-            self._podman_work_dir_is_blank(create_config),
-            self._safe_network_names(self._endpoint_names_from_network_config(spec.network_config)),
-            self._dropped_empty_endpoint_count(spec.network_config),
-            self._safe_create_config_keys(create_config),
-        )
-
-    def _log_podman_grouped_recovery_create_boundary(
-        self,
-        snapshot: dict[str, Any],
-        create_config: dict[str, Any],
-        *,
-        boundary: str,
-        create_strategy: str,
-        create_endpoint: str,
-        create_compatible_requested: bool,
-        create_compatible_accepted: bool,
-    ) -> None:
-        network_config = snapshot.get("network_config") if isinstance(snapshot, Mapping) else None
-        pod_relation_payload = (
-            snapshot.get("pod_relation_payload") if isinstance(snapshot, Mapping) else None
-        )
-        pod_join_shape = self._pod_join_shape_summary(
-            create_config,
-            pod_name=snapshot.get("pod_name"),
-            pod_id=snapshot.get("pod_id"),
-            pod_relation_payload=(
-                pod_relation_payload if isinstance(pod_relation_payload, dict) else {}
-            ),
-        )
-        logger.info(
-            "Podman grouped compose SDK boundary: phase=recovery boundary=%s create_strategy=%s "
-            "create_endpoint=%s compatible_requested=%s compatible_accepted=%s "
-            "container_name=%s container_id=%s pod_name=%s pod_id=%s "
-            "pod_value_class=%s pod_join_strategy=%s has_infra_id=%s "
-            "netns_nsmode=%s netns_value_class=%s "
-            "has_network_mode=%s network_mode_is_blank=%s network_mode=%s "
-            "network_mode_avoidance=%s "
-            "has_network=%s network_is_blank=%s has_networks=%s network_names=%s "
-            "has_work_dir=%s work_dir_is_blank=%s "
-            "network_endpoint_names=%s dropped_empty_network_count=%s create_config_keys=%s",
-            boundary,
-            create_strategy,
-            create_endpoint,
-            create_compatible_requested,
-            create_compatible_accepted,
-            self._safe_identifier(snapshot.get("container_name")),
-            self._safe_identifier(snapshot.get("container_id")),
-            self._safe_identifier(snapshot.get("pod_name")),
-            self._safe_identifier(snapshot.get("pod_id")),
-            pod_join_shape["pod_value_class"],
-            pod_join_shape["pod_join_strategy"],
-            pod_join_shape["has_infra_id"],
-            pod_join_shape["netns_nsmode"],
-            pod_join_shape["netns_value_class"],
-            "network_mode" in create_config,
-            self._network_mode_is_blank(create_config.get("network_mode")),
-            self._classify_network_mode(create_config.get("network_mode")),
-            self._podman_network_mode_avoidance(create_config),
-            "network" in create_config,
-            self._network_mode_is_blank(create_config.get("network")),
-            "networks" in create_config,
-            self._safe_network_names(create_config.get("networks")),
-            self._has_podman_work_dir_field(create_config),
-            self._podman_work_dir_is_blank(create_config),
-            self._safe_network_names(
-                self._endpoint_names_from_network_config(
-                    network_config if isinstance(network_config, dict) else {}
-                )
-            ),
-            self._dropped_empty_endpoint_count(
-                network_config if isinstance(network_config, dict) else {}
-            ),
-            self._safe_create_config_keys(create_config),
-        )
-
-    def _log_podman_grouped_pod_create_boundary(
-        self,
-        phase: str,
-        spec: GroupedRuntimeRecreateSpec,
-        pod_name: str,
-        pod_payload: dict[str, Any],
-        *,
-        boundary: str,
-    ) -> None:
-        networks = pod_payload.get("networks")
-        logger.info(
-            "Podman grouped compose SDK boundary: phase=%s boundary=%s "
-            "container_name=%s container_id=%s pod_name=%s pod_id=%s "
-            "pod_payload_network_names=%s dropped_empty_network_count=%s pod_payload_keys=%s",
-            phase,
-            boundary,
-            self._safe_identifier(spec.container_name),
-            self._safe_identifier(spec.container_id),
-            self._safe_identifier(pod_name),
-            self._safe_identifier(spec.pod_id),
-            self._safe_network_names(networks if isinstance(networks, Mapping) else {}),
-            self._dropped_empty_endpoint_count(spec.network_config),
-            sorted(pod_payload),
-        )
-
     def _endpoint_names_from_network_config(self, network_config: dict[str, Any]) -> list[str]:
         endpoints = network_config.get("endpoints")
         if not isinstance(endpoints, Mapping):
@@ -2703,74 +2382,6 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         if isinstance(dropped_count, int) and dropped_count > 0:
             return dropped_count
         return sum(1 for name in endpoints if isinstance(name, str) and not name.strip())
-
-    def _safe_create_config_keys(self, create_config: dict[str, Any]) -> list[str]:
-        return sorted(key for key in create_config if isinstance(key, str))
-
-    def _pod_join_shape_summary(
-        self,
-        create_config: Mapping[str, Any],
-        *,
-        pod_name: Any,
-        pod_id: Any,
-        pod_relation_payload: Mapping[str, Any] | None,
-        pod_join_strategy: str | None = None,
-    ) -> dict[str, Any]:
-        pod_value = create_config.get("pod")
-        netns = create_config.get("netns")
-        netns_nsmode = None
-        netns_value_class = "missing"
-        if isinstance(netns, Mapping):
-            nsmode = netns.get("nsmode")
-            if isinstance(nsmode, str) and nsmode.strip():
-                netns_nsmode = nsmode.strip()
-            netns_value_class = self._safe_payload_value_type(netns.get("value"))
-
-        return {
-            "pod_value_class": self._safe_payload_value_type(pod_value),
-            "pod_join_strategy": pod_join_strategy
-            or self._pod_join_strategy(
-                pod_value,
-                pod_name=pod_name,
-                pod_id=pod_id,
-            ),
-            "has_infra_id": self._pod_relation_has_infra_id(pod_relation_payload),
-            "netns_nsmode": netns_nsmode,
-            "netns_value_class": netns_value_class,
-        }
-
-    def _pod_join_strategy(self, pod_value: Any, *, pod_name: Any, pod_id: Any) -> str:
-        pod_value_name = getattr(pod_value, "name", None)
-        if isinstance(pod_value_name, str) and pod_value_name.strip():
-            return "resolved_pod_name"
-        if self._has_non_empty_string(pod_value) and self._has_non_empty_string(pod_name):
-            if pod_value == pod_name:
-                return "pod_name"
-            return "resolved_pod_name"
-        if self._has_non_empty_string(pod_value) and self._has_non_empty_string(pod_id):
-            if pod_value == pod_id:
-                return "pod_id_fallback"
-            return "resolved_pod_name"
-        if self._has_non_empty_string(pod_value):
-            return "explicit_pod_string"
-        return "none"
-
-    def _pod_relation_has_infra_id(self, pod_relation_payload: Mapping[str, Any] | None) -> bool:
-        if not isinstance(pod_relation_payload, Mapping):
-            return False
-        return self._has_non_empty_string(pod_relation_payload.get("pod_infra_id"))
-
-    def _safe_payload_value_type(self, value: Any) -> str:
-        if value is None:
-            return "missing"
-        return type(value).__name__
-
-    def _safe_payload_item_count(self, value: Any) -> int:
-        if isinstance(value, Mapping):
-            return len(value)
-        if isinstance(value, list | tuple | set):
-            return len(value)
-        return 0
 
     def _has_podman_work_dir_field(self, payload: Mapping[str, Any]) -> bool:
         return "work_dir" in payload or "working_dir" in payload
@@ -2804,11 +2415,13 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         message = str(exc).strip()
         if not message:
             return ""
+        credential_key = r"[A-Za-z0-9_.-]*(?:password|passwd|token|secret|api[_-]?key|access[_-]?key)[A-Za-z0-9_.-]*"
         for pattern in (
-            r"(?i)(password|passwd|token|secret|api[_-]?key|access[_-]?key)=\S+",
-            r"(?i)(password|passwd|token|secret|api[_-]?key|access[_-]?key)\s*[:=]\s*[^\s,;]+",
+            rf"(?i)([\"']){credential_key}\1\s*:\s*([\"']).*?\2",
+            rf"(?i)([\"']){credential_key}\1\s*:\s*[^\s,}}]+",
+            rf"(?i)\b{credential_key}\s*[:=]\s*[^\s,;}}]+",
         ):
-            message = re.sub(pattern, r"\1=***REDACTED***", message)
+            message = re.sub(pattern, "credential=***REDACTED***", message)
         return message[:500]
 
     def _network_mode_is_blank(self, value: Any) -> bool:
@@ -2831,11 +2444,6 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
             return "container"
         return "other"
 
-    def _podman_network_mode_avoidance(self, create_config: dict[str, Any]) -> str:
-        if "network_mode" in create_config:
-            return "preserved"
-        return "omitted_for_low_level_create"
-
     def _connect_podman_network(
         self,
         client,
@@ -2854,13 +2462,6 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                 container_id=container_id,
                 endpoint=endpoint,
             )
-            self._log_network_restore_connect_attempt(
-                phase,
-                new_container,
-                network_name,
-                connect_strategy="raw_api",
-                connect_payload=connect_payload,
-            )
             raw_api_post(
                 f"networks/{network_name}/connect",
                 compatible=False,
@@ -2870,13 +2471,6 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
             return
 
         connect_kwargs = self._network_connect_kwargs(container_id, endpoint)
-        self._log_network_restore_connect_attempt(
-            phase,
-            new_container,
-            network_name,
-            connect_strategy="sdk",
-            connect_payload=connect_kwargs,
-        )
         network.connect(new_container, **connect_kwargs)
 
     def _raw_network_connect_post(self, client):
@@ -2996,51 +2590,6 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         if isinstance(container_name, str) and container_name.strip():
             return container_name.strip()
         raise ValueError("replacement container missing id/name for network restore")
-
-    def _log_network_restore_connect_attempt(
-        self,
-        phase: str,
-        new_container,
-        network_name: str,
-        *,
-        connect_strategy: str,
-        connect_payload: dict[str, Any],
-    ) -> None:
-        aliases = connect_payload.get("aliases")
-        if aliases is None:
-            aliases = connect_payload.get("Aliases")
-        static_ips = connect_payload.get("static_ips")
-        has_ipv4 = False
-        has_ipv6 = False
-        if isinstance(static_ips, list):
-            has_ipv4 = any(isinstance(ip, str) and ":" not in ip for ip in static_ips)
-            has_ipv6 = any(isinstance(ip, str) and ":" in ip for ip in static_ips)
-        has_ipv4 = has_ipv4 or bool(connect_payload.get("ipv4_address"))
-        has_ipv6 = has_ipv6 or bool(connect_payload.get("ipv6_address"))
-        logger.info(
-            "Podman network restore connect attempt: phase=%s container=%s network=%s "
-            "connect_strategy=%s alias_count=%s has_ipv4=%s has_ipv6=%s "
-            "connect_payload_keys=%s",
-            phase,
-            self._container_log_identifier(new_container),
-            network_name,
-            connect_strategy,
-            len(aliases or []),
-            has_ipv4,
-            has_ipv6,
-            sorted(connect_payload),
-        )
-
-    def _container_log_identifier(self, container) -> str:
-        container_name = getattr(container, "name", None)
-        container_id = getattr(container, "id", None)
-        if isinstance(container_name, str) and container_name.strip():
-            if isinstance(container_id, str) and container_id.strip():
-                return f"{container_name.strip()} ({container_id.strip()})"
-            return container_name.strip()
-        if isinstance(container_id, str) and container_id.strip():
-            return container_id.strip()
-        return "unknown"
 
     def _normalize_podman_ulimit_name(self, value: str) -> str:
         normalized = value.strip()

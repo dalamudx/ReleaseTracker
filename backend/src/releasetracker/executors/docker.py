@@ -94,7 +94,7 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
                 self._resolve_compose_container(spec).remove()
 
             for spec in ordered_specs:
-                new_container = client.containers.create(**dict(spec.create_config))
+                new_container = self._create_docker_container(client, spec.create_config)
                 self._restore_container_networks(client, new_container, spec)
                 new_container.start()
                 created_containers.append(new_container)
@@ -191,7 +191,7 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         try:
             container.stop()
             container.remove()
-            new_container = client.containers.create(**dict(recreate_spec.create_config))
+            new_container = self._create_docker_container(client, recreate_spec.create_config)
             self._restore_container_networks(client, new_container, recreate_spec)
             new_container.start()
         except Exception as exc:
@@ -264,7 +264,7 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
 
         recovered_container = None
         try:
-            recovered_container = client.containers.create(**create_config)
+            recovered_container = self._create_docker_container(client, create_config)
             self._restore_container_networks_from_snapshot(client, recovered_container, snapshot)
             recovered_container.start()
         except Exception:
@@ -279,6 +279,60 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
             message="runtime recovered from snapshot",
             new_container_id=getattr(recovered_container, "id", None),
         )
+
+    def _create_docker_container(self, client, create_config: dict[str, Any]):
+        create_kwargs = self._sanitize_docker_create_kwargs(create_config)
+        exposed_ports = create_kwargs.pop("_releasetracker_exposed_ports", None)
+        if not exposed_ports:
+            return client.containers.create(**create_kwargs)
+
+        api_client = getattr(client, "api", None)
+        if api_client is None or not hasattr(api_client, "create_container"):
+            return client.containers.create(**create_kwargs)
+
+        try:
+            docker_containers = importlib.import_module("docker.models.containers")
+            convert_create_args = docker_containers._create_container_args
+        except (AttributeError, ImportError):
+            return client.containers.create(**create_kwargs)
+
+        api_version = getattr(api_client, "_version", None)
+        raw_create_kwargs = convert_create_args({**create_kwargs, "version": api_version})
+        raw_ports = list(raw_create_kwargs.get("ports") or [])
+        existing_raw_ports = {self._docker_raw_port_key(port) for port in raw_ports}
+        for exposed_port in exposed_ports:
+            raw_port = self._parse_docker_port_spec(exposed_port)
+            if raw_port is not None and raw_port not in existing_raw_ports:
+                raw_ports.append(raw_port)
+                existing_raw_ports.add(raw_port)
+        if raw_ports:
+            raw_create_kwargs["ports"] = raw_ports
+
+        response = api_client.create_container(**raw_create_kwargs)
+        container_id = response.get("Id") if isinstance(response, dict) else None
+        return client.containers.get(container_id)
+
+    @staticmethod
+    def _sanitize_docker_create_kwargs(create_config: dict[str, Any]) -> dict[str, Any]:
+        create_kwargs = dict(create_config)
+        create_kwargs.pop("stop_timeout", None)
+        return create_kwargs
+
+    @staticmethod
+    def _parse_docker_port_spec(port_spec: str) -> tuple[str, str] | None:
+        port, separator, protocol = port_spec.partition("/")
+        if not separator:
+            protocol = "tcp"
+        if not port.strip() or not protocol.strip():
+            return None
+        return (port.strip(), protocol.strip())
+
+    @staticmethod
+    def _docker_raw_port_key(port: Any) -> tuple[str, str] | None:
+        if isinstance(port, tuple) and len(port) == 2:
+            port_number, protocol = port
+            return (str(port_number), str(protocol))
+        return None
 
     def _cleanup_replacement_conflict(
         self,
