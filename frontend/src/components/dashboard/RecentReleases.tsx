@@ -92,14 +92,16 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
                                     ?? null
                                 const releaseChannelLabel = getReleaseChannelDisplayLabel(release, t)
                                 const sourceTypeLabel = getTrackerChannelTypeLabel(sourceType)
-                                const absolutePublished = formatDate(release.published_at)
+                                const releaseTypeLabel = releaseChannelLabel
+                                    ?? (release.prerelease ? t("channel.prerelease") : t("channel.stable"))
+                                const versionLabel = release.tag_name || release.version
                                 const relativePublished = formatRelative(release.published_at)
                                 const linkHref = resolveLinkTarget(release)
 
                                 return (
                                     <li
                                         key={`${release.tracker_release_history_id}-${release.published_at}`}
-                                        className="group relative flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-muted/40"
+                                        className="group relative grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-2 px-4 py-2.5 transition-colors hover:bg-muted/40 sm:grid-cols-[minmax(0,1fr)_minmax(0,27rem)_auto] sm:gap-x-3"
                                     >
                                         {/* Hover accent strip — uses the active theme primary colour. */}
                                         <span
@@ -108,58 +110,43 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
                                         />
 
                                         {/* Tracker name — takes the flexible space. */}
-                                        <span
-                                            className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
-                                            title={release.tracker_name}
-                                        >
+                                        <span className="min-w-0 truncate text-sm font-medium text-foreground">
                                             {release.tracker_name}
                                         </span>
 
-                                        {/* Version tag. */}
-                                        <Badge
-                                            variant="outline"
-                                            className="max-w-[9rem] shrink-0 truncate border-border/60 bg-muted/40 px-1.5 font-mono text-[10px] h-5 text-foreground/80"
-                                            title={release.tag_name}
-                                        >
-                                            {release.tag_name}
-                                        </Badge>
-
-                                        {release.prerelease ? (
-                                            <Badge
-                                                variant="outline"
-                                                className="h-5 shrink-0 border-warning/60 bg-transparent px-1.5 text-[10px] font-medium text-warning"
-                                            >
-                                                {t("channel.prerelease")}
-                                            </Badge>
-                                        ) : null}
-
-                                        {/* Source type & channel — hidden on narrow panels. */}
-                                        <div className="hidden min-w-0 shrink items-center gap-1.5 text-[11px] text-muted-foreground sm:flex">
-                                            <span className="shrink-0 uppercase tracking-wide">{sourceTypeLabel}</span>
-                                            {releaseChannelLabel ? (
-                                                <>
-                                                    <span aria-hidden className="h-0.5 w-0.5 shrink-0 rounded-full bg-muted-foreground/40" />
-                                                    <span className="max-w-[7rem] truncate">{releaseChannelLabel}</span>
-                                                </>
-                                            ) : null}
+                                        {/* Metadata fields: source type, release type, version, then time. */}
+                                        <div className="col-span-2 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1.5 sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:w-full sm:gap-x-3">
+                                            <div className="flex min-w-0 flex-wrap items-center justify-start gap-1.5 sm:gap-2">
+                                                <Badge
+                                                    variant="secondary"
+                                                    className="h-6 min-w-0 max-w-full justify-start rounded-md px-2 text-left text-[11px] font-medium"
+                                                >
+                                                    <span className="truncate text-left">{sourceTypeLabel}</span>
+                                                </Badge>
+                                                <Badge
+                                                    variant="outline"
+                                                    className="h-6 min-w-0 max-w-full justify-start rounded-md border-border/60 bg-background px-2 text-left text-[11px] font-medium text-foreground/80"
+                                                >
+                                                    <span className="truncate text-left">{releaseTypeLabel}</span>
+                                                </Badge>
+                                                <span className="min-w-0 max-w-full truncate rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-left font-mono text-xs leading-none text-foreground/90">
+                                                    {versionLabel}
+                                                </span>
+                                            </div>
+                                            <span className="justify-self-end whitespace-nowrap text-right text-[11px] tabular-nums text-muted-foreground">
+                                                {relativePublished}
+                                            </span>
                                         </div>
 
-                                        {/* Relative time. */}
-                                        <span
-                                            className="shrink-0 whitespace-nowrap text-[11px] tabular-nums text-muted-foreground"
-                                            title={absolutePublished}
-                                        >
-                                            {relativePublished}
-                                        </span>
-
                                         {/* Actions. */}
-                                        <div className="flex shrink-0 items-center gap-0.5 text-muted-foreground/60 transition-colors group-hover:text-muted-foreground">
+                                        <div className="col-start-2 row-start-1 flex shrink-0 items-center gap-0.5 text-muted-foreground/60 transition-colors group-hover:text-muted-foreground sm:col-start-3">
                                             <Button
                                                 variant="ghost"
                                                 size="icon"
                                                 disabled={!release.body}
                                                 onClick={() => handleViewNotes(release)}
                                                 title={t("dashboard.recentReleases.viewNotes")}
+                                                aria-label={t("dashboard.recentReleases.viewNotes")}
                                                 className="h-6 w-6"
                                             >
                                                 <FileText className="h-3.5 w-3.5" />
@@ -171,6 +158,7 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
                                                     asChild
                                                     className="h-6 w-6"
                                                     title={t("dashboard.releaseNotes.viewSource")}
+                                                    aria-label={t("dashboard.releaseNotes.viewSource")}
                                                 >
                                                     <a href={linkHref} target="_blank" rel="noreferrer">
                                                         <ExternalLink className="h-3.5 w-3.5" />
