@@ -8,6 +8,7 @@ import re
 import signal
 import urllib.parse
 from collections.abc import Iterator, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from .base import RuntimeMutationError, RuntimeUpdateResult
@@ -17,6 +18,8 @@ from .container_runtime import _ContainerRuntimeAdapter
 logger = logging.getLogger(__name__)
 
 PODMAN_LIBPOD_CONTAINER_CREATE_ENDPOINT = "containers/create"
+PODMAN_LIBPOD_POD_CREATE_ENDPOINT = "pods/create"
+PODMAN_DEFAULTED_INFRA_PAYLOAD_KEY = "_releasetracker_defaulted_infra"
 PODMAN_MOUNT_DESTINATION_KEYS = ("destination", "target", "dest", "Destination", "Target", "Dest")
 PODMAN_NAMED_VOLUME_DESTINATION_KEYS = (
     "Dest",
@@ -26,6 +29,18 @@ PODMAN_NAMED_VOLUME_DESTINATION_KEYS = (
     "Target",
     "target",
 )
+
+
+@dataclass(frozen=True)
+class PodmanPodTopology:
+    create_infra: bool | None = None
+    shared_namespaces: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class PodmanCreatedPodReference:
+    name: str
+    id: str
 
 
 class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
@@ -147,8 +162,7 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                     self._remove_grouped_container_with_sdk_decode_tolerance(client, container)
 
                 replacement = self._create_podman_grouped_container(client, create_config)
-                if not self._is_pod_backed_grouped_spec(spec):
-                    self._restore_container_networks(client, replacement, spec, phase="forward")
+                self._restore_container_networks(client, replacement, spec, phase="forward")
                 replacement.start()
                 if spec.pod_id or spec.pod_name:
                     self._remove_replaced_grouped_container_backup(client, backup_name)
@@ -512,13 +526,12 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                 client,
                 restorable_create_config,
             )
-            if not self._snapshot_has_pod_membership(snapshot):
-                self._restore_container_networks_from_snapshot(
-                    client,
-                    recovered_container,
-                    snapshot,
-                    phase="recovery",
-                )
+            self._restore_container_networks_from_snapshot(
+                client,
+                recovered_container,
+                snapshot,
+                phase="recovery",
+            )
             recovered_container.start()
         except Exception:
             if recovered_container is not None:
@@ -585,13 +598,109 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         pod_payload = self._pod_create_payload_from_spec(spec)
         pod_payload["name"] = pod_name
         pod_name = pod_payload.pop("name")
-        created_pod = client.pods.create(pod_name, **pod_payload)
+        created_pod = self._create_podman_pod(client, pod_name, pod_payload)
         if created_pod is not None:
             return created_pod, "recreated_pod_object"
         resolved_pod = self._resolve_pod_object_after_create(client, pod_name)
         if resolved_pod is not None:
             return resolved_pod, "recreated_pod_object"
         return pod_name, "recreated_pod_name"
+
+    def _create_podman_pod(self, client, pod_name: str, pod_payload: dict[str, Any]):
+        if self._pod_payload_requires_low_level_create(pod_payload):
+            return self._create_podman_pod_with_low_level_api(client, pod_name, pod_payload)
+        high_level_payload = dict(pod_payload)
+        high_level_payload.pop(PODMAN_DEFAULTED_INFRA_PAYLOAD_KEY, None)
+        return client.pods.create(pod_name, **high_level_payload)
+
+    def _pod_payload_requires_low_level_create(self, pod_payload: Mapping[str, Any]) -> bool:
+        explicit_no_infra = pod_payload.get("no_infra") is True
+        explicit_infra_false = (
+            pod_payload.get("infra") is False
+            and pod_payload.get(PODMAN_DEFAULTED_INFRA_PAYLOAD_KEY) is not True
+        )
+        return explicit_no_infra or explicit_infra_false
+
+    def _create_podman_pod_with_low_level_api(
+        self,
+        client,
+        pod_name: str,
+        pod_payload: Mapping[str, Any],
+    ):
+        api_client = getattr(client, "api", None)
+        if api_client is None or not hasattr(api_client, "post"):
+            raise RuntimeError("podman-py API client cannot create pod through native libpod API")
+        payload = self._render_libpod_pod_create_payload({"name": pod_name, **dict(pod_payload)})
+        compatibility = self._podman_low_level_pod_create_compatibility(api_client)
+        response = self._post_podman_libpod_pod_create(
+            api_client, payload, compatibility=compatibility
+        )
+        if hasattr(response, "raise_for_status"):
+            response.raise_for_status()
+        response_payload = response.json() if hasattr(response, "json") else {}
+        pod_id = response_payload.get("Id") if isinstance(response_payload, Mapping) else None
+        if isinstance(pod_id, str) and pod_id.strip():
+            return PodmanCreatedPodReference(name=pod_name, id=pod_id.strip())
+        return PodmanCreatedPodReference(name=pod_name, id=pod_name)
+
+    def _podman_low_level_pod_create_compatibility(self, api_client) -> dict[str, Any]:
+        compatible_supported = self._api_post_supports_compatible(api_client)
+        return {
+            "endpoint": PODMAN_LIBPOD_POD_CREATE_ENDPOINT,
+            "compatible_requested": False,
+            "compatible_accepted": compatible_supported,
+            "compatible_supported": compatible_supported,
+        }
+
+    def _render_libpod_pod_create_payload(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        rendered = dict(payload)
+        if rendered.get("infra") is False:
+            rendered["no_infra"] = True
+        if rendered.get("no_infra") is True:
+            rendered.pop("infra", None)
+            rendered.pop("share", None)
+            for key in (
+                "networks",
+                "portmappings",
+                "dns",
+                "dns_search",
+                "dns_option",
+                "hostadd",
+                "hostname",
+                "shm_size",
+                PODMAN_DEFAULTED_INFRA_PAYLOAD_KEY,
+            ):
+                rendered.pop(key, None)
+        return rendered
+
+    def _post_podman_libpod_pod_create(
+        self,
+        api_client,
+        payload: dict[str, Any],
+        *,
+        compatibility: dict[str, Any],
+    ):
+        headers = {"content-type": "application/json"}
+        data = json.dumps(payload, sort_keys=True)
+        endpoint = compatibility["endpoint"]
+        if compatibility["compatible_supported"]:
+            return api_client.post(
+                endpoint,
+                compatible=False,
+                headers=headers,
+                data=data,
+            )
+        manual_url = self._podman_libpod_manual_url(api_client, endpoint)
+        if manual_url is None or not hasattr(api_client, "request"):
+            raise RuntimeError(
+                "podman-py API client cannot target libpod pod create without compatible=False"
+            )
+        return api_client.request(
+            "POST",
+            manual_url,
+            headers=headers,
+            data=data,
+        )
 
     def _resolve_pod_object_after_create(self, client, pod_name: str):
         pods = getattr(client, "pods", None)
@@ -611,10 +720,21 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
 
     def _pod_create_payload_from_spec(self, spec: GroupedRuntimeRecreateSpec) -> dict[str, Any]:
         pod_name = spec.pod_name or spec.pod_id
-        payload: dict[str, Any] = {
-            "name": pod_name,
-            "infra": False,
-        }
+        topology = self._pod_topology_from_relation_payload(spec.pod_relation_payload)
+        payload: dict[str, Any] = {"name": pod_name}
+        if topology.create_infra is not None:
+            payload["infra"] = topology.create_infra
+        else:
+            payload["infra"] = False
+            payload[PODMAN_DEFAULTED_INFRA_PAYLOAD_KEY] = True
+
+        share_value = self._pod_share_payload_value(topology)
+        if self._pod_topology_uses_container_networking(topology):
+            payload["no_infra"] = True
+            if topology.shared_namespaces == ():
+                payload["shared_namespaces"] = []
+            return payload
+
         hostname = spec.create_config.get("hostname")
         if isinstance(hostname, str) and hostname.strip():
             payload["hostname"] = hostname.strip()
@@ -635,9 +755,63 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
             payload["dns_search"] = list(dns_search)
         networks = self._pod_networks_from_config(spec.network_config, spec.container_id)
         if networks:
-            payload["share"] = "net"
+            if share_value is not None:
+                payload["share"] = share_value
             payload["networks"] = networks
         return payload
+
+    def _pod_topology_from_relation_payload(
+        self,
+        pod_relation_payload: Mapping[str, Any] | None,
+    ) -> PodmanPodTopology:
+        if not isinstance(pod_relation_payload, Mapping):
+            return PodmanPodTopology()
+        create_infra = self._coerce_optional_bool(
+            pod_relation_payload.get("pod_create_infra"),
+        )
+        shared_namespaces_value = pod_relation_payload.get("pod_shared_namespaces")
+        shared_namespaces = (
+            self._normalize_pod_shared_namespaces(shared_namespaces_value)
+            if shared_namespaces_value is not None
+            else None
+        )
+        return PodmanPodTopology(
+            create_infra=create_infra,
+            shared_namespaces=shared_namespaces,
+        )
+
+    def _pod_share_payload_value(self, topology: PodmanPodTopology) -> str | None:
+        if topology.shared_namespaces is None:
+            return "net"
+        return ",".join(topology.shared_namespaces)
+
+    def _pod_topology_uses_container_networking(self, topology: PodmanPodTopology) -> bool:
+        return topology.create_infra is False
+
+    def _pod_relation_payload_uses_container_networking(
+        self,
+        pod_relation_payload: Mapping[str, Any] | None,
+    ) -> bool:
+        return self._pod_topology_uses_container_networking(
+            self._pod_topology_from_relation_payload(pod_relation_payload),
+        )
+
+    def _normalize_pod_shared_namespaces(self, value: Any) -> tuple[str, ...]:
+        candidates: list[Any]
+        if isinstance(value, str):
+            candidates = value.split(",")
+        elif isinstance(value, list | tuple | set):
+            candidates = list(value)
+        else:
+            return ()
+        normalized: list[str] = []
+        for item in candidates:
+            if not isinstance(item, str):
+                continue
+            namespace = item.strip().lower()
+            if namespace and namespace not in normalized:
+                normalized.append(namespace)
+        return tuple(normalized)
 
     def _pod_portmappings_from_create_config(
         self,
@@ -1886,7 +2060,10 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         create_config = self._apply_podman_host_config_preservation(create_config, spec.host_config)
         create_config = self._podman_container_create_config(create_config)
         if spec.pod_id or spec.pod_name:
-            self._prepare_create_config_for_pod_membership(create_config)
+            self._prepare_create_config_for_pod_membership(
+                create_config,
+                pod_relation_payload=spec.pod_relation_payload,
+            )
         return self._apply_pod_membership_to_create_config(
             create_config,
             pod_name=spec.pod_name,
@@ -1907,8 +2084,14 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         create_config = self._apply_podman_host_config_preservation(create_config, host_config)
         pod_name = snapshot.get("pod_name") if isinstance(snapshot.get("pod_name"), str) else None
         pod_id = snapshot.get("pod_id") if isinstance(snapshot.get("pod_id"), str) else None
+        pod_relation_payload = snapshot.get("pod_relation_payload")
+        if not isinstance(pod_relation_payload, Mapping):
+            pod_relation_payload = None
         if pod_name or pod_id:
-            self._prepare_create_config_for_pod_membership(create_config)
+            self._prepare_create_config_for_pod_membership(
+                create_config,
+                pod_relation_payload=pod_relation_payload,
+            )
         return self._apply_pod_membership_to_create_config(
             create_config,
             pod_name=pod_name,
@@ -2226,7 +2409,14 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
 
         return create_config
 
-    def _prepare_create_config_for_pod_membership(self, create_config: dict[str, Any]) -> None:
+    def _prepare_create_config_for_pod_membership(
+        self,
+        create_config: dict[str, Any],
+        *,
+        pod_relation_payload: Mapping[str, Any] | None = None,
+    ) -> None:
+        if self._pod_relation_payload_uses_container_networking(pod_relation_payload):
+            return
         create_config.pop("hostname", None)
         create_config.pop("network", None)
         create_config.pop("networks", None)
@@ -2248,7 +2438,9 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         *,
         phase: str | None = None,
     ) -> None:
-        if self._is_pod_backed_grouped_spec(spec):
+        if self._is_pod_backed_grouped_spec(
+            spec,
+        ) and not self._pod_relation_payload_uses_container_networking(spec.pod_relation_payload):
             return
         self._restore_container_networks_for_payload(
             client,
@@ -2266,7 +2458,12 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         *,
         phase: str | None = None,
     ) -> None:
-        if self._snapshot_has_pod_membership(snapshot):
+        pod_relation_payload = snapshot.get("pod_relation_payload")
+        if not isinstance(pod_relation_payload, Mapping):
+            pod_relation_payload = None
+        if self._snapshot_has_pod_membership(
+            snapshot,
+        ) and not self._pod_relation_payload_uses_container_networking(pod_relation_payload):
             return
         network_config = snapshot.get("network_config")
         if not isinstance(network_config, dict) or not network_config:
@@ -2694,6 +2891,10 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                     )
                 compose_label_overrides = self._extract_compose_label_overrides(labels)
                 pod_relation_payload = self._extract_pod_relation_payload(attrs)
+                pod_relation_payload = self._merge_pod_inspect_relation_payload(
+                    pod_relation_payload,
+                    client,
+                )
                 specs.append(
                     build_grouped_runtime_recreate_spec(
                         container,
@@ -2734,6 +2935,35 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
 
         return collected
 
+    def _merge_pod_inspect_relation_payload(
+        self,
+        pod_relation_payload: Mapping[str, Any],
+        client,
+    ) -> dict[str, Any]:
+        payload = dict(pod_relation_payload)
+        pod_ref = payload.get("pod_id") or payload.get("pod_name")
+        if not isinstance(pod_ref, str) or not pod_ref.strip():
+            return payload
+
+        pods = getattr(client, "pods", None)
+        if pods is None or not hasattr(pods, "get"):
+            return payload
+        try:
+            pod = pods.get(pod_ref.strip())
+        except Exception:
+            return payload
+
+        pod_attrs = getattr(pod, "attrs", None)
+        if not isinstance(pod_attrs, Mapping):
+            return payload
+        pod_metadata = self._extract_pod_relation_payload(pod_attrs)
+        for key, value in pod_metadata.items():
+            if key in {"pod_id", "pod_name"}:
+                payload.setdefault(key, value)
+            else:
+                payload[key] = value
+        return payload
+
     def _extract_pod_relation_payload(self, attrs: Any) -> dict[str, Any]:
         if not isinstance(attrs, Mapping):
             return {}
@@ -2751,12 +2981,58 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         for source_key, target_key in (
             ("PodInfraId", "pod_infra_id"),
             ("PodInfraName", "pod_infra_name"),
+            ("InfraId", "pod_infra_id"),
+            ("InfraName", "pod_infra_name"),
         ):
             value = attrs.get(source_key)
-            if isinstance(value, str) and value.strip():
+            if isinstance(value, str) and value.strip() and target_key not in payload:
                 payload[target_key] = value.strip()
 
+        create_infra = self._extract_pod_create_infra(attrs)
+        if create_infra is not None:
+            payload["pod_create_infra"] = create_infra
+
+        shared_namespaces = self._extract_pod_shared_namespaces(attrs)
+        if shared_namespaces is not None:
+            payload["pod_shared_namespaces"] = list(shared_namespaces)
+
         return payload
+
+    def _extract_pod_create_infra(self, attrs: Mapping[str, Any]) -> bool | None:
+        for key in ("CreateInfra", "createInfra", "create_infra", "infra"):
+            value = attrs.get(key)
+            normalized = self._coerce_optional_bool(value)
+            if normalized is not None:
+                return normalized
+        if self._has_non_empty_string(attrs.get("PodInfraId")) or self._has_non_empty_string(
+            attrs.get("InfraId")
+        ):
+            return True
+        return None
+
+    def _coerce_optional_bool(self, value: Any) -> bool | None:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1", "yes", "on"}:
+                return True
+            if normalized in {"false", "0", "no", "off"}:
+                return False
+        return None
+
+    def _extract_pod_shared_namespaces(self, attrs: Mapping[str, Any]) -> tuple[str, ...] | None:
+        for key in (
+            "SharedNamespaces",
+            "shared_namespaces",
+            "sharedNamespaces",
+            "Share",
+            "share",
+        ):
+            if key not in attrs:
+                continue
+            return self._normalize_pod_shared_namespaces(attrs.get(key))
+        return None
 
     def _get_compose_labels(self, container) -> dict[str, str]:
         candidates: list[Mapping[str, Any]] = []

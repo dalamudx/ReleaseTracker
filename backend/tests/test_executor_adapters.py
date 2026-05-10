@@ -374,9 +374,10 @@ class FakePodmanNetworkManager:
 
 
 class FakePodmanPod:
-    def __init__(self, name: str, pod_id: str | None = None):
+    def __init__(self, name: str, pod_id: str | None = None, attrs: dict | None = None):
         self.id = pod_id or name
         self.name = name
+        self.attrs = attrs or {}
 
     def __eq__(self, other) -> bool:
         if isinstance(other, str):
@@ -393,8 +394,13 @@ class FakePodmanPodManager:
         self.create_returns_none = False
         self.next_create_pod_id: str | None = None
 
-    def add(self, name: str, pod_id: str | None = None) -> FakePodmanPod:
-        pod = FakePodmanPod(name, pod_id=pod_id)
+    def add(
+        self,
+        name: str,
+        pod_id: str | None = None,
+        attrs: dict | None = None,
+    ) -> FakePodmanPod:
+        pod = FakePodmanPod(name, pod_id=pod_id, attrs=attrs)
         self._pods[pod.name] = pod
         self._pods[pod.id] = pod
         return pod
@@ -462,9 +468,11 @@ class FakePodmanServerError(Exception):
 
 
 class FakePodmanApi:
-    def __init__(self, container_manager):
+    def __init__(self, container_manager, pod_manager=None):
         self._container_manager = container_manager
+        self._pod_manager = pod_manager
         self.post_calls: list[dict] = []
+        self.pod_create_posts: list[dict] = []
         self.network_connect_posts: list[dict] = []
         self.not_found_once_paths: set[str] = set()
         self.fail_empty_network_mode_for_attempts: list[str] = []
@@ -478,9 +486,6 @@ class FakePodmanApi:
         if self.require_compatible_false and kwargs.get("compatible") is not False:
             raise AssertionError("pod-backed create must call libpod with compatible=False")
         payload = json.loads(data) if isinstance(data, str) else data
-        self.post_calls.append(
-            {"path": path, "data": payload, "headers": headers or {}, "kwargs": kwargs}
-        )
         if path in self.not_found_once_paths:
             self.not_found_once_paths.remove(path)
             raise FakePodmanNotFoundError()
@@ -496,8 +501,25 @@ class FakePodmanApi:
                 {"path": path, "data": payload, "headers": headers or {}, "kwargs": kwargs}
             )
             return FakePodmanResponse({})
+        if path in {"/pods/create", "pods/create", "libpod/pods/create"}:
+            assert isinstance(payload, dict)
+            pod_name = payload.get("name")
+            assert isinstance(pod_name, str) and pod_name.strip()
+            self.pod_create_posts.append(
+                {"path": path, "data": payload, "headers": headers or {}, "kwargs": kwargs}
+            )
+            pod_id = pod_name
+            if self._pod_manager is not None:
+                self._pod_manager.create_calls.append(dict(payload))
+                pod_id = self._pod_manager.next_create_pod_id or pod_name
+                self._pod_manager.next_create_pod_id = None
+                self._pod_manager.add(pod_name, pod_id=pod_id)
+            return FakePodmanResponse({"Id": pod_id})
         if path not in {"/containers/create", "containers/create", "libpod/containers/create"}:
             raise AssertionError(f"unexpected path: {path}")
+        self.post_calls.append(
+            {"path": path, "data": payload, "headers": headers or {}, "kwargs": kwargs}
+        )
         restart_policy = payload.get("restart_policy") if isinstance(payload, dict) else None
         if isinstance(restart_policy, dict):
             raise FakePodmanServerError(
@@ -798,11 +820,11 @@ class FakePodmanClient:
         raw_api_available: bool = True,
     ):
         self.containers = FakePodmanContainerManager(containers)
+        self.pods = FakePodmanPodManager()
         if raw_api_available:
-            self.api = FakePodmanApi(self.containers)
+            self.api = FakePodmanApi(self.containers, self.pods)
         self.images = FakePodmanImageManager(should_fail=pull_should_fail)
         self.networks = FakePodmanNetworkManager(network_names or [])
-        self.pods = FakePodmanPodManager()
 
 
 def _assert_podman_pod_member_create_kwargs(create_kwargs: dict) -> None:
@@ -5088,7 +5110,7 @@ async def test_podman_compose_grouped_update_resolves_pod_id_to_name_for_low_lev
     )
 
     assert result.updated is True
-    assert client.pods.get_calls == ["0123456789abcdef"]
+    assert client.pods.get_calls == ["0123456789abcdef", "0123456789abcdef"]
     assert client.api.post_calls
     assert client.containers.create_calls == [
         {
@@ -5493,6 +5515,7 @@ async def test_podman_compose_grouped_spec_includes_pod_metadata_payload():
         "pod_name": "core-pod",
         "pod_infra_id": "infra-123",
         "pod_infra_name": "core-pod-infra",
+        "pod_create_infra": True,
     }
     assert spec.snapshot_payload["pod_id"] == "pod-core"
     assert spec.snapshot_payload["pod_name"] == "core-pod"
@@ -5500,6 +5523,238 @@ async def test_podman_compose_grouped_spec_includes_pod_metadata_payload():
     assert spec.restore_payload["pod_id"] == "pod-core"
     assert spec.restore_payload["pod_name"] == "core-pod"
     assert spec.restore_payload["pod_relation_payload"] == spec.pod_relation_payload
+
+
+@pytest.mark.asyncio
+async def test_podman_compose_grouped_update_preserves_no_infra_when_shared_namespaces_omitted():
+    runtime = RuntimeConnectionConfig(
+        name="podman-prod",
+        type="podman",
+        config={"socket": "unix:///run/podman/podman.sock"},
+        secrets={},
+    )
+    labels = {
+        "io.podman.compose.project": "nginx",
+        "com.docker.compose.service": "nginx",
+    }
+    nginx = FakeContainer(
+        "nginx-1",
+        "nginx-podman-compose",
+        FakeImage(tags=["docker.io/library/nginx:1.25"]),
+        attrs={
+            "Pod": "nginx-podman-compose",
+            "PodName": "nginx-podman-compose",
+            "Config": {
+                "Image": "docker.io/library/nginx:1.25",
+                "Labels": labels,
+                "Hostname": "nginx-host",
+            },
+            "HostConfig": {
+                "NetworkMode": "",
+                "PortBindings": {"8080/tcp": [{"HostIp": "", "HostPort": "18080"}]},
+                "Dns": ["1.1.1.1"],
+                "DnsSearch": ["svc.local"],
+                "ExtraHosts": ["api.local:10.88.0.10"],
+                "ShmSize": 67108864,
+            },
+            "NetworkSettings": {
+                "Networks": {
+                    "nginx-net": {
+                        "Aliases": ["nginx", "nginx-podman-compose"],
+                        "IPAddress": "10.88.0.20",
+                        "IPAMConfig": None,
+                    }
+                }
+            },
+        },
+    )
+    client = FakePodmanClient([nginx], network_names=["nginx-net", "podman"])
+    client.pods.add(
+        "nginx-podman-compose",
+        attrs={"CreateInfra": False},
+    )
+    adapter = PodmanRuntimeAdapter(runtime, client=client)
+
+    result = await adapter.update_compose_services(
+        {"mode": "docker_compose", "project": "nginx"},
+        {"nginx": "docker.io/library/nginx:1.26"},
+    )
+
+    assert result.updated is True
+    assert client.api.pod_create_posts == [
+        {
+            "path": "pods/create",
+            "data": {
+                "name": "nginx-podman-compose",
+                "no_infra": True,
+            },
+            "headers": {"content-type": "application/json"},
+            "kwargs": {"compatible": False},
+        }
+    ]
+    pod_create_payload = client.api.pod_create_posts[0]["data"]
+    assert "infra" not in pod_create_payload
+    assert "share" not in pod_create_payload
+    assert "shared_namespaces" not in pod_create_payload
+    for key in (
+        "networks",
+        "portmappings",
+        "dns",
+        "dns_search",
+        "hostadd",
+        "hostname",
+        "shm_size",
+    ):
+        assert key not in pod_create_payload
+    assert client.pods.create_calls == [
+        {
+            "name": "nginx-podman-compose",
+            "no_infra": True,
+        }
+    ]
+    assert client.containers.create_calls == [
+        {
+            "image": "docker.io/library/nginx:1.26",
+            "name": "nginx-podman-compose",
+            "hostname": "nginx-host",
+            "portmappings": [{"container_port": 8080, "protocol": "tcp", "host_port": 18080}],
+            "hostadd": ["api.local:10.88.0.10"],
+            "dns_server": ["1.1.1.1"],
+            "dns_search": ["svc.local"],
+            "labels": labels,
+            "shm_size": 67108864,
+            "pod": "nginx-podman-compose",
+        }
+    ]
+    assert client.api.network_connect_posts == [
+        {
+            "path": "networks/nginx-net/connect",
+            "data": {
+                "container": "new-id",
+                "aliases": ["nginx", "nginx-podman-compose"],
+                "static_ips": ["10.88.0.20"],
+            },
+            "headers": {"Content-Type": "application/json"},
+            "kwargs": {"compatible": False},
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_podman_compose_grouped_update_preserves_no_infra_empty_share_pod_topology():
+    runtime = RuntimeConnectionConfig(
+        name="podman-prod",
+        type="podman",
+        config={"socket": "unix:///run/podman/podman.sock"},
+        secrets={},
+    )
+    labels = {
+        "io.podman.compose.project": "nginx",
+        "com.docker.compose.service": "nginx",
+    }
+    nginx = FakeContainer(
+        "nginx-1",
+        "nginx-podman-compose",
+        FakeImage(tags=["docker.io/library/nginx:1.25"]),
+        attrs={
+            "Pod": "nginx-podman-compose",
+            "PodName": "nginx-podman-compose",
+            "Config": {
+                "Image": "docker.io/library/nginx:1.25",
+                "Labels": labels,
+                "Hostname": "nginx-host",
+            },
+            "HostConfig": {
+                "NetworkMode": "",
+                "PortBindings": {"8080/tcp": [{"HostIp": "", "HostPort": "18080"}]},
+                "Dns": ["1.1.1.1"],
+                "DnsSearch": ["svc.local"],
+                "ExtraHosts": ["api.local:10.88.0.10"],
+                "ShmSize": 67108864,
+            },
+            "NetworkSettings": {
+                "Networks": {
+                    "nginx-net": {
+                        "Aliases": ["nginx", "nginx-podman-compose"],
+                        "IPAddress": "10.88.0.20",
+                        "IPAMConfig": None,
+                    }
+                }
+            },
+        },
+    )
+    client = FakePodmanClient([nginx], network_names=["nginx-net", "podman"])
+    client.pods.add(
+        "nginx-podman-compose",
+        attrs={"CreateInfra": False, "SharedNamespaces": []},
+    )
+    adapter = PodmanRuntimeAdapter(runtime, client=client)
+
+    result = await adapter.update_compose_services(
+        {"mode": "docker_compose", "project": "nginx"},
+        {"nginx": "docker.io/library/nginx:1.26"},
+    )
+
+    assert result.updated is True
+    assert client.api.pod_create_posts == [
+        {
+            "path": "pods/create",
+            "data": {
+                "name": "nginx-podman-compose",
+                "no_infra": True,
+                "shared_namespaces": [],
+            },
+            "headers": {"content-type": "application/json"},
+            "kwargs": {"compatible": False},
+        }
+    ]
+    pod_create_payload = client.api.pod_create_posts[0]["data"]
+    assert "infra" not in pod_create_payload
+    assert "share" not in pod_create_payload
+    for key in (
+        "networks",
+        "portmappings",
+        "dns",
+        "dns_search",
+        "hostadd",
+        "hostname",
+        "shm_size",
+    ):
+        assert key not in pod_create_payload
+    assert client.pods.create_calls == [
+        {
+            "name": "nginx-podman-compose",
+            "no_infra": True,
+            "shared_namespaces": [],
+        }
+    ]
+    assert client.containers.create_calls == [
+        {
+            "image": "docker.io/library/nginx:1.26",
+            "name": "nginx-podman-compose",
+            "hostname": "nginx-host",
+            "portmappings": [{"container_port": 8080, "protocol": "tcp", "host_port": 18080}],
+            "hostadd": ["api.local:10.88.0.10"],
+            "dns_server": ["1.1.1.1"],
+            "dns_search": ["svc.local"],
+            "labels": labels,
+            "shm_size": 67108864,
+            "pod": "nginx-podman-compose",
+        }
+    ]
+    assert client.pods.get_calls == ["nginx-podman-compose"]
+    assert client.api.network_connect_posts == [
+        {
+            "path": "networks/nginx-net/connect",
+            "data": {
+                "container": "new-id",
+                "aliases": ["nginx", "nginx-podman-compose"],
+                "static_ips": ["10.88.0.20"],
+            },
+            "headers": {"Content-Type": "application/json"},
+            "kwargs": {"compatible": False},
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -6079,6 +6334,14 @@ async def test_podman_compose_grouped_update_drops_empty_network_values_from_pod
     ]
     for payload in payloads:
         _assert_podman_pod_member_create_kwargs(payload)
+    assert all(
+        "network_mode" not in call
+        and "network" not in call
+        and "networks" not in call
+        and "netns" not in call
+        for call in client.containers.create_calls
+    )
+    assert client.networks.connect_calls == []
     assert client.pods.create_calls == [
         {
             "name": "nginx-podman-compose",
@@ -6092,14 +6355,6 @@ async def test_podman_compose_grouped_update_drops_empty_network_values_from_pod
             },
         }
     ]
-    assert all(
-        "network_mode" not in call
-        and "network" not in call
-        and "networks" not in call
-        and "netns" not in call
-        for call in client.containers.create_calls
-    )
-    assert client.networks.connect_calls == []
     assert "boundary=networks.get" not in caplog.text
     assert "boundary=networks.connect" not in caplog.text
     assert "API_TOKEN" not in caplog.text
@@ -6177,7 +6432,7 @@ async def test_podman_compose_grouped_update_uses_resolved_pod_object_without_co
             },
         }
     ]
-    assert client.pods.get_calls == []
+    assert client.pods.get_calls == ["nginx-podman-compose"]
     assert client.api.post_calls
     assert len(client.containers.create_calls) == 1
     create_call = client.containers.create_calls[0]
@@ -6243,7 +6498,7 @@ async def test_podman_compose_grouped_update_uses_resolved_recreated_pod_after_n
         )
 
     assert result.updated is True
-    assert client.pods.get_calls == ["nginx-podman-compose"]
+    assert client.pods.get_calls == ["old-pod-id", "nginx-podman-compose"]
     assert len(client.containers.create_calls) == 1
     create_call = client.containers.create_calls[0]
     assert create_call["pod"] == "new-pod-id"
