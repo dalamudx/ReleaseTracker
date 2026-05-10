@@ -4,7 +4,6 @@ import { useTranslation } from "react-i18next"
 import type { GitHubFetchMode, TrackerChannelType } from "@/api/types"
 import {
     FormControl,
-    FormDescription,
     FormField,
     FormItem,
     FormLabel,
@@ -43,7 +42,7 @@ export function TrackerDialogSourceConfigFields({
                     control={form.control}
                     name={`sources.${index}.source_config.repo`}
                     render={({ field }) => (
-                        <FormItem className="w-full max-w-lg">
+                        <FormItem className="w-full">
                             <FormLabel>{t("tracker.fields.repo")}</FormLabel>
                             <FormControl>
                                 <Input {...field} value={field.value ?? ""} placeholder="owner/repo" />
@@ -60,7 +59,7 @@ export function TrackerDialogSourceConfigFields({
                 control={form.control}
                 name={`sources.${index}.source_config.fetch_mode`}
                 render={({ field }) => (
-                    <FormItem className="w-full max-w-md">
+                    <FormItem className="w-full">
                         <FormLabel>{t("tracker.fields.githubFetchMode")}</FormLabel>
                         <Select value={field.value ?? "rest_first"} onValueChange={(value) => field.onChange(value as GitHubFetchMode)}>
                             <FormControl>
@@ -76,7 +75,6 @@ export function TrackerDialogSourceConfigFields({
                                 ))}
                             </SelectContent>
                         </Select>
-                        <FormDescription>{t("tracker.fields.githubFetchModeDesc")}</FormDescription>
                         <FormMessage />
                     </FormItem>
                 )}
@@ -91,7 +89,7 @@ export function TrackerDialogSourceConfigFields({
                     control={form.control}
                     name={`sources.${index}.source_config.project`}
                     render={({ field }) => (
-                        <FormItem className="w-full max-w-md">
+                        <FormItem className="w-full">
                             <FormLabel>{t("tracker.fields.projectId")}</FormLabel>
                             <FormControl>
                                 <Input {...field} value={field.value ?? ""} placeholder="group/project" />
@@ -108,7 +106,7 @@ export function TrackerDialogSourceConfigFields({
                 control={form.control}
                 name={`sources.${index}.source_config.instance`}
                 render={({ field }) => (
-                    <FormItem className="w-full max-w-md">
+                    <FormItem className="w-full">
                         <FormLabel>{t("tracker.fields.instanceUrl")}</FormLabel>
                         <FormControl>
                             <Input {...field} value={field.value ?? ""} placeholder="https://gitlab.com" />
@@ -127,7 +125,7 @@ export function TrackerDialogSourceConfigFields({
                     control={form.control}
                     name={`sources.${index}.source_config.repo`}
                     render={({ field }) => (
-                        <FormItem className="w-full max-w-md">
+                        <FormItem className="w-full">
                             <FormLabel>{t("tracker.fields.giteaRepo")}</FormLabel>
                             <FormControl>
                                 <Input {...field} value={field.value ?? ""} placeholder="owner/repo" />
@@ -144,7 +142,7 @@ export function TrackerDialogSourceConfigFields({
                 control={form.control}
                 name={`sources.${index}.source_config.instance`}
                 render={({ field }) => (
-                    <FormItem className="w-full max-w-md">
+                    <FormItem className="w-full">
                         <FormLabel>{t("tracker.fields.instanceUrl")}</FormLabel>
                         <FormControl>
                             <Input {...field} value={field.value ?? ""} placeholder="https://gitea.example.com" />
@@ -163,7 +161,7 @@ export function TrackerDialogSourceConfigFields({
                     control={form.control}
                     name={`sources.${index}.source_config.chart`}
                     render={({ field }) => (
-                        <FormItem className="w-full max-w-md">
+                        <FormItem className="w-full">
                             <FormLabel>{t("tracker.fields.chartName")}</FormLabel>
                             <FormControl>
                                 <Input {...field} value={field.value ?? ""} placeholder="nginx" />
@@ -180,7 +178,7 @@ export function TrackerDialogSourceConfigFields({
                 control={form.control}
                 name={`sources.${index}.source_config.repo`}
                 render={({ field }) => (
-                    <FormItem className="w-full max-w-md">
+                    <FormItem className="w-full">
                         <FormLabel>{t("tracker.fields.chartRepo")}</FormLabel>
                         <FormControl>
                             <Input {...field} value={field.value ?? ""} placeholder="https://charts.bitnami.com/bitnami" />
@@ -198,7 +196,7 @@ export function TrackerDialogSourceConfigFields({
                 control={form.control}
                 name={`sources.${index}.source_config.image`}
                 render={({ field }) => (
-                    <FormItem className="w-full max-w-lg">
+                    <FormItem className="w-full">
                         <FormLabel>{t("tracker.fields.image")}</FormLabel>
                         <FormControl>
                             <Input {...field} value={field.value ?? ""} placeholder="example/app" />
@@ -211,12 +209,12 @@ export function TrackerDialogSourceConfigFields({
     }
 
     return (
-        <div className="flex w-full flex-wrap gap-4">
+        <>
             <FormField
                 control={form.control}
                 name={`sources.${index}.source_config.registry`}
                 render={({ field }) => (
-                    <FormItem className="w-full max-w-md">
+                    <FormItem className="w-full">
                         <FormLabel>{t("tracker.fields.registry")}</FormLabel>
                         <FormControl>
                             <Input {...field} value={field.value ?? ""} placeholder="ghcr.io" />
@@ -230,7 +228,7 @@ export function TrackerDialogSourceConfigFields({
                 control={form.control}
                 name={`sources.${index}.source_config.published_at_mode`}
                 render={({ field }) => (
-                    <FormItem className="w-full max-w-md">
+                    <FormItem className="w-full">
                         <FormLabel>{t("tracker.fields.publishedAtMode.label")}</FormLabel>
                         <Select
                             value={field.value ?? "auto"}
@@ -255,13 +253,10 @@ export function TrackerDialogSourceConfigFields({
                                 </SelectItem>
                             </SelectContent>
                         </Select>
-                        <FormDescription>
-                            {t("tracker.fields.publishedAtMode.description")}
-                        </FormDescription>
                         <FormMessage />
                     </FormItem>
                 )}
             />
-        </div>
+        </>
     )
 }

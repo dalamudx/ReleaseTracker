@@ -39,6 +39,7 @@ import { usePageSize } from "@/hooks/use-page-size"
 import { toast } from "sonner"
 
 const SYSTEM_TIMEZONE_SETTING_KEY = "system.timezone"
+const SNAPSHOT_SUPPORTED_RUNTIME_TYPES = new Set(["docker", "podman"])
 
 function getBrowserTimezone() {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
@@ -262,6 +263,12 @@ export default function ExecutorsPage() {
     }
 
     const selectedExecutor = executors.find((executor) => executor.id === selectedExecutorId) ?? selectedExecutorSnapshot
+    const selectedRuntimeConnection = selectedExecutor
+        ? runtimeConnections.find((connection) => connection.id === selectedExecutor.runtime_connection_id) ?? null
+        : null
+    const canViewSnapshots = selectedRuntimeConnection
+        ? SNAPSHOT_SUPPORTED_RUNTIME_TYPES.has(selectedRuntimeConnection.type)
+        : false
 
     // Client-side filter. The API doesn't accept a search param yet, so we
     // filter the current page locally — good enough for the common case and a
@@ -412,7 +419,9 @@ export default function ExecutorsPage() {
                     <Tabs defaultValue="history" className="flex min-h-0 flex-1 flex-col px-4 pt-3 sm:px-6">
                         <TabsList className="shrink-0 self-start">
                             <TabsTrigger value="history">{t('executors.history.title')}</TabsTrigger>
-                            <TabsTrigger value="snapshots">{t('executors.snapshots.tab')}</TabsTrigger>
+                            {canViewSnapshots ? (
+                                <TabsTrigger value="snapshots">{t('executors.snapshots.tab')}</TabsTrigger>
+                            ) : null}
                         </TabsList>
                         <TabsContent
                             value="history"
@@ -420,16 +429,18 @@ export default function ExecutorsPage() {
                         >
                             <ExecutorExecutionHistoryPanel executor={selectedExecutor} refreshKey={executionHistoryRefreshKey} />
                         </TabsContent>
-                        <TabsContent
-                            value="snapshots"
-                            className="mt-3 min-h-0 flex-1 overflow-hidden pb-4 data-[state=inactive]:hidden"
-                        >
-                            <ExecutorSnapshotsPanel
-                                executor={selectedExecutor}
-                                refreshKey={executionHistoryRefreshKey}
-                                onRollbackQueued={handleRollbackQueued}
-                            />
-                        </TabsContent>
+                        {canViewSnapshots ? (
+                            <TabsContent
+                                value="snapshots"
+                                className="mt-3 min-h-0 flex-1 overflow-hidden pb-4 data-[state=inactive]:hidden"
+                            >
+                                <ExecutorSnapshotsPanel
+                                    executor={selectedExecutor}
+                                    refreshKey={executionHistoryRefreshKey}
+                                    onRollbackQueued={handleRollbackQueued}
+                                />
+                            </TabsContent>
+                        ) : null}
                     </Tabs>
                 </SheetContent>
             </Sheet>

@@ -1014,7 +1014,6 @@
             "registry": "Registry Address",
             "publishedAtMode": {
                 "label": "Publish-time source",
-                "description": "How accurately the publish time is recorded for container tags. Auto is recommended: it fetches the real build time from OCI-compliant registries like GHCR/Harbor while falling back to first-observed time on docker.io anonymous to protect rate limits.",
                 "auto": "Auto (detect by registry)",
                 "preferReal": "Always fetch real build time",
                 "firstObserved": "First observed time only"

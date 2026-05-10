@@ -52,14 +52,35 @@ vi.mock("react-i18next", () => ({
 }))
 
 vi.mock("@/components/executors/ExecutorList", () => ({
-  ExecutorList: ({ executors, loading, onRun }: { executors: ExecutorListItem[]; loading: boolean; onRun: (executorId: number) => void }) => (
+  ExecutorList: ({
+    executors,
+    loading,
+    onRun,
+    onViewExecutionHistory,
+  }: {
+    executors: ExecutorListItem[]
+    loading: boolean
+    onRun: (executorId: number) => void
+    onViewExecutionHistory: (executorId: number) => void
+  }) => (
     <div data-testid="executor-list" data-loading={String(loading)}>
       {executors.map((executor) => (
-        <button key={executor.id} type="button" onClick={() => executor.id && onRun(executor.id)}>
-          run executor {executor.id}
-        </button>
+        <div key={executor.id}>
+          <button type="button" onClick={() => executor.id && onRun(executor.id)}>
+            run executor {executor.id}
+          </button>
+          <button type="button" onClick={() => executor.id && onViewExecutionHistory(executor.id)}>
+            history executor {executor.id}
+          </button>
+        </div>
       ))}
     </div>
+  ),
+}))
+
+vi.mock("@/components/executors/ExecutorSnapshotsPanel", () => ({
+  ExecutorSnapshotsPanel: ({ executor }: { executor: ExecutorListItem | null }) => (
+    <div data-testid="executor-snapshots-panel">{executor?.name}</div>
   ),
 }))
 
@@ -265,5 +286,65 @@ describe("ExecutorsPage run flow", () => {
     expect(runExecutorMock).not.toHaveBeenCalled()
     expect(toastErrorMock).toHaveBeenCalledWith("executors.toasts.runDisabled")
     expect(toastSuccessMock).not.toHaveBeenCalledWith("executors.toasts.runQueued")
+  })
+
+  it.each(["docker", "podman"] as const)(
+    "shows snapshot tab for %s runtime connections",
+    async (runtimeType) => {
+      getExecutorsMock.mockResolvedValue({
+        items: [
+          createExecutor({ id: 1, name: `${runtimeType}-executor`, runtime_type: runtimeType, runtime_connection_id: 1 }),
+        ],
+        total: 1,
+      })
+      getRuntimeConnectionsMock.mockResolvedValue({
+        items: [createRuntimeConnection({ id: 1, type: runtimeType })],
+        total: 1,
+      })
+      getTrackersMock.mockResolvedValue({ items: [createTracker()], total: 1 })
+      getSettingsMock.mockResolvedValue([])
+
+      renderExecutorsPage()
+
+      await waitFor(() => {
+        expect(screen.getByTestId("executor-list")).toHaveAttribute("data-loading", "false")
+      })
+
+      fireEvent.click(screen.getByRole("button", { name: "history executor 1" }))
+
+      expect(screen.getByRole("tab", { name: "executors.snapshots.tab" })).toBeInTheDocument()
+    },
+  )
+
+  it("hides snapshot tab for non-Docker and non-Podman runtime connections", async () => {
+    getExecutorsMock.mockResolvedValue({
+      items: [
+        createExecutor({
+          id: 3,
+          name: "kubernetes-executor",
+          runtime_type: "kubernetes",
+          runtime_connection_id: 3,
+          runtime_connection_name: "k8s-prod",
+        }),
+      ],
+      total: 1,
+    })
+    getRuntimeConnectionsMock.mockResolvedValue({
+      items: [createRuntimeConnection({ id: 3, name: "k8s-prod", type: "kubernetes" })],
+      total: 1,
+    })
+    getTrackersMock.mockResolvedValue({ items: [createTracker()], total: 1 })
+    getSettingsMock.mockResolvedValue([])
+
+    renderExecutorsPage()
+
+    await waitFor(() => {
+      expect(screen.getByTestId("executor-list")).toHaveAttribute("data-loading", "false")
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "history executor 3" }))
+
+    expect(screen.queryByRole("tab", { name: "executors.snapshots.tab" })).not.toBeInTheDocument()
+    expect(screen.queryByTestId("executor-snapshots-panel")).not.toBeInTheDocument()
   })
 })

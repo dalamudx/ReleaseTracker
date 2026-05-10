@@ -206,12 +206,12 @@ export function TrackerDialogTrackerChannelsSection({
                             </div>
 
                             <div className="space-y-4 p-4">
-                                <div className="grid items-start gap-4 md:grid-cols-2">
+                                <div className="grid items-start gap-4 md:grid-cols-3">
                                     <FormField
                                         control={form.control}
                                         name={`sources.${index}.source_key`}
                                         render={({ field: channelKeyField }) => (
-                                            <FormItem className="w-full max-w-md">
+                                            <FormItem className="w-full">
                                                 <FormLabel>{t("trackers.aggregate.fields.sourceKey")}</FormLabel>
                                                 <FormControl>
                                                     <Input
@@ -227,15 +227,11 @@ export function TrackerDialogTrackerChannelsSection({
                                         )}
                                     />
 
-                                    <TrackerDialogSourceConfigFields form={form} index={index} channelType={channelType} group="primary" />
-                                </div>
-
-                                <div className="grid items-start gap-4 md:grid-cols-3">
                                     <FormField
                                         control={form.control}
                                         name={`sources.${index}.source_type`}
                                         render={({ field: channelTypeField }) => (
-                                            <FormItem className="w-full max-w-xs">
+                                            <FormItem className="w-full">
                                                 <FormLabel>{t("trackers.aggregate.fields.sourceType")}</FormLabel>
                                                 <Select value={channelTypeField.value} onValueChange={(value) => channelTypeField.onChange(value as TrackerChannelType)}>
                                                     <FormControl>
@@ -258,7 +254,7 @@ export function TrackerDialogTrackerChannelsSection({
                                         control={form.control}
                                         name={`sources.${index}.credential_name`}
                                         render={({ field: credentialField }) => (
-                                            <FormItem className="w-full max-w-sm">
+                                            <FormItem className="w-full">
                                                 <FormLabel>{t("trackers.aggregate.fields.credential")}</FormLabel>
                                                 <Select value={credentialField.value || "none"} onValueChange={(value) => credentialField.onChange(value === "none" ? "" : value)}>
                                                     <FormControl>
@@ -279,7 +275,10 @@ export function TrackerDialogTrackerChannelsSection({
                                             </FormItem>
                                         )}
                                     />
+                                </div>
 
+                                <div className={channelType === "container" ? "grid items-start gap-4 md:grid-cols-3" : "grid items-start gap-4 md:grid-cols-2"}>
+                                    <TrackerDialogSourceConfigFields form={form} index={index} channelType={channelType} group="primary" />
                                     <TrackerDialogSourceConfigFields form={form} index={index} channelType={channelType} group="secondary" />
                                 </div>
                             </div>
