@@ -4,21 +4,21 @@ title: Installation
 
 # Installation
 
-This page covers the three ways to deploy ReleaseTracker: Docker, Docker Compose, and local development. Docker or Docker Compose is recommended for production.
+This page covers the three deployment paths for ReleaseTracker: Docker, Docker Compose, and local development. Docker or Docker Compose is recommended for production.
 
 ## 1. Prerequisites
 
 | Item | Requirement | Notes |
 | ---- | ----------- | ----- |
-| Server | Linux x86_64 | The container image currently ships for `linux/amd64` only. |
-| Port | `8000` reachable directly or via a reverse proxy | Frontend assets and the API share this port. |
-| Persistent volume | Mounted at `/app/backend/data` | SQLite DB and system keys live here. |
-| Outbound network | Access to upstream services (GitHub/GitLab/… and OCI registries) | Needed when scanning versions. |
+| Operating system | Linux x86_64 | The official image is currently published for `linux/amd64` only. |
+| Port | `8000` | Frontend assets and the API share this port, optionally fronted by a reverse proxy. |
+| Persistent volume | Mounted at `/app/backend/data` | Holds the SQLite database and the system keys. |
+| Outbound network | Access to upstream services (GitHub / GitLab / … and OCI registries) | Required during version scans. |
 
-For local development you'll also need Python 3.12+, Node.js 20+, `npm`, and `uv`.
+Local development additionally requires Python 3.12+, Node.js 20+, `npm`, and `uv`.
 
-!!! warning "Plan the persistent volume first"
-    It will run without a mount, but everything — the database and `system-secrets.json` — is lost when the container is recreated. Losing `system-secrets.json` makes every encrypted value (credentials, OIDC client secrets, runtime connection secrets) **permanently undecryptable**.
+!!! warning "Always configure a persistent volume"
+    Running without a volume works, but every container recreation wipes the database and `system-secrets.json`. Losing `system-secrets.json` makes every encrypted credential, OIDC client secret, and runtime connection secret **permanently undecryptable**.
 
 ## 2. Docker
 
@@ -62,13 +62,13 @@ For local development you'll also need Python 3.12+, Node.js 20+, `npm`, and `uv
 
 The image supports three entry commands:
 
-| Command | Description | When to use |
-| ------- | ----------- | ----------- |
-| `serve` | Starts the app without running migrations. | When you know the schema is already up to date. |
-| `migrate` | Runs database migrations only. | Migrate before a cut-over so startup is fast. |
-| `migrate-and-serve` | Migrates, then starts the app. | Recommended default for fresh installs and upgrades. |
+| Command | Behaviour | When to use |
+| ------- | --------- | ----------- |
+| `serve` | Starts the application without running migrations. | When the schema is known to be up to date. |
+| `migrate` | Runs database migrations only. | To migrate ahead of a cut-over and separate migration cost from startup. |
+| `migrate-and-serve` | Runs migrations, then starts the application. | Recommended default for both fresh installs and upgrades. |
 
-You should see something like this on first boot:
+Once the application is up, the log should contain entries similar to:
 
 ```
 SQLite persistent connection established with WAL mode enabled
@@ -77,36 +77,36 @@ INFO:     Uvicorn running on http://0.0.0.0:8000
 
 ## 3. First login
 
-Open <http://localhost:8000> (or your reverse proxy address). A default administrator is created automatically:
+Open <http://localhost:8000> (or the address exposed by the reverse proxy). A default administrator account is created on first launch:
 
 | Username | Password |
 | -------- | -------- |
 | `admin` | `admin` |
 
 !!! danger "Change the default password immediately"
-    First thing after login: open the user menu and set a strong password. Exposing a stock `admin/admin` instance on the internet means anyone can take it over.
+    After signing in, open the **user menu at the bottom-left of the sidebar → User Settings → Change Password** and set a strong password. An instance exposed to the internet with default credentials can be taken over by anyone.
 
 ## 4. Data directory layout
 
-The volume mounted at `/app/backend/data` holds roughly:
+The volume mounted at `/app/backend/data` typically contains:
 
 ```
 data/
-├── releases.db                 # SQLite main DB
+├── releases.db                 # SQLite main database
 ├── releases.db-shm             # SQLite WAL shared memory
 ├── releases.db-wal             # SQLite WAL write-ahead log
 └── system-secrets.json         # JWT signing key + Fernet encryption key
 ```
 
-Backup strategy:
+Backup guidance:
 
-- **Back up the whole directory**: the `.db-wal` / `.db-shm` files pair with the main DB; backing up only one of them can yield an inconsistent snapshot.
-- **`system-secrets.json` and the DB must travel together**: the DB alone can't decrypt any encrypted column.
-- For safest snapshots, stop the container (or force a WAL checkpoint) before copying. In production: `docker compose stop`, copy, then start.
+- **Back up the directory as a unit.** `.db-wal` / `.db-shm` and the main database form a set; copying them independently can yield an inconsistent snapshot.
+- **`system-secrets.json` and the database must travel together.** Without the keys, the encrypted columns (credentials, OIDC client secrets, runtime connection secrets) cannot be decrypted.
+- For production backups, stop the container (`docker compose stop` or `docker stop releasetracker`) before performing file-level copies.
 
 ## 5. Reverse proxy (optional but recommended)
 
-Most production deployments run behind Nginx / Traefik / Caddy for HTTPS, access control, or sub-path hosting.
+ReleaseTracker is typically placed behind Nginx / Traefik / Caddy for HTTPS, access control, or sub-path hosting.
 
 === "Nginx"
 
@@ -155,34 +155,34 @@ Most production deployments run behind Nginx / Traefik / Caddy for HTTPS, access
           - "traefik.http.services.rt.loadbalancer.server.port=8000"
     ```
 
-After deploying, set the matching public address in `System Settings → Global Settings → BASE URL`, for example `https://releases.example.com`. For sub-path deployments (e.g. `https://example.com/releasetracker`), the BASE URL must include the full sub-path. BASE URL drives the OIDC callback:
+After deployment, set **System Settings → Global Settings → BASE URL** to match the public address, for example `https://releases.example.com`. For sub-path deployments (e.g. `https://example.com/releasetracker`), the BASE URL must include the full sub-path. BASE URL drives the OIDC callback:
 
 ```text
 {BASE URL}/auth/oidc/{provider}/callback
 ```
 
-A misconfigured BASE URL typically shows up as OIDC login redirecting to the wrong host or returning `redirect_uri_mismatch`.
+A mismatched BASE URL most commonly surfaces as OIDC logins redirecting to the wrong host or failing with `redirect_uri_mismatch`.
 
-## 6. Upgrading
+## 6. Upgrades
 
-1. Stop the container: `docker compose stop` (or `docker stop releasetracker`).
-2. Back up the `./data/` directory.
-3. Pull the new image: `docker compose pull` (or `docker pull ghcr.io/dalamudx/releasetracker:latest`).
-4. Start: `docker compose up -d` (the `migrate-and-serve` entrypoint auto-applies schema migrations).
-5. Watch the logs: `docker compose logs -f`.
+1. Stop the running container: `docker compose stop`, or `docker stop releasetracker`.
+2. Back up the `./data/` directory (see section 4).
+3. Pull the new image: `docker compose pull`, or `docker pull ghcr.io/dalamudx/releasetracker:latest`.
+4. Start again: `docker compose up -d`. The `migrate-and-serve` entry command runs dbmate migrations before the server boots.
+5. Follow the logs to confirm the migration completed: `docker compose logs -f`.
 
-!!! tip "Check the release notes before cross-version upgrades"
-    Releases that change the schema call it out in the GitHub release notes. dbmate migrations are forward-only — once applied, downgrading to an older version may refuse to start.
+!!! note "About downgrades"
+    dbmate migrations are forward-only. After a new version's migrations have been applied, reverting to an older container may refuse to start due to schema mismatch; recovery requires restoring from the backup taken in step 2.
 
 ## 7. Local development
 
-For contributors and debugging only.
+For contributors and local debugging only.
 
 ```bash
 git clone https://github.com/dalamudx/ReleaseTracker.git
 cd ReleaseTracker
 
-make install       # Install backend + frontend deps (needs uv + npm)
+make install       # Install backend + frontend dependencies (requires uv and npm)
 make dev           # Run backend + frontend in parallel
 ```
 
@@ -192,35 +192,35 @@ Default ports:
 - Backend API: <http://localhost:8000>
 - Swagger UI / ReDoc: <http://localhost:8000/docs>, <http://localhost:8000/redoc>
 
-Vite proxies `/api` to the backend, so you only need to visit the frontend port during development.
+In development, Vite proxies `/api` to the backend, so only the frontend port needs to be visited from the browser.
 
 ## 8. Common deployment issues
 
-!!! failure "Permission error on `system-secrets.json` at startup"
-    The container can't write to the data directory. Check host permissions — the container runs as a non-root user (typically UID `1000` depending on the image). Grant it read/write access:
+!!! failure "Container cannot write to `data/`"
+    The container runs as `root` by default, so permission errors are uncommon. If deploying with rootless Docker, SELinux, or another runtime that restricts write access, make sure the mount is writable for the process, for example:
     ```bash
-    chown -R 1000:1000 ./data
+    chmod -R u+rwX ./data
     ```
 
 !!! failure "OIDC login fails with `redirect_uri_mismatch`"
-    - The value of `System Settings → Global Settings → BASE URL` must exactly match the callback prefix registered at your IdP.
+    - Verify that **System Settings → Global Settings → BASE URL** matches the callback prefix registered at the IdP exactly.
     - Sub-path deployments must include the full sub-path.
-    - After changing the BASE URL, sign out and back in for it to take effect.
+    - Changes to the BASE URL only take effect after signing out and back in.
 
-!!! failure "UI loads through the reverse proxy but API calls return 404"
-    Usually the proxy isn't forwarding `/api/*`, or it's stripping the path prefix. ReleaseTracker serves the API and static assets from the same FastAPI process — both `/` and `/api` should reach the same upstream with no rewriting.
+!!! failure "The UI loads through the reverse proxy but API calls return 404"
+    Usually the proxy is not forwarding `/api/*`, or is stripping a path prefix. ReleaseTracker serves the API and static assets from the same FastAPI process, so `/` and `/api` should use identical `proxy_pass` without path rewriting.
 
 !!! failure "Container keeps restarting after an upgrade"
-    Run the `migrate` entrypoint once to inspect the migration log:
+    Run the `migrate` entry once to inspect the migration output:
     ```bash
     docker run --rm \
       -v $(pwd)/data:/app/backend/data \
       ghcr.io/dalamudx/releasetracker:latest migrate
     ```
-    Schema conflicts usually mean the DB was modified by hand. Restore from backup or rebuild from the official schema.
+    Schema conflicts typically indicate the database was modified by hand; restore from backup.
 
 ## 9. Next steps
 
-- Put a reverse proxy in front and set the BASE URL (see section 5).
+- Configure a reverse proxy and set the BASE URL as needed (section 5).
 - Add tokens, OIDC client secrets, and runtime connection secrets under **Credentials**.
-- The **Configuration / Trackers / Executors / Operations** pages will follow — check back as they land.
+- Watch for the upcoming **Configuration / Trackers / Executors / Operations** chapters.

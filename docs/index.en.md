@@ -6,11 +6,11 @@ title: ReleaseTracker Wiki
 
 <div class="grid cards" markdown>
 
--   :material-rocket-launch-outline: **Get Started**
+-   :material-rocket-launch-outline: **Get started**
 
     ---
 
-    Launch with a single Docker command or via Docker Compose.
+    Deploy with Docker or Docker Compose.
 
     [:octicons-arrow-right-24: Installation](getting-started/installation.en.md)
 
@@ -18,7 +18,7 @@ title: ReleaseTracker Wiki
 
     ---
 
-    Hosted on GitHub. Issues and PRs welcome.
+    Hosted on GitHub. Issues and pull requests welcome.
 
     [:octicons-arrow-right-24: GitHub](https://github.com/dalamudx/ReleaseTracker)
 
@@ -26,28 +26,27 @@ title: ReleaseTracker Wiki
 
 ## What it is
 
-ReleaseTracker is a lightweight, configurable release tracking and update orchestration tool. It tracks releases and tags from GitHub, GitLab, Gitea, Helm charts, and OCI container registries, and maps version changes to runtime targets such as Docker, Podman, Portainer, Kubernetes, and Helm.
+ReleaseTracker is a lightweight, configurable release tracking and update orchestration tool. It tracks releases and tags from GitHub, GitLab, Gitea, Helm charts, and OCI container registries, and maps version changes to runtime targets such as Docker, Podman, Portainer, Kubernetes, and Helm releases.
 
-## Who it's for
+## Who it is for
 
-- **Ops / DevOps**: track upstream dependency versions and roll updates into your environments on a schedule.
-- **Self-hosters**: a single panel to manage upgrades across multiple Docker / K8s / Helm deployments.
-- **Platform teams**: stitch version discovery, approval, execution, and rollback into an auditable flow.
+- **Ops / DevOps**: teams tracking upstream dependency versions and rolling updates into their own environments on a schedule.
+- **Self-hosting administrators**: operators who want a single console to manage upgrades across multiple Docker / Kubernetes / Helm deployments.
 
-!!! info "This Wiki is a work in progress"
-    Only the skeleton and the Installation page are live for now. Configuration details, tracker / executor deep-dives, operations guides, and FAQs will follow.
+!!! info "This Wiki is under construction"
+    Only the skeleton and the Installation chapter are live today. Upcoming chapters: Configuration, Trackers, Executors, Operations, known limitations, and FAQ.
 
-## Capabilities at a glance
+## Core capabilities
 
-- **Multi-source tracking**: GitHub, GitLab (incl. self-hosted), Gitea, Helm charts, Docker Hub, GHCR, private OCI registries.
-- **Aggregate trackers**: bind multiple sources under one tracker; filter, merge, and display via release channel rules.
-- **Executor orchestration**: discover, bind, and run updates against containers, Compose projects, Portainer stacks, Kubernetes workloads, and Helm releases — manually, on schedule, or in maintenance windows, with full run history.
-- **Snapshot & rollback**: pre-update snapshots with rollback and health-check-driven recovery.
-- **Security**: local users + JWT + OIDC; Fernet-encrypted secrets; rotatable system keys.
-- **Web UI configuration**: timezone, log level, history retention, BASE URL, key rotation — all from the browser; no environment variables required.
+- **Multi-source release tracking**: GitHub, GitLab (including self-hosted instances), Gitea, Helm charts, Docker Hub, GHCR, and private OCI registries.
+- **Aggregate trackers**: bind multiple sources under a single tracker; filter, merge, and display releases through release channel rules.
+- **Executor orchestration**: target discovery, binding, manual / scheduled execution, maintenance windows, and run history for containers, Compose projects, Portainer stacks, Kubernetes workloads, and Helm releases.
+- **Snapshot and rollback (selected executors)**: pre-update snapshots and manual rollback are supported only for Docker / Podman single-container executors and Helm release executors. Docker Compose, Portainer stack, and Kubernetes workload executors do not currently capture pre-update snapshots and cannot be rolled back from them.
+- **Security**: local users plus JWT and OIDC; sensitive data is encrypted with Fernet; system keys are rotatable.
+- **Web UI configuration**: timezone, log level, release history retention, BASE URL, and key rotation are all handled from the browser without environment variables.
 
 ## Next steps
 
-- Follow the [Installation](getting-started/installation.en.md) guide to bring it up.
-- Change the default admin password immediately after first login.
-- Watch for upcoming **Configuration / Operations** pages.
+- Follow [Installation](getting-started/installation.en.md) to deploy ReleaseTracker.
+- Change the default administrator password after first login.
+- Add the credentials and tokens you will need later under **Credentials**.

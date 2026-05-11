@@ -4,21 +4,21 @@ title: 安装部署
 
 # 安装部署
 
-本页覆盖 ReleaseTracker 的三种部署方式：Docker、Docker Compose、本地开发模式。生产环境推荐 Docker 或 Docker Compose。
+本页说明 ReleaseTracker 的三种部署方式：Docker、Docker Compose、本地开发模式。生产环境推荐 Docker 或 Docker Compose。
 
 ## 1. 前置要求
 
-| 项目 | 要求 | 备注 |
+| 项目 | 要求 | 说明 |
 | ---- | ---- | ---- |
-| 服务器 | Linux x86_64 | 容器镜像当前仅构建 `linux/amd64` |
-| 端口 | `8000` 可对外或经反代 | 前端静态资源和 API 共用该端口 |
-| 持久化目录 | 挂载到容器 `/app/backend/data` | SQLite 数据库与系统密钥落在此目录 |
-| 出站网络 | 允许访问上游（GitHub/GitLab/…、OCI Registry） | 扫描版本时使用 |
+| 操作系统 | Linux x86_64 | 官方容器镜像目前仅提供 `linux/amd64` 构建。 |
+| 监听端口 | `8000` | 前端静态资源与 API 共用该端口；经反向代理暴露亦可。 |
+| 持久化目录 | 挂载到容器内 `/app/backend/data` | SQLite 数据库与系统密钥均落在此目录。 |
+| 出站网络 | 可访问上游（GitHub/GitLab/… 与各 OCI Registry） | 执行版本扫描时使用。 |
 
-如果需要本地开发或调试，另外需要：Python 3.12+、Node.js 20+、`npm`、`uv`。
+本地开发或调试额外需要：Python 3.12+、Node.js 20+、`npm`、`uv`。
 
-!!! warning "请先规划持久化目录"
-    不挂载目录也能跑，但容器重建后数据库和 `system-secrets.json` 都会丢失。丢失 `system-secrets.json` 会让所有已加密数据（凭证、OIDC 密钥、运行时连接密钥）**永久不可解密**。
+!!! warning "务必配置持久化目录"
+    不挂载持久化目录也能运行，但容器重建后数据库和 `system-secrets.json` 会全部丢失。丢失 `system-secrets.json` 会使已加密的凭证、OIDC 客户端密钥、运行时连接密钥**永久无法解密**。
 
 ## 2. Docker 部署
 
@@ -37,7 +37,7 @@ title: 安装部署
 
 === "Docker Compose"
 
-    `docker-compose.yml`:
+    `docker-compose.yml`：
 
     ```yaml
     services:
@@ -60,15 +60,15 @@ title: 安装部署
 
 ### 入口命令
 
-Docker 镜像支持三种入口命令：
+镜像支持三种入口命令：
 
-| 命令 | 说明 | 典型场景 |
+| 命令 | 行为 | 建议使用场景 |
 | ---- | ---- | ---- |
-| `serve` | 只启动应用，不执行迁移 | 确认数据库 schema 已经是最新时使用 |
-| `migrate` | 只执行数据库迁移 | 升级前预先迁移，避免应用启动阶段耗时 |
-| `migrate-and-serve` | 先迁移后启动 | 默认推荐；新装 / 升级都能用 |
+| `serve` | 仅启动应用，不执行数据库迁移。 | 已经确认 schema 为最新时使用。 |
+| `migrate` | 仅执行数据库迁移。 | 升级前预先迁移，将迁移开销与启动过程分离。 |
+| `migrate-and-serve` | 先迁移再启动。 | 默认推荐；新装与升级均适用。 |
 
-首次启动日志里会看到：
+应用正常启动后，日志中会出现类似如下条目：
 
 ```
 SQLite persistent connection established with WAL mode enabled
@@ -77,18 +77,18 @@ INFO:     Uvicorn running on http://0.0.0.0:8000
 
 ## 3. 首次登录
 
-部署完成后访问 <http://localhost:8000>（或你的反代地址）。首次启动会自动创建默认管理员：
+访问 <http://localhost:8000>（或反向代理的对外地址）。首次启动会自动创建默认管理员账户：
 
 | 用户名 | 密码 |
 | ------ | ---- |
 | `admin` | `admin` |
 
-!!! danger "立即修改默认密码"
-    登录后第一件事：在右上角用户菜单打开「修改密码」并设置强密码。如果暴露在公网而没改密码，任何人都能接管这个实例。
+!!! danger "请立即修改默认密码"
+    登录后第一时间修改密码：打开**左下角用户菜单 → 用户设置 → 修改密码**。如果使用默认凭证将实例暴露在公网，任何人都可直接接管。
 
 ## 4. 数据目录结构
 
-挂载到容器内 `/app/backend/data` 的目录大致长这样：
+挂载到 `/app/backend/data` 的目录中通常包含：
 
 ```
 data/
@@ -98,15 +98,15 @@ data/
 └── system-secrets.json         # JWT 签名密钥 + Fernet 加密密钥
 ```
 
-备份策略：
+备份建议：
 
-- **必须整体备份目录**：SQLite 的 `.db-wal` / `.db-shm` 与主库配套，分开备份可能得到不一致快照。
-- **`system-secrets.json` 与数据库必须一起备份**：单独备份数据库无法解密其中任何加密字段。
-- 建议在容器停止或 `PRAGMA wal_checkpoint` 后再拷贝；生产环境可先 `docker compose stop`，拷贝，再启动。
+- **整目录一致备份**：`.db-wal` / `.db-shm` 与主库为一组，分开拷贝可能得到不一致快照。
+- **`system-secrets.json` 与数据库必须一同备份**：缺少密钥文件时，数据库中的加密字段（凭证、OIDC 客户端密钥、运行时连接密钥）将无法解密。
+- 生产环境建议先 `docker compose stop`（或 `docker stop releasetracker`）后再进行文件级复制。
 
 ## 5. 反向代理（可选但推荐）
 
-生产环境通常在 Nginx / Traefik / Caddy 后面运行 ReleaseTracker，以便提供 HTTPS、访问控制或子路径部署。
+生产环境通常在 Nginx / Traefik / Caddy 后方运行 ReleaseTracker，用于提供 HTTPS、访问控制或子路径部署。
 
 === "Nginx"
 
@@ -155,72 +155,72 @@ data/
           - "traefik.http.services.rt.loadbalancer.server.port=8000"
     ```
 
-部署后务必在「系统设置 → 全局配置 → BASE URL」填写与反代匹配的公网地址，例如 `https://releases.example.com`。子路径部署（如 `https://example.com/releasetracker`）时 BASE URL 必须包含完整子路径。BASE URL 决定 OIDC callback：
+部署完成后，在 **系统设置 → 全局配置 → BASE URL** 填写与反向代理一致的公网地址，例如 `https://releases.example.com`；若部署在子路径下（如 `https://example.com/releasetracker`），BASE URL 必须包含完整子路径。BASE URL 决定 OIDC callback：
 
 ```text
 {BASE URL}/auth/oidc/{provider}/callback
 ```
 
-BASE URL 配置错误时最明显的症状是 OIDC 登录回跳到错误域名或返回 `redirect_uri_mismatch`。
+BASE URL 与实际访问地址不一致时，最常见的表现是 OIDC 登录回跳到错误域名或返回 `redirect_uri_mismatch`。
 
 ## 6. 升级
 
-1. 停止当前容器：`docker compose stop`（或 `docker stop releasetracker`）。
-2. 备份 `./data/` 目录。
-3. 拉取新镜像：`docker compose pull`（或 `docker pull ghcr.io/dalamudx/releasetracker:latest`）。
-4. 启动：`docker compose up -d`（`migrate-and-serve` 入口会自动迁移 schema）。
+1. 停止当前容器：`docker compose stop`，或 `docker stop releasetracker`。
+2. 备份 `./data/` 目录（参见第 4 节）。
+3. 拉取新镜像：`docker compose pull`，或 `docker pull ghcr.io/dalamudx/releasetracker:latest`。
+4. 重新启动：`docker compose up -d`。`migrate-and-serve` 入口会在启动前自动执行 dbmate 迁移。
 5. 观察日志确认迁移完成：`docker compose logs -f`。
 
-!!! tip "跨版本升级前看一眼变更说明"
-    涉及 schema 变更的版本会在 GitHub Release notes 里注明。dbmate 迁移是向前兼容的 —— 一旦迁移完成，降级到旧版本可能导致应用启动失败。
+!!! note "降级说明"
+    dbmate 迁移为向前兼容。一旦新版本的迁移已执行，再回退到旧版本容器可能因 schema 不匹配而无法启动，需要从第 2 步的备份恢复。
 
 ## 7. 本地开发模式
 
-仅供贡献者或调试使用。
+仅用于贡献代码或在本地调试。
 
 ```bash
 git clone https://github.com/dalamudx/ReleaseTracker.git
 cd ReleaseTracker
 
-make install       # 安装前后端依赖（需要 uv + npm）
+make install       # 安装前后端依赖（需要 uv 与 npm）
 make dev           # 并行启动后端 + 前端
 ```
 
 默认端口：
 
-- 前端（Vite）: <http://localhost:5173>
-- 后端 API: <http://localhost:8000>
-- Swagger UI / ReDoc: <http://localhost:8000/docs>、<http://localhost:8000/redoc>
+- 前端（Vite）：<http://localhost:5173>
+- 后端 API：<http://localhost:8000>
+- Swagger UI / ReDoc：<http://localhost:8000/docs>、<http://localhost:8000/redoc>
 
-前端在开发模式下将 `/api` 请求代理到后端，因此直接访问前端端口即可。
+开发模式下 Vite 会将 `/api` 请求代理到后端，因此浏览器直接访问前端端口即可。
 
 ## 8. 常见部署问题
 
-!!! failure "启动日志里出现 `system-secrets.json` 权限错误"
-    表示容器无法写入数据目录。检查宿主机目录权限；容器内以 UID `1000`（或根据镜像用户）运行，需要该用户对挂载目录有读写权限：
+!!! failure "容器无法写入 `data/` 目录"
+    容器默认以 `root` 用户运行，通常不会遇到权限问题。若以非 root 或受限运行时（rootless Docker、SELinux 等）部署，确保挂载目录对进程用户可读写，例如：
     ```bash
-    chown -R 1000:1000 ./data
+    chmod -R u+rwX ./data
     ```
 
 !!! failure "OIDC 登录回跳失败（`redirect_uri_mismatch`）"
-    - 确认「系统设置 → 全局配置 → BASE URL」的值与 IdP 里注册的 callback 前缀完全一致；
+    - 确认 **系统设置 → 全局配置 → BASE URL** 的值与在 IdP 侧注册的 callback 前缀完全一致；
     - 子路径部署必须包含完整子路径；
-    - 修改 BASE URL 后需要重新登录才会生效。
+    - 修改 BASE URL 后需要退出并重新登录方能生效。
 
-!!! failure "反代后访问 UI 能开，但调用 API 返回 404"
-    很可能反代未把 `/api/*` 透传给 ReleaseTracker，或者把请求路径前缀剥掉了。ReleaseTracker 把 API 与静态资源挂在同一个 FastAPI 进程，反代规则对 `/` 和 `/api` 使用相同的 `proxy_pass` 即可，不要做路径重写。
+!!! failure "反向代理后访问 UI 正常，但接口返回 404"
+    通常是反向代理没有将 `/api/*` 透传到后端，或对路径前缀进行了重写。ReleaseTracker 将前端静态资源与 API 挂在同一个 FastAPI 进程，反向代理对 `/` 与 `/api` 使用相同的 `proxy_pass` 即可，不要做路径重写。
 
 !!! failure "升级后容器反复重启"
-    先执行一次 `migrate` 入口命令查看迁移日志：
+    先以 `migrate` 入口单独执行一次迁移并查看输出：
     ```bash
     docker run --rm \
       -v $(pwd)/data:/app/backend/data \
       ghcr.io/dalamudx/releasetracker:latest migrate
     ```
-    如果报 schema 冲突，通常是手动改过数据库。恢复备份或从官方 schema 重建。
+    若提示 schema 冲突，通常是数据库被手动修改过。建议从备份恢复。
 
 ## 9. 下一步
 
-- 按需配置反向代理与 BASE URL（见第 5 节）。
-- 在「凭证管理」添加后续需要的 Token / OIDC Secret / 运行时连接密钥。
-- 等待 **配置说明 / 追踪器 / 执行器 / 运维指南** 页面上线后按章节深入。
+- 根据需要配置反向代理并设置 BASE URL（第 5 节）。
+- 在 **凭证管理** 中录入后续需要的 Token / OIDC 客户端密钥 / 运行时连接密钥。
+- 关注后续发布的 **配置说明 / 追踪器 / 执行器 / 运维** 章节。
