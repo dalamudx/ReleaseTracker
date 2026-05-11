@@ -7,6 +7,7 @@ import logging
 import re
 import signal
 import urllib.parse
+from collections import defaultdict
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -84,10 +85,12 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
 
         service_containers = self._find_compose_service_containers(project)
         update_plan: dict[str, str] = {}
+        current_images_by_service: dict[str, str] = {}
         target_pod_id: str | None = None
         for service, target_image in sorted(service_target_images.items()):
             if not isinstance(target_image, str) or not target_image.strip():
                 raise ValueError("compose target images must be non-empty strings")
+            target_image = target_image.strip()
             containers = service_containers.get(service) or []
             if not containers:
                 raise ValueError(f"Podman Compose service container missing: {service}")
@@ -99,6 +102,8 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                 raise ValueError(
                     f"Podman Compose service has inconsistent replica images: {service}"
                 )
+            if not current_images:
+                raise ValueError(f"Podman Compose service image missing: {service}")
 
             for container in containers:
                 attrs = getattr(container, "attrs", {}) or {}
@@ -117,7 +122,8 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                         f"Found pod '{target_pod_id}' and '{pod_id}'."
                     )
 
-            current_image = self._extract_image(containers[0]) or ""
+            current_image = current_images[0]
+            current_images_by_service[service] = current_image
             if current_image != target_image:
                 update_plan[service] = target_image
 
@@ -132,7 +138,8 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
             )
 
         client = self._get_client()
-        for image in sorted({spec.target_image for spec in specs}):
+        self._validate_podman_grouped_recreate_specs(specs, target_pod_id=target_pod_id)
+        for image in sorted(set(update_plan.values())):
             client.images.pull(image)
 
         snapshots_by_spec_key = {
@@ -141,30 +148,53 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         }
         new_container_ids: list[str] = []
         renamed_backups: list[tuple[str, str]] = []
+        backup_names_by_spec_key: dict[str, str] = {}
+        removal_order = list(reversed(specs))
         try:
-            for spec in specs:
+            for spec in removal_order:
                 container = client.containers.get(spec.container_id)
-                create_config = self._podman_grouped_create_config_for_spec(spec, client=client)
                 self._stop_grouped_container_with_sdk_decode_tolerance(client, container)
+
+            for spec in removal_order:
+                container = client.containers.get(spec.container_id)
                 backup_name = self._podman_replacement_backup_name(spec)
+                backup_names_by_spec_key[self._grouped_runtime_recreate_spec_key(spec)] = backup_name
                 if spec.pod_id or spec.pod_name:
+                    original_name = spec.container_name or getattr(container, "name", None)
+                    if not isinstance(original_name, str) or not original_name.strip():
+                        raise ValueError("podman grouped recreate spec missing container name")
                     self._rename_grouped_container_for_replacement(container, backup_name)
+                    renamed_backups.append((backup_name, original_name.strip()))
                     self._remove_grouped_container_with_sdk_decode_tolerance(client, container)
-                    pod_name_hint = create_config.get("pod")
-                    recreated_pod_ref, _ = self._recreate_pod_for_grouped_replacement(
-                        client,
-                        spec,
-                        pod_name_hint=pod_name_hint if isinstance(pod_name_hint, str) else None,
-                    )
-                    if recreated_pod_ref is not None:
-                        create_config["pod"] = recreated_pod_ref
                 else:
                     self._remove_grouped_container_with_sdk_decode_tolerance(client, container)
+
+            recreated_pods: dict[str, Any] = {}
+            specs_by_pod_key = self._group_pod_backed_specs_by_pod_key(specs)
+            for spec in specs:
+                create_config = self._podman_grouped_create_config_for_spec(spec, client=client)
+                pod_key = self._grouped_spec_pod_key(spec)
+                if pod_key is not None:
+                    recreated_pod_ref = recreated_pods.get(pod_key)
+                    if recreated_pod_ref is None:
+                        pod_name_hint = create_config.get("pod")
+                        recreated_pod_ref, _ = self._recreate_pod_for_grouped_specs(
+                            client,
+                            specs_by_pod_key[pod_key],
+                            pod_name_hint=pod_name_hint if isinstance(pod_name_hint, str) else None,
+                        )
+                        if recreated_pod_ref is not None:
+                            recreated_pods[pod_key] = recreated_pod_ref
+                    if recreated_pod_ref is not None:
+                        create_config["pod"] = recreated_pod_ref
 
                 replacement = self._create_podman_grouped_container(client, create_config)
                 self._restore_container_networks(client, replacement, spec, phase="forward")
                 replacement.start()
-                if spec.pod_id or spec.pod_name:
+                backup_name = backup_names_by_spec_key.get(
+                    self._grouped_runtime_recreate_spec_key(spec)
+                )
+                if backup_name:
                     self._remove_replaced_grouped_container_backup(client, backup_name)
                 replacement_id = getattr(replacement, "id", None)
                 if isinstance(replacement_id, str) and replacement_id.strip():
@@ -178,12 +208,6 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                 len(specs),
             )
             backup_recovery_error = self._recover_renamed_grouped_backups(client, renamed_backups)
-            if backup_recovery_error is None and renamed_backups:
-                raise RuntimeMutationError(
-                    "podman grouped compose update failed after destructive steps began and recovery "
-                    f"succeeded best-effort: {exc}",
-                    destructive_started=True,
-                ) from exc
             recovery_error = await self._recover_grouped_compose_runtime_update(
                 specs, snapshots_by_spec_key
             )
@@ -204,8 +228,14 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
 
         return RuntimeUpdateResult(
             updated=True,
-            old_image=None,
-            new_image=None,
+            old_image="; ".join(
+                f"{service}={image}"
+                for service, image in sorted(current_images_by_service.items())
+                if service in update_plan
+            ),
+            new_image="; ".join(
+                f"{service}={image}" for service, image in sorted(update_plan.items())
+            ),
             new_container_id=",".join(new_container_ids) or None,
             message=(
                 "podman compose grouped pod-aware update completed "
@@ -583,19 +613,37 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         *,
         pod_name_hint: str | None = None,
     ) -> tuple[Any | None, str | None]:
+        return self._recreate_pod_for_grouped_specs(
+            client,
+            [spec],
+            pod_name_hint=pod_name_hint,
+        )
+
+    def _recreate_pod_for_grouped_specs(
+        self,
+        client,
+        specs: list[GroupedRuntimeRecreateSpec],
+        *,
+        pod_name_hint: str | None = None,
+    ) -> tuple[Any | None, str | None]:
+        if not specs:
+            return None, None
+        spec = specs[0]
         pod_ref = spec.pod_name or spec.pod_id
         if not isinstance(pod_ref, str) or not pod_ref.strip():
             return None, None
-        pod_name = (
-            pod_name_hint if isinstance(pod_name_hint, str) and pod_name_hint.strip() else None
-        )
+        pod_name = self._pod_name_from_grouped_specs(specs)
+        if pod_name is None:
+            pod_name = (
+                pod_name_hint if isinstance(pod_name_hint, str) and pod_name_hint.strip() else None
+            )
         if pod_name is None:
             pod_name = self._resolve_existing_pod_name(client, pod_ref.strip()) or pod_ref.strip()
         try:
             client.pods.remove(pod_ref.strip(), force=True)
         except Exception:
             pass
-        pod_payload = self._pod_create_payload_from_spec(spec)
+        pod_payload = self._pod_create_payload_from_specs(specs)
         pod_payload["name"] = pod_name
         pod_name = pod_payload.pop("name")
         created_pod = self._create_podman_pod(client, pod_name, pod_payload)
@@ -605,6 +653,12 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         if resolved_pod is not None:
             return resolved_pod, "recreated_pod_object"
         return pod_name, "recreated_pod_name"
+
+    def _pod_name_from_grouped_specs(self, specs: list[GroupedRuntimeRecreateSpec]) -> str | None:
+        for spec in specs:
+            if isinstance(spec.pod_name, str) and spec.pod_name.strip():
+                return spec.pod_name.strip()
+        return None
 
     def _create_podman_pod(self, client, pod_name: str, pod_payload: dict[str, Any]):
         if self._pod_payload_requires_low_level_create(pod_payload):
@@ -719,6 +773,15 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         return None
 
     def _pod_create_payload_from_spec(self, spec: GroupedRuntimeRecreateSpec) -> dict[str, Any]:
+        return self._pod_create_payload_from_specs([spec])
+
+    def _pod_create_payload_from_specs(
+        self,
+        specs: list[GroupedRuntimeRecreateSpec],
+    ) -> dict[str, Any]:
+        if not specs:
+            return {}
+        spec = specs[0]
         pod_name = spec.pod_name or spec.pod_id
         topology = self._pod_topology_from_relation_payload(spec.pod_relation_payload)
         payload: dict[str, Any] = {"name": pod_name}
@@ -735,30 +798,61 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                 payload["shared_namespaces"] = []
             return payload
 
-        hostname = spec.create_config.get("hostname")
-        if isinstance(hostname, str) and hostname.strip():
-            payload["hostname"] = hostname.strip()
-        shm_size = spec.create_config.get("shm_size")
-        if isinstance(shm_size, int) and shm_size > 0:
-            payload["shm_size"] = shm_size
-        portmappings = self._pod_portmappings_from_create_config(spec.create_config)
-        if portmappings:
-            payload["portmappings"] = portmappings
-        extra_hosts = self._pod_extra_hosts_from_create_config(spec.create_config)
-        if extra_hosts:
-            payload["hostadd"] = extra_hosts
-        dns = spec.create_config.get("dns")
-        if isinstance(dns, list) and dns:
-            payload["dns"] = list(dns)
-        dns_search = spec.create_config.get("dns_search")
-        if isinstance(dns_search, list) and dns_search:
-            payload["dns_search"] = list(dns_search)
-        networks = self._pod_networks_from_config(spec.network_config, spec.container_id)
+        for candidate in specs:
+            hostname = candidate.create_config.get("hostname")
+            if isinstance(hostname, str) and hostname.strip() and "hostname" not in payload:
+                payload["hostname"] = hostname.strip()
+            shm_size = candidate.create_config.get("shm_size")
+            if isinstance(shm_size, int) and shm_size > 0 and "shm_size" not in payload:
+                payload["shm_size"] = shm_size
+            portmappings = self._pod_portmappings_from_create_config(candidate.create_config)
+            if portmappings:
+                payload.setdefault("portmappings", [])
+                payload["portmappings"].extend(portmappings)
+            extra_hosts = self._pod_extra_hosts_from_create_config(candidate.create_config)
+            if extra_hosts:
+                payload.setdefault("hostadd", [])
+                payload["hostadd"].extend(extra_hosts)
+            dns = candidate.create_config.get("dns")
+            if isinstance(dns, list) and dns and "dns" not in payload:
+                payload["dns"] = list(dns)
+            dns_search = candidate.create_config.get("dns_search")
+            if isinstance(dns_search, list) and dns_search and "dns_search" not in payload:
+                payload["dns_search"] = list(dns_search)
+
+        networks = self._pod_networks_from_specs(specs)
         if networks:
             if share_value is not None:
                 payload["share"] = share_value
             payload["networks"] = networks
         return payload
+
+    def _pod_networks_from_specs(
+        self,
+        specs: list[GroupedRuntimeRecreateSpec],
+    ) -> dict[str, dict[str, Any]]:
+        networks: dict[str, dict[str, Any]] = {}
+        for spec in specs:
+            for network_name, options in self._pod_networks_from_config(
+                spec.network_config,
+                spec.container_id,
+            ).items():
+                merged_options = networks.setdefault(network_name, {})
+                for option_key, option_value in options.items():
+                    if option_key == "aliases" and isinstance(option_value, list):
+                        aliases = merged_options.setdefault("aliases", [])
+                        for alias in option_value:
+                            if alias not in aliases:
+                                aliases.append(alias)
+                        continue
+                    if option_key == "static_ips" and isinstance(option_value, list):
+                        static_ips = merged_options.setdefault("static_ips", [])
+                        for static_ip in option_value:
+                            if static_ip not in static_ips:
+                                static_ips.append(static_ip)
+                        continue
+                    merged_options.setdefault(option_key, option_value)
+        return networks
 
     def _pod_topology_from_relation_payload(
         self,
@@ -1114,6 +1208,23 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
             raise ValueError("grouped recreate spec missing container identity")
         return identifier
 
+    def _grouped_spec_pod_key(self, spec: GroupedRuntimeRecreateSpec) -> str | None:
+        identifier = spec.pod_id or spec.pod_name
+        if not isinstance(identifier, str) or not identifier.strip():
+            return None
+        return identifier.strip()
+
+    def _group_pod_backed_specs_by_pod_key(
+        self,
+        specs: list[GroupedRuntimeRecreateSpec],
+    ) -> dict[str, list[GroupedRuntimeRecreateSpec]]:
+        grouped: dict[str, list[GroupedRuntimeRecreateSpec]] = defaultdict(list)
+        for spec in specs:
+            pod_key = self._grouped_spec_pod_key(spec)
+            if pod_key is not None:
+                grouped[pod_key].append(spec)
+        return dict(grouped)
+
     def _create_podman_grouped_container(self, client, create_config: dict[str, Any]):
         return self._create_podman_container(client, create_config)
 
@@ -1281,6 +1392,11 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         network = payload.pop("network", None)
         if network is not None:
             payload["cni_networks"] = [network]
+
+        exposed_ports = payload.pop("exposed_ports", None)
+        expose_payload = self._podman_expose_payload_from_exposed_ports(exposed_ports)
+        if expose_payload:
+            payload["expose"] = expose_payload
 
         dns = payload.pop("dns", None)
         if isinstance(dns, list) and dns:
@@ -2104,7 +2220,7 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         create_config: dict[str, Any],
     ) -> dict[str, Any]:
         sanitized = dict(create_config)
-        sanitized.pop("_releasetracker_exposed_ports", None)
+        self._preserve_podman_exposed_only_ports(sanitized)
         self._sanitize_podman_create_config(sanitized)
         self._filter_podman_exposed_only_ports(sanitized)
         self._convert_podman_tmpfs_to_mounts(sanitized)
@@ -2233,6 +2349,49 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         for key in keys:
             if self._string_field_is_blank(payload.get(key)):
                 payload.pop(key, None)
+
+    def _preserve_podman_exposed_only_ports(self, create_config: dict[str, Any]) -> None:
+        exposed_ports = create_config.pop("_releasetracker_exposed_ports", None)
+        normalized_exposed_ports = self._normalize_podman_exposed_ports(exposed_ports)
+        if not normalized_exposed_ports:
+            return
+
+        existing_exposed_ports = self._normalize_podman_exposed_ports(
+            create_config.get("exposed_ports")
+        )
+        merged_exposed_ports = [*existing_exposed_ports]
+        for port in normalized_exposed_ports:
+            if port not in merged_exposed_ports:
+                merged_exposed_ports.append(port)
+        create_config["exposed_ports"] = merged_exposed_ports
+
+    def _normalize_podman_exposed_ports(self, exposed_ports: Any) -> list[str]:
+        if isinstance(exposed_ports, Mapping):
+            candidates = exposed_ports.keys()
+        elif isinstance(exposed_ports, list | tuple | set):
+            candidates = exposed_ports
+        elif isinstance(exposed_ports, str):
+            candidates = [exposed_ports]
+        else:
+            return []
+
+        normalized: list[str] = []
+        for candidate in candidates:
+            port, protocol = self._split_port_protocol(candidate)
+            if port is None:
+                continue
+            port_spec = f"{port}/{protocol}"
+            if port_spec not in normalized:
+                normalized.append(port_spec)
+        return normalized
+
+    def _podman_expose_payload_from_exposed_ports(self, exposed_ports: Any) -> dict[int, str]:
+        expose_payload: dict[int, str] = {}
+        for port_spec in self._normalize_podman_exposed_ports(exposed_ports):
+            port, protocol = self._split_port_protocol(port_spec)
+            if port is not None:
+                expose_payload[port] = protocol
+        return expose_payload
 
     def _filter_podman_exposed_only_ports(self, create_config: dict[str, Any]) -> None:
         ports = create_config.get("ports")
@@ -2423,7 +2582,6 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         create_config.pop("network_mode", None)
         create_config.pop("network_options", None)
         create_config.pop("ports", None)
-        create_config.pop("exposed_ports", None)
         create_config.pop("extra_hosts", None)
         create_config.pop("dns", None)
         create_config.pop("dns_search", None)
@@ -2878,10 +3036,44 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         service_containers: dict[str, list[Any]],
         update_plan: dict[str, str],
     ) -> list[Any]:
-        specs: list[Any] = []
         client = self._get_client()
-        for service, target_image in sorted(update_plan.items()):
-            for container in service_containers.get(service, []):
+        specs_by_service = self._build_all_grouped_runtime_recreate_specs_by_service(
+            service_containers,
+            update_plan,
+            client=client,
+        )
+        selected_services = self._expand_grouped_recreate_services_for_dependents(
+            specs_by_service,
+            set(update_plan),
+        )
+        selected_services = self._expand_grouped_recreate_services_for_pod_siblings(
+            specs_by_service,
+            set(selected_services),
+        )
+        selected_specs = [
+            spec
+            for service in selected_services
+            for spec in specs_by_service.get(service, [])
+        ]
+        return self._order_grouped_runtime_recreate_specs(selected_specs)
+
+    def _build_all_grouped_runtime_recreate_specs_by_service(
+        self,
+        service_containers: dict[str, list[Any]],
+        update_plan: dict[str, str],
+        *,
+        client,
+    ) -> dict[str, list[GroupedRuntimeRecreateSpec]]:
+        specs_by_service: dict[str, list[GroupedRuntimeRecreateSpec]] = {}
+        for service, containers in sorted(service_containers.items()):
+            service_specs: list[GroupedRuntimeRecreateSpec] = []
+            target_image = update_plan.get(service)
+            for container in containers:
+                current_image = self._extract_image(container)
+                if target_image is None:
+                    target_image = current_image
+                if not isinstance(target_image, str) or not target_image.strip():
+                    continue
                 attrs = getattr(container, "attrs", {}) or {}
                 labels = self._get_compose_labels_with_fallback(container, client)
                 compose_project = None
@@ -2895,12 +3087,12 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                     pod_relation_payload,
                     client,
                 )
-                specs.append(
+                service_specs.append(
                     build_grouped_runtime_recreate_spec(
                         container,
                         runtime_type=self.runtime_connection.type,
                         target_image=target_image,
-                        current_image=self._extract_image(container),
+                        current_image=current_image,
                         compose_project=(
                             compose_project if isinstance(compose_project, str) else None
                         ),
@@ -2911,7 +3103,165 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                         create_config_labels_override=compose_label_overrides,
                     )
                 )
-        return specs
+            if service_specs:
+                specs_by_service[service] = service_specs
+        return specs_by_service
+
+    def _expand_grouped_recreate_services_for_dependents(
+        self,
+        specs_by_service: dict[str, list[GroupedRuntimeRecreateSpec]],
+        update_services: set[str],
+    ) -> list[str]:
+        selected = set(update_services)
+        changed = True
+        while changed:
+            changed = False
+            for service, specs in specs_by_service.items():
+                if service in selected:
+                    continue
+                if any(
+                    self._grouped_spec_depends_on_selected_service(spec, selected, specs_by_service)
+                    for spec in specs
+                ):
+                    selected.add(service)
+                    changed = True
+        return sorted(selected)
+
+    def _expand_grouped_recreate_services_for_pod_siblings(
+        self,
+        specs_by_service: dict[str, list[GroupedRuntimeRecreateSpec]],
+        selected_services: set[str],
+    ) -> list[str]:
+        selected_pod_keys = {
+            pod_key
+            for service in selected_services
+            for spec in specs_by_service.get(service, [])
+            if (pod_key := self._grouped_spec_pod_key(spec)) is not None
+        }
+        if not selected_pod_keys:
+            return sorted(selected_services)
+
+        expanded = set(selected_services)
+        for service, specs in specs_by_service.items():
+            if service in expanded:
+                continue
+            if any(self._grouped_spec_pod_key(spec) in selected_pod_keys for spec in specs):
+                expanded.add(service)
+        return sorted(expanded)
+
+    def _grouped_spec_depends_on_selected_service(
+        self,
+        spec: GroupedRuntimeRecreateSpec,
+        selected_services: set[str],
+        specs_by_service: dict[str, list[GroupedRuntimeRecreateSpec]],
+    ) -> bool:
+        for dependency in spec.dependencies:
+            if dependency in selected_services:
+                return True
+            for selected_service in selected_services:
+                for selected_spec in specs_by_service.get(selected_service, []):
+                    if dependency in self._grouped_spec_identity_refs(selected_spec):
+                        return True
+        return False
+
+    def _grouped_spec_identity_refs(self, spec: GroupedRuntimeRecreateSpec) -> set[str]:
+        refs = {spec.compose_service, spec.container_name, spec.container_id}
+        normalized_refs = {ref for ref in refs if isinstance(ref, str) and ref.strip()}
+        if spec.container_name:
+            normalized_refs.add(spec.container_name.removeprefix("/"))
+        return normalized_refs
+
+    def _order_grouped_runtime_recreate_specs(
+        self,
+        specs: list[GroupedRuntimeRecreateSpec],
+    ) -> list[GroupedRuntimeRecreateSpec]:
+        if len(specs) <= 1:
+            return list(specs)
+
+        stable_specs = sorted(
+            specs,
+            key=lambda spec: (
+                spec.compose_service or "",
+                spec.container_name or "",
+                spec.container_id or "",
+            ),
+        )
+        stable_order = {
+            (spec.container_id or spec.container_name or f"spec-{index}"): index
+            for index, spec in enumerate(stable_specs)
+        }
+
+        service_to_keys: dict[str, list[str]] = defaultdict(list)
+        name_to_key: dict[str, str] = {}
+        key_to_spec: dict[str, GroupedRuntimeRecreateSpec] = {}
+        dependencies_by_key: dict[str, set[str]] = {}
+
+        for index, spec in enumerate(stable_specs):
+            key = spec.container_id or spec.container_name or f"spec-{index}"
+            key_to_spec[key] = spec
+            dependencies_by_key.setdefault(key, set())
+            if spec.container_name:
+                name_to_key[spec.container_name] = key
+                name_to_key[spec.container_name.removeprefix("/")] = key
+            if spec.compose_service:
+                service_to_keys[spec.compose_service].append(key)
+
+        for key, spec in key_to_spec.items():
+            resolved_dependencies: set[str] = set()
+            for dependency in spec.dependencies:
+                if dependency in name_to_key:
+                    resolved_dependencies.add(name_to_key[dependency])
+                for dependency_key in service_to_keys.get(dependency, []):
+                    resolved_dependencies.add(dependency_key)
+            resolved_dependencies.discard(key)
+            dependencies_by_key[key] = resolved_dependencies
+
+        ordered: list[GroupedRuntimeRecreateSpec] = []
+        ready = [key for key, deps in dependencies_by_key.items() if not deps]
+        ready.sort(key=lambda key: stable_order[key])
+
+        while ready:
+            key = ready.pop(0)
+            ordered.append(key_to_spec[key])
+            for candidate_key, deps in dependencies_by_key.items():
+                if key not in deps:
+                    continue
+                deps.remove(key)
+                if (
+                    not deps
+                    and key_to_spec[candidate_key] not in ordered
+                    and candidate_key not in ready
+                ):
+                    ready.append(candidate_key)
+                    ready.sort(key=lambda item: stable_order[item])
+
+        if len(ordered) != len(stable_specs):
+            return stable_specs
+        return ordered
+
+    def _validate_podman_grouped_recreate_specs(
+        self,
+        specs: list[GroupedRuntimeRecreateSpec],
+        *,
+        target_pod_id: str | None,
+    ) -> None:
+        if not specs:
+            raise ValueError("grouped recreate plan is empty")
+        for spec in specs:
+            if not spec.create_config:
+                raise ValueError(
+                    f"Podman cannot recreate compose container '{spec.container_name or spec.container_id}' without a restorable create configuration"
+                )
+            if not isinstance(spec.target_image, str) or not spec.target_image.strip():
+                raise ValueError("compose target images must be non-empty strings")
+            if target_pod_id is None:
+                continue
+            spec_pod_id = spec.pod_id or spec.pod_name
+            if not isinstance(spec_pod_id, str) or not spec_pod_id.strip():
+                raise ValueError(
+                    "Podman compose grouped pod-aware update requires pod-backed services. "
+                    f"Service '{spec.compose_service}' includes non-pod container '{spec.container_id or ''}'."
+                )
 
     def _extract_compose_label_overrides(self, labels: Mapping[str, Any]) -> dict[str, str]:
         if not isinstance(labels, Mapping):

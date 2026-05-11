@@ -741,10 +741,10 @@ class FakePodmanContainerManager:
         self.create_calls: list[dict] = []
         self._created: list[FakeContainer] = []
         self.fail_start_for_images: set[str] = set()
+        self.fail_remove_for_names: set[str] = set()
         self.inject_empty_network_mode_when_omitted = False
         for container in self._containers:
-            container._event_log = self.event_log
-            container._on_remove = lambda container=container: self._forget_container(container)
+            self._bind_container_lifecycle_hooks(container)
 
     def list(self, all=True):
         return list(self._containers)
@@ -770,6 +770,16 @@ class FakePodmanContainerManager:
                 "500 Server Error: Internal Server Error: invalid empty network mode"
             )
         return self._create_from_kwargs(kwargs)
+
+    def _bind_container_lifecycle_hooks(self, container: FakeContainer) -> None:
+        container._event_log = self.event_log
+
+        def on_remove(container=container) -> None:
+            if container.name in self.fail_remove_for_names:
+                raise FakePodmanServerError(f"remove failed: {container.name}")
+            self._forget_container(container)
+
+        container._on_remove = on_remove
 
     def _create_from_kwargs(self, kwargs: dict) -> FakeContainer:
         self.event_log.append(f"create:{kwargs.get('name', 'recreated')}")
@@ -809,7 +819,7 @@ class FakePodmanContainerManager:
             created.start = fail_start
         self._created.append(created)
         self._containers.append(created)
-        created._on_remove = lambda: self._forget_container(created)
+        self._bind_container_lifecycle_hooks(created)
         return created
 
 
@@ -1300,6 +1310,7 @@ async def test_podman_adapter_recreates_container_with_new_image():
                 "Env": ["FOO=bar"],
                 "Cmd": ["sample-cache-server"],
                 "Entrypoint": None,
+                "ExposedPorts": {"6379/tcp": {}, "8080/tcp": {}},
                 "Labels": {"app": "cache"},
             },
             "HostConfig": {
@@ -1321,6 +1332,7 @@ async def test_podman_adapter_recreates_container_with_new_image():
     assert snapshot["container_name"] == "sample-cache"
     assert snapshot["image"] == "sample-cache:7.2"
     assert snapshot["create_config"]["image"] == "sample-cache:7.2"
+    assert snapshot["create_config"]["_releasetracker_exposed_ports"] == ["8080/tcp"]
 
     result = await adapter.update_image({"container_name": "sample-cache"}, "sample-cache:7.4")
 
@@ -1339,6 +1351,8 @@ async def test_podman_adapter_recreates_container_with_new_image():
     assert create_kwargs["portmappings"] == [
         {"container_port": 6379, "host_port": 6379, "protocol": "tcp"}
     ]
+    assert create_kwargs["expose"] == {"8080": "tcp"}
+    assert all(mapping["container_port"] != 8080 for mapping in create_kwargs["portmappings"])
     assert create_kwargs["mounts"] == [
         {
             "type": "bind",
@@ -5010,23 +5024,248 @@ async def test_podman_compose_grouped_update_recreates_pod_backed_targets_in_sam
     ]
     for create_kwargs in client.containers.create_calls:
         _assert_podman_pod_member_create_kwargs(create_kwargs)
-    assert client.pods.remove_calls == [("core-pod", True), ("core-pod", True)]
+    assert client.pods.remove_calls == [("core-pod", True)]
     assert client.pods.create_calls == [
         {
             "name": "core-pod",
             "infra": False,
             "share": "net",
-            "networks": {"sample-edge": {"aliases": ["api", "core-api-1"]}},
-        },
-        {
-            "name": "core-pod",
-            "infra": False,
-            "share": "net",
-            "networks": {"sample-edge": {"aliases": ["worker", "core-worker-1"]}},
-        },
+            "networks": {
+                "sample-edge": {"aliases": ["api", "core-api-1", "worker", "core-worker-1"]}
+            },
+        }
     ]
     assert client.networks.disconnect_calls == []
     assert client.networks.connect_calls == []
+
+
+@pytest.mark.asyncio
+async def test_podman_compose_grouped_update_recreates_dependent_sibling_with_current_image():
+    runtime = RuntimeConnectionConfig(
+        name="podman-prod",
+        type="podman",
+        config={"socket": "unix:///run/podman/podman.sock"},
+        secrets={},
+    )
+    nginx_labels = {
+        "io.podman.compose.project": "nginx-docker-traefik-test",
+        "com.docker.compose.service": "nginx",
+    }
+    traefik_labels = {
+        "io.podman.compose.project": "nginx-docker-traefik-test",
+        "com.docker.compose.service": "traefik",
+        "io.podman.compose.depends_on": "nginx:service_started",
+    }
+    nginx = FakeContainer(
+        "nginx-1",
+        "nginx-behind-traefik",
+        FakeImage(tags=["docker.io/library/nginx:1.25"]),
+        attrs={
+            "Pod": "pod-nginx",
+            "PodName": "nginx-pod",
+            "Config": {"Image": "docker.io/library/nginx:1.25", "Labels": nginx_labels},
+            "HostConfig": {},
+            "NetworkSettings": {
+                "Networks": {"edge": {"Aliases": ["nginx", "nginx-behind-traefik"]}}
+            },
+        },
+    )
+    traefik = FakeContainer(
+        "traefik-1",
+        "traefik-router",
+        FakeImage(tags=["docker.io/library/traefik:3.0"]),
+        attrs={
+            "Pod": "pod-nginx",
+            "PodName": "nginx-pod",
+            "Config": {"Image": "docker.io/library/traefik:3.0", "Labels": traefik_labels},
+            "HostConfig": {},
+            "NetworkSettings": {"Networks": {"edge": {"Aliases": ["traefik", "traefik-router"]}}},
+        },
+    )
+    client = FakePodmanClient([nginx, traefik], network_names=["edge", "podman"])
+    adapter = PodmanRuntimeAdapter(runtime, client=client)
+
+    result = await adapter.update_compose_services(
+        {"mode": "docker_compose", "project": "nginx-docker-traefik-test"},
+        {"nginx": "docker.io/library/nginx:1.26"},
+    )
+
+    assert result.updated is True
+    assert result.old_image == "nginx=docker.io/library/nginx:1.25"
+    assert result.new_image == "nginx=docker.io/library/nginx:1.26"
+    assert client.images.pull_calls == ["docker.io/library/nginx:1.26"]
+    assert [call["image"] for call in client.containers.create_calls] == [
+        "docker.io/library/nginx:1.26",
+        "docker.io/library/traefik:3.0",
+    ]
+    assert client.containers.create_calls[1]["labels"] == traefik_labels
+    assert client.containers.event_log == [
+        "stop:traefik-router",
+        "stop:nginx-behind-traefik",
+        "rename:traefik-router->traefik-router-rt-backup-traefik-1",
+        "remove:traefik-router-rt-backup-traefik-1",
+        "rename:nginx-behind-traefik->nginx-behind-traefik-rt-backup-nginx-1",
+        "remove:nginx-behind-traefik-rt-backup-nginx-1",
+        "create:nginx-behind-traefik",
+        "start:nginx-behind-traefik",
+        "create:traefik-router",
+        "start:traefik-router",
+    ]
+    assert client.pods.remove_calls == [("nginx-pod", True)]
+    assert client.pods.create_calls == [
+        {
+            "name": "nginx-pod",
+            "infra": False,
+            "share": "net",
+            "networks": {
+                "edge": {
+                    "aliases": [
+                        "nginx",
+                        "nginx-behind-traefik",
+                        "traefik",
+                        "traefik-router",
+                    ]
+                }
+            },
+        }
+    ]
+    assert all("rt-backup" not in container.name for container in client.containers.list(all=True))
+
+
+@pytest.mark.asyncio
+async def test_podman_compose_grouped_update_recreates_same_pod_sibling_without_dependency_metadata():
+    runtime = RuntimeConnectionConfig(
+        name="podman-prod",
+        type="podman",
+        config={"socket": "unix:///run/podman/podman.sock"},
+        secrets={},
+    )
+    nginx_labels = {
+        "io.podman.compose.project": "nginx-docker-traefik-test",
+        "com.docker.compose.service": "nginx",
+    }
+    traefik_labels = {
+        "io.podman.compose.project": "nginx-docker-traefik-test",
+        "com.docker.compose.service": "traefik",
+    }
+    nginx = FakeContainer(
+        "nginx-1",
+        "nginx-behind-traefik",
+        FakeImage(tags=["docker.io/library/nginx:1.25"]),
+        attrs={
+            "Pod": "pod-nginx",
+            "PodName": "nginx-pod",
+            "Config": {"Image": "docker.io/library/nginx:1.25", "Labels": nginx_labels},
+            "HostConfig": {},
+            "NetworkSettings": {
+                "Networks": {"edge": {"Aliases": ["nginx", "nginx-behind-traefik"]}}
+            },
+        },
+    )
+    traefik = FakeContainer(
+        "traefik-1",
+        "traefik-router",
+        FakeImage(tags=["docker.io/library/traefik:3.0"]),
+        attrs={
+            "Pod": "pod-nginx",
+            "PodName": "nginx-pod",
+            "Config": {"Image": "docker.io/library/traefik:3.0", "Labels": traefik_labels},
+            "HostConfig": {},
+            "NetworkSettings": {"Networks": {"edge": {"Aliases": ["traefik", "traefik-router"]}}},
+        },
+    )
+    client = FakePodmanClient([nginx, traefik], network_names=["edge", "podman"])
+    adapter = PodmanRuntimeAdapter(runtime, client=client)
+
+    result = await adapter.update_compose_services(
+        {"mode": "docker_compose", "project": "nginx-docker-traefik-test"},
+        {"nginx": "docker.io/library/nginx:1.26"},
+    )
+
+    assert result.updated is True
+    assert result.old_image == "nginx=docker.io/library/nginx:1.25"
+    assert result.new_image == "nginx=docker.io/library/nginx:1.26"
+    assert client.images.pull_calls == ["docker.io/library/nginx:1.26"]
+    assert [call["image"] for call in client.containers.create_calls] == [
+        "docker.io/library/nginx:1.26",
+        "docker.io/library/traefik:3.0",
+    ]
+    assert client.containers.create_calls[1]["labels"] == traefik_labels
+    assert client.containers.event_log == [
+        "stop:traefik-router",
+        "stop:nginx-behind-traefik",
+        "rename:traefik-router->traefik-router-rt-backup-traefik-1",
+        "remove:traefik-router-rt-backup-traefik-1",
+        "rename:nginx-behind-traefik->nginx-behind-traefik-rt-backup-nginx-1",
+        "remove:nginx-behind-traefik-rt-backup-nginx-1",
+        "create:nginx-behind-traefik",
+        "start:nginx-behind-traefik",
+        "create:traefik-router",
+        "start:traefik-router",
+    ]
+    assert client.pods.remove_calls == [("nginx-pod", True)]
+    assert client.pods.create_calls == [
+        {
+            "name": "nginx-pod",
+            "infra": False,
+            "share": "net",
+            "networks": {
+                "edge": {
+                    "aliases": [
+                        "nginx",
+                        "nginx-behind-traefik",
+                        "traefik",
+                        "traefik-router",
+                    ]
+                }
+            },
+        }
+    ]
+    assert all("rt-backup" not in container.name for container in client.containers.list(all=True))
+
+
+@pytest.mark.asyncio
+async def test_podman_compose_grouped_update_records_renamed_backup_before_recovery():
+    runtime = RuntimeConnectionConfig(
+        name="podman-prod",
+        type="podman",
+        config={"socket": "unix:///run/podman/podman.sock"},
+        secrets={},
+    )
+    labels = {
+        "io.podman.compose.project": "core",
+        "com.docker.compose.service": "api",
+    }
+    api = FakeContainer(
+        "api-1",
+        "core-api-1",
+        FakeImage(tags=["ghcr.io/acme/api:1.0"]),
+        attrs={
+            "Pod": "pod-core",
+            "PodName": "core-pod",
+            "Config": {"Image": "ghcr.io/acme/api:1.0", "Labels": labels},
+            "HostConfig": {},
+        },
+    )
+    client = FakePodmanClient([api])
+    client.containers.fail_remove_for_names.add("core-api-1-rt-backup-api-1")
+    adapter = PodmanRuntimeAdapter(runtime, client=client)
+
+    with pytest.raises(RuntimeMutationError, match="recovery succeeded best-effort"):
+        await adapter.update_compose_services(
+            {"mode": "docker_compose", "project": "core"},
+            {"api": "ghcr.io/acme/api:1.1"},
+        )
+
+    assert client.containers.event_log == [
+        "stop:core-api-1",
+        "rename:core-api-1->core-api-1-rt-backup-api-1",
+        "remove:core-api-1-rt-backup-api-1",
+        "rename:core-api-1-rt-backup-api-1->core-api-1",
+        "start:core-api-1",
+        "start:core-api-1",
+    ]
+    assert [container.name for container in client.containers.list(all=True)] == ["core-api-1"]
 
 
 @pytest.mark.asyncio
@@ -5822,6 +6061,7 @@ async def test_podman_adapter_recreates_container_preserving_compose_matrix_fiel
             "hostname": "core-api",
             "healthconfig": {"Test": ["CMD-SHELL", "curl -f http://127.0.0.1/health || exit 1"]},
             "portmappings": [{"container_port": 8000, "host_port": 8080, "protocol": "tcp"}],
+            "expose": {"9000": "tcp"},
             "mounts": [
                 {
                     "destination": "/app/data",
@@ -5849,6 +6089,10 @@ async def test_podman_adapter_recreates_container_preserving_compose_matrix_fiel
             "labels": {"app": "api"},
         }
     ]
+    assert all(
+        mapping["container_port"] != 9000
+        for mapping in client.containers.create_calls[0]["portmappings"]
+    )
 
 
 @pytest.mark.asyncio
@@ -5945,6 +6189,7 @@ async def test_podman_compose_grouped_update_preserves_high_fidelity_runtime_fie
                 "memory": {"limit": 134217728, "reservation": 67108864},
                 "pids": {"limit": 256},
             },
+            "expose": {"80": "tcp"},
             "labels": labels,
             "mounts": [
                 {
@@ -5959,6 +6204,9 @@ async def test_podman_compose_grouped_update_preserves_high_fidelity_runtime_fie
     ]
     for payload in payloads:
         _assert_podman_pod_member_create_kwargs(payload)
+    assert all(
+        mapping["container_port"] != 80 for mapping in client.pods.create_calls[0]["portmappings"]
+    )
     assert client.pods.create_calls == [
         {
             "name": "core-pod",
@@ -6162,20 +6410,20 @@ async def test_podman_compose_grouped_update_recovers_best_effort_after_partial_
         "ghcr.io/acme/api:1.0",
         "ghcr.io/acme/worker:9.1",
     ]
-    assert client.containers.create_calls[0]["pod"] == "pod-core"
+    assert client.containers.create_calls[0]["pod"] == "core-pod"
     assert client.containers.create_calls[1]["pod"] == "core-pod"
     assert client.containers.create_calls[2]["pod"] == "pod-core"
     assert client.containers.create_calls[3]["pod"] == "core-pod"
     assert all("network_mode" not in call for call in client.containers.create_calls)
     assert client.containers.event_log == [
+        "stop:core-worker-1",
         "stop:core-api-1",
+        "rename:core-worker-1->core-worker-1-rt-backup-worker-1",
+        "remove:core-worker-1-rt-backup-worker-1",
         "rename:core-api-1->core-api-1-rt-backup-api-1",
         "remove:core-api-1-rt-backup-api-1",
         "create:core-api-1",
         "start:core-api-1",
-        "stop:core-worker-1",
-        "rename:core-worker-1->core-worker-1-rt-backup-worker-1",
-        "remove:core-worker-1-rt-backup-worker-1",
         "create:core-worker-1",
         "start:core-worker-1",
         "remove:core-api-1",
