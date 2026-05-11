@@ -101,10 +101,3 @@ extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/dalamudx/ReleaseTracker
-  alternate:
-    - name: 中文
-      link: /
-      lang: zh
-    - name: English
-      link: /en/
-      lang: en
