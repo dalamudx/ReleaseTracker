@@ -39,7 +39,17 @@ import { usePageSize } from "@/hooks/use-page-size"
 import { toast } from "sonner"
 
 const SYSTEM_TIMEZONE_SETTING_KEY = "system.timezone"
-const SNAPSHOT_SUPPORTED_RUNTIME_TYPES = new Set(["docker", "podman"])
+
+function supportsFullConfigSnapshots(executor: ExecutorListItem | null) {
+    if (!executor) {
+        return false
+    }
+    const targetMode = executor.target_ref?.mode ?? "container"
+    if (targetMode !== "container" && targetMode !== "docker_compose") {
+        return false
+    }
+    return executor.runtime_type === "docker" || executor.runtime_type === "podman"
+}
 
 function getBrowserTimezone() {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
@@ -269,12 +279,7 @@ export default function ExecutorsPage() {
     }
 
     const selectedExecutor = executors.find((executor) => executor.id === selectedExecutorId) ?? selectedExecutorSnapshot
-    const selectedRuntimeConnection = selectedExecutor
-        ? runtimeConnections.find((connection) => connection.id === selectedExecutor.runtime_connection_id) ?? null
-        : null
-    const canViewSnapshots = selectedRuntimeConnection
-        ? SNAPSHOT_SUPPORTED_RUNTIME_TYPES.has(selectedRuntimeConnection.type)
-        : false
+    const canViewSnapshots = supportsFullConfigSnapshots(selectedExecutor)
 
     // Client-side filter. The API doesn't accept a search param yet, so we
     // filter the current page locally — good enough for the common case and a

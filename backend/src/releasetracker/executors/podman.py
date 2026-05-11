@@ -30,6 +30,11 @@ PODMAN_NAMED_VOLUME_DESTINATION_KEYS = (
     "Target",
     "target",
 )
+PODMAN_SNAPSHOT_POD_REFERENCE_KEYS = frozenset({"pod", "pod_id", "podId", "Pod", "PodID", "PodId"})
+PODMAN_SNAPSHOT_POD_NAME_KEYS = frozenset({"pod_name", "podName", "PodName"})
+PODMAN_NAMESPACE_PAYLOAD_KEYS = frozenset(
+    {"netns", "utsns", "ipcns", "pidns", "cgroupns", "userns"}
+)
 
 
 @dataclass(frozen=True)
@@ -158,7 +163,9 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
             for spec in removal_order:
                 container = client.containers.get(spec.container_id)
                 backup_name = self._podman_replacement_backup_name(spec)
-                backup_names_by_spec_key[self._grouped_runtime_recreate_spec_key(spec)] = backup_name
+                backup_names_by_spec_key[self._grouped_runtime_recreate_spec_key(spec)] = (
+                    backup_name
+                )
                 if spec.pod_id or spec.pod_name:
                     original_name = spec.container_name or getattr(container, "name", None)
                     if not isinstance(original_name, str) or not original_name.strip():
@@ -360,9 +367,20 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         targets.extend(self._compose_runtime_targets(compose_containers_by_project))
         return targets
 
+    async def get_current_image(self, target_ref: dict[str, Any]) -> str:
+        if target_ref.get("mode") == "docker_compose":
+            service_images = await self.fetch_compose_service_images(target_ref)
+            if not service_images:
+                raise ValueError("Unable to resolve Podman Compose service images")
+            return self._compose_snapshot_image_summary(service_images)
+        return await super().get_current_image(target_ref)
+
     async def capture_snapshot(
         self, target_ref: dict[str, Any], current_image: str
     ) -> dict[str, Any]:
+        if target_ref.get("mode") == "docker_compose":
+            return await self._capture_compose_snapshot(target_ref, current_image)
+
         container = self._get_container(target_ref)
         attrs = getattr(container, "attrs", {}) or {}
         spec = build_grouped_runtime_recreate_spec(
@@ -382,6 +400,10 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         return snapshot
 
     async def validate_snapshot(self, target_ref: dict[str, Any], snapshot: dict[str, Any]) -> None:
+        if target_ref.get("mode") == "docker_compose":
+            self._validate_compose_snapshot(target_ref, snapshot)
+            return
+
         await super().validate_snapshot(target_ref, snapshot)
         create_config = snapshot.get("create_config")
         if not isinstance(create_config, dict) or not create_config:
@@ -397,6 +419,9 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
     async def recover_from_snapshot(
         self, target_ref: dict[str, Any], snapshot: dict[str, Any]
     ) -> RuntimeUpdateResult:
+        if target_ref.get("mode") == "docker_compose":
+            return await self._recover_compose_from_snapshot(target_ref, snapshot)
+
         await self.validate_snapshot(target_ref, snapshot)
 
         create_config = snapshot.get("create_config")
@@ -444,6 +469,120 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
             new_image=recovered_image,
             message="runtime recovered from snapshot",
             new_container_id=getattr(recovered_container, "id", None),
+        )
+
+    async def _capture_compose_snapshot(
+        self,
+        target_ref: dict[str, Any],
+        current_image: str,
+    ) -> dict[str, Any]:
+        project = target_ref.get("project")
+        if not isinstance(project, str) or not project.strip():
+            raise ValueError("target_ref.project must be a non-empty string")
+        service_containers = self._find_compose_service_containers(project)
+        service_images = await self.fetch_compose_service_images(target_ref)
+        update_plan = {
+            service: image
+            for service, image in service_images.items()
+            if isinstance(image, str) and image.strip()
+        }
+        specs = self._build_grouped_runtime_recreate_specs(service_containers, update_plan)
+        self._validate_podman_grouped_recreate_specs(specs, target_pod_id=None)
+        snapshots = []
+        for spec in specs:
+            snapshot = dict(spec.snapshot_payload)
+            snapshot["compose_project"] = spec.compose_project
+            snapshot["compose_service"] = spec.compose_service
+            snapshot["create_config"] = self._apply_podman_host_config_preservation(
+                dict(snapshot.get("create_config") or {}),
+                spec.host_config,
+            )
+            snapshots.append(snapshot)
+        image_summary = current_image or self._compose_snapshot_image_summary(service_images)
+        return {
+            "runtime_type": self.runtime_connection.type,
+            "mode": "docker_compose",
+            "project": project.strip(),
+            "image": image_summary,
+            "services": list(target_ref.get("services") or []),
+            "snapshots": snapshots,
+        }
+
+    def _validate_compose_snapshot(
+        self,
+        target_ref: dict[str, Any],
+        snapshot: dict[str, Any],
+    ) -> None:
+        if not isinstance(snapshot, dict) or not snapshot:
+            raise ValueError("snapshot must be a non-empty dict")
+        if snapshot.get("mode") != "docker_compose":
+            raise ValueError("snapshot.mode must be docker_compose")
+        project = target_ref.get("project")
+        if not isinstance(project, str) or not project.strip():
+            raise ValueError("target_ref.project must be a non-empty string")
+        snapshot_project = snapshot.get("project")
+        if snapshot_project != project.strip():
+            raise ValueError("snapshot.project must match target_ref.project")
+        if not isinstance(snapshot.get("image"), str) or not snapshot["image"].strip():
+            raise ValueError("snapshot.image must be a non-empty string")
+        snapshots = snapshot.get("snapshots")
+        if not isinstance(snapshots, list) or not snapshots:
+            raise ValueError("snapshot.snapshots must be a non-empty list")
+        for item in snapshots:
+            self._validate_compose_container_snapshot(item)
+
+    def _validate_compose_container_snapshot(self, snapshot: Any) -> None:
+        if not isinstance(snapshot, dict) or not snapshot:
+            raise ValueError("compose snapshot entry must be a non-empty dict")
+        if not isinstance(snapshot.get("image"), str) or not snapshot["image"].strip():
+            raise ValueError("compose snapshot entry image must be a non-empty string")
+        has_id = isinstance(snapshot.get("container_id"), str) and snapshot["container_id"].strip()
+        has_name = (
+            isinstance(snapshot.get("container_name"), str) and snapshot["container_name"].strip()
+        )
+        if not (has_id or has_name):
+            raise ValueError("compose snapshot entry must include container_id or container_name")
+        create_config = snapshot.get("create_config")
+        if not isinstance(create_config, dict) or not create_config:
+            raise ValueError("compose snapshot entry create_config must be a non-empty dict")
+        if create_config.get("image") != snapshot.get("image"):
+            raise ValueError("compose snapshot entry create_config.image must match image")
+
+    async def _recover_compose_from_snapshot(
+        self,
+        target_ref: dict[str, Any],
+        snapshot: dict[str, Any],
+    ) -> RuntimeUpdateResult:
+        self._validate_compose_snapshot(target_ref, snapshot)
+        recovered_ids: list[str] = []
+        snapshots = snapshot.get("snapshots")
+        if not isinstance(snapshots, list):
+            raise ValueError("snapshot.snapshots must be a list")
+        client = self._get_client()
+        current_pod_refs = self._recover_snapshot_pods(client, snapshots)
+        for item in snapshots:
+            result = await self._recover_grouped_container_from_snapshot(
+                item,
+                client=client,
+                pod_ref_override=self._snapshot_pod_ref_override(item, current_pod_refs),
+            )
+            if result.new_container_id:
+                recovered_ids.append(result.new_container_id)
+        recovered_image = snapshot.get("image") if isinstance(snapshot.get("image"), str) else None
+        return RuntimeUpdateResult(
+            updated=True,
+            old_image=None,
+            new_image=recovered_image,
+            message="podman compose recovered from snapshot",
+            new_container_id=",".join(recovered_ids) or None,
+        )
+
+    @staticmethod
+    def _compose_snapshot_image_summary(service_images: dict[str, str]) -> str:
+        return "; ".join(
+            f"{service}={image}"
+            for service, image in sorted(service_images.items())
+            if isinstance(image, str) and image.strip()
         )
 
     def _cleanup_replacement_conflict(
@@ -494,6 +633,11 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         snapshots_by_spec_key: dict[str, dict[str, Any]],
     ) -> str | None:
         recovery_failures: list[str] = []
+        client = self._get_client()
+        current_pod_refs = self._recover_snapshot_pods(
+            client,
+            [snapshot for snapshot in snapshots_by_spec_key.values() if isinstance(snapshot, dict)],
+        )
         for spec in specs:
             snapshot = snapshots_by_spec_key.get(self._grouped_runtime_recreate_spec_key(spec))
             if not isinstance(snapshot, dict) or not snapshot:
@@ -502,7 +646,11 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                 )
                 continue
             try:
-                await self._recover_grouped_container_from_snapshot(snapshot)
+                await self._recover_grouped_container_from_snapshot(
+                    snapshot,
+                    client=client,
+                    pod_ref_override=self._snapshot_pod_ref_override(snapshot, current_pod_refs),
+                )
             except Exception as recovery_exc:
                 recovery_failures.append(
                     f"{spec.container_name or spec.container_id or 'unknown container'}: {recovery_exc}"
@@ -513,7 +661,11 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         return None
 
     async def _recover_grouped_container_from_snapshot(
-        self, snapshot: dict[str, Any]
+        self,
+        snapshot: dict[str, Any],
+        *,
+        client=None,
+        pod_ref_override: Any | None = None,
     ) -> RuntimeUpdateResult:
         create_config = snapshot.get("create_config")
         if not isinstance(create_config, dict) or not create_config:
@@ -521,7 +673,7 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         if create_config.get("image") != snapshot.get("image"):
             raise ValueError("snapshot.create_config.image must match snapshot.image")
 
-        client = self._get_client()
+        client = client or self._get_client()
         recovered_image = snapshot.get("image") if isinstance(snapshot.get("image"), str) else None
         if recovered_image:
             client.images.pull(recovered_image)
@@ -529,6 +681,7 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         restorable_create_config = self._podman_grouped_create_config_for_snapshot(
             snapshot,
             client=client,
+            pod_ref_override=pod_ref_override,
         )
         existing_container = self._cleanup_grouped_replacement_conflict(
             client,
@@ -767,13 +920,413 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
 
     def _resolve_existing_pod_name(self, client, pod_ref: str) -> str | None:
         pod = self._resolve_pod_object_after_create(client, pod_ref)
-        pod_name = getattr(pod, "name", None)
+        if pod is None:
+            return None
+        identity = self._extract_pod_object_identity_payload(pod)
+        pod_name = identity.get("pod_name")
         if isinstance(pod_name, str) and pod_name.strip():
             return pod_name.strip()
         return None
 
     def _pod_create_payload_from_spec(self, spec: GroupedRuntimeRecreateSpec) -> dict[str, Any]:
         return self._pod_create_payload_from_specs([spec])
+
+    def _recover_snapshot_pods(
+        self,
+        client,
+        snapshots: list[Any],
+    ) -> dict[str, Any]:
+        grouped = self._group_pod_backed_snapshots_by_pod_key(snapshots)
+        current_pod_refs: dict[str, Any] = {}
+        for pod_key, pod_snapshots in grouped.items():
+            if pod_key in current_pod_refs:
+                continue
+            pod_ref = self._ensure_snapshot_pod(client, pod_snapshots)
+            if pod_ref is not None:
+                for alias in self._snapshot_pod_aliases(pod_snapshots):
+                    current_pod_refs.setdefault(alias, pod_ref)
+        return current_pod_refs
+
+    def _resolve_current_pod_ref_from_snapshot_containers(
+        self,
+        client,
+        snapshots: list[dict[str, Any]],
+    ) -> Any | None:
+        for snapshot in snapshots:
+            container = self._resolve_current_container_for_snapshot(client, snapshot)
+            if container is None:
+                continue
+            pod_ref = self._current_pod_ref_from_container(client, container)
+            if pod_ref is not None:
+                return pod_ref
+        return None
+
+    def _resolve_current_container_for_snapshot(self, client, snapshot: Mapping[str, Any]):
+        for container_ref in self._snapshot_container_ref_candidates(snapshot):
+            try:
+                return client.containers.get(container_ref)
+            except Exception:
+                continue
+        return self._resolve_current_container_for_snapshot_labels(client, snapshot)
+
+    def _resolve_current_container_for_snapshot_labels(self, client, snapshot: Mapping[str, Any]):
+        compose_project = self._snapshot_compose_project(snapshot)
+        compose_service = self._snapshot_compose_service(snapshot)
+        if compose_project is None or compose_service is None:
+            return None
+        try:
+            containers = client.containers.list(all=True)
+        except Exception:
+            return None
+        for container in containers:
+            full_container = self._get_full_container_with_fallback(container, client)
+            labels = self._get_compose_labels_with_fallback(full_container, client)
+            label_project = labels.get("com.docker.compose.project") or labels.get(
+                "io.podman.compose.project"
+            )
+            label_service = labels.get("com.docker.compose.service")
+            if label_project == compose_project and label_service == compose_service:
+                return full_container
+        return None
+
+    def _snapshot_compose_project(self, snapshot: Mapping[str, Any]) -> str | None:
+        value = snapshot.get("compose_project")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        labels = self._snapshot_create_config_labels(snapshot)
+        for key in ("com.docker.compose.project", "io.podman.compose.project"):
+            label_value = labels.get(key)
+            if isinstance(label_value, str) and label_value.strip():
+                return label_value.strip()
+        return None
+
+    def _snapshot_compose_service(self, snapshot: Mapping[str, Any]) -> str | None:
+        value = snapshot.get("compose_service")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        labels = self._snapshot_create_config_labels(snapshot)
+        label_value = labels.get("com.docker.compose.service")
+        if isinstance(label_value, str) and label_value.strip():
+            return label_value.strip()
+        return None
+
+    def _snapshot_create_config_labels(self, snapshot: Mapping[str, Any]) -> Mapping[str, Any]:
+        create_config = snapshot.get("create_config")
+        if not isinstance(create_config, Mapping):
+            return {}
+        labels = create_config.get("labels") or create_config.get("Labels")
+        if isinstance(labels, Mapping):
+            return labels
+        return {}
+
+    def _snapshot_container_ref_candidates(self, snapshot: Mapping[str, Any]) -> list[str]:
+        candidates: list[str] = []
+        for value in (
+            snapshot.get("container_name"),
+            self._snapshot_create_config_container_name(snapshot),
+        ):
+            if isinstance(value, str) and value.strip() and value.strip() not in candidates:
+                candidates.append(value.strip())
+        return candidates
+
+    def _snapshot_create_config_container_name(self, snapshot: Mapping[str, Any]) -> str | None:
+        create_config = snapshot.get("create_config")
+        if not isinstance(create_config, Mapping):
+            return None
+        name = create_config.get("name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+        return None
+
+    def _current_pod_ref_from_container(self, client, container) -> Any | None:
+        attrs = getattr(container, "attrs", {}) or {}
+        if not isinstance(attrs, Mapping):
+            return None
+
+        pod_relation_payload = self._extract_pod_relation_payload(attrs)
+        pod_name = pod_relation_payload.get("pod_name")
+        if isinstance(pod_name, str) and pod_name.strip():
+            pod = self._resolve_pod_object_after_create(client, pod_name.strip())
+            if pod is not None:
+                return pod
+            return pod_name.strip()
+
+        pod_id = pod_relation_payload.get("pod_id")
+        if not isinstance(pod_id, str) or not pod_id.strip():
+            return None
+        pod = self._resolve_pod_object_after_create(client, pod_id.strip())
+        if pod is not None:
+            return pod
+        return pod_id.strip()
+
+    def _group_pod_backed_snapshots_by_pod_key(
+        self,
+        snapshots: list[Any],
+    ) -> dict[str, list[dict[str, Any]]]:
+        snapshot_items = [snapshot for snapshot in snapshots if isinstance(snapshot, dict)]
+        pod_names_by_id: dict[str, str] = {}
+        for snapshot in snapshot_items:
+            pod_name = self._snapshot_pod_name([snapshot])
+            if pod_name is None:
+                continue
+            for pod_id in self._snapshot_pod_ids([snapshot]):
+                pod_names_by_id.setdefault(pod_id, pod_name)
+
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for snapshot in snapshot_items:
+            pod_key = self._snapshot_pod_key(snapshot)
+            for pod_id in self._snapshot_pod_ids([snapshot]):
+                if pod_id in pod_names_by_id:
+                    pod_key = pod_names_by_id[pod_id]
+                    break
+            if pod_key is not None:
+                grouped[pod_key].append(snapshot)
+        return dict(grouped)
+
+    def _snapshot_pod_key(self, snapshot: Mapping[str, Any]) -> str | None:
+        pod_name = self._snapshot_pod_name([dict(snapshot)])
+        if pod_name is not None:
+            return pod_name
+        pod_ids = self._snapshot_pod_ids([dict(snapshot)])
+        if pod_ids:
+            return pod_ids[0]
+        return None
+
+    def _snapshot_pod_name(self, snapshots: list[dict[str, Any]]) -> str | None:
+        for snapshot in snapshots:
+            for candidate in self._iter_snapshot_pod_name_candidates(snapshot):
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+        return None
+
+    def _snapshot_pod_ids(self, snapshots: list[dict[str, Any]]) -> list[str]:
+        pod_ids: list[str] = []
+        for snapshot in snapshots:
+            for candidate in self._iter_snapshot_pod_id_candidates(snapshot):
+                if (
+                    isinstance(candidate, str)
+                    and candidate.strip()
+                    and candidate.strip() not in pod_ids
+                ):
+                    pod_ids.append(candidate.strip())
+        return pod_ids
+
+    def _iter_snapshot_pod_name_candidates(self, snapshot: Mapping[str, Any]) -> Iterator[Any]:
+        yield snapshot.get("pod_name")
+        pod_relation_payload = snapshot.get("pod_relation_payload")
+        if isinstance(pod_relation_payload, Mapping):
+            yield pod_relation_payload.get("pod_name")
+        for payload_key in ("create_config", "CreateConfig", "podman_create", "config"):
+            payload = snapshot.get(payload_key)
+            if isinstance(payload, Mapping):
+                yield from self._iter_pod_name_values_in_payload(payload)
+
+    def _iter_snapshot_pod_id_candidates(self, snapshot: Mapping[str, Any]) -> Iterator[Any]:
+        yield snapshot.get("pod_id")
+        pod_relation_payload = snapshot.get("pod_relation_payload")
+        if isinstance(pod_relation_payload, Mapping):
+            yield pod_relation_payload.get("pod_id")
+        for payload_key in (
+            "create_config",
+            "CreateConfig",
+            "podman_create",
+            "config",
+            "host_config",
+            "HostConfig",
+        ):
+            payload = snapshot.get(payload_key)
+            if isinstance(payload, Mapping):
+                yield from self._iter_pod_id_values_in_payload(payload)
+
+    def _iter_pod_name_values_in_payload(self, payload: Mapping[str, Any]) -> Iterator[Any]:
+        for key, value in payload.items():
+            if key in PODMAN_SNAPSHOT_POD_NAME_KEYS:
+                yield value
+            if isinstance(value, Mapping):
+                yield from self._iter_pod_name_values_in_payload(value)
+            elif isinstance(value, list | tuple):
+                for item in value:
+                    if isinstance(item, Mapping):
+                        yield from self._iter_pod_name_values_in_payload(item)
+
+    def _iter_pod_id_values_in_payload(self, payload: Mapping[str, Any]) -> Iterator[Any]:
+        for key, value in payload.items():
+            if key in PODMAN_SNAPSHOT_POD_REFERENCE_KEYS:
+                yield value
+            if key in PODMAN_NAMESPACE_PAYLOAD_KEYS and isinstance(value, Mapping):
+                namespace_value = value.get("value")
+                namespace_mode = value.get("nsmode")
+                if isinstance(namespace_mode, str) and namespace_mode.strip() == "pod":
+                    yield namespace_value
+                elif isinstance(namespace_value, str) and namespace_value.strip().startswith(
+                    "pod:"
+                ):
+                    yield namespace_value.strip().split(":", 1)[1]
+            if isinstance(value, Mapping):
+                yield from self._iter_pod_id_values_in_payload(value)
+            elif isinstance(value, list | tuple):
+                for item in value:
+                    if isinstance(item, Mapping):
+                        yield from self._iter_pod_id_values_in_payload(item)
+                    elif key in PODMAN_SNAPSHOT_POD_REFERENCE_KEYS:
+                        yield item
+
+    def _snapshot_pod_aliases(self, snapshots: list[dict[str, Any]]) -> list[str]:
+        aliases: list[str] = []
+        pod_name = self._snapshot_pod_name(snapshots)
+        if pod_name is not None:
+            aliases.append(pod_name)
+        for pod_id in self._snapshot_pod_ids(snapshots):
+            if pod_id not in aliases:
+                aliases.append(pod_id)
+        return aliases
+
+    def _ensure_snapshot_pod(self, client, snapshots: list[dict[str, Any]]) -> Any | None:
+        current_pod_ref = self._resolve_current_pod_ref_from_snapshot_containers(client, snapshots)
+        if current_pod_ref is not None:
+            return current_pod_ref
+
+        pod_name = self._snapshot_pod_name(snapshots)
+        if pod_name is not None:
+            current_pod = self._resolve_pod_object_after_create(client, pod_name)
+            if current_pod is not None:
+                return current_pod
+            return self._recreate_pod_for_snapshots(client, snapshots, pod_name=pod_name)
+
+        if self._snapshot_pod_ids(snapshots):
+            raise ValueError(
+                "podman compose snapshot contains pod membership but current containers could not "
+                "be resolved by stable container names and no stable pod name is available; "
+                "refusing to recover using stale pod IDs"
+            )
+        return None
+
+    def _recreate_pod_for_snapshots(
+        self,
+        client,
+        snapshots: list[dict[str, Any]],
+        *,
+        pod_name: str,
+    ) -> Any | None:
+        for pod_ref in [pod_name, *self._snapshot_pod_ids(snapshots)]:
+            try:
+                client.pods.remove(pod_ref, force=True)
+            except Exception:
+                pass
+        pod_payload = self._pod_create_payload_from_snapshots(snapshots)
+        created_pod = self._create_podman_pod(client, pod_name, pod_payload)
+        if created_pod is not None:
+            return created_pod
+        resolved_pod = self._resolve_pod_object_after_create(client, pod_name)
+        if resolved_pod is not None:
+            return resolved_pod
+        return pod_name
+
+    def _pod_create_payload_from_snapshots(self, snapshots: list[dict[str, Any]]) -> dict[str, Any]:
+        if not snapshots:
+            return {}
+        topology = self._pod_topology_from_relation_payload(
+            self._snapshot_pod_relation_payload(snapshots[0])
+        )
+        payload: dict[str, Any] = {}
+        if topology.create_infra is not None:
+            payload["infra"] = topology.create_infra
+        else:
+            payload["infra"] = False
+            payload[PODMAN_DEFAULTED_INFRA_PAYLOAD_KEY] = True
+
+        share_value = self._pod_share_payload_value(topology)
+        if self._pod_topology_uses_container_networking(topology):
+            payload["no_infra"] = True
+            if topology.shared_namespaces == ():
+                payload["shared_namespaces"] = []
+            return payload
+
+        for snapshot in snapshots:
+            create_config = snapshot.get("create_config")
+            if not isinstance(create_config, dict):
+                continue
+            hostname = create_config.get("hostname")
+            if isinstance(hostname, str) and hostname.strip() and "hostname" not in payload:
+                payload["hostname"] = hostname.strip()
+            shm_size = create_config.get("shm_size")
+            if isinstance(shm_size, int) and shm_size > 0 and "shm_size" not in payload:
+                payload["shm_size"] = shm_size
+            portmappings = self._pod_portmappings_from_create_config(create_config)
+            if portmappings:
+                payload.setdefault("portmappings", [])
+                payload["portmappings"].extend(portmappings)
+            extra_hosts = self._pod_extra_hosts_from_create_config(create_config)
+            if extra_hosts:
+                payload.setdefault("hostadd", [])
+                payload["hostadd"].extend(extra_hosts)
+            dns = create_config.get("dns")
+            if isinstance(dns, list) and dns and "dns" not in payload:
+                payload["dns"] = list(dns)
+            dns_search = create_config.get("dns_search")
+            if isinstance(dns_search, list) and dns_search and "dns_search" not in payload:
+                payload["dns_search"] = list(dns_search)
+
+        networks = self._pod_networks_from_snapshots(snapshots)
+        if networks:
+            if share_value is not None:
+                payload["share"] = share_value
+            payload["networks"] = networks
+        return payload
+
+    def _pod_networks_from_snapshots(
+        self,
+        snapshots: list[dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        networks: dict[str, dict[str, Any]] = {}
+        for snapshot in snapshots:
+            network_config = snapshot.get("network_config")
+            if not isinstance(network_config, dict):
+                continue
+            container_id = (
+                snapshot.get("container_id")
+                if isinstance(snapshot.get("container_id"), str)
+                else None
+            )
+            for network_name, options in self._pod_networks_from_config(
+                network_config,
+                container_id,
+            ).items():
+                merged_options = networks.setdefault(network_name, {})
+                for option_key, option_value in options.items():
+                    if option_key == "aliases" and isinstance(option_value, list):
+                        aliases = merged_options.setdefault("aliases", [])
+                        for alias in option_value:
+                            if alias not in aliases:
+                                aliases.append(alias)
+                        continue
+                    if option_key == "static_ips" and isinstance(option_value, list):
+                        static_ips = merged_options.setdefault("static_ips", [])
+                        for static_ip in option_value:
+                            if static_ip not in static_ips:
+                                static_ips.append(static_ip)
+                        continue
+                    merged_options.setdefault(option_key, option_value)
+        return networks
+
+    def _snapshot_pod_relation_payload(
+        self,
+        snapshot: Mapping[str, Any],
+    ) -> Mapping[str, Any] | None:
+        pod_relation_payload = snapshot.get("pod_relation_payload")
+        if isinstance(pod_relation_payload, Mapping):
+            return pod_relation_payload
+        return None
+
+    def _snapshot_pod_ref_override(
+        self,
+        snapshot: Mapping[str, Any],
+        current_pod_refs: Mapping[str, Any],
+    ) -> Any | None:
+        pod_key = self._snapshot_pod_key(snapshot)
+        if pod_key is None:
+            return None
+        return current_pod_refs.get(pod_key)
 
     def _pod_create_payload_from_specs(
         self,
@@ -2192,6 +2745,7 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         snapshot: dict[str, Any],
         *,
         client=None,
+        pod_ref_override: Any | None = None,
     ) -> dict[str, Any]:
         create_config = dict(snapshot.get("create_config") or {})
         host_config = (
@@ -2203,17 +2757,36 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         pod_relation_payload = snapshot.get("pod_relation_payload")
         if not isinstance(pod_relation_payload, Mapping):
             pod_relation_payload = None
-        if pod_name or pod_id:
+        if pod_name or pod_id or pod_ref_override is not None:
             self._prepare_create_config_for_pod_membership(
                 create_config,
                 pod_relation_payload=pod_relation_payload,
             )
-        return self._apply_pod_membership_to_create_config(
+        stable_pod_names = {
+            pod_name_candidate
+            for pod_name_candidate in (pod_name, self._snapshot_pod_name([snapshot]))
+            if isinstance(pod_name_candidate, str) and pod_name_candidate.strip()
+        }
+        stale_pod_ids = set(self._snapshot_pod_ids([snapshot])) - stable_pod_names
+        if pod_ref_override is not None:
+            return self._apply_snapshot_pod_ref_override(
+                create_config,
+                pod_ref_override,
+                stale_pod_ids=stale_pod_ids,
+            )
+        create_config = self._apply_pod_membership_to_create_config(
             create_config,
             pod_name=pod_name,
             pod_id=pod_id,
             client=client,
         )
+        if create_config.get("pod") is not None:
+            return self._apply_snapshot_pod_ref_override(
+                create_config,
+                create_config["pod"],
+                stale_pod_ids=stale_pod_ids,
+            )
+        return create_config
 
     def _podman_container_create_config(
         self,
@@ -2243,6 +2816,58 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
             else:
                 sanitized.pop("extra_hosts", None)
         return sanitized
+
+    def _apply_snapshot_pod_ref_override(
+        self,
+        create_config: dict[str, Any],
+        pod_ref_override: Any,
+        *,
+        stale_pod_ids: set[str] | None = None,
+    ) -> dict[str, Any]:
+        self._sanitize_snapshot_pod_references(create_config, stale_pod_ids=stale_pod_ids)
+        create_config["pod"] = pod_ref_override
+        return create_config
+
+    def _sanitize_snapshot_pod_references(
+        self,
+        payload: Any,
+        *,
+        stale_pod_ids: set[str] | None = None,
+    ) -> None:
+        stale_pod_ids = stale_pod_ids or set()
+        if isinstance(payload, dict):
+            for key in list(payload):
+                value = payload.get(key)
+                if key in PODMAN_SNAPSHOT_POD_REFERENCE_KEYS:
+                    payload.pop(key, None)
+                    continue
+                if key in PODMAN_NAMESPACE_PAYLOAD_KEYS and self._podman_namespace_targets_pod(
+                    value
+                ):
+                    payload.pop(key, None)
+                    continue
+                if isinstance(value, str) and value.strip() in stale_pod_ids:
+                    payload.pop(key, None)
+                    continue
+                self._sanitize_snapshot_pod_references(value, stale_pod_ids=stale_pod_ids)
+            return
+        if isinstance(payload, list):
+            payload[:] = [
+                item
+                for item in payload
+                if not (isinstance(item, str) and item.strip() in stale_pod_ids)
+            ]
+            for item in payload:
+                self._sanitize_snapshot_pod_references(item, stale_pod_ids=stale_pod_ids)
+
+    def _podman_namespace_targets_pod(self, value: Any) -> bool:
+        if not isinstance(value, Mapping):
+            return False
+        namespace_mode = value.get("nsmode")
+        namespace_value = value.get("value")
+        if isinstance(namespace_mode, str) and namespace_mode.strip() == "pod":
+            return True
+        return isinstance(namespace_value, str) and namespace_value.strip().startswith("pod:")
 
     def _sanitize_podman_create_config(self, create_config: dict[str, Any]) -> None:
         network_mode = create_config.get("network_mode")
@@ -2642,8 +3267,8 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         return self._has_non_empty_string(spec.pod_name) or self._has_non_empty_string(spec.pod_id)
 
     def _snapshot_has_pod_membership(self, snapshot: Mapping[str, Any]) -> bool:
-        return self._has_non_empty_string(snapshot.get("pod_name")) or self._has_non_empty_string(
-            snapshot.get("pod_id")
+        return self._snapshot_pod_name([dict(snapshot)]) is not None or bool(
+            self._snapshot_pod_ids([dict(snapshot)])
         )
 
     def _has_non_empty_string(self, value: Any) -> bool:
@@ -3051,9 +3676,7 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
             set(selected_services),
         )
         selected_specs = [
-            spec
-            for service in selected_services
-            for spec in specs_by_service.get(service, [])
+            spec for service in selected_services for spec in specs_by_service.get(service, [])
         ]
         return self._order_grouped_runtime_recreate_specs(selected_specs)
 
@@ -3087,6 +3710,9 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                     pod_relation_payload,
                     client,
                 )
+                pod_name_from_labels = self._pod_name_from_compose_labels(labels)
+                if pod_name_from_labels is not None:
+                    pod_relation_payload.setdefault("pod_name", pod_name_from_labels)
                 service_specs.append(
                     build_grouped_runtime_recreate_spec(
                         container,
@@ -3285,6 +3911,15 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
 
         return collected
 
+    def _pod_name_from_compose_labels(self, labels: Mapping[str, Any]) -> str | None:
+        if not isinstance(labels, Mapping):
+            return None
+        for key in ("io.podman.compose.pod", "io.podman.compose.pod_name"):
+            value = labels.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
     def _merge_pod_inspect_relation_payload(
         self,
         pod_relation_payload: Mapping[str, Any],
@@ -3303,15 +3938,38 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         except Exception:
             return payload
 
+        pod_metadata = self._extract_pod_object_identity_payload(pod)
         pod_attrs = getattr(pod, "attrs", None)
-        if not isinstance(pod_attrs, Mapping):
-            return payload
-        pod_metadata = self._extract_pod_relation_payload(pod_attrs)
+        if isinstance(pod_attrs, Mapping):
+            pod_metadata.update(self._extract_pod_relation_payload(pod_attrs))
         for key, value in pod_metadata.items():
             if key in {"pod_id", "pod_name"}:
                 payload.setdefault(key, value)
             else:
                 payload[key] = value
+        return payload
+
+    def _extract_pod_object_identity_payload(self, pod: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        pod_attrs = getattr(pod, "attrs", None)
+        if isinstance(pod_attrs, Mapping):
+            for source_key in ("Id", "ID", "id"):
+                value = pod_attrs.get(source_key)
+                if isinstance(value, str) and value.strip():
+                    payload.setdefault("pod_id", value.strip())
+                    break
+            for source_key in ("Name", "name"):
+                value = pod_attrs.get(source_key)
+                if isinstance(value, str) and value.strip():
+                    payload.setdefault("pod_name", value.strip())
+                    break
+
+        pod_id = getattr(pod, "id", None)
+        if isinstance(pod_id, str) and pod_id.strip():
+            payload.setdefault("pod_id", pod_id.strip())
+        pod_name = getattr(pod, "name", None)
+        if isinstance(pod_name, str) and pod_name.strip():
+            payload.setdefault("pod_name", pod_name.strip())
         return payload
 
     def _extract_pod_relation_payload(self, attrs: Any) -> dict[str, Any]:

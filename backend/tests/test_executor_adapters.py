@@ -858,6 +858,20 @@ def _assert_podman_pod_member_create_kwargs(create_kwargs: dict) -> None:
             assert namespace_payload != ""
 
 
+def _assert_podman_payload_does_not_contain_value(payload, forbidden_value: str) -> None:
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            assert value != forbidden_value, f"forbidden value found at key {key}"
+            _assert_podman_payload_does_not_contain_value(value, forbidden_value)
+        return
+    if isinstance(payload, list | tuple | set):
+        for item in payload:
+            assert item != forbidden_value
+            _assert_podman_payload_does_not_contain_value(item, forbidden_value)
+        return
+    assert payload != forbidden_value
+
+
 def _assert_no_blank_podman_create_network_values(create_kwargs: dict) -> None:
     assert create_kwargs.get("network_mode") != ""
     assert create_kwargs.get("network") != ""
@@ -4661,6 +4675,89 @@ async def test_docker_compose_grouped_update_recovery_uses_snapshot_payload_not_
 
 
 @pytest.mark.asyncio
+async def test_docker_compose_snapshot_captures_and_recovers_grouped_config():
+    runtime = RuntimeConnectionConfig(
+        name="docker-prod",
+        type="docker",
+        config={"socket": "unix:///var/run/docker.sock"},
+        secrets={},
+    )
+    labels = {
+        "com.docker.compose.project": "release-stack",
+        "com.docker.compose.service": "api",
+        "com.docker.compose.container-number": "1",
+    }
+    api = FakeContainer(
+        "api-1",
+        "release-stack-api-1",
+        FakeImage(tags=["ghcr.io/acme/api:1.0"]),
+        attrs={
+            "Config": {
+                "Image": "ghcr.io/acme/api:1.0",
+                "Env": ["APP_MODE=stable"],
+                "Labels": labels,
+            },
+            "HostConfig": {
+                "PortBindings": {"8000/tcp": [{"HostIp": "", "HostPort": "8080"}]},
+                "Binds": ["/srv/api:/app/data:ro"],
+                "RestartPolicy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
+                "NetworkMode": "release-stack_default",
+            },
+            "NetworkSettings": {
+                "Networks": {
+                    "release-stack_default": {
+                        "Aliases": ["api", "release-stack-api-1", "api-1"],
+                        "IPAMConfig": None,
+                    }
+                }
+            },
+        },
+    )
+    client = FakeDockerRecreateClient([api], network_names=["release-stack_default"])
+    adapter = DockerRuntimeAdapter(runtime, client=client)
+
+    snapshot = await adapter.capture_snapshot(
+        {"mode": "docker_compose", "project": "release-stack"},
+        "api=ghcr.io/acme/api:1.0",
+    )
+    await adapter.validate_snapshot(
+        {"mode": "docker_compose", "project": "release-stack"}, snapshot
+    )
+
+    assert snapshot["mode"] == "docker_compose"
+    assert snapshot["image"] == "api=ghcr.io/acme/api:1.0"
+    assert snapshot["snapshots"][0]["compose_service"] == "api"
+    assert snapshot["snapshots"][0]["create_config"] == {
+        "image": "ghcr.io/acme/api:1.0",
+        "name": "release-stack-api-1",
+        "environment": ["APP_MODE=stable"],
+        "ports": {"8000/tcp": ("", 8080)},
+        "volumes": {"/srv/api": {"bind": "/app/data", "mode": "ro"}},
+        "restart_policy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
+        "network_mode": "release-stack_default",
+        "labels": labels,
+    }
+
+    api.remove()
+    result = await adapter.recover_from_snapshot(
+        {"mode": "docker_compose", "project": "release-stack"},
+        snapshot,
+    )
+
+    assert result.updated is True
+    assert result.new_image == "api=ghcr.io/acme/api:1.0"
+    assert result.message == "docker compose recovered from snapshot"
+    assert client.containers.create_calls == [snapshot["snapshots"][0]["create_config"]]
+    assert client.networks.connect_calls == [
+        (
+            "release-stack_default",
+            "release-stack-api-1",
+            {"aliases": ["api", "release-stack-api-1"]},
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_docker_compose_grouped_update_fails_fast_for_active_runtime_endpoint_proxy():
     runtime = RuntimeConnectionConfig(
         name="docker-prod",
@@ -5040,6 +5137,652 @@ async def test_podman_compose_grouped_update_recreates_pod_backed_targets_in_sam
 
 
 @pytest.mark.asyncio
+async def test_podman_compose_snapshot_captures_and_recovers_pod_backed_group():
+    runtime = RuntimeConnectionConfig(
+        name="podman-prod",
+        type="podman",
+        config={"socket": "unix:///run/podman/podman.sock"},
+        secrets={},
+    )
+    api_labels = {
+        "io.podman.compose.project": "core",
+        "com.docker.compose.service": "api",
+    }
+    worker_labels = {
+        "io.podman.compose.project": "core",
+        "com.docker.compose.service": "worker",
+    }
+    api = FakeContainer(
+        "api-1",
+        "core-api-1",
+        FakeImage(tags=["ghcr.io/acme/api:1.0"]),
+        attrs={
+            "Pod": "pod-core",
+            "PodName": "core-pod",
+            "Config": {"Image": "ghcr.io/acme/api:1.0", "Labels": api_labels},
+            "HostConfig": {},
+            "NetworkSettings": {"Networks": {"edge": {"Aliases": ["api", "core-api-1"]}}},
+        },
+    )
+    worker = FakeContainer(
+        "worker-1",
+        "core-worker-1",
+        FakeImage(tags=["ghcr.io/acme/worker:1.0"]),
+        attrs={
+            "Pod": "pod-core",
+            "PodName": "core-pod",
+            "Config": {"Image": "ghcr.io/acme/worker:1.0", "Labels": worker_labels},
+            "HostConfig": {"Binds": ["/srv/worker:/app:Z"]},
+            "NetworkSettings": {"Networks": {"edge": {"Aliases": ["worker", "core-worker-1"]}}},
+        },
+    )
+    client = FakePodmanClient([api, worker], network_names=["edge", "podman"])
+    adapter = PodmanRuntimeAdapter(runtime, client=client)
+
+    snapshot = await adapter.capture_snapshot(
+        {"mode": "docker_compose", "project": "core"},
+        "api=ghcr.io/acme/api:1.0; worker=ghcr.io/acme/worker:1.0",
+    )
+    await adapter.validate_snapshot({"mode": "docker_compose", "project": "core"}, snapshot)
+
+    assert snapshot["mode"] == "docker_compose"
+    assert [item["compose_service"] for item in snapshot["snapshots"]] == ["api", "worker"]
+    assert all(item["pod_id"] == "pod-core" for item in snapshot["snapshots"])
+    assert snapshot["snapshots"][1]["create_config"]["mounts"] == [
+        {
+            "destination": "/app",
+            "options": ["Z"],
+            "relabel": "Z",
+            "source": "/srv/worker",
+            "type": "bind",
+        }
+    ]
+
+    api.remove()
+    worker.remove()
+    result = await adapter.recover_from_snapshot(
+        {"mode": "docker_compose", "project": "core"},
+        snapshot,
+    )
+
+    assert result.updated is True
+    assert result.new_image == "api=ghcr.io/acme/api:1.0; worker=ghcr.io/acme/worker:1.0"
+    assert result.message == "podman compose recovered from snapshot"
+    assert [call["image"] for call in client.containers.create_calls] == [
+        "ghcr.io/acme/api:1.0",
+        "ghcr.io/acme/worker:1.0",
+    ]
+    assert all(call["pod"] == "core-pod" for call in client.containers.create_calls)
+
+
+@pytest.mark.asyncio
+async def test_podman_compose_snapshot_captures_stable_pod_name_from_pod_inspect():
+    runtime = RuntimeConnectionConfig(
+        name="podman-prod",
+        type="podman",
+        config={"socket": "unix:///run/podman/podman.sock"},
+        secrets={},
+    )
+    stale_pod_id = "1c533360b00f4b0685fd702da5a2582753c9668d9a0e05e90b9ea3af7227b471"
+    stable_pod_name = "nginx-docker-traefik-test"
+    nginx_labels = {
+        "io.podman.compose.project": stable_pod_name,
+        "com.docker.compose.service": "nginx",
+    }
+    traefik_labels = {
+        "io.podman.compose.project": stable_pod_name,
+        "com.docker.compose.service": "traefik",
+    }
+    nginx = FakeContainer(
+        "c332df545be11953a36c937d298eda732f3721755d347be4a356912ef3844ee3",
+        "nginx-behind-traefik",
+        FakeImage(tags=["docker.io/library/nginx:1.25"]),
+        attrs={
+            "Pod": stale_pod_id,
+            "Config": {"Image": "docker.io/library/nginx:1.25", "Labels": nginx_labels},
+            "HostConfig": {},
+            "NetworkSettings": {
+                "Networks": {"edge": {"Aliases": ["nginx", "nginx-behind-traefik"]}}
+            },
+        },
+    )
+    traefik = FakeContainer(
+        "449aced0d19175df137e60cc457d438696ba8adb7a6f5b4cca4906730b79b2bc",
+        "traefik-test",
+        FakeImage(tags=["docker.io/library/traefik:3.0"]),
+        attrs={
+            "Pod": stale_pod_id,
+            "Config": {"Image": "docker.io/library/traefik:3.0", "Labels": traefik_labels},
+            "HostConfig": {},
+            "NetworkSettings": {"Networks": {"edge": {"Aliases": ["traefik", "traefik-test"]}}},
+        },
+    )
+    client = FakePodmanClient([nginx, traefik], network_names=["edge", "podman"])
+    client.pods.add(
+        stable_pod_name,
+        pod_id=stale_pod_id,
+        attrs={"Id": stale_pod_id, "Name": stable_pod_name, "CreateInfra": True},
+    )
+    adapter = PodmanRuntimeAdapter(runtime, client=client)
+
+    snapshot = await adapter.capture_snapshot(
+        {"mode": "docker_compose", "project": stable_pod_name},
+        "nginx=docker.io/library/nginx:1.25; traefik=docker.io/library/traefik:3.0",
+    )
+
+    assert [item["compose_service"] for item in snapshot["snapshots"]] == ["nginx", "traefik"]
+    assert all(item["pod_id"] == stale_pod_id for item in snapshot["snapshots"])
+    assert all(item["pod_name"] == stable_pod_name for item in snapshot["snapshots"])
+    assert all(
+        item["pod_relation_payload"]["pod_name"] == stable_pod_name
+        for item in snapshot["snapshots"]
+    )
+
+    nginx.remove()
+    traefik.remove()
+    client.pods.remove(stale_pod_id, force=True)
+    client.pods.next_create_pod_id = "current-pod-id"
+    client.api.reject_pod_id_only_create.add(stale_pod_id)
+
+    result = await adapter.recover_from_snapshot(
+        {"mode": "docker_compose", "project": stable_pod_name},
+        snapshot,
+    )
+
+    assert result.updated is True
+    assert client.pods.create_calls[-1] == {
+        "name": stable_pod_name,
+        "infra": True,
+        "share": "net",
+        "networks": {
+            "edge": {"aliases": ["nginx", "nginx-behind-traefik", "traefik", "traefik-test"]}
+        },
+    }
+    assert [call["pod"] for call in client.containers.create_calls[-2:]] == [
+        "current-pod-id",
+        "current-pod-id",
+    ]
+    for call in client.api.post_calls[-2:]:
+        assert call["data"]["pod"] == "current-pod-id"
+        _assert_podman_payload_does_not_contain_value(call["data"], stale_pod_id)
+
+
+@pytest.mark.asyncio
+async def test_podman_compose_snapshot_recovery_recreates_stale_pod_by_name():
+    runtime = RuntimeConnectionConfig(
+        name="podman-prod",
+        type="podman",
+        config={"socket": "unix:///run/podman/podman.sock"},
+        secrets={},
+    )
+    api_snapshot = {
+        "runtime_type": "podman",
+        "container_id": "api-1",
+        "container_name": "core-api-1",
+        "compose_project": "core",
+        "compose_service": "api",
+        "image": "ghcr.io/acme/api:1.0",
+        "pod_id": "stale-pod-id",
+        "pod_name": "core-pod",
+        "pod_relation_payload": {
+            "pod_id": "stale-pod-id",
+            "pod_name": "core-pod",
+            "pod_create_infra": True,
+            "pod_shared_namespaces": ["net"],
+        },
+        "create_config": {
+            "image": "ghcr.io/acme/api:1.0",
+            "name": "core-api-1",
+            "labels": {
+                "io.podman.compose.project": "core",
+                "com.docker.compose.service": "api",
+            },
+        },
+        "host_config": {},
+        "network_config": {
+            "endpoints": {
+                "edge": {
+                    "Aliases": ["api", "core-api-1"],
+                    "IPAddress": "10.88.0.10",
+                }
+            }
+        },
+    }
+    worker_snapshot = {
+        "runtime_type": "podman",
+        "container_id": "worker-1",
+        "container_name": "core-worker-1",
+        "compose_project": "core",
+        "compose_service": "worker",
+        "image": "ghcr.io/acme/worker:1.0",
+        "pod_id": "stale-pod-id",
+        "pod_name": "core-pod",
+        "pod_relation_payload": {
+            "pod_id": "stale-pod-id",
+            "pod_name": "core-pod",
+            "pod_create_infra": True,
+            "pod_shared_namespaces": ["net"],
+        },
+        "create_config": {
+            "image": "ghcr.io/acme/worker:1.0",
+            "name": "core-worker-1",
+            "labels": {
+                "io.podman.compose.project": "core",
+                "com.docker.compose.service": "worker",
+            },
+        },
+        "host_config": {},
+        "network_config": {
+            "endpoints": {
+                "edge": {
+                    "Aliases": ["worker", "core-worker-1"],
+                    "IPAddress": "10.88.0.11",
+                }
+            }
+        },
+    }
+    client = FakePodmanClient([], network_names=["edge", "podman"])
+    client.pods.next_create_pod_id = "current-pod-id"
+    client.api.reject_pod_id_only_create.add("stale-pod-id")
+    adapter = PodmanRuntimeAdapter(runtime, client=client)
+
+    result = await adapter.recover_from_snapshot(
+        {"mode": "docker_compose", "project": "core"},
+        {
+            "mode": "docker_compose",
+            "project": "core",
+            "image": "api=ghcr.io/acme/api:1.0; worker=ghcr.io/acme/worker:1.0",
+            "services": ["api", "worker"],
+            "snapshots": [api_snapshot, worker_snapshot],
+        },
+    )
+
+    assert result.updated is True
+    assert client.pods.remove_calls == [("core-pod", True), ("stale-pod-id", True)]
+    assert client.pods.create_calls == [
+        {
+            "name": "core-pod",
+            "infra": True,
+            "share": "net",
+            "networks": {
+                "edge": {
+                    "aliases": ["api", "core-api-1", "worker", "core-worker-1"],
+                    "static_ips": ["10.88.0.10", "10.88.0.11"],
+                }
+            },
+        }
+    ]
+    assert [call["pod"] for call in client.containers.create_calls] == [
+        "current-pod-id",
+        "current-pod-id",
+    ]
+    assert all(call["data"]["pod"] == "current-pod-id" for call in client.api.post_calls)
+    for call in client.api.post_calls:
+        _assert_podman_payload_does_not_contain_value(call["data"], "stale-pod-id")
+
+
+@pytest.mark.asyncio
+async def test_podman_compose_snapshot_recovery_sanitizes_nested_stale_pod_references():
+    runtime = RuntimeConnectionConfig(
+        name="podman-prod",
+        type="podman",
+        config={"socket": "unix:///run/podman/podman.sock"},
+        secrets={},
+    )
+    stale_pod_id = "1c533360b00f4b0685fd702da5a2582753c9668d9a0e05e90b9ea3af7227b471"
+    snapshot = {
+        "runtime_type": "podman",
+        "container_id": "api-1",
+        "container_name": "core-api-1",
+        "compose_project": "core",
+        "compose_service": "api",
+        "image": "ghcr.io/acme/api:1.0",
+        "pod_id": stale_pod_id,
+        "pod_name": "core-pod",
+        "pod_relation_payload": {
+            "pod_id": stale_pod_id,
+            "pod_name": "core-pod",
+            "pod_create_infra": True,
+            "pod_shared_namespaces": ["net"],
+        },
+        "create_config": {
+            "image": "ghcr.io/acme/api:1.0",
+            "name": "core-api-1",
+            "pod": stale_pod_id,
+            "Pod": stale_pod_id,
+            "PodID": stale_pod_id,
+            "podId": stale_pod_id,
+            "CreateConfig": {"Pod": stale_pod_id},
+            "podman_create": {"PodID": stale_pod_id},
+            "host_config": {"PodId": stale_pod_id},
+            "netns": {"nsmode": "pod", "value": stale_pod_id},
+            "ipcns": {"nsmode": "pod", "value": stale_pod_id},
+            "labels": {
+                "io.podman.compose.project": "core",
+                "com.docker.compose.service": "api",
+                "io.podman.compose.stale-pod-id": stale_pod_id,
+            },
+        },
+        "host_config": {"Pod": stale_pod_id, "HostConfig": {"PodID": stale_pod_id}},
+        "network_config": {"endpoints": {"edge": {"Aliases": ["api", "core-api-1"]}}},
+    }
+    client = FakePodmanClient([], network_names=["edge", "podman"])
+    client.pods.next_create_pod_id = "current-pod-id"
+    client.api.reject_pod_id_only_create.add(stale_pod_id)
+    adapter = PodmanRuntimeAdapter(runtime, client=client)
+
+    result = await adapter.recover_from_snapshot(
+        {"mode": "docker_compose", "project": "core"},
+        {
+            "mode": "docker_compose",
+            "project": "core",
+            "image": "api=ghcr.io/acme/api:1.0",
+            "services": ["api"],
+            "snapshots": [snapshot],
+        },
+    )
+
+    assert result.updated is True
+    assert len(client.containers.create_calls) == 1
+    assert client.containers.create_calls[0]["image"] == "ghcr.io/acme/api:1.0"
+    assert client.containers.create_calls[0]["name"] == "core-api-1"
+    assert client.containers.create_calls[0]["pod"] == "current-pod-id"
+    assert client.containers.create_calls[0]["labels"] == {
+        "io.podman.compose.project": "core",
+        "com.docker.compose.service": "api",
+    }
+    assert client.api.post_calls
+    assert client.api.post_calls[0]["data"]["pod"] == "current-pod-id"
+    _assert_podman_payload_does_not_contain_value(
+        client.containers.create_calls[0],
+        stale_pod_id,
+    )
+    _assert_podman_payload_does_not_contain_value(client.api.post_calls[0]["data"], stale_pod_id)
+
+
+@pytest.mark.asyncio
+async def test_podman_compose_snapshot_recovery_groups_sibling_stale_pod_ids_by_name():
+    runtime = RuntimeConnectionConfig(
+        name="podman-prod",
+        type="podman",
+        config={"socket": "unix:///run/podman/podman.sock"},
+        secrets={},
+    )
+    api_snapshot = {
+        "runtime_type": "podman",
+        "container_id": "api-1",
+        "container_name": "core-api-1",
+        "compose_project": "core",
+        "compose_service": "api",
+        "image": "ghcr.io/acme/api:1.0",
+        "pod_id": "stale-pod-id",
+        "pod_name": "core-pod",
+        "pod_relation_payload": {
+            "pod_id": "stale-pod-id",
+            "pod_name": "core-pod",
+            "pod_create_infra": True,
+            "pod_shared_namespaces": ["net"],
+        },
+        "create_config": {
+            "image": "ghcr.io/acme/api:1.0",
+            "name": "core-api-1",
+            "labels": {
+                "io.podman.compose.project": "core",
+                "com.docker.compose.service": "api",
+            },
+        },
+        "host_config": {},
+        "network_config": {
+            "endpoints": {
+                "edge": {
+                    "Aliases": ["api", "core-api-1"],
+                    "IPAddress": "10.88.0.10",
+                }
+            }
+        },
+    }
+    worker_snapshot = {
+        "runtime_type": "podman",
+        "container_id": "worker-1",
+        "container_name": "core-worker-1",
+        "compose_project": "core",
+        "compose_service": "worker",
+        "image": "ghcr.io/acme/worker:1.0",
+        "pod_id": "stale-pod-id",
+        "pod_relation_payload": {
+            "pod_id": "stale-pod-id",
+            "pod_create_infra": True,
+            "pod_shared_namespaces": ["net"],
+        },
+        "create_config": {
+            "image": "ghcr.io/acme/worker:1.0",
+            "name": "core-worker-1",
+            "labels": {
+                "io.podman.compose.project": "core",
+                "com.docker.compose.service": "worker",
+            },
+        },
+        "host_config": {},
+        "network_config": {
+            "endpoints": {
+                "edge": {
+                    "Aliases": ["worker", "core-worker-1"],
+                    "IPAddress": "10.88.0.11",
+                }
+            }
+        },
+    }
+    client = FakePodmanClient([], network_names=["edge", "podman"])
+    client.pods.next_create_pod_id = "current-pod-id"
+    client.api.reject_pod_id_only_create.add("stale-pod-id")
+    adapter = PodmanRuntimeAdapter(runtime, client=client)
+
+    result = await adapter.recover_from_snapshot(
+        {"mode": "docker_compose", "project": "core"},
+        {
+            "mode": "docker_compose",
+            "project": "core",
+            "image": "api=ghcr.io/acme/api:1.0; worker=ghcr.io/acme/worker:1.0",
+            "services": ["api", "worker"],
+            "snapshots": [api_snapshot, worker_snapshot],
+        },
+    )
+
+    assert result.updated is True
+    assert client.pods.create_calls == [
+        {
+            "name": "core-pod",
+            "infra": True,
+            "share": "net",
+            "networks": {
+                "edge": {
+                    "aliases": ["api", "core-api-1", "worker", "core-worker-1"],
+                    "static_ips": ["10.88.0.10", "10.88.0.11"],
+                }
+            },
+        }
+    ]
+    assert [call["pod"] for call in client.containers.create_calls] == [
+        "current-pod-id",
+        "current-pod-id",
+    ]
+    for call in client.api.post_calls:
+        assert call["data"]["pod"] == "current-pod-id"
+        _assert_podman_payload_does_not_contain_value(call["data"], "stale-pod-id")
+
+
+@pytest.mark.asyncio
+async def test_podman_compose_snapshot_recovery_uses_current_pod_from_stable_container_names():
+    runtime = RuntimeConnectionConfig(
+        name="podman-prod",
+        type="podman",
+        config={"socket": "unix:///run/podman/podman.sock"},
+        secrets={},
+    )
+    stale_pod_id = "1c533360b00f4b0685fd702da5a2582753c9668d9a0e05e90b9ea3af7227b471"
+    current_pod_id = "current-pod-id"
+    current_pod_name = "nginx-docker-traefik-test"
+    nginx_snapshot = {
+        "runtime_type": "podman",
+        "container_id": "c332df545be11953a36c937d298eda732f3721755d347be4a356912ef3844ee3",
+        "container_name": "nginx-behind-traefik",
+        "compose_project": current_pod_name,
+        "compose_service": "nginx",
+        "image": "docker.io/library/nginx:1.25",
+        "pod_id": stale_pod_id,
+        "pod_relation_payload": {
+            "pod_id": stale_pod_id,
+            "pod_create_infra": True,
+            "pod_shared_namespaces": ["net"],
+        },
+        "create_config": {
+            "image": "docker.io/library/nginx:1.25",
+            "name": "nginx-behind-traefik",
+            "pod": stale_pod_id,
+            "netns": {"nsmode": "pod", "value": stale_pod_id},
+            "labels": {
+                "io.podman.compose.project": current_pod_name,
+                "com.docker.compose.service": "nginx",
+            },
+        },
+        "host_config": {"PodID": stale_pod_id},
+        "network_config": {"endpoints": {"edge": {"Aliases": ["nginx", "nginx-behind-traefik"]}}},
+    }
+    traefik_snapshot = {
+        "runtime_type": "podman",
+        "container_id": "449aced0d19175df137e60cc457d438696ba8adb7a6f5b4cca4906730b79b2bc",
+        "container_name": "traefik-test",
+        "compose_project": current_pod_name,
+        "compose_service": "traefik",
+        "image": "docker.io/library/traefik:3.0",
+        "pod_id": stale_pod_id,
+        "pod_relation_payload": {
+            "pod_id": stale_pod_id,
+            "pod_create_infra": True,
+            "pod_shared_namespaces": ["net"],
+        },
+        "create_config": {
+            "image": "docker.io/library/traefik:3.0",
+            "name": "traefik-test",
+            "PodID": stale_pod_id,
+            "labels": {
+                "io.podman.compose.project": current_pod_name,
+                "com.docker.compose.service": "traefik",
+            },
+        },
+        "host_config": {},
+        "network_config": {"endpoints": {"edge": {"Aliases": ["traefik", "traefik-test"]}}},
+    }
+    current_nginx = FakeContainer(
+        "new-nginx-id",
+        "nginx-behind-traefik",
+        FakeImage(tags=["docker.io/library/nginx:1.26"]),
+        attrs={
+            "Pod": current_pod_id,
+            "PodName": current_pod_name,
+            "Config": {
+                "Image": "docker.io/library/nginx:1.26",
+                "Labels": {
+                    "io.podman.compose.project": current_pod_name,
+                    "com.docker.compose.service": "nginx",
+                },
+            },
+            "HostConfig": {},
+        },
+    )
+    current_traefik = FakeContainer(
+        "new-traefik-id",
+        "traefik-test",
+        FakeImage(tags=["docker.io/library/traefik:3.1"]),
+        attrs={
+            "Pod": current_pod_id,
+            "PodName": current_pod_name,
+            "Config": {
+                "Image": "docker.io/library/traefik:3.1",
+                "Labels": {
+                    "io.podman.compose.project": current_pod_name,
+                    "com.docker.compose.service": "traefik",
+                },
+            },
+            "HostConfig": {},
+        },
+    )
+    client = FakePodmanClient([current_nginx, current_traefik], network_names=["edge", "podman"])
+    client.pods.add(current_pod_name, pod_id=current_pod_id)
+    client.api.reject_pod_id_only_create.add(stale_pod_id)
+    adapter = PodmanRuntimeAdapter(runtime, client=client)
+
+    result = await adapter.recover_from_snapshot(
+        {"mode": "docker_compose", "project": current_pod_name},
+        {
+            "mode": "docker_compose",
+            "project": current_pod_name,
+            "image": "nginx=docker.io/library/nginx:1.25; traefik=docker.io/library/traefik:3.0",
+            "services": ["nginx", "traefik"],
+            "snapshots": [nginx_snapshot, traefik_snapshot],
+        },
+    )
+
+    assert result.updated is True
+    assert client.pods.create_calls == []
+    assert len(current_nginx.remove_calls) == 1
+    assert len(current_traefik.remove_calls) == 1
+    assert [call[0] for call in client.pods.remove_calls] == []
+    assert [call["pod"] for call in client.containers.create_calls] == [
+        current_pod_id,
+        current_pod_id,
+    ]
+    for call in client.api.post_calls:
+        assert call["data"]["pod"] == current_pod_id
+        _assert_podman_payload_does_not_contain_value(call["data"], stale_pod_id)
+    for call in client.containers.create_calls:
+        _assert_podman_payload_does_not_contain_value(call, stale_pod_id)
+
+
+@pytest.mark.asyncio
+async def test_podman_compose_snapshot_recovery_rejects_pod_id_without_current_container_or_stable_name():
+    runtime = RuntimeConnectionConfig(
+        name="podman-prod",
+        type="podman",
+        config={"socket": "unix:///run/podman/podman.sock"},
+        secrets={},
+    )
+    snapshot = {
+        "runtime_type": "podman",
+        "container_id": "api-1",
+        "container_name": "core-api-1",
+        "compose_project": "core",
+        "compose_service": "api",
+        "image": "ghcr.io/acme/api:1.0",
+        "create_config": {
+            "image": "ghcr.io/acme/api:1.0",
+            "name": "core-api-1",
+            "PodID": "stale-pod-id",
+        },
+        "host_config": {},
+        "network_config": {},
+    }
+    client = FakePodmanClient([], network_names=["podman"])
+    adapter = PodmanRuntimeAdapter(runtime, client=client)
+
+    with pytest.raises(ValueError, match="stable pod name"):
+        await adapter.recover_from_snapshot(
+            {"mode": "docker_compose", "project": "core"},
+            {
+                "mode": "docker_compose",
+                "project": "core",
+                "image": "api=ghcr.io/acme/api:1.0",
+                "services": ["api"],
+                "snapshots": [snapshot],
+            },
+        )
+
+    assert client.pods.get_calls == []
+    assert client.api.post_calls == []
+    assert client.containers.create_calls == []
+
+
+@pytest.mark.asyncio
 async def test_podman_compose_grouped_update_recreates_dependent_sibling_with_current_image():
     runtime = RuntimeConnectionConfig(
         name="podman-prod",
@@ -5351,7 +6094,7 @@ async def test_podman_compose_grouped_update_resolves_pod_id_to_name_for_low_lev
     )
 
     assert result.updated is True
-    assert client.pods.get_calls == ["0123456789abcdef", "0123456789abcdef"]
+    assert client.pods.get_calls == ["0123456789abcdef"]
     assert client.api.post_calls
     assert client.containers.create_calls == [
         {
@@ -6410,10 +7153,8 @@ async def test_podman_compose_grouped_update_recovers_best_effort_after_partial_
         "ghcr.io/acme/api:1.0",
         "ghcr.io/acme/worker:9.1",
     ]
-    assert client.containers.create_calls[0]["pod"] == "core-pod"
-    assert client.containers.create_calls[1]["pod"] == "core-pod"
-    assert client.containers.create_calls[2]["pod"] == "pod-core"
-    assert client.containers.create_calls[3]["pod"] == "core-pod"
+    assert all(call["pod"] == "core-pod" for call in client.containers.create_calls)
+    assert all(call["pod"] != "pod-core" for call in client.containers.create_calls)
     assert all("network_mode" not in call for call in client.containers.create_calls)
     assert client.containers.event_log == [
         "stop:core-worker-1",

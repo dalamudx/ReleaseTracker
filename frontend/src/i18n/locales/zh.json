@@ -860,7 +860,18 @@
         "pre_rollback": "回滚前"
       },
       "actions": {
+        "delete": "删除",
         "rollback": "回滚"
+      },
+      "deleteDialog": {
+        "title": "删除快照？",
+        "description": "这会删除所选执行器快照，操作无法撤销。",
+        "confirm": "删除快照"
+      },
+      "toasts": {
+        "loadFailed": "加载快照失败",
+        "deleteSuccess": "快照已删除",
+        "deleteFailed": "删除快照失败"
       },
       "banners": {
         "unredacted": "该快照包含无法自动脱敏的字段，分享前请先复核。",
@@ -878,6 +889,7 @@
         "cancel": "取消"
       },
       "toasts": {
+        "submitting": "正在发起回滚...",
         "success": "回滚已入队",
         "failed": "回滚失败",
         "notFound": "快照已不存在",

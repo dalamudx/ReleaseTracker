@@ -30,6 +30,7 @@ import type {
     TokenPair,
     PaginatedSnapshots,
     SnapshotDetail,
+    DeleteSnapshotResponse,
     RollbackRequest,
     RollbackResponse,
     ReleaseHistoryItem,
@@ -333,6 +334,8 @@ export const api = {
         apiClient.get<PaginatedSnapshots>(`/api/executors/${id}/snapshots`, { params }).then(res => res.data),
     getExecutorSnapshot: (executorId: number, snapshotId: number) =>
         apiClient.get<SnapshotDetail>(`/api/executors/${executorId}/snapshots/${snapshotId}`).then(res => res.data),
+    deleteExecutorSnapshot: (executorId: number, snapshotId: number) =>
+        apiClient.delete<DeleteSnapshotResponse>(`/api/executors/${executorId}/snapshots/${snapshotId}`).then(res => res.data),
     rollbackExecutor: (id: number, payload?: RollbackRequest) =>
         apiClient.post<RollbackResponse>(`/api/executors/${id}/rollback`, payload ?? {}).then(res => res.data),
 }

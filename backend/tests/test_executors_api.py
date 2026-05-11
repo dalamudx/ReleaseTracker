@@ -17,6 +17,7 @@ from releasetracker.executors.base import BaseRuntimeAdapter, RuntimeTarget, Run
 from releasetracker.models import (
     AggregateTracker,
     ExecutorRunHistory,
+    ExecutorSnapshot,
     ReleaseChannel,
     TrackerSource,
 )
@@ -28,7 +29,11 @@ class FakeDiscoveryAdapter(BaseRuntimeAdapter):
             RuntimeTarget(
                 runtime_type=self.runtime_connection.type,
                 name="sample-web",
-                target_ref={"mode": "container", "container_id": "abc", "container_name": "sample-web"},
+                target_ref={
+                    "mode": "container",
+                    "container_id": "abc",
+                    "container_name": "sample-web",
+                },
                 image="sample-web:1.25",
             )
         ]
@@ -138,7 +143,9 @@ async def _create_tracker(
     tracker_type: Literal["github", "gitlab", "gitea", "helm", "container"] = "container",
 ):
     channels = (
-        [Channel(name="stable", enabled=True, type="release")] if tracker_type == "container" else []
+        [Channel(name="stable", enabled=True, type="release")]
+        if tracker_type == "container"
+        else []
     )
     if tracker_type == "container":
         await save_docker_tracker_config(
@@ -362,7 +369,11 @@ async def test_executor_discovery_and_create_validation(authed_client, storage, 
         {
             "runtime_type": "docker",
             "name": "sample-web",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
+            "target_ref": {
+                "mode": "container",
+                "container_id": "abc",
+                "container_name": "sample-web",
+            },
             "image": "sample-web:1.25",
         }
     ]
@@ -410,7 +421,11 @@ async def test_executor_discovery_and_create_validation(authed_client, storage, 
             "enabled": True,
             "image_selection_mode": "replace_tag_on_current_image",
             "update_mode": "manual",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
+            "target_ref": {
+                "mode": "container",
+                "container_id": "abc",
+                "container_name": "sample-web",
+            },
             "description": "test executor",
         },
     )
@@ -515,7 +530,9 @@ async def test_executor_create_rejects_non_container_tracker(authed_client, stor
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "Runtime executors must be bound to a deployable image source"
+    assert (
+        response.json()["detail"] == "Runtime executors must be bound to a deployable image source"
+    )
 
 
 @pytest.mark.asyncio
@@ -1588,7 +1605,10 @@ async def test_executor_create_rejects_tracker_image_mode_without_image(authed_c
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "Tracker source image must not be empty when using tracker image mode"
+    assert (
+        response.json()["detail"]
+        == "Tracker source image must not be empty when using tracker image mode"
+    )
 
 
 @pytest.mark.asyncio
@@ -1614,7 +1634,11 @@ async def test_executor_create_accepts_tracker_image_mode(authed_client, storage
             "enabled": True,
             "image_selection_mode": "use_tracker_image_and_tag",
             "update_mode": "manual",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
+            "target_ref": {
+                "mode": "container",
+                "container_id": "abc",
+                "container_name": "sample-web",
+            },
         },
     )
 
@@ -1843,7 +1867,11 @@ async def test_executor_create_rejects_missing_channel_name(authed_client, stora
             "tracker_source_id": tracker_source_id,
             "enabled": True,
             "update_mode": "manual",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
+            "target_ref": {
+                "mode": "container",
+                "container_id": "abc",
+                "container_name": "sample-web",
+            },
         },
     )
     assert response.status_code == 400
@@ -1877,7 +1905,11 @@ async def test_executor_create_rejects_nonexistent_channel(authed_client, storag
             "channel_name": "canary",
             "enabled": True,
             "update_mode": "manual",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
+            "target_ref": {
+                "mode": "container",
+                "container_id": "abc",
+                "container_name": "sample-web",
+            },
         },
     )
     assert response.status_code == 400
@@ -1933,7 +1965,11 @@ async def test_executor_create_rejects_disabled_channel(authed_client, storage, 
             "channel_name": "canary",
             "enabled": True,
             "update_mode": "manual",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
+            "target_ref": {
+                "mode": "container",
+                "container_id": "abc",
+                "container_name": "sample-web",
+            },
         },
     )
     assert response.status_code == 400
@@ -1982,7 +2018,11 @@ async def test_executor_create_accepts_valid_channel_and_persists_it(
             "channel_name": "stable",
             "enabled": True,
             "update_mode": "manual",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
+            "target_ref": {
+                "mode": "container",
+                "container_id": "abc",
+                "container_name": "sample-web",
+            },
         },
     )
     assert response.status_code == 200
@@ -2037,12 +2077,18 @@ async def test_executor_create_rejects_non_bindable_tracker_source(
             "channel_name": "stable",
             "enabled": True,
             "update_mode": "manual",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
+            "target_ref": {
+                "mode": "container",
+                "container_id": "abc",
+                "container_name": "sample-web",
+            },
         },
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "Runtime executors must be bound to a deployable image source"
+    assert (
+        response.json()["detail"] == "Runtime executors must be bound to a deployable image source"
+    )
 
 
 @pytest.mark.asyncio
@@ -2090,7 +2136,11 @@ async def test_executor_create_rejects_ambiguous_tracker_without_source_id_when_
             "channel_name": "stable",
             "enabled": True,
             "update_mode": "manual",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
+            "target_ref": {
+                "mode": "container",
+                "container_id": "abc",
+                "container_name": "sample-web",
+            },
         },
     )
 
@@ -2177,7 +2227,11 @@ async def test_executor_create_rejects_channel_name_not_owned_by_bound_tracker_c
             "enabled": True,
             "image_selection_mode": "use_tracker_image_and_tag",
             "update_mode": "manual",
-            "target_ref": {"mode": "container", "container_id": "abc", "container_name": "sample-web"},
+            "target_ref": {
+                "mode": "container",
+                "container_id": "abc",
+                "container_name": "sample-web",
+            },
         },
     )
 
@@ -2312,6 +2366,93 @@ async def test_clear_executor_history_returns_404_for_missing_executor(authed_cl
     assert response.json()["detail"] == "Executor not found"
 
 
+@pytest.mark.asyncio
+async def test_delete_executor_snapshot_removes_scoped_snapshot(authed_client, storage):
+    runtime_id = await _create_runtime_connection(storage)
+    await _create_tracker(storage, name="snapshot-delete-worker")
+    executor_id = await _create_executor_via_api(
+        authed_client,
+        storage=storage,
+        name="snapshot-delete-executor",
+        runtime_id=runtime_id,
+        tracker_name="snapshot-delete-worker",
+        target_ref={"mode": "container", "container_id": "container-snapshot-delete"},
+    )
+    snapshot_id = await storage.create_executor_snapshot(
+        ExecutorSnapshot(
+            executor_id=executor_id,
+            snapshot_data={"image": "snapshot-delete-worker:1.0.0"},
+            trigger="pre_update",
+            image_at_capture="snapshot-delete-worker:1.0.0",
+        )
+    )
+
+    response = authed_client.delete(f"/api/executors/{executor_id}/snapshots/{snapshot_id}")
+
+    assert response.status_code == 200
+    assert response.json() == {"message": "Snapshot deleted", "deleted": 1}
+    assert await storage.get_executor_snapshot_by_id(executor_id, snapshot_id) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_executor_snapshot_returns_404_for_missing_snapshot(authed_client, storage):
+    runtime_id = await _create_runtime_connection(storage)
+    await _create_tracker(storage, name="snapshot-missing-worker")
+    executor_id = await _create_executor_via_api(
+        authed_client,
+        storage=storage,
+        name="snapshot-missing-executor",
+        runtime_id=runtime_id,
+        tracker_name="snapshot-missing-worker",
+        target_ref={"mode": "container", "container_id": "container-snapshot-missing"},
+    )
+
+    response = authed_client.delete(f"/api/executors/{executor_id}/snapshots/999999")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Snapshot not found"
+
+
+@pytest.mark.asyncio
+async def test_delete_executor_snapshot_returns_404_for_missing_executor(authed_client):
+    response = authed_client.delete("/api/executors/999999/snapshots/1")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Executor not found"
+
+
+@pytest.mark.asyncio
+async def test_delete_executor_snapshot_returns_409_for_in_flight_snapshot(authed_client, storage):
+    runtime_id = await _create_runtime_connection(storage)
+    await _create_tracker(storage, name="snapshot-in-flight-worker")
+    executor_id = await _create_executor_via_api(
+        authed_client,
+        storage=storage,
+        name="snapshot-in-flight-executor",
+        runtime_id=runtime_id,
+        tracker_name="snapshot-in-flight-worker",
+        target_ref={"mode": "container", "container_id": "container-snapshot-in-flight"},
+    )
+    snapshot_id = await storage.create_executor_snapshot(
+        ExecutorSnapshot(
+            executor_id=executor_id,
+            snapshot_data={"image": "snapshot-in-flight-worker:1.0.0"},
+            trigger="pre_update",
+            image_at_capture="snapshot-in-flight-worker:1.0.0",
+        )
+    )
+    await authed_client.executor_scheduler.snapshot_service.registry.register(snapshot_id)
+
+    try:
+        response = authed_client.delete(f"/api/executors/{executor_id}/snapshots/{snapshot_id}")
+    finally:
+        await authed_client.executor_scheduler.snapshot_service.registry.unregister(snapshot_id)
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Snapshot is currently in use by a rollback"
+    assert await storage.get_executor_snapshot_by_id(executor_id, snapshot_id) is not None
+
+
 # ============================================================
 # Health Check profile API validation (Phase C, Req 1.*, 2.*)
 # ============================================================
@@ -2380,9 +2521,7 @@ async def test_create_executor_accepts_runtime_native_health_check(
 
 
 @pytest.mark.asyncio
-async def test_create_executor_accepts_manual_http_strategy(
-    authed_client, storage, monkeypatch
-):
+async def test_create_executor_accepts_manual_http_strategy(authed_client, storage, monkeypatch):
     """Manual HTTP health checks require a direct host and probe config."""
     runtime_id = await _create_runtime_connection(storage, name="hc-http-runtime")
     await _create_tracker(storage, name="hc-http-tracker")
@@ -2459,9 +2598,7 @@ async def test_create_executor_rejects_manual_http_profile_without_http_sub_obje
     """``strategy=manual_http`` requires an ``http`` sub-object."""
     runtime_id = await _create_runtime_connection(storage, name="hc-missing-http-runtime")
     await _create_tracker(storage, name="hc-missing-http-tracker")
-    tracker_source_id = await _get_tracker_source_id(
-        storage, "hc-missing-http-tracker"
-    )
+    tracker_source_id = await _get_tracker_source_id(storage, "hc-missing-http-tracker")
 
     response = authed_client.post(
         "/api/executors",
@@ -2567,9 +2704,7 @@ async def test_create_executor_rejects_failure_policy_other_than_mark_failed_for
     """``strategy=none`` forces ``failure_policy=mark_failed`` (Req 1.9)."""
     runtime_id = await _create_runtime_connection(storage, name="hc-none-policy-runtime")
     await _create_tracker(storage, name="hc-none-policy-tracker")
-    tracker_source_id = await _get_tracker_source_id(
-        storage, "hc-none-policy-tracker"
-    )
+    tracker_source_id = await _get_tracker_source_id(storage, "hc-none-policy-tracker")
 
     response = authed_client.post(
         "/api/executors",
@@ -2695,15 +2830,9 @@ async def _seed_executor_with_snapshot(
 
 
 @pytest.mark.asyncio
-async def test_list_executor_snapshots_returns_paginated_history(
-    authed_client, storage
-):
-    executor_id, snapshot_id = await _seed_executor_with_snapshot(
-        storage, name="snap-list"
-    )
-    response = authed_client.get(
-        f"/api/executors/{executor_id}/snapshots?page=1&page_size=10"
-    )
+async def test_list_executor_snapshots_returns_paginated_history(authed_client, storage):
+    executor_id, snapshot_id = await _seed_executor_with_snapshot(storage, name="snap-list")
+    response = authed_client.get(f"/api/executors/{executor_id}/snapshots?page=1&page_size=10")
     assert response.status_code == 200
     body = response.json()
     assert body["total"] == 1
@@ -2726,16 +2855,12 @@ async def test_list_executor_snapshots_returns_404_when_executor_missing(
 
 
 @pytest.mark.asyncio
-async def test_get_executor_snapshot_detail_returns_redacted_payload(
-    authed_client, storage
-):
+async def test_get_executor_snapshot_detail_returns_redacted_payload(authed_client, storage):
     from datetime import datetime as _dt
 
     from releasetracker.models import ExecutorSnapshot as _ExecutorSnapshot
 
-    executor_id, _ = await _seed_executor_with_snapshot(
-        storage, name="snap-detail-redact"
-    )
+    executor_id, _ = await _seed_executor_with_snapshot(storage, name="snap-detail-redact")
     # Replace the seeded snapshot with one carrying sensitive data so we
     # can assert read-time redaction kicks in.
     sensitive_id = await storage.create_executor_snapshot(
@@ -2755,9 +2880,7 @@ async def test_get_executor_snapshot_detail_returns_redacted_payload(
             updated_at=_dt(2026, 5, 2, 10, 0, 0),
         )
     )
-    response = authed_client.get(
-        f"/api/executors/{executor_id}/snapshots/{sensitive_id}"
-    )
+    response = authed_client.get(f"/api/executors/{executor_id}/snapshots/{sensitive_id}")
     assert response.status_code == 200
     body = response.json()
     assert body["id"] == sensitive_id
@@ -2779,15 +2902,9 @@ async def test_get_executor_snapshot_detail_returns_redacted_payload(
 async def test_get_executor_snapshot_detail_returns_404_for_foreign_snapshot(
     authed_client, storage
 ):
-    executor_a_id, snapshot_a = await _seed_executor_with_snapshot(
-        storage, name="snap-foreign-a"
-    )
-    executor_b_id, _ = await _seed_executor_with_snapshot(
-        storage, name="snap-foreign-b"
-    )
-    response = authed_client.get(
-        f"/api/executors/{executor_b_id}/snapshots/{snapshot_a}"
-    )
+    executor_a_id, snapshot_a = await _seed_executor_with_snapshot(storage, name="snap-foreign-a")
+    executor_b_id, _ = await _seed_executor_with_snapshot(storage, name="snap-foreign-b")
+    response = authed_client.get(f"/api/executors/{executor_b_id}/snapshots/{snapshot_a}")
     assert response.status_code == 404
 
 
@@ -2795,9 +2912,7 @@ async def test_get_executor_snapshot_detail_returns_404_for_foreign_snapshot(
 async def test_rollback_endpoint_returns_run_and_recovery_outcome(
     authed_client, storage, monkeypatch
 ):
-    executor_id, snapshot_id = await _seed_executor_with_snapshot(
-        storage, name="snap-rollback-ok"
-    )
+    executor_id, snapshot_id = await _seed_executor_with_snapshot(storage, name="snap-rollback-ok")
 
     # Stub the Docker adapter so the endpoint runs end-to-end without a
     # real Docker daemon. Phase E endpoint resolves the adapter via
@@ -2856,9 +2971,7 @@ async def test_rollback_endpoint_returns_run_and_recovery_outcome(
 
 
 @pytest.mark.asyncio
-async def test_rollback_endpoint_returns_failed_recovery_error(
-    authed_client, storage, monkeypatch
-):
+async def test_rollback_endpoint_returns_failed_recovery_error(authed_client, storage, monkeypatch):
     executor_id, snapshot_id = await _seed_executor_with_snapshot(
         storage, name="snap-rollback-failed"
     )
@@ -2905,12 +3018,8 @@ async def test_rollback_endpoint_returns_failed_recovery_error(
 
 
 @pytest.mark.asyncio
-async def test_rollback_endpoint_returns_404_for_unknown_snapshot(
-    authed_client, storage
-):
-    executor_id, _ = await _seed_executor_with_snapshot(
-        storage, name="snap-rollback-missing"
-    )
+async def test_rollback_endpoint_returns_404_for_unknown_snapshot(authed_client, storage):
+    executor_id, _ = await _seed_executor_with_snapshot(storage, name="snap-rollback-missing")
     response = authed_client.post(
         f"/api/executors/{executor_id}/rollback",
         json={"snapshot_id": 999999},
@@ -2919,9 +3028,7 @@ async def test_rollback_endpoint_returns_404_for_unknown_snapshot(
 
 
 @pytest.mark.asyncio
-async def test_rollback_endpoint_returns_409_when_executor_has_active_run(
-    authed_client, storage
-):
+async def test_rollback_endpoint_returns_409_when_executor_has_active_run(authed_client, storage):
     from datetime import datetime as _dt
 
     from releasetracker.models import ExecutorRunHistory as _ExecutorRunHistory
@@ -2956,9 +3063,7 @@ async def test_rollback_endpoint_defaults_to_most_recent_snapshot(
     )
     from releasetracker.models import ExecutorSnapshot as _ExecutorSnapshot
 
-    executor_id, older = await _seed_executor_with_snapshot(
-        storage, name="snap-rollback-default"
-    )
+    executor_id, older = await _seed_executor_with_snapshot(storage, name="snap-rollback-default")
     newer = await storage.create_executor_snapshot(
         _ExecutorSnapshot(
             executor_id=executor_id,
@@ -3001,5 +3106,3 @@ async def test_rollback_endpoint_defaults_to_most_recent_snapshot(
     assert response.status_code == 200
     body = response.json()
     assert body["run"]["diagnostics"]["snapshot_id"] == newer
-
-

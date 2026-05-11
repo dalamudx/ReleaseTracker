@@ -88,6 +88,8 @@ export const queryKeys = {
       search?: string
     }
   ) => ["executors", id, "history", params] as const,
+  executorSnapshots: (id: number, params?: { page?: number; page_size?: number }) =>
+    ["executors", id, "snapshots", params] as const,
 }
 
 // ==================== Dashboard ====================
@@ -550,6 +552,43 @@ export function useRunExecutor() {
       queryClient.invalidateQueries({
         queryKey: ["executors", id, "history"],
       })
+    },
+  })
+}
+
+export function useExecutorSnapshots(
+  id: number | null,
+  params?: { page?: number; page_size?: number }
+) {
+  return useQuery({
+    queryKey: queryKeys.executorSnapshots(id!, params),
+    queryFn: () => api.getExecutorSnapshots(id!, params),
+    enabled: id !== null,
+    staleTime: 15_000,
+  })
+}
+
+export function useDeleteExecutorSnapshot() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ executorId, snapshotId }: { executorId: number; snapshotId: number }) =>
+      api.deleteExecutorSnapshot(executorId, snapshotId),
+    onSuccess: (_data, { executorId }) =>
+      queryClient.invalidateQueries({
+        queryKey: ["executors", executorId, "snapshots"],
+      }),
+  })
+}
+
+export function useRollbackExecutor() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ executorId, snapshotId }: { executorId: number; snapshotId: number }) =>
+      api.rollbackExecutor(executorId, { snapshot_id: snapshotId }),
+    onSuccess: (_data, { executorId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.executor(executorId) })
+      queryClient.invalidateQueries({ queryKey: ["executors", executorId, "history"] })
+      queryClient.invalidateQueries({ queryKey: ["executors", executorId, "snapshots"] })
     },
   })
 }

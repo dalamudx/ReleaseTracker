@@ -1,13 +1,23 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { AlertTriangle, Info, Loader2, RotateCcw } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { AlertTriangle, Info, Loader2, RotateCcw, Trash2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
-import { api } from "@/api/client"
 import type { ExecutorListItem, SnapshotListItem } from "@/api/types"
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { DataPagination } from "@/components/common/DataPagination"
+import { useDeleteExecutorSnapshot, useExecutorSnapshots } from "@/hooks/queries"
 import { usePageSize } from "@/hooks/use-page-size"
 import { cn } from "@/lib/utils"
 
@@ -39,12 +49,23 @@ export function ExecutorSnapshotsPanel({
 }: ExecutorSnapshotsPanelProps) {
     const { t, i18n } = useTranslation()
 
-    const [items, setItems] = useState<SnapshotListItem[]>([])
-    const [total, setTotal] = useState(0)
     const [page, setPage] = useState(1)
     const [pageSize, setPageSize] = usePageSize("settings.executors.snapshots.pageSize")
-    const [loading, setLoading] = useState(false)
+    const [deleteSnapshot, setDeleteSnapshot] = useState<SnapshotListItem | null>(null)
     const [rollbackSnapshot, setRollbackSnapshot] = useState<SnapshotListItem | null>(null)
+
+    const snapshotsQuery = useExecutorSnapshots(executor?.id ?? null, {
+        page,
+        page_size: pageSize,
+    })
+    const deleteSnapshotMutation = useDeleteExecutorSnapshot()
+    const previousRefreshKeyRef = useRef(refreshKey)
+
+    const items = useMemo(() => snapshotsQuery.data?.items ?? [], [snapshotsQuery.data?.items])
+    const total = snapshotsQuery.data?.total ?? 0
+    const loading = snapshotsQuery.isLoading
+    const deleting = deleteSnapshotMutation.isPending
+    const refetchSnapshots = snapshotsQuery.refetch
 
     const hasUnredacted = useMemo(
         () => items.some((item) => item.unredacted_persisted),
@@ -56,31 +77,40 @@ export function ExecutorSnapshotsPanel({
     // operator a hint that retention is actively trimming history.
     const showPruningBanner = total > pageSize && page === 1 && items.length === pageSize
 
-    const loadSnapshots = useCallback(async () => {
-        if (!executor?.id) {
-            setItems([])
-            setTotal(0)
-            return
+    useEffect(() => {
+        if (snapshotsQuery.error) {
+            toast.error(t("executors.snapshots.toasts.loadFailed"))
         }
-        setLoading(true)
-        try {
-            const response = await api.getExecutorSnapshots(executor.id, {
-                page,
-                page_size: pageSize,
-            })
-            setItems(response.items)
-            setTotal(response.total)
-        } catch (error) {
-            console.error("Failed to load executor snapshots", error)
-            toast.error(t("executors.snapshots.toasts.loadFailed", { defaultValue: "Failed to load snapshots" }))
-        } finally {
-            setLoading(false)
-        }
-    }, [executor?.id, page, pageSize, t])
+    }, [snapshotsQuery.error, t])
 
     useEffect(() => {
-        void loadSnapshots()
-    }, [loadSnapshots, refreshKey])
+        if (previousRefreshKeyRef.current !== refreshKey) {
+            previousRefreshKeyRef.current = refreshKey
+            if (executor?.id != null) {
+                void refetchSnapshots()
+            }
+        }
+    }, [executor?.id, refreshKey, refetchSnapshots])
+
+    const handleDeleteSnapshot = async () => {
+        if (!executor?.id || !deleteSnapshot) {
+            return
+        }
+
+        try {
+            await deleteSnapshotMutation.mutateAsync({
+                executorId: executor.id,
+                snapshotId: deleteSnapshot.id,
+            })
+            toast.success(t("executors.snapshots.toasts.deleteSuccess"))
+            setDeleteSnapshot(null)
+            if (items.length === 1 && page > 1) {
+                setPage(page - 1)
+            }
+        } catch {
+            toast.error(t("executors.snapshots.toasts.deleteFailed"))
+        }
+    }
 
     if (!executor) {
         return (
@@ -179,16 +209,26 @@ export function ExecutorSnapshotsPanel({
                                             ) : null}
                                         </dl>
 
-                                        <Button
-                                            size="sm"
-                                            variant="outline"
-                                            className="shrink-0"
-                                            onClick={() => setRollbackSnapshot(item)}
-                                            data-testid="executor-snapshot-rollback"
-                                        >
-                                            <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-                                            {t("executors.snapshots.actions.rollback")}
-                                        </Button>
+                                        <div className="flex shrink-0 gap-2">
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={() => setDeleteSnapshot(item)}
+                                                data-testid="executor-snapshot-delete"
+                                            >
+                                                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                                                {t("executors.snapshots.actions.delete")}
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={() => setRollbackSnapshot(item)}
+                                                data-testid="executor-snapshot-rollback"
+                                            >
+                                                <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                                                {t("executors.snapshots.actions.rollback")}
+                                            </Button>
+                                        </div>
                                     </div>
                                 </li>
                             )
@@ -205,6 +245,33 @@ export function ExecutorSnapshotsPanel({
                 onPageSizeChange={setPageSize}
             />
 
+            <AlertDialog open={deleteSnapshot !== null} onOpenChange={(open) => {
+                if (!open && !deleting) setDeleteSnapshot(null)
+            }}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>{t("executors.snapshots.deleteDialog.title")}</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {t("executors.snapshots.deleteDialog.description")}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={deleting}>{t("common.cancel")}</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={(event) => {
+                                event.preventDefault()
+                                void handleDeleteSnapshot()
+                            }}
+                            disabled={deleting}
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        >
+                            {deleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                            {t("executors.snapshots.deleteDialog.confirm")}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
             <ExecutorRollbackDialog
                 executor={executor}
                 snapshot={rollbackSnapshot}
@@ -214,7 +281,7 @@ export function ExecutorSnapshotsPanel({
                 }}
                 onSuccess={() => {
                     setRollbackSnapshot(null)
-                    void loadSnapshots()
+                    void refetchSnapshots()
                     onRollbackQueued?.()
                 }}
             />

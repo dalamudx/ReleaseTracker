@@ -162,9 +162,7 @@ class SnapshotRedactor:
                 if isinstance(resource, dict) and resource.get("kind") == "Secret":
                     for key in ("data", "stringData"):
                         if isinstance(resource.get(key), dict):
-                            resource[key] = {
-                                name: REDACTED_MARKER for name in resource[key]
-                            }
+                            resource[key] = {name: REDACTED_MARKER for name in resource[key]}
 
         helm_values = result.get("values")
         if isinstance(helm_values, dict):
@@ -189,6 +187,10 @@ class SnapshotRedactor:
         elif isinstance(node, list):
             for entry in node:
                 self._redact_helm_values(entry)
+
+
+class SnapshotInUseError(RuntimeError):
+    """Raised when a snapshot is being consumed by an in-flight rollback."""
 
 
 class SnapshotService:
@@ -281,9 +283,7 @@ class SnapshotService:
         *,
         runtime_type: str | None = None,
     ) -> SnapshotDetailView | None:
-        snapshot = await self._storage.get_executor_snapshot_by_id(
-            executor_id, snapshot_id
-        )
+        snapshot = await self._storage.get_executor_snapshot_by_id(executor_id, snapshot_id)
         if snapshot is None:
             return None
         redacted_payload, needs_marker = self._redactor.redact(
@@ -301,6 +301,18 @@ class SnapshotService:
             snapshot_data=redacted_payload if isinstance(redacted_payload, dict) else {},
         )
 
+    async def delete_snapshot(self, executor_id: int, snapshot_id: int) -> bool:
+        """Delete a snapshot scoped to an executor unless rollback is consuming it."""
+        snapshot = await self._storage.get_executor_snapshot_by_id(executor_id, snapshot_id)
+        if snapshot is None:
+            return False
+
+        if snapshot_id in await self._registry.snapshot_ids():
+            raise SnapshotInUseError("Snapshot is currently in use by a rollback")
+
+        deleted = await self._storage.delete_executor_snapshots(executor_id, [snapshot_id])
+        return deleted > 0
+
     def _to_list_item(self, snapshot: "ExecutorSnapshot") -> SnapshotListItemView:
         return SnapshotListItemView(
             id=snapshot.id or 0,
@@ -317,9 +329,7 @@ class SnapshotService:
         *,
         runtime_type: str,
     ) -> tuple[dict[str, Any], bool]:
-        redacted, needs_marker = self._redactor.redact(
-            snapshot_data, runtime_type=runtime_type
-        )
+        redacted, needs_marker = self._redactor.redact(snapshot_data, runtime_type=runtime_type)
         if not isinstance(redacted, dict):
             redacted = {}
         return redacted, needs_marker
@@ -330,6 +340,7 @@ __all__ = [
     "PaginatedSnapshotsView",
     "REDACTED_MARKER",
     "SnapshotDetailView",
+    "SnapshotInUseError",
     "SnapshotListItemView",
     "SnapshotRedactor",
     "SnapshotService",

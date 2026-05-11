@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import type { ExecutorListItem, RuntimeConnection, TrackerStatus } from "@/api/types"
+import type { ExecutorListItem, ExecutorTargetRef, RuntimeConnection, RuntimeType, TrackerStatus } from "@/api/types"
 
 const {
   deleteExecutorMock,
@@ -294,49 +294,65 @@ describe("ExecutorsPage run flow", () => {
     expect(toastSuccessMock).not.toHaveBeenCalledWith("executors.toasts.runQueued")
   })
 
-  it.each(["docker", "podman"] as const)(
-    "shows snapshot tab for %s runtime connections",
-    async (runtimeType) => {
-      getExecutorsMock.mockResolvedValue({
-        items: [
-          createExecutor({ id: 1, name: `${runtimeType}-executor`, runtime_type: runtimeType, runtime_connection_id: 1 }),
-        ],
-        total: 1,
-      })
-      getRuntimeConnectionsMock.mockResolvedValue({
-        items: [createRuntimeConnection({ id: 1, type: runtimeType })],
-        total: 1,
-      })
-      getTrackersMock.mockResolvedValue({ items: [createTracker()], total: 1 })
-      getSettingsMock.mockResolvedValue([])
-
-      renderExecutorsPage()
-
-      await waitFor(() => {
-        expect(screen.getByTestId("executor-list")).toHaveAttribute("data-loading", "false")
-      })
-
-      fireEvent.click(screen.getByRole("button", { name: "history executor 1" }))
-
-      expect(screen.getByRole("tab", { name: "executors.snapshots.tab" })).toBeInTheDocument()
-    },
-  )
-
-  it("hides snapshot tab for non-Docker and non-Podman runtime connections", async () => {
+  it.each(
+    [
+      {
+        id: 1,
+        name: "docker-container-executor",
+        runtimeType: "docker",
+        runtimeConnectionName: "docker-prod",
+        targetRef: { mode: "container", container_id: "abc123", container_name: "docker-container-executor" },
+      },
+      {
+        id: 2,
+        name: "podman-container-executor",
+        runtimeType: "podman",
+        runtimeConnectionName: "podman-prod",
+        targetRef: { mode: "container", container_id: "def456", container_name: "podman-container-executor" },
+      },
+      {
+        id: 3,
+        name: "docker-compose-executor",
+        runtimeType: "docker",
+        runtimeConnectionName: "docker-prod",
+        targetRef: { mode: "docker_compose", project: "release-stack", services: [] },
+      },
+      {
+        id: 4,
+        name: "podman-compose-executor",
+        runtimeType: "podman",
+        runtimeConnectionName: "podman-prod",
+        targetRef: { mode: "docker_compose", project: "podman-stack", services: [] },
+      },
+    ] satisfies Array<{
+      id: number
+      name: string
+      runtimeType: Extract<RuntimeType, "docker" | "podman">
+      runtimeConnectionName: string
+      targetRef: ExecutorTargetRef
+    }>,
+  )("shows snapshot tab for destructive $name", async (caseData) => {
     getExecutorsMock.mockResolvedValue({
       items: [
         createExecutor({
-          id: 3,
-          name: "kubernetes-executor",
-          runtime_type: "kubernetes",
-          runtime_connection_id: 3,
-          runtime_connection_name: "k8s-prod",
+          id: caseData.id,
+          name: caseData.name,
+          runtime_type: caseData.runtimeType,
+          runtime_connection_id: caseData.id,
+          runtime_connection_name: caseData.runtimeConnectionName,
+          target_ref: caseData.targetRef,
         }),
       ],
       total: 1,
     })
     getRuntimeConnectionsMock.mockResolvedValue({
-      items: [createRuntimeConnection({ id: 3, name: "k8s-prod", type: "kubernetes" })],
+      items: [
+        createRuntimeConnection({
+          id: caseData.id,
+          name: caseData.runtimeConnectionName,
+          type: caseData.runtimeType,
+        }),
+      ],
       total: 1,
     })
     getTrackersMock.mockResolvedValue({ items: [createTracker()], total: 1 })
@@ -348,7 +364,81 @@ describe("ExecutorsPage run flow", () => {
       expect(screen.getByTestId("executor-list")).toHaveAttribute("data-loading", "false")
     })
 
-    fireEvent.click(screen.getByRole("button", { name: "history executor 3" }))
+    fireEvent.click(screen.getByRole("button", { name: `history executor ${caseData.id}` }))
+
+    expect(screen.getByRole("tab", { name: "executors.snapshots.tab" })).toBeInTheDocument()
+  })
+
+  it.each(
+    [
+      {
+        id: 5,
+        name: "kubernetes-executor",
+        runtimeType: "kubernetes",
+        runtimeConnectionName: "k8s-prod",
+        targetRef: { mode: "kubernetes_workload", namespace: "apps", kind: "Deployment", name: "api" },
+      },
+      {
+        id: 6,
+        name: "helm-executor",
+        runtimeType: "kubernetes",
+        runtimeConnectionName: "k8s-prod",
+        targetRef: { mode: "helm_release", namespace: "apps", release_name: "certd" },
+      },
+      {
+        id: 7,
+        name: "portainer-stack-executor",
+        runtimeType: "portainer",
+        runtimeConnectionName: "portainer-prod",
+        targetRef: {
+          mode: "portainer_stack",
+          endpoint_id: 2,
+          stack_id: 11,
+          stack_name: "release-stack",
+          stack_type: "standalone",
+        },
+      },
+    ] satisfies Array<{
+      id: number
+      name: string
+      runtimeType: RuntimeType
+      runtimeConnectionName: string
+      targetRef: ExecutorTargetRef
+    }>,
+  )("hides snapshot tab for declarative $name", async (caseData) => {
+    getExecutorsMock.mockResolvedValue({
+      items: [
+        createExecutor({
+          id: caseData.id,
+          name: caseData.name,
+          runtime_type: caseData.runtimeType,
+          runtime_connection_id: caseData.id,
+          runtime_connection_name: caseData.runtimeConnectionName,
+          target_ref: caseData.targetRef,
+        }),
+      ],
+      total: 1,
+    })
+    getRuntimeConnectionsMock.mockResolvedValue({
+      items: [
+        createRuntimeConnection({
+          id: caseData.id,
+          name: caseData.runtimeConnectionName,
+          type: caseData.runtimeType,
+        }),
+      ],
+      total: 1,
+    })
+    getTrackersMock.mockResolvedValue({ items: [createTracker()], total: 1 })
+    getSettingsMock.mockResolvedValue([])
+
+    renderExecutorsPage()
+
+    await waitFor(() => {
+      expect(screen.getByTestId("executor-list")).toHaveAttribute("data-loading", "false")
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: `history executor ${caseData.id}` }))
 
     expect(screen.queryByRole("tab", { name: "executors.snapshots.tab" })).not.toBeInTheDocument()
     expect(screen.queryByTestId("executor-snapshots-panel")).not.toBeInTheDocument()

@@ -209,9 +209,20 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
             new_container_id=getattr(new_container, "id", None),
         )
 
+    async def get_current_image(self, target_ref: dict[str, Any]) -> str:
+        if target_ref.get("mode") == "docker_compose":
+            service_images = await self.fetch_compose_service_images(target_ref)
+            if not service_images:
+                raise ValueError("Unable to resolve Docker Compose service images")
+            return self._compose_snapshot_image_summary(service_images)
+        return await super().get_current_image(target_ref)
+
     async def capture_snapshot(
         self, target_ref: dict[str, Any], current_image: str
     ) -> dict[str, Any]:
+        if target_ref.get("mode") == "docker_compose":
+            return await self._capture_compose_snapshot(target_ref, current_image)
+
         container = self._get_container(target_ref)
         spec = self._build_recreate_spec_from_inspect(container, current_image)
         if spec is None:
@@ -224,6 +235,10 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         return dict(spec.snapshot_payload)
 
     async def validate_snapshot(self, target_ref: dict[str, Any], snapshot: dict[str, Any]) -> None:
+        if target_ref.get("mode") == "docker_compose":
+            self._validate_compose_snapshot(target_ref, snapshot)
+            return
+
         await super().validate_snapshot(target_ref, snapshot)
         create_config = snapshot.get("create_config")
         if not create_config and hasattr(self._get_client(), "update_container_image"):
@@ -236,6 +251,9 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
     async def recover_from_snapshot(
         self, target_ref: dict[str, Any], snapshot: dict[str, Any]
     ) -> RuntimeUpdateResult:
+        if target_ref.get("mode") == "docker_compose":
+            return await self._recover_compose_from_snapshot(target_ref, snapshot)
+
         await self.validate_snapshot(target_ref, snapshot)
 
         create_config = snapshot.get("create_config")
@@ -278,6 +296,127 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
             new_image=recovered_image,
             message="runtime recovered from snapshot",
             new_container_id=getattr(recovered_container, "id", None),
+        )
+
+    async def _capture_compose_snapshot(
+        self,
+        target_ref: dict[str, Any],
+        current_image: str,
+    ) -> dict[str, Any]:
+        project = target_ref.get("project")
+        if not isinstance(project, str) or not project.strip():
+            raise ValueError("target_ref.project must be a non-empty string")
+        service_containers = self._find_compose_service_containers(project)
+        service_images = await self.fetch_compose_service_images(target_ref)
+        update_plan = {
+            service: image
+            for service, image in service_images.items()
+            if isinstance(image, str) and image.strip()
+        }
+        specs = self._build_grouped_runtime_recreate_specs(service_containers, update_plan)
+        self._validate_grouped_runtime_recreate_specs(specs)
+        ordered_specs = self._order_grouped_runtime_recreate_specs(specs)
+        snapshots = []
+        for spec in ordered_specs:
+            snapshot = dict(spec.snapshot_payload)
+            snapshot["compose_project"] = spec.compose_project
+            snapshot["compose_service"] = spec.compose_service
+            snapshots.append(snapshot)
+        image_summary = current_image or self._compose_snapshot_image_summary(service_images)
+        return {
+            "runtime_type": self.runtime_connection.type,
+            "mode": "docker_compose",
+            "project": project.strip(),
+            "image": image_summary,
+            "services": list(target_ref.get("services") or []),
+            "snapshots": snapshots,
+        }
+
+    def _validate_compose_snapshot(
+        self,
+        target_ref: dict[str, Any],
+        snapshot: dict[str, Any],
+    ) -> None:
+        if not isinstance(snapshot, dict) or not snapshot:
+            raise ValueError("snapshot must be a non-empty dict")
+        if snapshot.get("mode") != "docker_compose":
+            raise ValueError("snapshot.mode must be docker_compose")
+        project = target_ref.get("project")
+        if not isinstance(project, str) or not project.strip():
+            raise ValueError("target_ref.project must be a non-empty string")
+        snapshot_project = snapshot.get("project")
+        if snapshot_project != project.strip():
+            raise ValueError("snapshot.project must match target_ref.project")
+        if not isinstance(snapshot.get("image"), str) or not snapshot["image"].strip():
+            raise ValueError("snapshot.image must be a non-empty string")
+        snapshots = snapshot.get("snapshots")
+        if not isinstance(snapshots, list) or not snapshots:
+            raise ValueError("snapshot.snapshots must be a non-empty list")
+        for item in snapshots:
+            self._validate_compose_container_snapshot(item)
+
+    def _validate_compose_container_snapshot(self, snapshot: Any) -> None:
+        if not isinstance(snapshot, dict) or not snapshot:
+            raise ValueError("compose snapshot entry must be a non-empty dict")
+        if not isinstance(snapshot.get("image"), str) or not snapshot["image"].strip():
+            raise ValueError("compose snapshot entry image must be a non-empty string")
+        has_id = isinstance(snapshot.get("container_id"), str) and snapshot["container_id"].strip()
+        has_name = (
+            isinstance(snapshot.get("container_name"), str) and snapshot["container_name"].strip()
+        )
+        if not (has_id or has_name):
+            raise ValueError("compose snapshot entry must include container_id or container_name")
+        create_config = snapshot.get("create_config")
+        if not isinstance(create_config, dict) or not create_config:
+            raise ValueError("compose snapshot entry create_config must be a non-empty dict")
+        if create_config.get("image") != snapshot.get("image"):
+            raise ValueError("compose snapshot entry create_config.image must match image")
+
+    async def _recover_compose_from_snapshot(
+        self,
+        target_ref: dict[str, Any],
+        snapshot: dict[str, Any],
+    ) -> RuntimeUpdateResult:
+        self._validate_compose_snapshot(target_ref, snapshot)
+        recovered_ids: list[str] = []
+        snapshots = snapshot.get("snapshots")
+        if not isinstance(snapshots, list):
+            raise ValueError("snapshot.snapshots must be a list")
+        for item in snapshots:
+            result = await self.recover_from_snapshot(
+                self._target_ref_for_compose_snapshot_entry(item),
+                item,
+            )
+            if result.new_container_id:
+                recovered_ids.append(result.new_container_id)
+        recovered_image = snapshot.get("image") if isinstance(snapshot.get("image"), str) else None
+        return RuntimeUpdateResult(
+            updated=True,
+            old_image=None,
+            new_image=recovered_image,
+            message="docker compose recovered from snapshot",
+            new_container_id=",".join(recovered_ids) or None,
+        )
+
+    @staticmethod
+    def _target_ref_for_compose_snapshot_entry(snapshot: dict[str, Any]) -> dict[str, str]:
+        target_ref: dict[str, str] = {}
+        container_id = snapshot.get("container_id")
+        container_name = snapshot.get("container_name")
+        if isinstance(container_id, str) and container_id.strip():
+            target_ref["container_id"] = container_id.strip()
+        if isinstance(container_name, str) and container_name.strip():
+            target_ref["container_name"] = container_name.strip()
+        if not target_ref:
+            raise ValueError("compose snapshot entry missing container identity")
+        return target_ref
+
+    @staticmethod
+    def _compose_snapshot_image_summary(service_images: dict[str, str]) -> str:
+        return "; ".join(
+            f"{service}={image}"
+            for service, image in sorted(service_images.items())
+            if isinstance(image, str) and image.strip()
         )
 
     def _create_docker_container(self, client, create_config: dict[str, Any]):

@@ -22,7 +22,7 @@ from .executors import (
     PodmanRuntimeAdapter,
     PortainerRuntimeAdapter,
 )
-from .executors.base import BaseRuntimeAdapter, RuntimeMutationError, RuntimeUpdateResult
+from .executors.base import RuntimeMutationError, RuntimeUpdateResult
 from .executors.portainer import PortainerRequestTimeoutError
 from .models import (
     ExecutorDesiredState,
@@ -36,7 +36,7 @@ from .notifiers import WebhookNotifier
 from .notifiers.base import NotificationEvent
 from .scheduler_host import SchedulerHost
 from .services.runtime_credentials import materialize_runtime_connection_credentials
-from .services.snapshot_service import InFlightRollbackRegistry, SnapshotService
+from .services.snapshot_service import SnapshotService
 from .storage.sqlite import SQLiteStorage
 
 logger = logging.getLogger(__name__)
@@ -1179,27 +1179,14 @@ class ExecutorScheduler:
             )
 
             try:
-                snapshot_data = await adapter.capture_snapshot(
-                    executor_config.target_ref, current_image
-                )
-                await adapter.validate_snapshot(executor_config.target_ref, snapshot_data)
-                redacted_snapshot, unredacted_persisted = (
-                    self._snapshot_service.redact_for_persist(
-                        snapshot_data,
-                        runtime_type=executor_config.runtime_type,
+                snapshot_created = False
+                if self._supports_persisted_full_config_snapshots(executor_config):
+                    snapshot_created = await self._capture_pre_update_snapshot(
+                        executor_config,
+                        adapter,
+                        run_id=run_id,
+                        current_image=current_image,
                     )
-                )
-                await self.storage.create_executor_snapshot(
-                    ExecutorSnapshot(
-                        executor_id=executor_config.id,
-                        snapshot_data=redacted_snapshot,
-                        trigger="pre_update",
-                        image_at_capture=current_image,
-                        executor_run_id=run_id,
-                        unredacted_persisted=unredacted_persisted,
-                    )
-                )
-                await self._prune_snapshot_history(executor_config.id)
                 result = await adapter.update_image(executor_config.target_ref, target_image)
                 if not result.updated:
                     return await self._finalize_run(
@@ -1260,6 +1247,17 @@ class ExecutorScheduler:
                     from_version=current_image,
                 )
             except RuntimeMutationError as exc:
+                if not snapshot_created:
+                    message = str(exc) or exc.__class__.__name__
+                    return await self._finalize_run(
+                        executor_config,
+                        run_id,
+                        status="failed",
+                        to_version=target_image,
+                        message=message,
+                        last_error=message,
+                        from_version=current_image,
+                    )
                 return await self._recover_after_mutation_failure(
                     executor_config,
                     adapter,
@@ -1311,6 +1309,59 @@ class ExecutorScheduler:
                 channel_name=executor_config.channel_name,
             )
         ]
+
+    async def _capture_pre_update_snapshot(
+        self,
+        executor_config: ExecutorConfig,
+        adapter: BaseRuntimeAdapter,
+        *,
+        run_id: int,
+        current_image: str,
+    ) -> bool:
+        snapshot_data = await adapter.capture_snapshot(
+            executor_config.target_ref,
+            current_image,
+        )
+        await adapter.validate_snapshot(executor_config.target_ref, snapshot_data)
+        redacted_snapshot, unredacted_persisted = self._snapshot_service.redact_for_persist(
+            snapshot_data,
+            runtime_type=executor_config.runtime_type,
+        )
+        await self.storage.create_executor_snapshot(
+            ExecutorSnapshot(
+                executor_id=executor_config.id,
+                snapshot_data=redacted_snapshot,
+                trigger="pre_update",
+                image_at_capture=current_image,
+                executor_run_id=run_id,
+                unredacted_persisted=unredacted_persisted,
+            )
+        )
+        await self._prune_snapshot_history(executor_config.id)
+        return True
+
+    @staticmethod
+    def _supports_persisted_full_config_snapshots(
+        executor_config: ExecutorConfig,
+    ) -> bool:
+        """Persist full config snapshots for destructive recreate targets."""
+        target_mode = executor_config.target_ref.get("mode", "container")
+        if target_mode in {"container", "docker_compose"}:
+            return executor_config.runtime_type in {"docker", "podman"}
+        if target_mode == "portainer_stack":
+            # Current Portainer stack updates use the declarative stack-file API,
+            # so stack history is the source of truth rather than full runtime
+            # recreate snapshots.
+            return False
+        return False
+
+    @staticmethod
+    def _compose_snapshot_image_summary(service_images: dict[str, str]) -> str:
+        return "; ".join(
+            f"{service}={image}"
+            for service, image in sorted(service_images.items())
+            if isinstance(image, str) and image.strip()
+        )
 
     def _summarize_portainer_stack_run(
         self,
@@ -1564,25 +1615,6 @@ class ExecutorScheduler:
         )
 
         try:
-            snapshot_data = await adapter.capture_helm_release_snapshot(executor_config.target_ref)
-            await adapter.validate_helm_release_snapshot(executor_config.target_ref, snapshot_data)
-            redacted_snapshot, unredacted_persisted = (
-                self._snapshot_service.redact_for_persist(
-                    snapshot_data,
-                    runtime_type=executor_config.runtime_type,
-                )
-            )
-            await self.storage.create_executor_snapshot(
-                ExecutorSnapshot(
-                    executor_id=executor_config.id,
-                    snapshot_data=redacted_snapshot,
-                    trigger="pre_update",
-                    image_at_capture=current_chart_version,
-                    executor_run_id=run_id,
-                    unredacted_persisted=unredacted_persisted,
-                )
-            )
-            await self._prune_snapshot_history(executor_config.id)
             result = await adapter.upgrade_helm_release(
                 executor_config.target_ref,
                 chart_ref=chart_ref,
@@ -1617,14 +1649,15 @@ class ExecutorScheduler:
                 from_version=current_chart_version,
             )
         except RuntimeMutationError as exc:
-            return await self._recover_after_mutation_failure(
+            message = str(exc) or exc.__class__.__name__
+            return await self._finalize_run(
                 executor_config,
-                adapter,
-                run_id=run_id,
-                target_image=target_chart_version,
+                run_id,
+                status="failed",
+                to_version=target_chart_version,
+                message=message,
+                last_error=message,
                 from_version=current_chart_version,
-                update_error=exc,
-                target_ref=executor_config.target_ref,
             )
         except Exception as exc:
             message = str(exc) or exc.__class__.__name__
@@ -2188,7 +2221,19 @@ class ExecutorScheduler:
             service_target_images = {
                 service: target_image for service, (_, target_image) in pending_updates.items()
             }
+            current_image_summary = self._compose_snapshot_image_summary(
+                {service: current_image for service, (current_image, _) in pending_updates.items()}
+            )
+            target_image_summary = self._compose_snapshot_image_summary(service_target_images)
+            snapshot_created = False
             try:
+                if self._supports_persisted_full_config_snapshots(executor_config):
+                    snapshot_created = await self._capture_pre_update_snapshot(
+                        executor_config,
+                        adapter,
+                        run_id=run_id,
+                        current_image=current_image_summary,
+                    )
                 update_result = await adapter.update_compose_services(
                     executor_config.target_ref,
                     service_target_images,
@@ -2206,6 +2251,32 @@ class ExecutorScheduler:
                             from_version=current_image,
                             to_version=target_image,
                             message="updated",
+                        )
+                    )
+            except RuntimeMutationError as exc:
+                if exc.destructive_started and snapshot_created:
+                    recovery_outcome = await self._recover_after_mutation_failure(
+                        executor_config,
+                        adapter,
+                        run_id=run_id,
+                        target_image=target_image_summary,
+                        from_version=current_image_summary,
+                        update_error=exc,
+                        target_ref=executor_config.target_ref,
+                        finalize_run=False,
+                    )
+                    error_message = recovery_outcome.message or str(exc) or exc.__class__.__name__
+                else:
+                    error_message = str(exc) or exc.__class__.__name__
+                for service_name in sorted(pending_updates):
+                    current_image, target_image = pending_updates[service_name]
+                    binding_results.append(
+                        _ExecutorBindingRunResult(
+                            service=service_name,
+                            status="failed",
+                            from_version=current_image,
+                            to_version=target_image,
+                            message=error_message,
                         )
                     )
             except Exception as exc:

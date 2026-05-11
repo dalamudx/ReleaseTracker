@@ -859,7 +859,18 @@
                 "pre_rollback": "Pre-rollback"
             },
             "actions": {
+                "delete": "Delete",
                 "rollback": "Rollback"
+            },
+            "deleteDialog": {
+                "title": "Delete snapshot?",
+                "description": "This deletes the selected executor snapshot. This action cannot be undone.",
+                "confirm": "Delete snapshot"
+            },
+            "toasts": {
+                "loadFailed": "Failed to load snapshots",
+                "deleteSuccess": "Snapshot deleted",
+                "deleteFailed": "Failed to delete snapshot"
             },
             "banners": {
                 "unredacted": "This snapshot contains fields that could not be redacted automatically; review before sharing.",
@@ -877,6 +888,7 @@
                 "cancel": "Cancel"
             },
             "toasts": {
+                "submitting": "Requesting rollback...",
                 "success": "Rollback queued",
                 "failed": "Rollback failed",
                 "notFound": "Snapshot no longer exists",

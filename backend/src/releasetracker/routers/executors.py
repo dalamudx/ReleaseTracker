@@ -22,6 +22,7 @@ from ..executors import (
 from ..models import ExecutorStatus, User
 from ..services.rollback_service import RollbackService
 from ..services.runtime_credentials import materialize_runtime_connection_credentials
+from ..services.snapshot_service import SnapshotInUseError
 from ..storage.sqlite import SQLiteStorage
 
 from pydantic import BaseModel
@@ -62,7 +63,9 @@ def _get_runtime_adapter(runtime_connection):
         return KubernetesRuntimeAdapter(runtime_connection)
     if runtime_connection.type == "portainer":
         return PortainerRuntimeAdapter(runtime_connection)
-    raise HTTPException(status_code=400, detail=f"Unsupported runtime type: {runtime_connection.type}")
+    raise HTTPException(
+        status_code=400, detail=f"Unsupported runtime type: {runtime_connection.type}"
+    )
 
 
 def _resolve_bound_release_channels(aggregate_tracker, tracker_config, binding_source) -> list:
@@ -143,11 +146,7 @@ async def _validate_executor_payload(
     )
     health_check_payload = executor_data.get(
         "health_check",
-        (
-            existing_executor.health_check.model_dump(mode="json")
-            if existing_executor
-            else None
-        ),
+        (existing_executor.health_check.model_dump(mode="json") if existing_executor else None),
     )
 
     runtime_connection = await storage.get_runtime_connection(runtime_connection_id)
@@ -155,7 +154,9 @@ async def _validate_executor_payload(
         raise HTTPException(status_code=400, detail="Runtime connection not found")
 
     if runtime_type != runtime_connection.type:
-        raise HTTPException(status_code=400, detail="Executor runtime_type must match the runtime connection type")
+        raise HTTPException(
+            status_code=400, detail="Executor runtime_type must match the runtime connection type"
+        )
 
     try:
         normalized_target_ref = normalize_executor_target_ref(target_ref, runtime_type=runtime_type)
@@ -196,7 +197,10 @@ async def _validate_executor_payload(
         if binding_source is None or binding_source.id is None:
             raise HTTPException(status_code=400, detail="Tracker source not found")
         if binding_source.source_type not in EXECUTOR_BINDABLE_SOURCE_TYPES:
-            raise HTTPException(status_code=400, detail="Runtime executors must be bound to a deployable image source")
+            raise HTTPException(
+                status_code=400,
+                detail="Runtime executors must be bound to a deployable image source",
+            )
         if not binding_source.enabled:
             raise HTTPException(status_code=400, detail="Tracker source is disabled")
 
@@ -221,10 +225,14 @@ async def _validate_executor_payload(
         source_type = getattr(binding_source, "source_type", None)
         if target_mode == "helm_release":
             if source_type != "helm":
-                raise HTTPException(status_code=400, detail="Helm release executors must be bound to a Helm source")
+                raise HTTPException(
+                    status_code=400, detail="Helm release executors must be bound to a Helm source"
+                )
             return
         if source_type != "container":
-            raise HTTPException(status_code=400, detail="Runtime executors must be bound to a Docker image source")
+            raise HTTPException(
+                status_code=400, detail="Runtime executors must be bound to a Docker image source"
+            )
 
     def _validate_bound_channel(
         *,
@@ -247,7 +255,9 @@ async def _validate_executor_payload(
                 detail=f"Tracker '{binding_tracker_name_value}' has no channel '{channel_name_value}'",
             )
         if not matched_channels[0].enabled:
-            raise HTTPException(status_code=400, detail=f"Channel '{channel_name_value}' is disabled")
+            raise HTTPException(
+                status_code=400, detail=f"Channel '{channel_name_value}' is disabled"
+            )
 
     binding_tracker_name = tracker_name
     binding_source = None
@@ -311,7 +321,8 @@ async def _validate_executor_payload(
             and not binding_source.source_config.get("image")
         ):
             raise HTTPException(
-                status_code=400, detail="Tracker source image must not be empty when using tracker image mode"
+                status_code=400,
+                detail="Tracker source image must not be empty when using tracker image mode",
             )
 
         for (
@@ -354,7 +365,8 @@ async def _validate_executor_payload(
             and not binding_source.source_config.get("image")
         ):
             raise HTTPException(
-                status_code=400, detail="Tracker source image must not be empty when using tracker image mode"
+                status_code=400,
+                detail="Tracker source image must not be empty when using tracker image mode",
             )
 
         _validate_bound_channel(
@@ -585,7 +597,9 @@ async def create_executor(
     try:
         name = executor_data.get("name")
         if not isinstance(name, str) or not name.strip():
-            raise HTTPException(status_code=400, detail="Create failed: name must be a non-empty string")
+            raise HTTPException(
+                status_code=400, detail="Create failed: name must be a non-empty string"
+            )
 
         existing = await storage.get_executor_config_by_name(name)
         if existing:
@@ -673,6 +687,7 @@ async def run_executor(
 
     return {"status": "queued", "run_id": run_id}
 
+
 def _serialize_snapshot_list_item(item) -> dict[str, Any]:
     return {
         "id": item.id,
@@ -756,6 +771,35 @@ async def get_executor_snapshot_detail(
     return _serialize_snapshot_detail(detail)
 
 
+@router.delete(
+    "/{executor_id}/snapshots/{snapshot_id}",
+    dependencies=[Depends(get_current_user)],
+)
+async def delete_executor_snapshot(
+    executor_id: int,
+    snapshot_id: int,
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    scheduler: Annotated[ExecutorScheduler, Depends(get_executor_scheduler)],
+):
+    """Delete one persisted executor snapshot."""
+
+    executor = await storage.get_executor_config(executor_id)
+    if not executor:
+        raise HTTPException(status_code=404, detail="Executor not found")
+
+    try:
+        deleted = await scheduler.snapshot_service.delete_snapshot(
+            executor_id,
+            snapshot_id,
+        )
+    except SnapshotInUseError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    return {"message": "Snapshot deleted", "deleted": 1}
+
+
 @router.post(
     "/{executor_id}/rollback",
     dependencies=[Depends(get_current_user)],
@@ -771,9 +815,7 @@ async def rollback_executor(
     if not executor:
         raise HTTPException(status_code=404, detail="Executor not found")
 
-    runtime_connection = await storage.get_runtime_connection(
-        executor.runtime_connection_id
-    )
+    runtime_connection = await storage.get_runtime_connection(executor.runtime_connection_id)
     if not runtime_connection:
         raise HTTPException(status_code=400, detail="Runtime connection not found")
 

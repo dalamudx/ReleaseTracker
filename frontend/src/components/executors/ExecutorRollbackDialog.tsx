@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { Loader2, RotateCcw } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
-import { api } from "@/api/client"
 import type { ExecutorListItem, SnapshotListItem } from "@/api/types"
+import { useRollbackExecutor } from "@/hooks/queries"
 import {
     AlertDialog,
     AlertDialogAction,
@@ -27,6 +27,13 @@ export interface ExecutorRollbackDialogProps {
     onSuccess?: () => void
 }
 
+function getApiErrorDetail(error: unknown): string | undefined {
+    const data = (error as { response?: { data?: { detail?: unknown; message?: unknown } } })
+        ?.response?.data
+    const detail = data?.detail ?? data?.message
+    return typeof detail === "string" && detail.trim() ? detail : undefined
+}
+
 
 export function ExecutorRollbackDialog({
     executor,
@@ -36,18 +43,17 @@ export function ExecutorRollbackDialog({
     onSuccess,
 }: ExecutorRollbackDialogProps) {
     const { t } = useTranslation()
+    const rollbackMutation = useRollbackExecutor()
     const [confirmText, setConfirmText] = useState("")
     const [submitting, setSubmitting] = useState(false)
 
-    // Reset the typed confirmation whenever the dialog opens against a
-    // fresh snapshot so an operator cannot accidentally reuse the text
-    // from a previous dialog instance.
-    useEffect(() => {
-        if (!open) {
+    const handleOpenChange = (nextOpen: boolean) => {
+        if (!nextOpen) {
             setConfirmText("")
             setSubmitting(false)
         }
-    }, [open])
+        onOpenChange(nextOpen)
+    }
 
     if (!executor || !snapshot) {
         return null
@@ -62,12 +68,16 @@ export function ExecutorRollbackDialog({
             return
         }
         setSubmitting(true)
+        const toastId = toast.loading(t("executors.rollback.toasts.submitting"))
         try {
-            const result = await api.rollbackExecutor(executor.id, { snapshot_id: snapshot.id })
+            const result = await rollbackMutation.mutateAsync({
+                executorId: executor.id,
+                snapshotId: snapshot.id,
+            })
             if (result.recovery_outcome === "succeeded") {
-                toast.success(t("executors.rollback.toasts.success"))
+                toast.success(t("executors.rollback.toasts.success"), { id: toastId })
                 onSuccess?.()
-                onOpenChange(false)
+                handleOpenChange(false)
             } else {
                 const outcomeLabel = t(
                     `executors.history.recoveryOutcome.${result.recovery_outcome}`,
@@ -78,23 +88,31 @@ export function ExecutorRollbackDialog({
                     ? `${outcomeLabel}: ${detail}`
                     : outcomeLabel
                 toast.error(t("executors.rollback.toasts.failed"), {
+                    id: toastId,
                     description,
                     duration: 10000,
                 })
                 // Refresh the caller so the snapshot list + history reload
                 // with the just-finalized rollback run visible.
                 onSuccess?.()
-                onOpenChange(false)
+                handleOpenChange(false)
             }
         } catch (error: unknown) {
             const status = (error as { response?: { status?: number } })?.response?.status
+            const apiDetail = getApiErrorDetail(error)
             if (status === 404) {
-                toast.error(t("executors.rollback.toasts.notFound"))
+                toast.error(t("executors.rollback.toasts.notFound"), {
+                    id: toastId,
+                    description: apiDetail,
+                })
             } else if (status === 409) {
-                toast.error(t("executors.rollback.toasts.conflict"))
+                toast.error(t("executors.rollback.toasts.conflict"), {
+                    id: toastId,
+                    description: apiDetail,
+                })
             } else {
                 console.error("Rollback failed", error)
-                toast.error(t("executors.rollback.toasts.failed"))
+                toast.error(apiDetail ?? t("executors.rollback.toasts.failed"), { id: toastId })
             }
         } finally {
             setSubmitting(false)
@@ -107,7 +125,7 @@ export function ExecutorRollbackDialog({
     })
 
     return (
-        <AlertDialog open={open} onOpenChange={onOpenChange}>
+        <AlertDialog open={open} onOpenChange={handleOpenChange}>
             <AlertDialogContent>
                 <AlertDialogHeader>
                     <AlertDialogTitle>{t("executors.rollback.dialog.title")}</AlertDialogTitle>

@@ -128,6 +128,7 @@ class FakeDockerComposeAdapter(DockerRuntimeAdapter):
         self.current_images = current_images
         self.fail_update = fail_update
         self.update_calls: list[tuple[dict, dict[str, str]]] = []
+        self.recover_calls: list[tuple[dict, dict]] = []
 
     async def validate_target_ref(self, target_ref):
         await super().validate_target_ref(target_ref)
@@ -135,9 +136,54 @@ class FakeDockerComposeAdapter(DockerRuntimeAdapter):
     async def fetch_compose_service_images(self, target_ref):
         return dict(self.current_images)
 
+    async def capture_snapshot(self, target_ref, current_image):
+        return {
+            "runtime_type": self.runtime_connection.type,
+            "mode": "docker_compose",
+            "project": target_ref.get("project"),
+            "image": current_image,
+            "services": list(target_ref.get("services") or []),
+            "snapshots": [
+                {
+                    "runtime_type": self.runtime_connection.type,
+                    "container_id": f"{service}-container",
+                    "container_name": f"{target_ref.get('project')}-{service}-1",
+                    "compose_project": target_ref.get("project"),
+                    "compose_service": service,
+                    "image": image,
+                    "create_config": {
+                        "image": image,
+                        "name": f"{target_ref.get('project')}-{service}-1",
+                    },
+                }
+                for service, image in sorted(self.current_images.items())
+            ],
+        }
+
+    async def validate_snapshot(self, target_ref, snapshot):
+        if snapshot.get("mode") != "docker_compose":
+            raise ValueError("invalid fake docker compose snapshot")
+        if not snapshot.get("snapshots"):
+            raise ValueError("fake docker compose snapshot requires entries")
+
+    async def recover_from_snapshot(self, target_ref, snapshot):
+        self.recover_calls.append((target_ref, snapshot))
+        recovered_images = {
+            item["compose_service"]: item["image"]
+            for item in snapshot.get("snapshots", [])
+            if item.get("compose_service") and item.get("image")
+        }
+        self.current_images.update(recovered_images)
+        return RuntimeUpdateResult(
+            updated=True,
+            old_image=None,
+            new_image=snapshot.get("image"),
+            message="fake docker compose recovered from snapshot",
+        )
+
     async def update_compose_services(self, target_ref, service_target_images):
         if self.fail_update:
-            raise RuntimeError(self.fail_update)
+            raise RuntimeMutationError(self.fail_update, destructive_started=True)
         self.update_calls.append((target_ref, dict(service_target_images)))
         self.current_images.update(service_target_images)
         return RuntimeUpdateResult(
@@ -193,7 +239,6 @@ class FakeHelmReleaseAdapter(KubernetesRuntimeAdapter):
         self.current_chart_version = current_chart_version
         self.fail_update = fail_update
         self.update_calls: list[tuple[dict, str, str, str | None]] = []
-        self.snapshot_calls: list[dict] = []
 
     async def validate_target_ref(self, target_ref):
         if target_ref.get("mode") != "helm_release":
@@ -201,20 +246,6 @@ class FakeHelmReleaseAdapter(KubernetesRuntimeAdapter):
 
     async def get_helm_release_version(self, target_ref):
         return self.current_chart_version
-
-    async def capture_helm_release_snapshot(self, target_ref):
-        self.snapshot_calls.append(target_ref)
-        return {
-            "mode": "helm_release",
-            "namespace": target_ref["namespace"],
-            "release_name": target_ref["release_name"],
-            "chart_name": "certd",
-            "chart_version": self.current_chart_version or "1.0.0",
-            "release": {"name": target_ref["release_name"]},
-        }
-
-    async def validate_helm_release_snapshot(self, target_ref, snapshot):
-        await super().validate_helm_release_snapshot(target_ref, snapshot)
 
     async def upgrade_helm_release(self, target_ref, *, chart_ref, chart_version, repo_url):
         self.update_calls.append((target_ref, chart_ref, chart_version, repo_url))
@@ -226,15 +257,6 @@ class FakeHelmReleaseAdapter(KubernetesRuntimeAdapter):
             old_image=None,
             new_image=chart_version,
             message="fake helm upgraded",
-        )
-
-    async def recover_helm_release_from_snapshot(self, target_ref, snapshot):
-        self.current_chart_version = snapshot["chart_version"]
-        return RuntimeUpdateResult(
-            updated=True,
-            old_image=None,
-            new_image=snapshot["chart_version"],
-            message="fake helm recovered",
         )
 
 
@@ -250,12 +272,61 @@ class FakePodmanComposeAdapter(PodmanRuntimeAdapter):
         self.current_images = current_images
         self.fail_update = fail_update
         self.update_calls: list[tuple[dict, dict[str, str]]] = []
+        self.recover_calls: list[tuple[dict, dict]] = []
 
     async def validate_target_ref(self, target_ref):
         await super().validate_target_ref(target_ref)
 
     async def fetch_compose_service_images(self, target_ref):
         return dict(self.current_images)
+
+    async def capture_snapshot(self, target_ref, current_image):
+        return {
+            "runtime_type": self.runtime_connection.type,
+            "mode": "docker_compose",
+            "project": target_ref.get("project"),
+            "image": current_image,
+            "services": list(target_ref.get("services") or []),
+            "snapshots": [
+                {
+                    "runtime_type": self.runtime_connection.type,
+                    "container_id": f"{service}-container",
+                    "container_name": f"{target_ref.get('project')}-{service}-1",
+                    "compose_project": target_ref.get("project"),
+                    "compose_service": service,
+                    "image": image,
+                    "create_config": {
+                        "image": image,
+                        "name": f"{target_ref.get('project')}-{service}-1",
+                    },
+                    "pod_id": "podman-stack-pod",
+                    "pod_name": "podman-stack",
+                    "pod_relation_payload": {"infra": False},
+                }
+                for service, image in sorted(self.current_images.items())
+            ],
+        }
+
+    async def validate_snapshot(self, target_ref, snapshot):
+        if snapshot.get("mode") != "docker_compose":
+            raise ValueError("invalid fake podman compose snapshot")
+        if not snapshot.get("snapshots"):
+            raise ValueError("fake podman compose snapshot requires entries")
+
+    async def recover_from_snapshot(self, target_ref, snapshot):
+        self.recover_calls.append((target_ref, snapshot))
+        recovered_images = {
+            item["compose_service"]: item["image"]
+            for item in snapshot.get("snapshots", [])
+            if item.get("compose_service") and item.get("image")
+        }
+        self.current_images.update(recovered_images)
+        return RuntimeUpdateResult(
+            updated=True,
+            old_image=None,
+            new_image=snapshot.get("image"),
+            message="fake podman compose recovered from snapshot",
+        )
 
     async def update_compose_services(self, target_ref, service_target_images):
         self.update_calls.append((target_ref, dict(service_target_images)))
@@ -1928,7 +1999,11 @@ async def test_maintenance_window_desired_state_defers_without_skip_history_spam
             channel_name="stable",
             enabled=True,
             update_mode="maintenance_window",
-            target_ref={"mode": "container", "container_id": "container-2", "image": "sample-cache"},
+            target_ref={
+                "mode": "container",
+                "container_id": "container-2",
+                "image": "sample-cache",
+            },
             maintenance_window=MaintenanceWindowConfig(
                 timezone="UTC",
                 days_of_week=[0],
@@ -2582,7 +2657,9 @@ async def test_start_does_not_register_run_history_pruning_job(storage, monkeypa
     await scheduler.start()
 
     assert scheduler.scheduler_host.scheduler.get_job("prune_executor_run_history") is None
-    assert scheduler.scheduler_host.scheduler.get_job("executor_desired_state_reconcile") is not None
+    assert (
+        scheduler.scheduler_host.scheduler.get_job("executor_desired_state_reconcile") is not None
+    )
     assert len(created_coroutines) == 1
 
     for coro in created_coroutines:
@@ -2840,7 +2917,9 @@ async def test_source_bound_executor_canary_uses_bound_source_channels_when_trac
         source for source in aggregate_tracker.sources if source.source_key == "stable-origin"
     )
     canary_source = next(
-        source for source in aggregate_tracker.sources if source.source_key == "sample_canary-origin"
+        source
+        for source in aggregate_tracker.sources
+        if source.source_key == "sample_canary-origin"
     )
     assert stable_source.id is not None
     assert canary_source.id is not None
@@ -3958,6 +4037,8 @@ async def test_portainer_stack_executor_updates_bound_services_via_single_stack_
     assert "ghcr.io/acme/worker:2.0.0" in payload["stackFileContent"]
     assert "sample-db:16" in payload["stackFileContent"]
 
+    assert await storage.get_executor_snapshot(executor_id) is None
+
     history = await storage.get_executor_run_history(executor_id, limit=1)
     assert history[0].status == "success"
     assert history[0].from_version == "api=ghcr.io/acme/api:1.0.0; worker=ghcr.io/acme/worker:1.0.0"
@@ -4099,6 +4180,18 @@ async def test_docker_compose_executor_updates_only_bound_services_via_single_gr
         )
     ]
 
+    snapshot = await storage.get_executor_snapshot(executor_id)
+    assert snapshot is not None
+    assert snapshot.trigger == "pre_update"
+    assert snapshot.image_at_capture == "api=ghcr.io/acme/api:1.0.0; worker=ghcr.io/acme/worker:1.0.0"
+    assert snapshot.snapshot_data["mode"] == "docker_compose"
+    assert snapshot.snapshot_data["project"] == "release-stack"
+    assert [item["compose_service"] for item in snapshot.snapshot_data["snapshots"]] == [
+        "api",
+        "db",
+        "worker",
+    ]
+
     history = await storage.get_executor_run_history(executor_id, limit=1)
     assert history[0].diagnostics == {
         "kind": "docker_compose",
@@ -4199,9 +4292,11 @@ async def test_helm_release_executor_upgrades_chart_version_from_helm_source(sto
     assert adapter.update_calls == [
         ({**target_ref, "workloads": []}, "certd", "0.8.0", "https://charts.example")
     ]
-    snapshot = await storage.get_executor_snapshot(executor_id)
-    assert snapshot is not None
-    assert snapshot.snapshot_data["chart_version"] == "0.7.0"
+    assert await storage.get_executor_snapshot(executor_id) is None
+    history = await storage.get_executor_run_history(executor_id, limit=1)
+    assert history[0].status == "success"
+    assert history[0].from_version == "0.7.0"
+    assert history[0].to_version == "0.8.0"
     updated_config = await storage.get_executor_config(executor_id)
     assert updated_config is not None
     assert updated_config.target_ref["chart_name"] == "certd"
@@ -4277,7 +4372,6 @@ async def test_helm_release_executor_skips_when_chart_version_is_current(storage
     assert outcome.to_version == "1.2.3"
     assert outcome.message == "Helm release already at target chart version"
     assert adapter.update_calls == []
-    assert adapter.snapshot_calls == []
 
 
 @pytest.mark.asyncio
@@ -4389,6 +4483,7 @@ async def test_kubernetes_workload_executor_updates_bound_containers_via_single_
             },
         )
     ]
+    assert await storage.get_executor_snapshot(executor_id) is None
 
     history = await storage.get_executor_run_history(executor_id, limit=1)
     assert history[0].diagnostics == {
@@ -4568,6 +4663,14 @@ async def test_podman_compose_executor_reports_runtime_mutation_failure(storage)
             {"api": "ghcr.io/acme/api:1.1.0"},
         )
     ]
+    assert len(adapter.recover_calls) == 1
+    snapshot = await storage.get_executor_snapshot(executor_id)
+    assert snapshot is not None
+    assert snapshot.trigger == "pre_update"
+    assert snapshot.snapshot_data["mode"] == "docker_compose"
+    assert snapshot.snapshot_data["runtime_type"] == "podman"
+    assert snapshot.snapshot_data["project"] == "podman-stack"
+    assert snapshot.snapshot_data["snapshots"][0]["pod_id"] == "podman-stack-pod"
 
     history = await storage.get_executor_run_history(executor_id, limit=1)
     assert history[0].status == "failed"
@@ -4671,6 +4774,15 @@ async def test_podman_compose_executor_succeeds_with_pod_backed_grouped_update(s
     assert "pod-aware grouped compose update completed" in outcome.message
     assert outcome.message.count("pod-aware grouped compose update completed") == 1
     assert "grouped runtime recreate is not supported in phase 1" not in outcome.message
+    snapshot = await storage.get_executor_snapshot(executor_id)
+    assert snapshot is not None
+    assert snapshot.trigger == "pre_update"
+    assert snapshot.snapshot_data["mode"] == "docker_compose"
+    assert snapshot.snapshot_data["runtime_type"] == "podman"
+    assert [item["compose_service"] for item in snapshot.snapshot_data["snapshots"]] == [
+        "api",
+        "worker",
+    ]
 
     history = await storage.get_executor_run_history(executor_id, limit=1)
     assert history[0].status == "success"

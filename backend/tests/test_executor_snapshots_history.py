@@ -174,9 +174,7 @@ async def test_get_executor_snapshot_by_id_scopes_by_executor(storage):
         )
     )
 
-    assert (
-        await storage.get_executor_snapshot_by_id(executor_id_a, snapshot_id)
-    ).id == snapshot_id
+    assert (await storage.get_executor_snapshot_by_id(executor_id_a, snapshot_id)).id == snapshot_id
     # Foreign executor must see nothing.
     assert await storage.get_executor_snapshot_by_id(executor_id_b, snapshot_id) is None
     # Missing id returns None too.
@@ -334,3 +332,56 @@ async def test_snapshot_service_get_snapshot_returns_none_for_foreign_executor(s
     service = SnapshotService(storage)
     assert await service.get_snapshot(executor_id_b, snapshot_id) is None
     assert await service.get_snapshot(executor_id_a, 999_999) is None
+
+
+@pytest.mark.asyncio
+async def test_snapshot_service_delete_snapshot_removes_scoped_snapshot(storage):
+    from releasetracker.services.snapshot_service import SnapshotService
+
+    executor_id_a = await _create_executor(storage, name="service-delete-a")
+    executor_id_b = await _create_executor(storage, name="service-delete-b")
+    snapshot_id_a = await storage.create_executor_snapshot(
+        ExecutorSnapshot(
+            executor_id=executor_id_a,
+            snapshot_data={"image": "a:1"},
+            trigger="pre_update",
+            image_at_capture="a:1",
+        )
+    )
+    snapshot_id_b = await storage.create_executor_snapshot(
+        ExecutorSnapshot(
+            executor_id=executor_id_b,
+            snapshot_data={"image": "b:1"},
+            trigger="pre_update",
+            image_at_capture="b:1",
+        )
+    )
+
+    service = SnapshotService(storage)
+
+    assert await service.delete_snapshot(executor_id_a, snapshot_id_a) is True
+    assert await storage.get_executor_snapshot_by_id(executor_id_a, snapshot_id_a) is None
+    assert await storage.get_executor_snapshot_by_id(executor_id_b, snapshot_id_b) is not None
+    assert await service.delete_snapshot(executor_id_a, snapshot_id_b) is False
+
+
+@pytest.mark.asyncio
+async def test_snapshot_service_delete_snapshot_rejects_in_flight_snapshot(storage):
+    from releasetracker.services.snapshot_service import SnapshotInUseError, SnapshotService
+
+    executor_id = await _create_executor(storage, name="service-delete-in-flight")
+    snapshot_id = await storage.create_executor_snapshot(
+        ExecutorSnapshot(
+            executor_id=executor_id,
+            snapshot_data={"image": "busy:1"},
+            trigger="pre_update",
+            image_at_capture="busy:1",
+        )
+    )
+    service = SnapshotService(storage)
+    await service.registry.register(snapshot_id)
+
+    with pytest.raises(SnapshotInUseError):
+        await service.delete_snapshot(executor_id, snapshot_id)
+
+    assert await storage.get_executor_snapshot_by_id(executor_id, snapshot_id) is not None

@@ -740,6 +740,11 @@ export interface PaginatedSnapshots {
     page_size: number
 }
 
+export interface DeleteSnapshotResponse {
+    message: string
+    deleted: number
+}
+
 export interface RollbackRequest {
     snapshot_id?: number | null
 }
