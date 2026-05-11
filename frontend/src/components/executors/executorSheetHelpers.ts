@@ -5,6 +5,7 @@ import type {
     DockerComposeExecutorTargetRef,
     ExecutorConfig,
     HealthCheckFailurePolicy,
+    HealthCheckHttpConfig,
     HealthCheckProfile,
     HealthCheckStrategy,
     HelmReleaseExecutorTargetRef,
@@ -47,6 +48,12 @@ export interface ExecutorFormValues {
     health_check_attempt_timeout_seconds: string
     health_check_interval_seconds: string
     health_check_probe_window_seconds: string
+    health_check_http_path: string
+    health_check_http_port: string
+    health_check_http_scheme: "http" | "https"
+    health_check_http_method: "GET" | "HEAD"
+    health_check_http_expected_status_codes: string
+    health_check_tcp_port: string
 }
 
 export type StepKey = "target" | "binding" | "policy" | "review"
@@ -828,6 +835,12 @@ export function createDefaultExecutorValues(defaultRuntimeConnection?: RuntimeCo
         health_check_attempt_timeout_seconds: "0",
         health_check_interval_seconds: "0",
         health_check_probe_window_seconds: "0",
+        health_check_http_path: "/health",
+        health_check_http_port: "",
+        health_check_http_scheme: "http",
+        health_check_http_method: "GET",
+        health_check_http_expected_status_codes: "",
+        health_check_tcp_port: "",
     }
 }
 
@@ -855,6 +868,12 @@ export function buildExecutorFormValues(config: ExecutorConfig): ExecutorFormVal
         health_check_attempt_timeout_seconds: String(health?.attempt_timeout_seconds ?? 0),
         health_check_interval_seconds: String(health?.interval_seconds ?? 0),
         health_check_probe_window_seconds: String(health?.probe_window_seconds ?? 0),
+        health_check_http_path: health?.http?.path ?? "/health",
+        health_check_http_port: health?.http?.port == null ? "" : String(health.http.port),
+        health_check_http_scheme: health?.http?.scheme ?? "http",
+        health_check_http_method: health?.http?.method ?? "GET",
+        health_check_http_expected_status_codes: formatStatusCodes(health?.http?.expected_status_codes),
+        health_check_tcp_port: health?.tcp?.port == null ? "" : String(health.tcp.port),
     }
 }
 
@@ -1142,6 +1161,53 @@ export function getExecutorValidationMessage({
         }
     }
 
+    const healthCheckValidationMessage = getHealthCheckValidationMessage(values, t)
+    if (healthCheckValidationMessage) {
+        return healthCheckValidationMessage
+    }
+
+    return null
+}
+
+function getHealthCheckValidationMessage(values: ExecutorFormValues, t: TFunction): string | null {
+    if (values.health_check_strategy === "none") {
+        return null
+    }
+
+    if (toNonNegativeInt(values.health_check_attempt_timeout_seconds) <= 0
+        || toNonNegativeInt(values.health_check_interval_seconds) <= 0
+        || toNonNegativeInt(values.health_check_probe_window_seconds) <= 0) {
+        return t("executors.validation.healthCheckTimingRequired")
+    }
+
+    if (toNonNegativeInt(values.health_check_probe_window_seconds) < toNonNegativeInt(values.health_check_attempt_timeout_seconds)) {
+        return t("executors.validation.healthCheckWindowTooSmall")
+    }
+
+    if (values.health_check_strategy === "http") {
+        if (!values.health_check_http_path.trim()) {
+            return t("executors.validation.healthCheckHttpPathRequired")
+        }
+        if (!values.health_check_http_path.trim().startsWith("/")) {
+            return t("executors.validation.healthCheckHttpPathInvalid")
+        }
+        if (!isOptionalPortValue(values.health_check_http_port)) {
+            return t("executors.validation.healthCheckPortInvalid")
+        }
+        if (!areStatusCodesValid(values.health_check_http_expected_status_codes)) {
+            return t("executors.validation.healthCheckStatusCodesInvalid")
+        }
+    }
+
+    if (values.health_check_strategy === "tcp") {
+        if (!values.health_check_tcp_port.trim()) {
+            return t("executors.validation.healthCheckTcpPortRequired")
+        }
+        if (!isRequiredPortValue(values.health_check_tcp_port)) {
+            return t("executors.validation.healthCheckPortInvalid")
+        }
+    }
+
     return null
 }
 
@@ -1186,24 +1252,87 @@ export function buildExecutorPayload({
 }
 
 function buildHealthCheckPayload(values: ExecutorFormValues, existingHealthCheck: HealthCheckProfile | null): HealthCheckProfile {
-    const toInt = (value: string): number => {
-        const parsed = Number.parseInt(value, 10)
-        return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
-    }
-
     const strategy = values.health_check_strategy
     return {
         strategy,
         use_default_strategy: false,
         failure_policy: strategy === "none" ? "mark_failed" : values.health_check_failure_policy,
-        grace_period_seconds: toInt(values.health_check_grace_period_seconds),
-        attempt_timeout_seconds: toInt(values.health_check_attempt_timeout_seconds),
-        interval_seconds: toInt(values.health_check_interval_seconds),
-        probe_window_seconds: toInt(values.health_check_probe_window_seconds),
+        grace_period_seconds: toNonNegativeInt(values.health_check_grace_period_seconds),
+        attempt_timeout_seconds: toNonNegativeInt(values.health_check_attempt_timeout_seconds),
+        interval_seconds: toNonNegativeInt(values.health_check_interval_seconds),
+        probe_window_seconds: toNonNegativeInt(values.health_check_probe_window_seconds),
         services: strategy === "none" ? null : (existingHealthCheck?.services ?? null),
-        http: strategy === "http" ? (existingHealthCheck?.http ?? null) : null,
-        tcp: strategy === "tcp" ? (existingHealthCheck?.tcp ?? null) : null,
+        http: strategy === "http" ? buildHttpHealthCheckPayload(values, existingHealthCheck?.http ?? null) : null,
+        tcp: strategy === "tcp" ? { port: toNonNegativeInt(values.health_check_tcp_port) } : null,
     }
+}
+
+function buildHttpHealthCheckPayload(
+    values: ExecutorFormValues,
+    existingHttp: HealthCheckHttpConfig | null,
+): HealthCheckHttpConfig {
+    const statusCodes = parseStatusCodes(values.health_check_http_expected_status_codes)
+
+    return {
+        path: values.health_check_http_path.trim() || "/",
+        port: parseOptionalPort(values.health_check_http_port),
+        scheme: values.health_check_http_scheme,
+        method: values.health_check_http_method,
+        expected_status_codes: statusCodes.length > 0 ? statusCodes : null,
+        expected_body_regex: existingHttp?.expected_body_regex ?? null,
+        headers: existingHttp?.headers ?? {},
+        tls_skip_verify: existingHttp?.tls_skip_verify ?? false,
+    }
+}
+
+function toNonNegativeInt(value: string): number {
+    const parsed = Number.parseInt(value, 10)
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
+}
+
+function parseOptionalPort(value: string): number | null {
+    if (!value.trim()) {
+        return null
+    }
+
+    const parsed = toNonNegativeInt(value)
+    return parsed > 0 ? parsed : null
+}
+
+function parseStatusCodes(value: string): number[] {
+    if (!areStatusCodesValid(value)) {
+        return []
+    }
+
+    return value
+        .split(",")
+        .map((entry) => Number.parseInt(entry.trim(), 10))
+        .filter((entry) => Number.isInteger(entry))
+}
+
+function areStatusCodesValid(value: string): boolean {
+    if (!value.trim()) {
+        return true
+    }
+
+    return value.split(",").every((entry) => {
+        const trimmed = entry.trim()
+        const parsed = Number.parseInt(trimmed, 10)
+        return /^\d{3}$/.test(trimmed) && parsed >= 100 && parsed <= 599
+    })
+}
+
+function isOptionalPortValue(value: string): boolean {
+    return !value.trim() || isRequiredPortValue(value)
+}
+
+function isRequiredPortValue(value: string): boolean {
+    const parsed = Number.parseInt(value, 10)
+    return /^\d+$/.test(value.trim()) && parsed >= 1 && parsed <= 65535
+}
+
+function formatStatusCodes(value?: number[] | null): string {
+    return value?.join(",") ?? ""
 }
 
 function formatApiErrorDetail(detail: unknown): string | null {

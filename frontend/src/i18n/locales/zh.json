@@ -716,7 +716,14 @@
       "maintenanceTimeRequired": "维护窗口模式必须填写开始和结束时间。",
       "channelRequired": "必须绑定发布渠道。",
       "channelMissing": "当前绑定的发布渠道不存在，请重新选择。",
-      "channelUnavailable": "当前绑定的发布渠道已禁用，请重新选择。"
+      "channelUnavailable": "当前绑定的发布渠道已禁用，请重新选择。",
+      "healthCheckTimingRequired": "健康检查需要填写大于 0 的单次超时、间隔和总探测窗口。",
+      "healthCheckWindowTooSmall": "总探测窗口必须大于或等于单次超时。",
+      "healthCheckHttpPathRequired": "请填写 HTTP 健康检查路径。",
+      "healthCheckHttpPathInvalid": "HTTP 健康检查路径必须以 / 开头。",
+      "healthCheckTcpPortRequired": "请填写 TCP 健康检查端口。",
+      "healthCheckPortInvalid": "健康检查端口必须在 1 到 65535 之间。",
+      "healthCheckStatusCodesInvalid": "期望状态码必须是 100 到 599 之间、用英文逗号分隔的数值。"
     },
     "toasts": {
       "loadFailed": "加载执行器失败。",
@@ -800,10 +807,24 @@
         "gracePeriod": "等待期（秒）",
         "attemptTimeout": "单次超时（秒）",
         "interval": "探测间隔（秒）",
-        "probeWindow": "总探测窗口（秒）"
+        "probeWindow": "总探测窗口（秒）",
+        "httpPath": "路径",
+        "httpPort": "端口",
+        "httpScheme": "协议",
+        "httpMethod": "方法",
+        "httpStatusCodes": "期望状态码",
+        "tcpPort": "端口"
+      },
+      "sections": {
+        "probe": "探针设置",
+        "timing": "时序"
       },
       "hints": {
-        "subObjectViaApi": "HTTP 路径 / 状态码 / 正则以及 TCP 端口目前通过 API 配置，这里聚焦于策略、失败处理与时序。"
+        "httpProbe": "向解析出的服务主机发送 HTTP 请求。",
+        "tcpProbe": "向解析出的服务主机建立 TCP 连接。",
+        "portOptional": "留空时使用运行时解析出的端口。",
+        "httpStatusCodes": "用英文逗号分隔；留空时接受任意 2xx/3xx 响应。",
+        "httpAdvancedViaApi": "请求头、响应正文正则、跳过 TLS 校验和服务过滤会保留 API 已配置的值。"
       }
     },
     "snapshots": {

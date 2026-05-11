@@ -60,6 +60,12 @@ function createFormValues(overrides: Partial<ExecutorFormValues> = {}): Executor
     health_check_attempt_timeout_seconds: overrides.health_check_attempt_timeout_seconds ?? "0",
     health_check_interval_seconds: overrides.health_check_interval_seconds ?? "0",
     health_check_probe_window_seconds: overrides.health_check_probe_window_seconds ?? "0",
+    health_check_http_path: overrides.health_check_http_path ?? "/health",
+    health_check_http_port: overrides.health_check_http_port ?? "",
+    health_check_http_scheme: overrides.health_check_http_scheme ?? "http",
+    health_check_http_method: overrides.health_check_http_method ?? "GET",
+    health_check_http_expected_status_codes: overrides.health_check_http_expected_status_codes ?? "",
+    health_check_tcp_port: overrides.health_check_tcp_port ?? "",
   }
 }
 

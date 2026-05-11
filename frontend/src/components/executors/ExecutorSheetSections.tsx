@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
     FormControl,
+    FormDescription,
     FormField,
     FormItem,
     FormLabel,
@@ -970,47 +971,39 @@ interface ExecutorSheetHealthCheckFieldsProps {
 }
 
 
-/**
- * Inline Health Check Profile editor rendered inside the Policy step.
- *
- * Scope: strategy + failure policy + timings are covered end-to-end so
- * operators can opt into runtime_native, helm_status, http, and tcp
- * strategies. HTTP / TCP sub-object editing (path, expected status
- * codes, headers, regex) is deferred — the API accepts the full
- * payload for power users, and this panel surfaces the essentials that
- * cover the common case.
- */
 export function ExecutorSheetHealthCheckFields({
     form,
     selectedTargetRef,
 }: ExecutorSheetHealthCheckFieldsProps) {
     const { t } = useTranslation()
     const strategy = form.watch("health_check_strategy")
+    const httpPath = form.watch("health_check_http_path")
     const isHelmRelease = typeof selectedTargetRef === "object"
         && selectedTargetRef !== null
         && (selectedTargetRef as { mode?: string }).mode === "helm_release"
     const probeActive = strategy !== "none"
+    const isHttpProbe = strategy === "http"
+    const isTcpProbe = strategy === "tcp"
 
     return (
-        <div className="mt-2 rounded-lg border border-border/60 bg-muted/10 p-4">
-            <div className="flex items-center justify-between">
-                <div>
+        <div className="space-y-4 border-t border-border/60 pt-4">
+            <div className="flex flex-col gap-3 rounded-lg border border-border/60 bg-muted/20 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-1">
                     <div className="text-sm font-medium">
                         {t("executors.healthCheck.title")}
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
+                    <p className="text-xs text-muted-foreground">
                         {t("executors.healthCheck.description")}
                     </p>
                 </div>
-            </div>
-
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
                 <FormField
                     control={form.control}
                     name="health_check_strategy"
                     render={({ field }) => (
-                        <FormItem>
-                            <FormLabel>{t("executors.healthCheck.fields.strategy")}</FormLabel>
+                        <FormItem className="sm:min-w-56">
+                            <FormLabel className="sr-only">
+                                {t("executors.healthCheck.fields.strategy")}
+                            </FormLabel>
                             <Select
                                 value={field.value}
                                 onValueChange={(value) => {
@@ -1050,111 +1043,269 @@ export function ExecutorSheetHealthCheckFields({
                         </FormItem>
                     )}
                 />
-
-                <FormField
-                    control={form.control}
-                    name="health_check_failure_policy"
-                    render={({ field }) => (
-                        <FormItem>
-                            <FormLabel>
-                                {t("executors.healthCheck.fields.failurePolicy")}
-                            </FormLabel>
-                            <Select
-                                value={field.value}
-                                onValueChange={field.onChange}
-                                disabled={!probeActive}
-                            >
-                                <FormControl>
-                                    <SelectTrigger>
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                    <SelectItem value="mark_failed">
-                                        {t("executors.healthCheck.failurePolicy.mark_failed")}
-                                    </SelectItem>
-                                    <SelectItem value="mark_failed_and_recover">
-                                        {t("executors.healthCheck.failurePolicy.mark_failed_and_recover")}
-                                    </SelectItem>
-                                    <SelectItem value="mark_degraded">
-                                        {t("executors.healthCheck.failurePolicy.mark_degraded")}
-                                    </SelectItem>
-                                </SelectContent>
-                            </Select>
-                            <FormMessage />
-                        </FormItem>
-                    )}
-                />
             </div>
 
             {probeActive ? (
-                <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                    <FormField
-                        control={form.control}
-                        name="health_check_grace_period_seconds"
-                        render={({ field }) => (
-                            <FormItem>
-                                <FormLabel>
-                                    {t("executors.healthCheck.fields.gracePeriod")}
-                                </FormLabel>
-                                <FormControl>
-                                    <Input type="number" min={0} step={1} {...field} />
-                                </FormControl>
-                                <FormMessage />
-                            </FormItem>
-                        )}
-                    />
-                    <FormField
-                        control={form.control}
-                        name="health_check_attempt_timeout_seconds"
-                        render={({ field }) => (
-                            <FormItem>
-                                <FormLabel>
-                                    {t("executors.healthCheck.fields.attemptTimeout")}
-                                </FormLabel>
-                                <FormControl>
-                                    <Input type="number" min={0} step={1} {...field} />
-                                </FormControl>
-                                <FormMessage />
-                            </FormItem>
-                        )}
-                    />
-                    <FormField
-                        control={form.control}
-                        name="health_check_interval_seconds"
-                        render={({ field }) => (
-                            <FormItem>
-                                <FormLabel>
-                                    {t("executors.healthCheck.fields.interval")}
-                                </FormLabel>
-                                <FormControl>
-                                    <Input type="number" min={0} step={1} {...field} />
-                                </FormControl>
-                                <FormMessage />
-                            </FormItem>
-                        )}
-                    />
-                    <FormField
-                        control={form.control}
-                        name="health_check_probe_window_seconds"
-                        render={({ field }) => (
-                            <FormItem>
-                                <FormLabel>
-                                    {t("executors.healthCheck.fields.probeWindow")}
-                                </FormLabel>
-                                <FormControl>
-                                    <Input type="number" min={0} step={1} {...field} />
-                                </FormControl>
-                                <FormMessage />
-                            </FormItem>
-                        )}
-                    />
-                </div>
-            ) : null}
+                <div className="space-y-4">
+                    <div className="grid gap-4 md:grid-cols-2">
+                        <FormField
+                            control={form.control}
+                            name="health_check_failure_policy"
+                            render={({ field }) => (
+                                <FormItem>
+                                    <FormLabel>
+                                        {t("executors.healthCheck.fields.failurePolicy")}
+                                    </FormLabel>
+                                    <Select
+                                        value={field.value}
+                                        onValueChange={field.onChange}
+                                    >
+                                        <FormControl>
+                                            <SelectTrigger>
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                        </FormControl>
+                                        <SelectContent>
+                                            <SelectItem value="mark_failed">
+                                                {t("executors.healthCheck.failurePolicy.mark_failed")}
+                                            </SelectItem>
+                                            <SelectItem value="mark_failed_and_recover">
+                                                {t("executors.healthCheck.failurePolicy.mark_failed_and_recover")}
+                                            </SelectItem>
+                                            <SelectItem value="mark_degraded">
+                                                {t("executors.healthCheck.failurePolicy.mark_degraded")}
+                                            </SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    <FormMessage />
+                                </FormItem>
+                            )}
+                        />
+                    </div>
 
-            {strategy === "http" || strategy === "tcp" ? (
-                <div className="mt-3 rounded-lg border border-amber-400/50 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200">
-                    {t("executors.healthCheck.hints.subObjectViaApi")}
+                    {isHttpProbe || isTcpProbe ? (
+                        <div className="space-y-3 rounded-lg border border-border/60 bg-background p-4">
+                            <div>
+                                <div className="text-sm font-medium">
+                                    {t("executors.healthCheck.sections.probe")}: {t(`executors.healthCheck.strategy.${strategy}`)}
+                                </div>
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                    {isHttpProbe
+                                        ? t("executors.healthCheck.hints.httpProbe")
+                                        : t("executors.healthCheck.hints.tcpProbe")}
+                                </p>
+                            </div>
+
+                            {isHttpProbe ? (
+                                <div className="grid gap-4 md:grid-cols-2">
+                                    <FormField
+                                        control={form.control}
+                                        name="health_check_http_path"
+                                        rules={{
+                                            required: t("executors.validation.healthCheckHttpPathRequired"),
+                                            validate: (value) => value.startsWith("/") || t("executors.validation.healthCheckHttpPathInvalid"),
+                                        }}
+                                        render={({ field }) => (
+                                            <FormItem>
+                                                <FormLabel>
+                                                    {t("executors.healthCheck.fields.httpPath")}
+                                                </FormLabel>
+                                                <FormControl>
+                                                    <Input placeholder="/health" {...field} />
+                                                </FormControl>
+                                                <FormMessage />
+                                            </FormItem>
+                                        )}
+                                    />
+                                    <FormField
+                                        control={form.control}
+                                        name="health_check_http_port"
+                                        render={({ field }) => (
+                                            <FormItem>
+                                                <FormLabel>
+                                                    {t("executors.healthCheck.fields.httpPort")}
+                                                </FormLabel>
+                                                <FormControl>
+                                                    <Input type="number" min={1} max={65535} step={1} placeholder="8080" {...field} />
+                                                </FormControl>
+                                                <FormDescription className="text-xs">
+                                                    {t("executors.healthCheck.hints.portOptional")}
+                                                </FormDescription>
+                                                <FormMessage />
+                                            </FormItem>
+                                        )}
+                                    />
+                                    <FormField
+                                        control={form.control}
+                                        name="health_check_http_scheme"
+                                        render={({ field }) => (
+                                            <FormItem>
+                                                <FormLabel>
+                                                    {t("executors.healthCheck.fields.httpScheme")}
+                                                </FormLabel>
+                                                <Select value={field.value} onValueChange={field.onChange}>
+                                                    <FormControl>
+                                                        <SelectTrigger>
+                                                            <SelectValue />
+                                                        </SelectTrigger>
+                                                    </FormControl>
+                                                    <SelectContent>
+                                                        <SelectItem value="http">http</SelectItem>
+                                                        <SelectItem value="https">https</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                                <FormMessage />
+                                            </FormItem>
+                                        )}
+                                    />
+                                    <FormField
+                                        control={form.control}
+                                        name="health_check_http_method"
+                                        render={({ field }) => (
+                                            <FormItem>
+                                                <FormLabel>
+                                                    {t("executors.healthCheck.fields.httpMethod")}
+                                                </FormLabel>
+                                                <Select value={field.value} onValueChange={field.onChange}>
+                                                    <FormControl>
+                                                        <SelectTrigger>
+                                                            <SelectValue />
+                                                        </SelectTrigger>
+                                                    </FormControl>
+                                                    <SelectContent>
+                                                        <SelectItem value="GET">GET</SelectItem>
+                                                        <SelectItem value="HEAD">HEAD</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                                <FormMessage />
+                                            </FormItem>
+                                        )}
+                                    />
+                                    <FormField
+                                        control={form.control}
+                                        name="health_check_http_expected_status_codes"
+                                        render={({ field }) => (
+                                            <FormItem className="md:col-span-2">
+                                                <FormLabel>
+                                                    {t("executors.healthCheck.fields.httpStatusCodes")}
+                                                </FormLabel>
+                                                <FormControl>
+                                                    <Input placeholder="200,204" {...field} />
+                                                </FormControl>
+                                                <FormDescription className="text-xs">
+                                                    {t("executors.healthCheck.hints.httpStatusCodes")}
+                                                </FormDescription>
+                                                <FormMessage />
+                                            </FormItem>
+                                        )}
+                                    />
+                                    {httpPath ? (
+                                        <div className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground md:col-span-2">
+                                            {t("executors.healthCheck.hints.httpAdvancedViaApi")}
+                                        </div>
+                                    ) : null}
+                                </div>
+                            ) : null}
+
+                            {isTcpProbe ? (
+                                <div className="grid gap-4 md:grid-cols-2">
+                                    <FormField
+                                        control={form.control}
+                                        name="health_check_tcp_port"
+                                        rules={{ required: t("executors.validation.healthCheckTcpPortRequired") }}
+                                        render={({ field }) => (
+                                            <FormItem>
+                                                <FormLabel>
+                                                    {t("executors.healthCheck.fields.tcpPort")}
+                                                </FormLabel>
+                                                <FormControl>
+                                                    <Input type="number" min={1} max={65535} step={1} placeholder="8080" {...field} />
+                                                </FormControl>
+                                                <FormMessage />
+                                            </FormItem>
+                                        )}
+                                    />
+                                </div>
+                            ) : null}
+                        </div>
+                    ) : null}
+
+                    <div className="space-y-3 rounded-lg border border-border/60 bg-background p-4">
+                        <div className="text-sm font-medium">
+                            {t("executors.healthCheck.sections.timing")}
+                        </div>
+                        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                            <FormField
+                                control={form.control}
+                                name="health_check_grace_period_seconds"
+                                render={({ field }) => (
+                                    <FormItem>
+                                        <FormLabel>
+                                            {t("executors.healthCheck.fields.gracePeriod")}
+                                        </FormLabel>
+                                        <FormControl>
+                                            <Input type="number" min={0} step={1} {...field} />
+                                        </FormControl>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+                            <FormField
+                                control={form.control}
+                                name="health_check_attempt_timeout_seconds"
+                                rules={{
+                                    validate: (value) => Number.parseInt(value, 10) > 0 || t("executors.validation.healthCheckTimingRequired"),
+                                }}
+                                render={({ field }) => (
+                                    <FormItem>
+                                        <FormLabel>
+                                            {t("executors.healthCheck.fields.attemptTimeout")}
+                                        </FormLabel>
+                                        <FormControl>
+                                            <Input type="number" min={1} step={1} {...field} />
+                                        </FormControl>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+                            <FormField
+                                control={form.control}
+                                name="health_check_interval_seconds"
+                                rules={{
+                                    validate: (value) => Number.parseInt(value, 10) > 0 || t("executors.validation.healthCheckTimingRequired"),
+                                }}
+                                render={({ field }) => (
+                                    <FormItem>
+                                        <FormLabel>
+                                            {t("executors.healthCheck.fields.interval")}
+                                        </FormLabel>
+                                        <FormControl>
+                                            <Input type="number" min={1} step={1} {...field} />
+                                        </FormControl>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+                            <FormField
+                                control={form.control}
+                                name="health_check_probe_window_seconds"
+                                rules={{
+                                    validate: (value) => Number.parseInt(value, 10) > 0 || t("executors.validation.healthCheckTimingRequired"),
+                                }}
+                                render={({ field }) => (
+                                    <FormItem>
+                                        <FormLabel>
+                                            {t("executors.healthCheck.fields.probeWindow")}
+                                        </FormLabel>
+                                        <FormControl>
+                                            <Input type="number" min={1} step={1} {...field} />
+                                        </FormControl>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+                        </div>
+                    </div>
                 </div>
             ) : null}
         </div>

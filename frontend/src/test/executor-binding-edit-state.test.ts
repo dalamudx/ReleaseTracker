@@ -125,6 +125,12 @@ function createValues(overrides: Partial<ExecutorFormValues>): ExecutorFormValue
         health_check_attempt_timeout_seconds: overrides.health_check_attempt_timeout_seconds ?? "0",
         health_check_interval_seconds: overrides.health_check_interval_seconds ?? "0",
         health_check_probe_window_seconds: overrides.health_check_probe_window_seconds ?? "0",
+        health_check_http_path: overrides.health_check_http_path ?? "/health",
+        health_check_http_port: overrides.health_check_http_port ?? "",
+        health_check_http_scheme: overrides.health_check_http_scheme ?? "http",
+        health_check_http_method: overrides.health_check_http_method ?? "GET",
+        health_check_http_expected_status_codes: overrides.health_check_http_expected_status_codes ?? "",
+        health_check_tcp_port: overrides.health_check_tcp_port ?? "",
     }
 }
 
@@ -181,6 +187,141 @@ describe("executor binding edit state helpers", () => {
 
         expect(createValues({}).image_reference_mode).toBe("digest")
         expect(hydrated.image_reference_mode).toBe("tag")
+    })
+
+
+    it("hydrates and builds editable HTTP health-check probe settings", () => {
+        const hydrated = buildExecutorFormValues({
+            name: "executor",
+            runtime_type: "docker",
+            runtime_connection_id: 1,
+            tracker_name: "tracker",
+            tracker_source_id: 1,
+            channel_name: "stable",
+            enabled: true,
+            update_mode: "manual",
+            image_selection_mode: "replace_tag_on_current_image",
+            image_reference_mode: "digest",
+            target_ref: { mode: "container", container_id: "abc" },
+            service_bindings: [],
+            maintenance_window: null,
+            description: null,
+            health_check: {
+                strategy: "http",
+                use_default_strategy: false,
+                failure_policy: "mark_failed",
+                grace_period_seconds: 5,
+                attempt_timeout_seconds: 2,
+                interval_seconds: 3,
+                probe_window_seconds: 30,
+                services: ["api"],
+                http: {
+                    path: "/ready",
+                    port: 8080,
+                    scheme: "https",
+                    method: "HEAD",
+                    expected_status_codes: [200, 204],
+                    expected_body_regex: "ok",
+                    headers: { "X-Probe": "1" },
+                    tls_skip_verify: true,
+                },
+                tcp: null,
+            },
+        })
+
+        expect(hydrated.health_check_http_path).toBe("/ready")
+        expect(hydrated.health_check_http_port).toBe("8080")
+        expect(hydrated.health_check_http_scheme).toBe("https")
+        expect(hydrated.health_check_http_method).toBe("HEAD")
+        expect(hydrated.health_check_http_expected_status_codes).toBe("200,204")
+
+        const payload = buildExecutorPayload({
+            values: {
+                ...hydrated,
+                health_check_http_path: "/live",
+                health_check_http_port: "9090",
+                health_check_http_scheme: "http",
+                health_check_http_method: "GET",
+                health_check_http_expected_status_codes: "200, 204",
+            },
+            effectiveTrackerSourceId: "1",
+            selectedTargetRef: { mode: "container", container_name: "api" },
+            existingHealthCheck: {
+                strategy: "http",
+                use_default_strategy: false,
+                failure_policy: "mark_failed",
+                grace_period_seconds: 5,
+                attempt_timeout_seconds: 2,
+                interval_seconds: 3,
+                probe_window_seconds: 30,
+                services: ["api"],
+                http: { expected_body_regex: "ok", headers: { "X-Probe": "1" }, path: "/ready", tls_skip_verify: true },
+                tcp: null,
+            },
+        })
+
+        expect(payload.health_check?.http).toEqual({
+            path: "/live",
+            port: 9090,
+            scheme: "http",
+            method: "GET",
+            expected_status_codes: [200, 204],
+            expected_body_regex: "ok",
+            headers: { "X-Probe": "1" },
+            tls_skip_verify: true,
+        })
+    })
+
+    it("validates health-check probe values before save", () => {
+        const t = ((key: string) => key) as unknown as TFunction
+        const baseParams = {
+            t,
+            selectedRuntimeConnection: createRuntimeConnection({ id: 1, type: "docker", enabled: true }),
+            isContainerRuntime: true,
+            selectedTracker: createTracker({
+                sources: [
+                    createTrackerSource({
+                        id: 1,
+                        source_key: "image",
+                        source_type: "container",
+                        enabled: true,
+                        source_config: { image: "ghcr.io/acme/app" },
+                        release_channels: [{ release_channel_key: "stable", name: "stable", type: "release", enabled: true }],
+                        source_rank: 0,
+                    }),
+                ],
+            }),
+            selectedTrackerBindableSources: [createTrackerSource({ id: 1, source_config: { image: "ghcr.io/acme/app" } })],
+            trackerSourceId: "1",
+            selectedBindableSource: createTrackerSource({
+                id: 1,
+                source_config: { image: "ghcr.io/acme/app" },
+                release_channels: [{ release_channel_key: "stable", name: "stable", type: "release", enabled: true }],
+            }),
+            selectedTargetRef: { container_name: "app", container_id: "abc" },
+        }
+
+        expect(getExecutorValidationMessage({
+            ...baseParams,
+            values: createValues({
+                health_check_strategy: "http",
+                health_check_attempt_timeout_seconds: "2",
+                health_check_interval_seconds: "3",
+                health_check_probe_window_seconds: "30",
+                health_check_http_path: "health",
+            }),
+        })).toBe("executors.validation.healthCheckHttpPathInvalid")
+
+        expect(getExecutorValidationMessage({
+            ...baseParams,
+            values: createValues({
+                health_check_strategy: "tcp",
+                health_check_attempt_timeout_seconds: "2",
+                health_check_interval_seconds: "3",
+                health_check_probe_window_seconds: "30",
+                health_check_tcp_port: "",
+            }),
+        })).toBe("executors.validation.healthCheckTcpPortRequired")
     })
 
     it("keeps currently bound disabled runtime visible in options", () => {
@@ -770,6 +911,9 @@ describe("executor binding edit state helpers", () => {
                 health_check_attempt_timeout_seconds: "2",
                 health_check_interval_seconds: "3",
                 health_check_probe_window_seconds: "30",
+                health_check_http_path: "/health",
+                health_check_http_port: "8080",
+                health_check_http_expected_status_codes: "204",
             }),
             effectiveTrackerSourceId: "1",
             selectedTargetRef: { mode: "container", container_name: "api" },

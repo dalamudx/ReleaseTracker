@@ -715,7 +715,14 @@
             "maintenanceTimeRequired": "Start and end times are required for maintenance window mode.",
             "channelRequired": "A release channel binding is required.",
             "channelMissing": "The currently bound release channel no longer exists. Please choose a new one.",
-            "channelUnavailable": "The currently bound release channel is disabled. Please choose a new one."
+            "channelUnavailable": "The currently bound release channel is disabled. Please choose a new one.",
+            "healthCheckTimingRequired": "Health checks need positive timeout, interval, and probe window values.",
+            "healthCheckWindowTooSmall": "Probe window must be greater than or equal to attempt timeout.",
+            "healthCheckHttpPathRequired": "HTTP health check path is required.",
+            "healthCheckHttpPathInvalid": "HTTP health check path must start with '/'.",
+            "healthCheckTcpPortRequired": "TCP health check port is required.",
+            "healthCheckPortInvalid": "Health check port must be between 1 and 65535.",
+            "healthCheckStatusCodesInvalid": "Expected status codes must be comma-separated values between 100 and 599."
         },
             "toasts": {
             "loadFailed": "Failed to load executors.",
@@ -799,10 +806,24 @@
                 "gracePeriod": "Grace period (s)",
                 "attemptTimeout": "Attempt timeout (s)",
                 "interval": "Interval (s)",
-                "probeWindow": "Probe window (s)"
+                "probeWindow": "Probe window (s)",
+                "httpPath": "Path",
+                "httpPort": "Port",
+                "httpScheme": "Scheme",
+                "httpMethod": "Method",
+                "httpStatusCodes": "Expected status codes",
+                "tcpPort": "Port"
+            },
+            "sections": {
+                "probe": "Probe settings",
+                "timing": "Timing"
             },
             "hints": {
-                "subObjectViaApi": "HTTP path / status / regex and TCP port are configured via the API for now; the core timing and failure policy can be set here."
+                "httpProbe": "Send an HTTP request to the resolved service host.",
+                "tcpProbe": "Open a TCP connection to the resolved service host.",
+                "portOptional": "Leave blank to use the runtime-discovered port.",
+                "httpStatusCodes": "Comma-separated. Leave blank to accept any 2xx/3xx response.",
+                "httpAdvancedViaApi": "Headers, body regex, TLS skip-verify, and service filters are preserved from API-edited configs."
             }
         },
         "snapshots": {

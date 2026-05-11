@@ -604,12 +604,38 @@ export function ExecutorSheet({
         }
 
         if (step === "policy") {
+            const policyFields: Array<keyof ExecutorFormValues> = [
+                "health_check_strategy",
+                "health_check_failure_policy",
+                "health_check_grace_period_seconds",
+                "health_check_attempt_timeout_seconds",
+                "health_check_interval_seconds",
+                "health_check_probe_window_seconds",
+            ]
+
             if (updateMode === "maintenance_window") {
-                const valid = await form.trigger(["maintenance_start_time", "maintenance_end_time"])
-                if (!valid) {
-                    return
-                }
+                policyFields.push("maintenance_start_time", "maintenance_end_time")
             }
+
+            if (form.getValues("health_check_strategy") === "http") {
+                policyFields.push(
+                    "health_check_http_path",
+                    "health_check_http_port",
+                    "health_check_http_scheme",
+                    "health_check_http_method",
+                    "health_check_http_expected_status_codes",
+                )
+            }
+
+            if (form.getValues("health_check_strategy") === "tcp") {
+                policyFields.push("health_check_tcp_port")
+            }
+
+            const valid = await form.trigger(policyFields)
+            if (!valid) {
+                return
+            }
+
             setStep("review")
         }
     }
