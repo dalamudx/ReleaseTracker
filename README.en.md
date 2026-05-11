@@ -6,7 +6,7 @@
 
 [中文](README.md) | [English](README.en.md)
 
-ReleaseTracker is a lightweight, configurable release tracking and update orchestration tool. It tracks releases and tags from GitHub, GitLab, Gitea, Helm charts, and OCI container registries, then maps version changes to runtime targets such as Docker, Podman, Portainer, Kubernetes, and Helm.
+ReleaseTracker is a lightweight, configurable release tracking and update orchestration tool. It tracks releases and tags from GitHub, GitLab, Gitea, Helm charts, and OCI container registries, and maps version changes to runtime targets such as Docker, Podman, Portainer, Kubernetes, and Helm.
 
 ![Python](https://img.shields.io/badge/Python-3.12+-blue)
 ![React](https://img.shields.io/badge/React-19-61dafb)
@@ -15,20 +15,20 @@ ReleaseTracker is a lightweight, configurable release tracking and update orches
 
 ## Features
 
-- **Multi-source release tracking**: supports GitHub, GitLab including self-hosted instances, Gitea, Helm charts, Docker Hub, GHCR, and private OCI registries.
-- **Aggregate trackers**: bind multiple version sources to one tracker, then filter, merge, and display versions through release channel rules.
-- **Version history and current projection**: keeps historical release records while maintaining the latest executable update view.
-- **Runtime connections**: supports Docker, Podman, Portainer, and Kubernetes connections, with credentials managed centrally.
-- **Executor orchestration**: supports target discovery, binding, manual execution, scheduled execution, maintenance windows, and execution history for containers, Compose projects, Portainer stacks, Kubernetes workloads, and Helm releases.
-- **Secure authentication**: supports local users, JWT sessions, OIDC login, password updates, and session refresh.
-- **Credential encryption**: tokens, OIDC client secrets, runtime connection secrets, and other sensitive values are encrypted with Fernet before being persisted.
-- **System settings**: timezone, log level, release history retention, BASE URL, and system key rotation are managed from the Web UI.
-- **Notifications**: currently supports webhook notifications with selectable events, test sending, Chinese and English messages, and Discord / Slack compatible fields.
-- **Modern frontend**: React 19 + TypeScript + TailwindCSS with Chinese / English language support, dark mode, theme colors, and responsive layouts.
+- **Multi-source tracking**: GitHub, GitLab (incl. self-hosted), Gitea, Helm charts, Docker Hub, GHCR, private OCI registries.
+- **Aggregate trackers**: bind multiple sources under one tracker; filter, merge, and display via release channel rules.
+- **History + current projection**: keep full release history while maintaining the latest installable version view.
+- **Runtime connections**: Docker, Podman, Portainer, Kubernetes; secrets centrally managed and encrypted.
+- **Executor orchestration**: target discovery, binding, manual / scheduled execution, maintenance windows, and run history for containers, Compose projects, Portainer stacks, Kubernetes workloads, and Helm releases.
+- **Snapshot & rollback**: pre-update snapshots with rollback and health-check-driven recovery.
+- **Security**: local users + JWT + OIDC; sensitive data encrypted with Fernet; rotatable system keys.
+- **System settings**: timezone, log level, history retention, BASE URL, key rotation — all from the Web UI.
+- **Notifications**: webhook with event filtering, bilingual messages, and Discord / Slack compatible fields.
+- **Modern frontend**: React 19 + TypeScript + TailwindCSS, bilingual (zh/en), dark mode, responsive layout.
 
 ## Feature Screenshots
 
-For more UI screenshots and feature walkthroughs, see [Feature Screenshots](FEATURES.md).
+See [FEATURES.md](FEATURES.md) for UI screenshots and walkthroughs.
 
 ## Architecture
 
@@ -56,7 +56,7 @@ flowchart TD
     Notifiers -->|Release Events| UI
 ```
 
-In production, FastAPI serves the built frontend assets and the API from the same process. In development, Vite runs the frontend dev server and proxies `/api` requests to the backend.
+In production, FastAPI serves the built frontend and the API from a single process. In development, Vite runs the dev server and proxies `/api` to the backend.
 
 ## Quick Start
 
@@ -81,7 +81,7 @@ After the development servers start, open:
 
 - Frontend: http://localhost:5173
 - Backend API: http://localhost:8000
-- Swagger UI: http://localhost:8000/docs
+- Swagger UI / ReDoc: http://localhost:8000/docs, http://localhost:8000/redoc
 
 ### Docker Deployment
 
@@ -93,14 +93,7 @@ docker run -d \
   ghcr.io/dalamudx/releasetracker:latest migrate-and-serve
 ```
 
-The production image serves both frontend static files and the API through FastAPI on port `8000`. Open http://localhost:8000 to use the application.
-
-On first startup, ReleaseTracker creates the default administrator account:
-
-- Username: `admin`
-- Password: `admin`
-
-Change the default password immediately after logging in.
+Open http://localhost:8000. The first launch creates the default administrator `admin` / `admin` — **change the password immediately** after logging in.
 
 ### Docker Compose
 
@@ -125,29 +118,13 @@ docker compose up -d
 
 ## Configuration
 
-### Web UI Settings
-
-The following runtime settings are managed from the System Settings page, not through `.env` files or environment variables:
-
-- Timezone
-- Log level
-- Release history retention count
-- BASE URL
-- Session key rotation
-- Encryption key rotation
+Runtime configuration (timezone, log level, release history retention, BASE URL, key rotation, etc.) is managed from the System Settings page — no `.env` files or environment variables required.
 
 ### BASE URL / Reverse Proxy
 
-The BASE URL is the public address used by browsers to access ReleaseTracker. It is used for reverse proxy deployments, OIDC callback URL generation, and post-login OIDC redirects.
+The BASE URL is the public address browsers use to reach ReleaseTracker. It drives reverse-proxy deployments and OIDC callback generation. Set it in `System Settings → Global Settings → BASE URL`, for example `https://releases.example.com` or, under a sub-path, `https://example.com/releasetracker`. Sub-path deployments must include the full sub-path.
 
-Configuration path: `System Settings -> Global Settings -> BASE URL`
-
-Examples:
-
-- `https://releases.example.com`
-- `https://example.com/releasetracker`
-
-If the application is deployed under a sub-path, the BASE URL must include the full sub-path. After configuration, OIDC callbacks use:
+OIDC callbacks resolve to:
 
 ```text
 {BASE URL}/auth/oidc/{provider}/callback
@@ -155,70 +132,36 @@ If the application is deployed under a sub-path, the BASE URL must include the f
 
 ### Data Directory and System Keys
 
-The default data directory inside the container is `/app/backend/data`. Mount a persistent directory when deploying:
+The container data directory defaults to `/app/backend/data`. Mount a persistent directory when deploying:
 
 ```bash
 -v $(pwd)/data:/app/backend/data
 ```
 
-On first startup, ReleaseTracker creates `system-secrets.json` in the data directory. It stores:
-
-- Session key: JWT signing key
-- Encryption key: Fernet data encryption key
-
-Use the key rotation tools in System Settings if you need to rotate keys. Encryption key rotation re-encrypts existing encrypted data. If any existing data cannot be decrypted with the current key, rotation is blocked until the data is fixed.
+On first startup, ReleaseTracker creates `system-secrets.json` holding the JWT signing key and the Fernet encryption key. Both can be rotated from System Settings; encryption key rotation re-encrypts existing data and is blocked when any row cannot be decrypted with the current key.
 
 ### Database Migrations
 
-The SQLite schema is managed by dbmate. The Docker image supports these entrypoint commands:
+The SQLite schema is managed by dbmate. Docker entrypoint commands:
 
 | Command | Description |
 |------|------|
-| `serve` | Start the application without running migrations |
-| `migrate` | Run database migrations only |
-| `migrate-and-serve` | Run migrations first, then start the application |
+| `serve` | Start the app without running migrations |
+| `migrate` | Run migrations only |
+| `migrate-and-serve` | Run migrations, then start the app |
 
-For local development:
-
-```bash
-make dbmate-migrate
-```
+For local development: `make dbmate-migrate`.
 
 ## Development Commands
 
-| Command | Description |
-|------|------|
-| `make install` | Install backend and frontend dependencies |
-| `make dev` | Start backend and frontend development servers together |
-| `make run-backend` | Start only the backend service |
-| `make run-frontend` | Start only the frontend service |
-| `make lint` | Run backend and frontend code checks |
-| `make format` | Format backend code |
-| `make build` | Build frontend production assets |
-| `make version VERSION=1.0.1` | Synchronize the root version file, backend version, and frontend version |
-| `make dbmate-migrate` | Run dbmate migrations against the current database |
-| `make clean` | Clean build artifacts and caches |
+Common: `make install`, `make dev`, `make lint`, `make build`, `make version VERSION=x.y.z`. Run `make help` for the full list.
 
-## Testing and Build Verification
-
-Backend tests:
+Tests:
 
 ```bash
-uv --directory backend run pytest -q
+uv --directory backend run pytest -q     # Backend
+npm --prefix frontend run test           # Frontend
 ```
-
-Frontend build:
-
-```bash
-npm --prefix frontend run build
-```
-
-## API Documentation
-
-After starting the backend, open:
-
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
 
 ## Roadmap
 
