@@ -10,6 +10,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+site/
 data/
 *.db
 *.db-journal
@@ -19,4 +20,5 @@ node_modules/
 dist-ssr
 *.local
 .mise.toml
+test.md
 AGENTS.md
