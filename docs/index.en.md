@@ -34,7 +34,7 @@ ReleaseTracker is a lightweight, configurable release tracking and update orches
 - **Self-hosting administrators**: operators who want a single console to manage upgrades across multiple Docker / Kubernetes / Helm deployments.
 
 !!! info "This Wiki is under construction"
-    Only the skeleton and the Installation chapter are live today. Upcoming chapters: Configuration, Trackers, Executors, Operations, known limitations, and FAQ.
+    Available: Installation, System Settings, Credentials, Runtime Connections, Notifications, Trackers, Executors, Known Limitations. More chapters (operations, FAQ) will follow.
 
 ## Core capabilities
 
