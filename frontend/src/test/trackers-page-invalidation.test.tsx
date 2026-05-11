@@ -1,4 +1,4 @@
-import { act, render } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -6,12 +6,24 @@ import type { AggregateTracker } from "@/api/types"
 import { buildTrackerFormValues, buildTrackerPayload, createDefaultValues, supportsReleaseTypeFilter } from "@/components/trackers/trackerDialogHelpers"
 import { formatChannelSummary, getTrackerLastCheck, getTrackerLastVersion } from "@/components/trackers/trackerListHelpers"
 
+const { checkTrackerMock, toastErrorMock, toastInfoMock, toastLoadingMock, toastSuccessMock, toastWarningMock } = vi.hoisted(() => ({
+  checkTrackerMock: vi.fn(),
+  toastErrorMock: vi.fn(),
+  toastInfoMock: vi.fn(),
+  toastLoadingMock: vi.fn(() => "tracker-check-toast"),
+  toastSuccessMock: vi.fn(),
+  toastWarningMock: vi.fn(),
+}))
+
 const invalidateQueries = vi.fn().mockResolvedValue(undefined)
 
 vi.mock("sonner", () => ({
   toast: {
-    success: vi.fn(),
-    error: vi.fn(),
+    error: toastErrorMock,
+    info: toastInfoMock,
+    loading: toastLoadingMock,
+    success: toastSuccessMock,
+    warning: toastWarningMock,
   },
 }))
 
@@ -27,6 +39,12 @@ vi.mock("@/components/trackers/TrackerDetail", () => ({
   },
 }))
 
+vi.mock("@/components/trackers/TrackerList", () => ({
+  TrackerList: ({ onCheck }: { onCheck: (name: string) => void }) => (
+    <button type="button" onClick={() => onCheck("qa-tracker")}>check tracker</button>
+  ),
+}))
+
 vi.mock("@/hooks/queries", () => ({
   queryKeys: {
     trackers: (params?: { skip?: number; limit?: number }) => ["trackers", params] as const,
@@ -39,7 +57,7 @@ vi.mock("@/hooks/queries", () => ({
     mutateAsync: vi.fn(),
   }),
   useCheckTracker: () => ({
-    mutateAsync: vi.fn(),
+    mutateAsync: checkTrackerMock,
   }),
 }))
 
@@ -58,6 +76,12 @@ describe("TrackersPage tracker invalidation", () => {
   beforeEach(() => {
     invalidateQueries.mockClear()
     trackerDialogMock.mockClear()
+    checkTrackerMock.mockReset()
+    toastErrorMock.mockReset()
+    toastInfoMock.mockReset()
+    toastLoadingMock.mockClear()
+    toastSuccessMock.mockReset()
+    toastWarningMock.mockReset()
     localStorage.clear()
   })
 
@@ -77,6 +101,30 @@ describe("TrackersPage tracker invalidation", () => {
     })
 
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["trackers"] })
+  })
+
+  it("updates tracker check toast for cooldown skips without showing queued", async () => {
+    checkTrackerMock.mockResolvedValue({
+      manual_check_outcome: "skipped",
+      manual_check_reason: "cooldown",
+      error: "Recently checked; skipping duplicate request",
+    })
+    const queryClient = new QueryClient()
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <TrackersPage />
+      </QueryClientProvider>,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "check tracker" }))
+
+    expect(toastLoadingMock).toHaveBeenCalledWith("common.checkSubmitting")
+    await waitFor(() => {
+      expect(toastInfoMock).toHaveBeenCalledWith("common.checkSkippedCooldown", { id: "tracker-check-toast" })
+    })
+    expect(toastSuccessMock).not.toHaveBeenCalledWith("common.checkQueued")
+    expect(toastErrorMock).not.toHaveBeenCalledWith(expect.stringContaining("common.checkFailed"), expect.anything())
   })
 
   it("builds tracker edit state from redesign sources only", () => {

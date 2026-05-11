@@ -219,8 +219,12 @@ export default function ExecutorsPage() {
             return
         }
 
-        void api.runExecutor(executorId).then(() => {
-            toast.success(t('executors.toasts.runQueued'))
+        const toastId = toast.loading(t('executors.toasts.runSubmitting'))
+        void api.runExecutor(executorId).then((response) => {
+            const message = response.status === "queued"
+                ? t('executors.toasts.runQueued')
+                : t('executors.toasts.runStarted')
+            toast.success(message, { id: toastId })
             setSelectedExecutorId(executorId)
             if (executor) {
                 setSelectedExecutorSnapshot(executor)
@@ -236,8 +240,10 @@ export default function ExecutorsPage() {
             const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
             const message = typeof detail === "string" && /^Executor \d+ is disabled$/.test(detail)
                 ? t('executors.toasts.runDisabled')
-                : detail || t('executors.toasts.runFailed')
-            toast.error(message)
+                : typeof detail === "string" && /^Executor \d+ is already running$/.test(detail)
+                    ? t('executors.toasts.runAlreadyRunning')
+                    : detail || t('executors.toasts.runFailed')
+            toast.error(message, { id: toastId })
         })
     }
 

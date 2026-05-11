@@ -111,20 +111,38 @@ export default function TrackersPage() {
     }
 
     const handleCheck = async (name: string) => {
-        toast.success(t("common.checkQueued"))
+        const toastId = toast.loading(t("common.checkSubmitting"))
         try {
             const status = await checkTracker.mutateAsync(name)
             setDetailRefreshKey((value) => value + 1)
 
-            if (status.error) {
-                toast.error(`${t("common.checkFailed")}: ${status.error}`)
+            if (status.manual_check_outcome === "skipped") {
+                const message = status.manual_check_reason === "cooldown"
+                    ? t("common.checkSkippedCooldown")
+                    : status.manual_check_reason === "already_running"
+                        ? t("common.checkSkippedAlreadyRunning")
+                        : t("common.checkSkipped")
+                toast.info(message, { id: toastId })
+                return
             }
+
+            if (status.manual_check_outcome === "failed") {
+                toast.error(`${t("common.checkFailed")}: ${status.error || t("common.unexpectedError")}`, { id: toastId })
+                return
+            }
+
+            if (status.error) {
+                toast.warning(`${t("common.checkCompletedWithWarnings")}: ${status.error}`, { id: toastId })
+                return
+            }
+
+            toast.success(t("common.checkCompleted"), { id: toastId })
         } catch (error: unknown) {
             console.error("Failed to check tracker", error)
             const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
                 || (error as Error).message
                 || t("common.checkFailed")
-            toast.error(`${t("common.checkFailed")}: ${detail}`)
+            toast.error(`${t("common.checkFailed")}: ${detail}`, { id: toastId })
         }
     }
 

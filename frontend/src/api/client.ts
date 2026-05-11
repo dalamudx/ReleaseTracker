@@ -42,6 +42,7 @@ import type {
     RotateEncryptionKeyResponse,
     ReleaseHistoryCleanupResponse,
     SnapshotHistoryCleanupResponse,
+    TrackerStatus,
 } from "./types"
 
 const API_BASE = '' // Vite proxy handles /api
@@ -254,7 +255,7 @@ export const api = {
     createTracker: (data: CreateTrackerRequest) => apiClient.post<AggregateTracker>('/api/trackers', data).then(res => res.data),
     updateTracker: (name: string, data: UpdateTrackerRequest) => apiClient.put<AggregateTracker>(`/api/trackers/${name}`, data).then(res => res.data),
     deleteTracker: (name: string) => apiClient.delete(`/api/trackers/${name}`).then(res => res.data),
-    checkTracker: (name: string) => apiClient.post(`/api/trackers/${name}/check`).then(res => res.data),
+    checkTracker: (name: string) => apiClient.post<TrackerStatus>(`/api/trackers/${name}/check`).then(res => res.data),
     getTracker: (name: string) => apiClient.get<AggregateTracker>(`/api/trackers/${name}`).then(res => res.data),
     getTrackerConfig: (name: string) => apiClient.get<AggregateTracker>(`/api/trackers/${name}/config`).then(res => res.data),
     getTrackerCurrentView: (trackerName: string) =>

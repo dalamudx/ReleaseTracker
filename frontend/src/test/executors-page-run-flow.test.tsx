@@ -13,6 +13,7 @@ const {
   runExecutorMock,
   tMock,
   toastErrorMock,
+  toastLoadingMock,
   toastSuccessMock,
 } = vi.hoisted(() => ({
   deleteExecutorMock: vi.fn(),
@@ -23,6 +24,7 @@ const {
   runExecutorMock: vi.fn(),
   tMock: (key: string, options?: { count?: number }) => options?.count == null ? key : `${key}:${options.count}`,
   toastErrorMock: vi.fn(),
+  toastLoadingMock: vi.fn(() => "executor-run-toast"),
   toastSuccessMock: vi.fn(),
 }))
 
@@ -40,6 +42,7 @@ vi.mock("@/api/client", () => ({
 vi.mock("sonner", () => ({
   toast: {
     error: toastErrorMock,
+    loading: toastLoadingMock,
     success: toastSuccessMock,
   },
 }))
@@ -196,6 +199,7 @@ describe("ExecutorsPage run flow", () => {
     getTrackersMock.mockReset()
     runExecutorMock.mockReset()
     toastErrorMock.mockReset()
+    toastLoadingMock.mockClear()
     toastSuccessMock.mockReset()
   })
 
@@ -253,11 +257,12 @@ describe("ExecutorsPage run flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "run executor 1" }))
 
     expect(runExecutorMock).toHaveBeenCalledWith(1)
+    expect(toastLoadingMock).toHaveBeenCalledWith("executors.toasts.runSubmitting")
     await act(async () => {
       await Promise.resolve()
     })
 
-    expect(toastSuccessMock).toHaveBeenCalledWith("executors.toasts.runQueued")
+    expect(toastSuccessMock).toHaveBeenCalledWith("executors.toasts.runQueued", { id: "executor-run-toast" })
     expect(screen.getByTestId("executor-list")).toHaveAttribute("data-loading", "false")
     expect(getExecutorsMock).toHaveBeenCalledTimes(2)
 
@@ -284,6 +289,7 @@ describe("ExecutorsPage run flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "run executor 1" }))
 
     expect(runExecutorMock).not.toHaveBeenCalled()
+    expect(toastLoadingMock).not.toHaveBeenCalled()
     expect(toastErrorMock).toHaveBeenCalledWith("executors.toasts.runDisabled")
     expect(toastSuccessMock).not.toHaveBeenCalledWith("executors.toasts.runQueued")
   })

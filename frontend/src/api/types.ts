@@ -180,12 +180,17 @@ export interface AggregateTracker {
     updated_at?: string
 }
 
+export type ManualTrackerCheckOutcome = 'completed' | 'skipped' | 'failed'
+export type ManualTrackerCheckReason = 'cooldown' | 'already_running'
+
 export interface TrackerStatus extends AggregateTracker {
     type?: TrackerChannelType
     last_check?: string | null
     last_version?: string | null
     error?: string | null
     channel_count?: number
+    manual_check_outcome?: ManualTrackerCheckOutcome | null
+    manual_check_reason?: ManualTrackerCheckReason | null
 }
 
 export interface ReleaseChannelInput {

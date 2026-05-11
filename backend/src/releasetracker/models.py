@@ -46,6 +46,8 @@ class TrackerStatus(BaseModel):
     last_version: str | None = None
     error: str | None = None
     channel_count: int = 0  # Channel count
+    manual_check_outcome: Literal["completed", "skipped", "failed"] | None = None
+    manual_check_reason: Literal["cooldown", "already_running"] | None = None
 
 
 TrackerSourceType = Literal["github", "gitlab", "gitea", "helm", "container"]

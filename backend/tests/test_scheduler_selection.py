@@ -1812,6 +1812,8 @@ async def test_manual_check_skips_when_same_tracker_check_is_already_running(tmp
         await first_task
 
         assert second_status.error == "Check already in progress; skipping duplicate request"
+        assert second_status.manual_check_outcome == "skipped"
+        assert second_status.manual_check_reason == "already_running"
     finally:
         await _close_storage(storage)
 
@@ -1847,6 +1849,8 @@ async def test_manual_check_skips_when_tracker_was_checked_recently(tmp_path, mo
         status = await scheduler.check_tracker_now_v2(tracker_name)
 
         assert status.error == "Recently checked; skipping duplicate request"
+        assert status.manual_check_outcome == "skipped"
+        assert status.manual_check_reason == "cooldown"
         assert status.last_version == "1.2.3"
     finally:
         await _close_storage(storage)

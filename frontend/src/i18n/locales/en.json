@@ -101,6 +101,12 @@
         "deleteFailed": "Failed to delete",
         "checkStarted": "Check started successfully",
         "checkQueued": "Check has been queued.",
+        "checkSubmitting": "Starting check...",
+        "checkCompleted": "Check completed.",
+        "checkCompletedWithWarnings": "Check completed with warnings",
+        "checkSkipped": "Check skipped.",
+        "checkSkippedCooldown": "Tracker was checked recently; skipped by cooldown.",
+        "checkSkippedAlreadyRunning": "Check is already running for this tracker.",
         "checkFailed": "Check failed",
         "check": "Check",
         "clear": "Clear",
@@ -730,9 +736,11 @@
             "loadFailed": "Failed to load executors.",
             "loadConfigFailed": "Failed to load executor configuration.",
             "runStarted": "Executor run queued.",
+            "runSubmitting": "Starting executor run...",
             "runQueued": "Executor run has been queued.",
             "runFailed": "Executor run failed.",
-            "runDisabled": "This executor is disabled and cannot be run manually."
+            "runDisabled": "This executor is disabled and cannot be run manually.",
+            "runAlreadyRunning": "This executor is already running."
         },
         "imageStrategy": {
             "replace_tag_on_current_image": "Keep current image name",

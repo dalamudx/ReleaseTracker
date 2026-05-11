@@ -33,6 +33,8 @@ MAX_CONCURRENT_FETCHES_PER_PROVIDER = {
     "container": 2,
     "helm": 2,
 }
+MANUAL_CHECK_ALREADY_RUNNING_MESSAGE = "Check already in progress; skipping duplicate request"
+MANUAL_CHECK_COOLDOWN_MESSAGE = "Recently checked; skipping duplicate request"
 
 
 def _tracker_method_supports_argument(method: Any, argument_name: str) -> bool:
@@ -1206,8 +1208,10 @@ class ReleaseScheduler:
                 enabled=enabled,
                 last_check=current_status.last_check if current_status else None,
                 last_version=current_status.last_version if current_status else None,
-                error="Check already in progress; skipping duplicate request",
+                error=MANUAL_CHECK_ALREADY_RUNNING_MESSAGE,
                 channel_count=_tracker_channel_count(config),
+                manual_check_outcome="skipped",
+                manual_check_reason="already_running",
             )
 
         if (
@@ -1222,8 +1226,10 @@ class ReleaseScheduler:
                 enabled=enabled,
                 last_check=current_status.last_check,
                 last_version=current_status.last_version,
-                error="Recently checked; skipping duplicate request",
+                error=MANUAL_CHECK_COOLDOWN_MESSAGE,
                 channel_count=_tracker_channel_count(config),
+                manual_check_outcome="skipped",
+                manual_check_reason="cooldown",
             )
 
         try:
@@ -1257,6 +1263,7 @@ class ReleaseScheduler:
                 last_version=latest_version,
                 error=error if releases or latest_version else (error or "No version information found"),
                 channel_count=_tracker_channel_count(config),
+                manual_check_outcome="completed",
             )
             await self.storage.update_tracker_status(status)
 
@@ -1279,6 +1286,7 @@ class ReleaseScheduler:
                 last_version=None,
                 error=error_msg,
                 channel_count=_tracker_channel_count(config),
+                manual_check_outcome="failed",
             )
             await self.storage.update_tracker_status(status)
 

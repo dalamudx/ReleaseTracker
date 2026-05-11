@@ -504,6 +504,29 @@ async def test_tracker_status_last_version_prefers_current_projection_over_stale
 
 
 @pytest.mark.asyncio
+async def test_manual_check_response_exposes_structured_skip_outcome(authed_client):
+    scheduler = authed_client.app.state.scheduler
+    scheduler.check_tracker_now_v2.return_value = TrackerStatus(
+        name="manual-skip-shape",
+        type="github",
+        enabled=True,
+        last_check=datetime(2026, 1, 1, 12, 0, 0),
+        last_version="1.2.3",
+        error="Recently checked; skipping duplicate request",
+        manual_check_outcome="skipped",
+        manual_check_reason="cooldown",
+    )
+
+    response = authed_client.post("/api/trackers/manual-skip-shape/check")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["manual_check_outcome"] == "skipped"
+    assert body["manual_check_reason"] == "cooldown"
+    assert body["error"] == "Recently checked; skipping duplicate request"
+
+
+@pytest.mark.asyncio
 async def test_update_tracker(authed_client):
     authed_client.post("/api/trackers", json=make_tracker_payload("update-test"))
 
