@@ -98,7 +98,9 @@ class SQLiteStorage:
             # Increase cache size in pages; default is 4KB per page, here about 16MB
             await self._db.execute("PRAGMA cache_size=-16384")
             await self._db.commit()
-            logger.info(f"SQLite persistent connection established with WAL mode enabled: {self.db_path}")
+            logger.info(
+                f"SQLite persistent connection established with WAL mode enabled: {self.db_path}"
+            )
         return self._db
 
     async def close(self) -> None:
@@ -161,7 +163,9 @@ class SQLiteStorage:
             return old_fernet.decrypt(value.encode("utf-8")).decode("utf-8"), True
         except InvalidToken as exc:
             if SQLiteStorage._looks_like_fernet_token(value):
-                raise ValueError("encrypted value cannot be decrypted with the current encryption key") from exc
+                raise ValueError(
+                    "encrypted value cannot be decrypted with the current encryption key"
+                ) from exc
             return value, False
 
     @classmethod
@@ -242,7 +246,9 @@ class SQLiteStorage:
     @classmethod
     def _count_undecryptable_nested_strings(cls, value, old_fernet: Fernet) -> int:
         if isinstance(value, dict):
-            return sum(cls._count_undecryptable_nested_strings(item, old_fernet) for item in value.values())
+            return sum(
+                cls._count_undecryptable_nested_strings(item, old_fernet) for item in value.values()
+            )
         if isinstance(value, list):
             return sum(cls._count_undecryptable_nested_strings(item, old_fernet) for item in value)
         if not isinstance(value, str) or not value:
@@ -283,13 +289,17 @@ class SQLiteStorage:
             nested_count = self._count_nested_strings(secrets_payload)
             inventory["credentials_secrets"] += nested_count
             if nested_count:
-                undecryptable_count += self._count_undecryptable_nested_strings(secrets_payload, self.fernet)
+                undecryptable_count += self._count_undecryptable_nested_strings(
+                    secrets_payload, self.fernet
+                )
 
         cursor = await db.execute("SELECT client_secret FROM oauth_providers")
         for row in await cursor.fetchall():
             if row["client_secret"]:
                 inventory["oauth_provider_client_secret"] += 1
-                undecryptable_count += self._count_undecryptable_string(row["client_secret"], self.fernet)
+                undecryptable_count += self._count_undecryptable_string(
+                    row["client_secret"], self.fernet
+                )
 
         cursor = await db.execute("SELECT secrets FROM runtime_connections")
         for row in await cursor.fetchall():
@@ -297,7 +307,9 @@ class SQLiteStorage:
             nested_count = self._count_nested_strings(secrets_payload)
             inventory["runtime_connection_secrets"] += nested_count
             if nested_count:
-                undecryptable_count += self._count_undecryptable_nested_strings(secrets_payload, self.fernet)
+                undecryptable_count += self._count_undecryptable_nested_strings(
+                    secrets_payload, self.fernet
+                )
 
         return {"inventory": inventory, "undecryptable_count": undecryptable_count}
 
@@ -343,15 +355,21 @@ class SQLiteStorage:
                         stats["plaintext_reencrypted"] += 1
 
                 secrets_payload = self._load_json(row["secrets"])
-                stats["inventory"]["credentials_secrets"] += self._count_nested_strings(secrets_payload)
+                stats["inventory"]["credentials_secrets"] += self._count_nested_strings(
+                    secrets_payload
+                )
                 rotated_secrets, nested_stats = self._rotate_nested_strings_for_encryption_key(
                     secrets_payload,
                     old_fernet,
                     new_fernet,
                 )
-                stats["rotated"]["credentials_secrets"] += nested_stats["encrypted"] + nested_stats["plaintext"]
+                stats["rotated"]["credentials_secrets"] += (
+                    nested_stats["encrypted"] + nested_stats["plaintext"]
+                )
                 stats["plaintext_reencrypted"] += nested_stats["plaintext"]
-                credential_updates.append((rotated_token, self._dump_json(rotated_secrets), row["id"]))
+                credential_updates.append(
+                    (rotated_token, self._dump_json(rotated_secrets), row["id"])
+                )
 
             cursor = await db.execute("SELECT id, client_secret FROM oauth_providers")
             for row in await cursor.fetchall():
@@ -372,17 +390,23 @@ class SQLiteStorage:
             cursor = await db.execute("SELECT id, secrets FROM runtime_connections")
             for row in await cursor.fetchall():
                 secrets_payload = self._load_json(row["secrets"])
-                stats["inventory"]["runtime_connection_secrets"] += self._count_nested_strings(secrets_payload)
+                stats["inventory"]["runtime_connection_secrets"] += self._count_nested_strings(
+                    secrets_payload
+                )
                 rotated_secrets, nested_stats = self._rotate_nested_strings_for_encryption_key(
                     secrets_payload,
                     old_fernet,
                     new_fernet,
                 )
-                stats["rotated"]["runtime_connection_secrets"] += nested_stats["encrypted"] + nested_stats["plaintext"]
+                stats["rotated"]["runtime_connection_secrets"] += (
+                    nested_stats["encrypted"] + nested_stats["plaintext"]
+                )
                 stats["plaintext_reencrypted"] += nested_stats["plaintext"]
                 runtime_connection_updates.append((self._dump_json(rotated_secrets), row["id"]))
         except ValueError:
-            stats["undecryptable_count"] = (await self.get_encryption_key_inventory())["undecryptable_count"]
+            stats["undecryptable_count"] = (await self.get_encryption_key_inventory())[
+                "undecryptable_count"
+            ]
             raise
 
         try:
@@ -483,6 +507,9 @@ class SQLiteStorage:
                 payload["release_channel_key"] = canonical_key
                 payload["channel_key"] = canonical_key
                 payload["source_type"] = source.source_type
+                payload["source_key"] = source.source_key
+                if source.id is not None:
+                    payload["tracker_source_id"] = source.id
                 channels.append(payload)
         return channels
 
@@ -2173,6 +2200,90 @@ class SQLiteStorage:
             for release in selected
         ]
 
+    @classmethod
+    def _source_identity_for_retention(
+        cls,
+        *,
+        tracker_source_id: Any = None,
+        source_key: Any = None,
+    ) -> str:
+        if tracker_source_id is not None:
+            return str(tracker_source_id)
+        normalized_source_key = cls._normalize_release_value(
+            str(source_key) if source_key is not None else None
+        )
+        return normalized_source_key or "__unknown_source__"
+
+    @classmethod
+    def _channel_identity_for_retention(cls, channel_name: Any = None) -> str:
+        normalized_channel_name = cls._normalize_release_value(
+            str(channel_name) if channel_name is not None else None
+        )
+        return normalized_channel_name or "__default__"
+
+    async def _get_tracker_release_history_retention_groups(
+        self,
+        aggregate_tracker_id: int,
+    ) -> dict[int, tuple[str, str]]:
+        db = await self._get_connection()
+        db.row_factory = aiosqlite.Row
+        rows = await (
+            await db.execute(
+                """
+                SELECT trh.id AS tracker_release_history_id,
+                       srh.tracker_source_id,
+                       ats.source_key,
+                       srh.raw_payload
+                FROM tracker_release_history trh
+                JOIN source_release_history srh ON srh.id = trh.primary_source_release_history_id
+                LEFT JOIN aggregate_tracker_sources ats ON ats.id = srh.tracker_source_id
+                WHERE trh.aggregate_tracker_id = ?
+                """,
+                (aggregate_tracker_id,),
+            )
+        ).fetchall()
+
+        groups: dict[int, tuple[str, str]] = {}
+        for row in rows:
+            raw_payload = self._load_json(row["raw_payload"])
+            source_identity = self._source_identity_for_retention(
+                tracker_source_id=row["tracker_source_id"],
+                source_key=raw_payload.get("source_key") or row["source_key"],
+            )
+            channel_identity = self._channel_identity_for_retention(
+                raw_payload.get("channel_name")
+            )
+            groups[int(row["tracker_release_history_id"])] = (source_identity, channel_identity)
+
+        return groups
+
+    @staticmethod
+    def _channel_value(channel: Any, key: str) -> Any:
+        if isinstance(channel, dict):
+            return channel.get(key)
+        return getattr(channel, key, None)
+
+    @classmethod
+    def _release_matches_retention_source_channel(
+        cls,
+        release: Release,
+        retention_groups: dict[int, tuple[str, str]],
+        channel: Any,
+    ) -> bool:
+        if release.id is None:
+            return False
+        release_group = retention_groups.get(int(release.id))
+        if release_group is None:
+            return False
+        channel_source_identity = cls._source_identity_for_retention(
+            tracker_source_id=cls._channel_value(channel, "tracker_source_id"),
+            source_key=cls._channel_value(channel, "source_key"),
+        )
+        if release_group[0] != channel_source_identity:
+            return False
+        channel_identity = cls._channel_identity_for_retention(cls._channel_value(channel, "name"))
+        return release_group[1] in {channel_identity, "__default__"}
+
     async def cleanup_release_history(
         self,
         *,
@@ -2223,34 +2334,57 @@ class SQLiteStorage:
                 if channel.get("enabled", True)
             ]
 
+            retention_groups = await self._get_tracker_release_history_retention_groups(
+                aggregate_tracker.id
+            )
             if enabled_channels:
                 for channel in enabled_channels:
-                    channel_source_type = (
-                        channel.get("source_type")
-                        if isinstance(channel, dict)
-                        else getattr(channel, "source_type", None)
-                    )
-                    keep_ids.update(
-                        int(release.id)
-                        for release in self.select_top_releases_for_channel(
-                            history_releases,
+                    channel_source_type = self._channel_value(channel, "source_type")
+                    channel_candidates = [
+                        release
+                        for release in history_releases
+                        if self._release_matches_retention_source_channel(
+                            release,
+                            retention_groups,
                             channel,
-                            limit=retention,
-                            sort_mode=sort_mode,
+                        )
+                        and self._release_matches_channel(
+                            release,
+                            channel,
                             channel_source_type=channel_source_type,
                         )
-                        if release.id is not None
+                    ]
+                    deduped_releases = self.dedupe_releases_by_immutable_identity(
+                        channel_candidates
+                    )
+                    top_releases = sorted(
+                        deduped_releases,
+                        key=lambda release: self._release_order_key(release, sort_mode),
+                        reverse=True,
+                    )[:retention]
+                    keep_ids.update(
+                        int(release.id) for release in top_releases if release.id is not None
                     )
             else:
-                deduped_releases = self.dedupe_releases_by_immutable_identity(history_releases)
-                top_releases = sorted(
-                    deduped_releases,
-                    key=lambda release: self._release_order_key(release, sort_mode),
-                    reverse=True,
-                )[:retention]
-                keep_ids.update(
-                    int(release.id) for release in top_releases if release.id is not None
-                )
+                releases_by_group: dict[tuple[str, str], list[Release]] = {}
+                for release in history_releases:
+                    if release.id is None:
+                        continue
+                    group_key = retention_groups.get(
+                        int(release.id), ("__unknown_source__", "__default__")
+                    )
+                    releases_by_group.setdefault(group_key, []).append(release)
+
+                for group_releases in releases_by_group.values():
+                    deduped_releases = self.dedupe_releases_by_immutable_identity(group_releases)
+                    top_releases = sorted(
+                        deduped_releases,
+                        key=lambda release: self._release_order_key(release, sort_mode),
+                        reverse=True,
+                    )[:retention]
+                    keep_ids.update(
+                        int(release.id) for release in top_releases if release.id is not None
+                    )
 
             all_ids = {int(release.id) for release in history_releases if release.id is not None}
             delete_ids = all_ids - keep_ids
@@ -3940,12 +4074,8 @@ class SQLiteStorage:
             self, executor_id, snapshot_id
         )
 
-    async def delete_executor_snapshots(
-        self, executor_id: int, ids: list[int]
-    ) -> int:
-        return await sqlite_runtime_executors.delete_executor_snapshots(
-            self, executor_id, ids
-        )
+    async def delete_executor_snapshots(self, executor_id: int, ids: list[int]) -> int:
+        return await sqlite_runtime_executors.delete_executor_snapshots(self, executor_id, ids)
 
     async def upsert_executor_desired_state(
         self,
@@ -4335,7 +4465,9 @@ class SQLiteStorage:
 
     async def get_system_log_level(self) -> str:
         value = await self.get_setting(SYSTEM_LOG_LEVEL_SETTING_KEY)
-        log_level = str(value or DEFAULT_SYSTEM_LOG_LEVEL).strip().upper() or DEFAULT_SYSTEM_LOG_LEVEL
+        log_level = (
+            str(value or DEFAULT_SYSTEM_LOG_LEVEL).strip().upper() or DEFAULT_SYSTEM_LOG_LEVEL
+        )
         return log_level if log_level in ALLOWED_SYSTEM_LOG_LEVELS else DEFAULT_SYSTEM_LOG_LEVEL
 
     async def get_system_base_url(self) -> str:

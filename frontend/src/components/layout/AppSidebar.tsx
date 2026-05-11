@@ -2,6 +2,7 @@ import { Link, useLocation } from "react-router-dom"
 import { LayoutDashboard, Boxes, Key, Package, Bell, Settings, Waypoints, Plug2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
+import { Badge } from "@/components/ui/badge"
 import {
     Sidebar,
     SidebarContent,
@@ -15,6 +16,8 @@ import {
     SidebarFooter,
 } from "@/components/ui/sidebar"
 import { UserNav } from "./UserNav"
+
+const appVersion = import.meta.env.VITE_APP_VERSION
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     const location = useLocation()
@@ -39,8 +42,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                         <SidebarMenuButton size="lg" asChild>
                             <Link to="/">
                                 <img src="/logo.svg" alt="Logo" className="size-8" />
-                                <div className="grid flex-1 text-left text-sm leading-tight">
+                                <div className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm leading-tight">
                                     <span className="truncate font-semibold">ReleaseTracker</span>
+                                    <Badge
+                                        variant="outline"
+                                        className="rounded-sm px-1 py-0 text-[10px] leading-4 text-muted-foreground"
+                                    >
+                                        v{appVersion}
+                                    </Badge>
                                 </div>
                             </Link>
                         </SidebarMenuButton>

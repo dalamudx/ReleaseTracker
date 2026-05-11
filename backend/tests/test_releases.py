@@ -29,7 +29,9 @@ async def _seed_runtime_release(storage: SQLiteStorage, release: Release) -> Non
                 ),
                 project=release.tracker_name if release.tracker_type == "gitlab" else None,
                 image=(
-                    f"ghcr.io/{release.tracker_name}" if release.tracker_type == "container" else None
+                    f"ghcr.io/{release.tracker_name}"
+                    if release.tracker_type == "container"
+                    else None
                 ),
                 interval=60,
             )
@@ -121,7 +123,6 @@ async def _materialize_aggregate_truth_and_projection(
         aggregate_tracker.id,
         projection_releases if projection_releases is not None else default_projection_releases,
     )
-
 
 
 async def _fetch_release_surface_counts(
@@ -294,9 +295,7 @@ async def test_releases_stats_groups_naive_published_at_in_system_timezone(authe
     assert response.status_code == 200, response.text
     stats = response.json()
     channels_by_date = {
-        item["date"]: item["channels"]
-        for item in stats["daily_stats"]
-        if item["channels"]
+        item["date"]: item["channels"] for item in stats["daily_stats"] if item["channels"]
     }
     assert channels_by_date["2026-05-06"] == {"stable": 1}
     assert "2026-05-07" not in channels_by_date
@@ -520,6 +519,221 @@ async def test_cleanup_release_history_keeps_latest_per_authoritative_channel_an
     latest_release = await storage.get_latest_release("cleanup-channel-retention")
     assert latest_release is not None
     assert latest_release.tag_name == "v1.0.0"
+
+
+@pytest.mark.asyncio
+async def test_cleanup_release_history_keeps_latest_per_source_authoritative_channel_with_shared_name(
+    storage,
+):
+    tracker_name = "cleanup-shared-authoritative-channel-retention"
+    aggregate_tracker = await storage.create_aggregate_tracker(
+        AggregateTracker(
+            name=tracker_name,
+            primary_changelog_source_key="repo",
+            sources=[
+                TrackerSource(
+                    source_key="repo",
+                    source_type="github",
+                    source_rank=0,
+                    source_config={"repo": "lobehub/lobehub"},
+                    release_channels=[
+                        ReleaseChannel(
+                            release_channel_key="source-1-0-stable",
+                            name="stable",
+                            type="release",
+                        )
+                    ],
+                ),
+                TrackerSource(
+                    source_key="container",
+                    source_type="container",
+                    source_rank=1,
+                    source_config={"image": "lobehub/lobehub", "registry": "docker.io"},
+                    release_channels=[
+                        ReleaseChannel(
+                            release_channel_key="source-2-0-stable",
+                            name="stable",
+                            exclude_pattern=".*canary.*",
+                        )
+                    ],
+                ),
+            ],
+        )
+    )
+
+    def build_release(source_type: str, version: int) -> Release:
+        tag_name = f"v2.1.{version}" if source_type == "github" else f"2.1.{version}"
+        return Release(
+            tracker_name=tracker_name,
+            tracker_type=source_type,
+            version=tag_name,
+            name=tag_name,
+            tag_name=tag_name,
+            url=f"http://example.com/{source_type}/{tag_name}",
+            published_at=datetime(2026, 5, version - 30, 12, 0, 0),
+            prerelease=False,
+            channel_name="stable",
+            commit_sha=(
+                f"github-sha-{version}"
+                if source_type == "github"
+                else f"sha256:{version:064d}"
+            ),
+        )
+
+    github_releases = [build_release("github", version) for version in range(31, 38)]
+    container_releases = [build_release("container", version) for version in range(31, 38)]
+    await _materialize_aggregate_truth_and_projection(
+        storage,
+        aggregate_tracker,
+        {
+            "repo": github_releases,
+            "container": container_releases,
+        },
+        projection_releases=[],
+    )
+
+    result = await storage.cleanup_release_history(retention_count=5)
+
+    assert result["tracker_release_history_deleted"] == 4
+    remaining_releases = await storage.get_tracker_release_history_releases(aggregate_tracker.id)
+    remaining_by_source = {"github": [], "container": []}
+    for release in remaining_releases:
+        assert release.channel_name == "stable"
+        remaining_by_source[release.tracker_type].append(release.tag_name)
+
+    assert set(remaining_by_source["github"]) == {
+        "v2.1.33",
+        "v2.1.34",
+        "v2.1.35",
+        "v2.1.36",
+        "v2.1.37",
+    }
+    assert set(remaining_by_source["container"]) == {
+        "2.1.33",
+        "2.1.34",
+        "2.1.35",
+        "2.1.36",
+        "2.1.37",
+    }
+
+
+@pytest.mark.asyncio
+async def test_cleanup_release_history_without_authoritative_channels_keeps_latest_per_stored_channel(
+    storage,
+):
+    aggregate_tracker = await storage.create_aggregate_tracker(
+        AggregateTracker(
+            name="cleanup-stored-channel-retention",
+            primary_changelog_source_key="repo",
+            sources=[
+                TrackerSource(
+                    source_key="repo",
+                    source_type="github",
+                    source_rank=0,
+                    source_config={"repo": "owner/cleanup-stored-channel-retention"},
+                )
+            ],
+        )
+    )
+
+    def build_release(channel_name: str, index: int, day: int) -> Release:
+        prerelease = channel_name != "stable"
+        suffix = "" if channel_name == "stable" else f"-{channel_name}.1"
+        version = f"{index}.0.0{suffix}"
+        return Release(
+            tracker_name="cleanup-stored-channel-retention",
+            tracker_type="github",
+            version=version,
+            name=f"Release {version}",
+            tag_name=f"v{version}",
+            url=f"http://example.com/releases/v{version}",
+            published_at=datetime(2025, 5, day, 12, 0, 0),
+            prerelease=prerelease,
+            channel_name=channel_name,
+        )
+
+    releases = [
+        *[build_release("stable", index, index) for index in range(1, 8)],
+        *[build_release("beta", index, index + 7) for index in range(1, 8)],
+        *[build_release("canary", index, index + 14) for index in range(1, 8)],
+    ]
+    await _materialize_aggregate_truth_and_projection(
+        storage,
+        aggregate_tracker,
+        {"repo": releases},
+        projection_releases=[],
+    )
+
+    result = await storage.cleanup_release_history(retention_count=5)
+
+    assert result["tracker_release_history_deleted"] == 6
+    remaining_releases = await storage.get_tracker_release_history_releases(aggregate_tracker.id)
+    remaining_by_channel: dict[str, list[Release]] = {}
+    for release in remaining_releases:
+        assert release.channel_name is not None
+        remaining_by_channel.setdefault(release.channel_name, []).append(release)
+
+    assert {channel: len(items) for channel, items in remaining_by_channel.items()} == {
+        "stable": 5,
+        "beta": 5,
+        "canary": 5,
+    }
+    for channel_name, channel_releases in remaining_by_channel.items():
+        remaining_tags = {release.tag_name for release in channel_releases}
+        assert (
+            f"v1.0.0{'-' + channel_name + '.1' if channel_name != 'stable' else ''}"
+            not in remaining_tags
+        )
+        assert (
+            f"v2.0.0{'-' + channel_name + '.1' if channel_name != 'stable' else ''}"
+            not in remaining_tags
+        )
+
+
+@pytest.mark.asyncio
+async def test_cleanup_release_history_without_authoritative_channels_keeps_single_channel_behavior(
+    storage,
+):
+    aggregate_tracker = await storage.create_aggregate_tracker(
+        AggregateTracker(
+            name="cleanup-single-stored-channel-retention",
+            primary_changelog_source_key="repo",
+            sources=[
+                TrackerSource(
+                    source_key="repo",
+                    source_type="github",
+                    source_rank=0,
+                    source_config={"repo": "owner/cleanup-single-stored-channel-retention"},
+                )
+            ],
+        )
+    )
+    releases = [
+        Release(
+            tracker_name="cleanup-single-stored-channel-retention",
+            tracker_type="github",
+            version=f"{version}.0.0",
+            name=f"Release {version}.0.0",
+            tag_name=f"v{version}.0.0",
+            url=f"http://example.com/releases/v{version}.0.0",
+            published_at=datetime(2025, 5, version, 12, 0, 0),
+            prerelease=False,
+            channel_name="stable",
+        )
+        for version in range(1, 5)
+    ]
+    await _materialize_aggregate_truth_and_projection(
+        storage,
+        aggregate_tracker,
+        {"repo": releases},
+        projection_releases=[],
+    )
+
+    result = await storage.cleanup_release_history(retention_count=2)
+
+    assert result["tracker_release_history_deleted"] == 2
+    remaining_releases = await storage.get_tracker_release_history_releases(aggregate_tracker.id)
+    assert [release.tag_name for release in remaining_releases] == ["v4.0.0", "v3.0.0"]
 
 
 @pytest.mark.asyncio
@@ -1539,7 +1753,6 @@ async def test_release_history_and_latest_current_endpoints_have_distinct_semant
         },
     )
 
-
     releases_response = authed_client.get("/api/releases")
     latest_response = authed_client.get("/api/releases/latest")
     tracker_current_response = authed_client.get("/api/trackers/aggregate-history/current")
@@ -2088,7 +2301,9 @@ async def test_latest_releases_preserve_projected_row_channel_name(authed_client
 
 
 @pytest.mark.asyncio
-async def test_release_history_channel_type_uses_stored_channel_name_before_inference(authed_client, storage):
+async def test_release_history_channel_type_uses_stored_channel_name_before_inference(
+    authed_client, storage
+):
     aggregate_tracker = await storage.create_aggregate_tracker(
         AggregateTracker(
             name="sample_canary-channel-type",
@@ -2633,8 +2848,6 @@ async def test_releases_latest_reject_legacy_channel_name_selector_and_apply_can
     assert payload[0]["prerelease"] is True
 
 
-
-
 @pytest.mark.asyncio
 async def test_get_latest_release_for_channels_uses_full_history(storage):
     tracker_name = "full-history-tracker"
@@ -2840,7 +3053,10 @@ async def test_latest_current_summary_prefers_highest_stable_semver_before_publi
                     source_key="channel-2",
                     source_type="container",
                     source_rank=1,
-                    source_config={"image": "owner/sample_canary-summary-order", "registry": "ghcr.io"},
+                    source_config={
+                        "image": "owner/sample_canary-summary-order",
+                        "registry": "ghcr.io",
+                    },
                     release_channels=[
                         ReleaseChannel(
                             release_channel_key="channel-2-0-stable",
@@ -3190,10 +3406,6 @@ async def test_releases_list_includes_archived_channel_state_for_republished_win
 
     assert [release.channel_name for release in tracker_history] == ["renamed-stable", "stable"]
     assert [release.commit_sha for release in tracker_history] == ["def456", "abc123"]
-
-
-
-
 
 
 @pytest.mark.asyncio
