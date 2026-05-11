@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -12,6 +14,7 @@ BACKEND_PYPROJECT = ROOT / "backend" / "pyproject.toml"
 BACKEND_INIT = ROOT / "backend" / "src" / "releasetracker" / "__init__.py"
 FRONTEND_PACKAGE = ROOT / "frontend" / "package.json"
 FRONTEND_LOCK = ROOT / "frontend" / "package-lock.json"
+BACKEND_DIR = ROOT / "backend"
 VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 
 
@@ -48,6 +51,16 @@ def update_package_json(path: Path, version: str) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def update_backend_lock() -> None:
+    uv_command = os.environ.get("UV", "uv")
+    try:
+        subprocess.run([uv_command, "lock"], cwd=BACKEND_DIR, check=True)
+    except FileNotFoundError as exc:
+        raise SystemExit(f"uv executable not found: {uv_command!r}") from exc
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit(f"Failed to refresh {BACKEND_DIR / 'uv.lock'} with uv lock") from exc
+
+
 def main() -> None:
     if len(sys.argv) > 2:
         raise SystemExit("Usage: sync_version.py [version]")
@@ -60,6 +73,7 @@ def main() -> None:
     version = read_version()
     update_pyproject(version)
     update_backend_init(version)
+    update_backend_lock()
     update_package_json(FRONTEND_PACKAGE, version)
     update_package_json(FRONTEND_LOCK, version)
     print(f"Synchronized project version to {version}")

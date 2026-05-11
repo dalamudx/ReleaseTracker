@@ -49,7 +49,7 @@ build: ## 构建前端生产代码
 
 version: ## 同步版本号，用法：make version VERSION=1.0.1
 	@test -n "$(VERSION)" || (echo "VERSION is required, for example: make version VERSION=1.0.1" && exit 1)
-	$(PYTHON) scripts/sync_version.py $(VERSION)
+	UV=$(UV) $(PYTHON) scripts/sync_version.py $(VERSION)
 
 dbmate-migrate: ## 对当前 releases.db 执行 dbmate 迁移
 	@echo "🛫 执行 dbmate 迁移..."

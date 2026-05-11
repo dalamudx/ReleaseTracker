@@ -8,7 +8,7 @@
 
 ReleaseTracker is a lightweight, configurable release tracking and update orchestration tool. It tracks releases and tags from GitHub, GitLab, Gitea, Helm charts, and OCI container registries, then maps version changes to runtime targets such as Docker, Podman, Portainer, Kubernetes, and Helm.
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue)
+![Python](https://img.shields.io/badge/Python-3.12+-blue)
 ![React](https://img.shields.io/badge/React-19-61dafb)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-teal)
 ![License](https://img.shields.io/badge/License-GPL%20v3-blue)
@@ -62,7 +62,7 @@ In production, FastAPI serves the built frontend assets and the API from the sam
 
 ### Requirements
 
-- Python 3.10+
+- Python 3.12+
 - Node.js 20+
 - npm
 - uv

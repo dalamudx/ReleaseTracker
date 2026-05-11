@@ -21,6 +21,6 @@ VALUES (
 DELETE FROM settings
 WHERE key = 'system.executor_snapshot_retention_count';
 
--- SQLite supports DROP COLUMN on 3.35+; the repo targets Python 3.10+ which
+-- SQLite supports DROP COLUMN on 3.35+; the repo targets Python 3.12+ which
 -- bundles SQLite >= 3.35, so this is safe.
 ALTER TABLE executors DROP COLUMN health_check;

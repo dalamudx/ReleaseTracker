@@ -8,7 +8,7 @@
 
 ReleaseTracker 是一款轻量级、可配置的版本追踪与更新编排工具，用于追踪 GitHub、GitLab、Gitea、Helm Chart 与 OCI 容器镜像仓库中的 release / tag，并将版本变化关联到 Docker、Podman、Portainer、Kubernetes、Helm 等运行时目标。
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue)
+![Python](https://img.shields.io/badge/Python-3.12+-blue)
 ![React](https://img.shields.io/badge/React-19-61dafb)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-teal)
 ![License](https://img.shields.io/badge/License-GPL%20v3-blue)
@@ -62,7 +62,7 @@ flowchart TD
 
 ### 前置要求
 
-- Python 3.10+
+- Python 3.12+
 - Node.js 20+
 - npm
 - uv

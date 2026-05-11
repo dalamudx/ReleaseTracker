@@ -3,7 +3,7 @@ name = "releasetracker"
 version = "1.0.8"
 license = {text = "GPL-3.0"}
 description = "A lightweight, configurable release tracking and update orchestration tool"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.109.0",
     "uvicorn[standard]>=0.27.0",
@@ -43,11 +43,11 @@ where = ["src"]
 
 [tool.black]
 line-length = 100
-target-version = ['py310']
+target-version = ['py312']
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py312"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
