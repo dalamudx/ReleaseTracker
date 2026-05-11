@@ -664,7 +664,7 @@ export interface ExecutorConfig {
 // Health Check Profile
 // -----------------------------------------------------------------
 
-export type HealthCheckStrategy = 'none' | 'runtime_native' | 'http' | 'tcp' | 'helm_status'
+export type HealthCheckStrategy = 'none' | 'auto' | 'runtime_native' | 'manual_http' | 'manual_tcp' | 'http' | 'tcp' | 'helm_status'
 
 export type HealthCheckFailurePolicy =
     | 'mark_failed'
@@ -673,6 +673,7 @@ export type HealthCheckFailurePolicy =
 
 export interface HealthCheckHttpConfig {
     path: string
+    host?: string | null
     port?: number | null
     scheme?: 'http' | 'https'
     method?: 'GET' | 'HEAD'
@@ -683,6 +684,7 @@ export interface HealthCheckHttpConfig {
 }
 
 export interface HealthCheckTcpConfig {
+    host?: string | null
     port: number
 }
 

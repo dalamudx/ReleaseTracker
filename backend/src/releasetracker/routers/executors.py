@@ -22,7 +22,6 @@ from ..executors import (
 from ..models import ExecutorStatus, User
 from ..services.rollback_service import RollbackService
 from ..services.runtime_credentials import materialize_runtime_connection_credentials
-from ..services.snapshot_service import SnapshotService
 from ..storage.sqlite import SQLiteStorage
 
 from pydantic import BaseModel
@@ -391,7 +390,7 @@ async def _validate_executor_payload(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    if executor.health_check.strategy in {"http", "tcp"}:
+    if executor.health_check.strategy in {"http", "tcp", "auto"}:
         try:
             runtime_connection = await storage.get_runtime_connection(
                 executor.runtime_connection_id

@@ -89,6 +89,21 @@ def _make_profile(**overrides) -> HealthCheckProfile:
     return HealthCheckProfile(**base)
 
 
+def _make_manual_profile(**overrides) -> HealthCheckProfile:
+    http_defaults = dict(host="manual.example", path="/healthz", port=8080)
+    http_overrides = overrides.pop("http", {})
+    return HealthCheckProfile(
+        strategy="manual_http",
+        grace_period_seconds=0,
+        attempt_timeout_seconds=5,
+        interval_seconds=1,
+        probe_window_seconds=60,
+        failure_policy="mark_failed",
+        http=HealthCheckHttpConfig(**{**http_defaults, **http_overrides}),
+        **overrides,
+    )
+
+
 def _make_context(
     profile: HealthCheckProfile,
     hosts: list[ProbeHost],
@@ -130,6 +145,29 @@ def _make_context(
 
 
 # ---- Tests --------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_manual_http_probe_uses_configured_host_without_runtime_resolution(monkeypatch):
+    requested_urls: list[str] = []
+
+    def handler(request: httpx.Request):
+        requested_urls.append(str(request.url))
+        return httpx.Response(204, text="ok")
+
+    monkeypatch.setattr(
+        "releasetracker.executors.health_check.http_probe.httpx.AsyncClient",
+        _patched_client_factory(handler),
+    )
+
+    profile = _make_manual_profile(http={"host": "manual.internal", "path": "/ready", "port": 9443, "scheme": "https"})
+    ctx = _make_context(profile, [ProbeHost(service=None, host="runtime.internal", port=80)])
+
+    result = await HTTPProbe(manual=True).attempt(ctx)
+
+    assert result.healthy is True
+    assert requested_urls == ["https://manual.internal:9443/ready"]
+    assert result.detail["http"][0]["host"] == "manual.internal"
 
 
 @pytest.mark.asyncio

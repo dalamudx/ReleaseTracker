@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlparse
 
 from ..config import normalize_executor_target_ref
 from .base import BaseRuntimeAdapter, RuntimeTarget, RuntimeUpdateResult
@@ -103,13 +104,18 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
         """
         # Imported here to avoid a circular dependency via
         # ``health_check.types`` → ``config`` → ``executors`` → ``container_runtime``.
-        from .health_check.types import ProbeAttemptResult  # noqa: WPS433
-
-        del services  # Single-container targets do not split by service.
+        if target_ref.get("mode") == "docker_compose":
+            return await self._probe_compose_runtime_native_health(
+                target_ref,
+                baseline=baseline,
+                services=services,
+            )
 
         try:
             container = self._get_container(target_ref)
         except Exception as exc:  # pragma: no cover - surfaced as runtime_api_error
+            from .health_check.types import ProbeAttemptResult  # noqa: WPS433
+
             return ProbeAttemptResult(
                 healthy=False,
                 error_category="runtime_api_error",
@@ -117,24 +123,98 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
             )
 
         attrs = getattr(container, "attrs", {}) or {}
+        return self._probe_container_attrs_runtime_native(attrs, baseline=baseline)
+
+    async def _probe_compose_runtime_native_health(
+        self,
+        target_ref: dict[str, Any],
+        *,
+        baseline: dict[str, Any],
+        services: list[str] | None = None,
+    ):
+        from .health_check.types import ProbeAttemptResult  # noqa: WPS433
+
+        project = target_ref.get("project")
+        if not isinstance(project, str) or not project.strip():
+            return ProbeAttemptResult(
+                healthy=False,
+                error_category="runtime_api_error",
+                last_error="target_ref.project must be a non-empty string",
+            )
+        selected_services = {service.lower() for service in services} if services else None
+        containers_by_service = self._find_compose_service_containers(project.strip())
+        per_service: dict[str, ProbeAttemptResult] = {}
+        detail: dict[str, Any] = {"services": {}}
+        matched = False
+        aggregate_last_error: str | None = None
+
+        for service, containers in sorted(containers_by_service.items()):
+            if selected_services is not None and service.lower() not in selected_services:
+                continue
+            matched = True
+            if not containers:
+                result = ProbeAttemptResult(
+                    healthy=False,
+                    error_category="runtime_api_error",
+                    last_error=f"compose service has no containers: {service}",
+                )
+            else:
+                service_results = [
+                    self._probe_container_attrs_runtime_native(
+                        getattr(container, "attrs", {}) or {},
+                        baseline=baseline,
+                    )
+                    for container in containers
+                ]
+                unhealthy = next((item for item in service_results if not item.healthy), None)
+                result = unhealthy or ProbeAttemptResult(
+                    healthy=True,
+                    detail={"replicas": len(containers)},
+                )
+            per_service[service] = result
+            detail["services"][service] = result.detail
+            if not result.healthy and aggregate_last_error is None:
+                aggregate_last_error = f"{service}: {result.last_error or 'unhealthy'}"
+
+        if not matched:
+            return ProbeAttemptResult(
+                healthy=False,
+                error_category="runtime_api_error",
+                detail=detail,
+                last_error="no compose services matched runtime-native health check",
+            )
+
+        overall_healthy = all(result.healthy for result in per_service.values())
+        return ProbeAttemptResult(
+            healthy=overall_healthy,
+            error_category="ok" if overall_healthy else "runtime_api_error",
+            detail=detail,
+            last_error=None if overall_healthy else aggregate_last_error,
+            per_service=per_service,
+        )
+
+    def _probe_container_attrs_runtime_native(
+        self,
+        attrs: dict[str, Any],
+        *,
+        baseline: dict[str, Any],
+    ):
+        from .health_check.types import ProbeAttemptResult  # noqa: WPS433
+
         state = attrs.get("State", {}) if isinstance(attrs, dict) else {}
         status = state.get("Status") if isinstance(state, dict) else None
         is_running = bool((state or {}).get("Running")) or status == "running"
-
         health = None
         if isinstance(state, dict):
             health_obj = state.get("Health")
             if isinstance(health_obj, dict):
                 health = health_obj.get("Status")
-
         restart_count = attrs.get("RestartCount") if isinstance(attrs, dict) else None
-
         detail: dict[str, Any] = {
             "status": status,
             "health": health,
             "restart_count": restart_count,
         }
-
         if not is_running:
             return ProbeAttemptResult(
                 healthy=False,
@@ -142,8 +222,6 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
                 detail=detail,
                 last_error=f"container state is {status!r}; expected 'running'",
             )
-
-        # When the image defines a HEALTHCHECK, rely on its reported status.
         if health is not None:
             if health == "healthy":
                 return ProbeAttemptResult(healthy=True, detail=detail)
@@ -153,10 +231,6 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
                 detail=detail,
                 last_error=f"container health is {health!r}; expected 'healthy'",
             )
-
-        # No HEALTHCHECK: compare against baseline restart count. A restart
-        # during or just after the Update Phase signals the container is
-        # crash-looping rather than serving.
         baseline_restart_count = baseline.get("restart_count")
         if (
             isinstance(restart_count, int)
@@ -172,7 +246,6 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
                     f"to {restart_count}"
                 ),
             )
-
         return ProbeAttemptResult(healthy=True, detail=detail)
 
     async def resolve_probe_hosts(
@@ -182,18 +255,100 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
         services: list[str] | None = None,
         default_port: int | None = None,
     ):
-        """Resolve the container's primary bridge IP for HTTP / TCP probes.
-
-        Docker / Podman single-container targets evaluate exactly one
-        probe host. Published host-port fallback is handled here so the
-        HTTP probe does not need to understand bridge networking.
-        """
+        """Resolve the container's primary bridge IP for legacy HTTP / TCP probes."""
         from .health_check.host_resolver import ProbeHost  # noqa: WPS433
 
         del services  # Not used for single-container targets.
 
         container = self._get_container(target_ref)
         attrs = getattr(container, "attrs", {}) or {}
+        primary_ip = self._extract_primary_container_ip(attrs)
+        if primary_ip is None:
+            host_port = self._extract_published_host_port(attrs, default_port)
+            if host_port is not None:
+                return [
+                    ProbeHost(
+                        service=None,
+                        host=self._runtime_connection_probe_host(),
+                        port=host_port,
+                    )
+                ]
+            raise ValueError("container has no primary IP and no published host port")
+
+        return [ProbeHost(service=None, host=primary_ip, port=default_port)]
+
+    async def resolve_auto_probe_hosts(
+        self,
+        target_ref: dict[str, Any],
+        *,
+        services: list[str] | None = None,
+        default_port: int | None = None,
+    ):
+        """Resolve published host ports for Docker / Podman auto fallback probes."""
+        from .health_check.host_resolver import ProbeHost  # noqa: WPS433
+
+        target_mode = target_ref.get("mode")
+        runtime_host = self._runtime_connection_probe_host()
+        if target_mode == "docker_compose":
+            project = target_ref.get("project")
+            if not isinstance(project, str) or not project.strip():
+                raise ValueError("target_ref.project must be a non-empty string")
+            selected_services = [service.lower() for service in services] if services else None
+            containers_by_service = self._find_compose_service_containers(project.strip())
+            probe_hosts: list[ProbeHost] = []
+            for service, containers in sorted(containers_by_service.items()):
+                if selected_services is not None and service.lower() not in selected_services:
+                    continue
+                if not containers:
+                    continue
+                if len(containers) != 1:
+                    raise ValueError(
+                        f"auto host-port probe for service '{service}' requires exactly one replica"
+                    )
+                attrs = getattr(containers[0], "attrs", {}) or {}
+                host_port = self._select_published_host_port(attrs, default_port)
+                probe_hosts.append(ProbeHost(service=service, host=runtime_host, port=host_port))
+            if not probe_hosts:
+                raise ValueError("no compose services with published host ports were found")
+            return probe_hosts
+
+        del services
+        container = self._get_container(target_ref)
+        attrs = getattr(container, "attrs", {}) or {}
+        host_port = self._select_published_host_port(attrs, default_port)
+        return [ProbeHost(service=None, host=runtime_host, port=host_port)]
+
+    async def has_runtime_native_healthcheck(
+        self,
+        target_ref: dict[str, Any],
+        *,
+        services: list[str] | None = None,
+    ) -> bool:
+        target_mode = target_ref.get("mode")
+        if target_mode == "docker_compose":
+            project = target_ref.get("project")
+            if not isinstance(project, str) or not project.strip():
+                return False
+            selected_services = {service.lower() for service in services} if services else None
+            containers_by_service = self._find_compose_service_containers(project.strip())
+            matched = False
+            for service, containers in containers_by_service.items():
+                if selected_services is not None and service.lower() not in selected_services:
+                    continue
+                matched = True
+                if not containers or not any(self._container_has_healthcheck(container) for container in containers):
+                    return False
+            return matched
+
+        del services
+        try:
+            container = self._get_container(target_ref)
+        except Exception:
+            return False
+        return self._container_has_healthcheck(container)
+
+    @staticmethod
+    def _extract_primary_container_ip(attrs: dict[str, Any]) -> str | None:
         network_settings = (
             attrs.get("NetworkSettings") if isinstance(attrs, dict) else None
         )
@@ -203,32 +358,79 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
             if isinstance(nested, dict):
                 networks = nested
 
-        primary_ip: str | None = None
         for network in networks.values():
             if not isinstance(network, dict):
                 continue
             ip = network.get("IPAddress")
             if isinstance(ip, str) and ip.strip():
-                primary_ip = ip.strip()
-                break
-        if primary_ip is None and isinstance(network_settings, dict):
+                return ip.strip()
+        if isinstance(network_settings, dict):
             fallback_ip = network_settings.get("IPAddress")
             if isinstance(fallback_ip, str) and fallback_ip.strip():
-                primary_ip = fallback_ip.strip()
+                return fallback_ip.strip()
+        return None
 
-        if primary_ip is None:
-            # Last-resort host-port fallback: if the container publishes
-            # a matching port we probe localhost. Useful when
-            # ``tls_skip_verify`` or ``scheme=https`` signals the
-            # operator expects an externally-reachable address.
-            host_port = self._extract_published_host_port(attrs, default_port)
-            if host_port is not None:
-                return [
-                    ProbeHost(service=None, host="127.0.0.1", port=host_port)
-                ]
-            raise ValueError("container has no primary IP and no published host port")
+    @staticmethod
+    def _container_has_healthcheck(container) -> bool:
+        attrs = getattr(container, "attrs", {}) or {}
+        if not isinstance(attrs, dict):
+            return False
+        state = attrs.get("State")
+        if isinstance(state, dict) and isinstance(state.get("Health"), dict):
+            return True
+        config = attrs.get("Config")
+        if isinstance(config, dict) and isinstance(config.get("Healthcheck"), dict):
+            return True
+        return False
 
-        return [ProbeHost(service=None, host=primary_ip, port=default_port)]
+    def _runtime_connection_probe_host(self) -> str:
+        socket = self.runtime_connection.config.get("socket")
+        if not isinstance(socket, str) or not socket.strip():
+            return "127.0.0.1"
+        parsed = urlparse(socket.strip())
+        if parsed.scheme == "tcp" and parsed.hostname:
+            return parsed.hostname
+        return "127.0.0.1"
+
+    def _select_published_host_port(self, attrs: dict[str, Any], container_port: int | None) -> int:
+        host_port = self._extract_published_host_port(attrs, container_port)
+        if host_port is not None:
+            return host_port
+        if container_port is not None:
+            raise ValueError(f"container has no published host port for container port {container_port}")
+
+        all_host_ports = self._extract_all_published_host_ports(attrs)
+        if len(all_host_ports) == 1:
+            return all_host_ports[0]
+        if len(all_host_ports) > 1:
+            raise ValueError(
+                "multiple published host ports found; configure a container port for auto probing"
+            )
+        raise ValueError("container has no published host ports")
+
+    @staticmethod
+    def _extract_all_published_host_ports(attrs: dict[str, Any]) -> list[int]:
+        if not isinstance(attrs, dict):
+            return []
+        network_settings = attrs.get("NetworkSettings")
+        if not isinstance(network_settings, dict):
+            return []
+        ports = network_settings.get("Ports")
+        if not isinstance(ports, dict):
+            return []
+        host_ports: list[int] = []
+        for value in ports.values():
+            if not isinstance(value, list):
+                continue
+            for mapping in value:
+                if not isinstance(mapping, dict):
+                    continue
+                host_port = mapping.get("HostPort")
+                if isinstance(host_port, str) and host_port.isdigit():
+                    host_ports.append(int(host_port))
+                elif isinstance(host_port, int):
+                    host_ports.append(host_port)
+        return sorted(set(host_ports))
 
     @staticmethod
     def _extract_published_host_port(

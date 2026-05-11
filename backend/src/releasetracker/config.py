@@ -514,29 +514,53 @@ class ExecutorServiceBinding(BaseModel):
 # Health Check Profile (post-update health verification config)
 # ============================================================
 
-HealthCheckStrategy = Literal["none", "runtime_native", "http", "tcp", "helm_status"]
+HealthCheckStrategy = Literal[
+    "none",
+    "auto",
+    "runtime_native",
+    "manual_http",
+    "manual_tcp",
+    "http",
+    "tcp",
+    "helm_status",
+]
 HealthCheckFailurePolicy = Literal[
     "mark_failed", "mark_failed_and_recover", "mark_degraded"
 ]
 
+# Legacy ``http`` / ``tcp`` strategies are still accepted for stored
+# runtime-derived configs, but the UI only exposes explicit manual modes.
+_CONTAINER_HEALTH_STRATEGIES = frozenset(
+    {"none", "auto", "runtime_native", "manual_http", "manual_tcp", "http", "tcp"}
+)
+
 # Per-target-mode allowed strategy catalog. Publicly consumable so routers,
 # UI serializers, and tests can all read from a single source of truth.
 HEALTH_CHECK_ALLOWED_STRATEGIES: dict[str, frozenset[str]] = {
-    "container": frozenset({"none", "runtime_native", "http", "tcp"}),
-    "docker_compose": frozenset({"none", "runtime_native", "http", "tcp"}),
-    "portainer_stack": frozenset({"none", "runtime_native", "http", "tcp"}),
-    "kubernetes_workload": frozenset({"none", "runtime_native", "http", "tcp"}),
+    "container": _CONTAINER_HEALTH_STRATEGIES,
+    "docker_compose": _CONTAINER_HEALTH_STRATEGIES,
+    "portainer_stack": _CONTAINER_HEALTH_STRATEGIES,
+    "kubernetes_workload": _CONTAINER_HEALTH_STRATEGIES,
     "helm_release": frozenset(
-        {"none", "helm_status", "runtime_native", "http", "tcp"}
+        {
+            "none",
+            "auto",
+            "helm_status",
+            "runtime_native",
+            "manual_http",
+            "manual_tcp",
+            "http",
+            "tcp",
+        }
     ),
 }
 
 # Default strategy per target mode used when ``use_default_strategy=True``.
 HEALTH_CHECK_DEFAULT_STRATEGY: dict[str, str] = {
-    "container": "runtime_native",
-    "docker_compose": "runtime_native",
-    "portainer_stack": "runtime_native",
-    "kubernetes_workload": "runtime_native",
+    "container": "auto",
+    "docker_compose": "auto",
+    "portainer_stack": "auto",
+    "kubernetes_workload": "auto",
     "helm_release": "helm_status",
 }
 
@@ -547,6 +571,7 @@ class HealthCheckHttpConfig(BaseModel):
     """HTTP probe sub-object."""
 
     path: str
+    host: str | None = None
     port: int | None = None
     scheme: Literal["http", "https"] = "http"
     method: Literal["GET", "HEAD"] = "GET"
@@ -565,6 +590,11 @@ class HealthCheckHttpConfig(BaseModel):
         if len(value) > 2048:
             raise ValueError("health_check.http.path must be at most 2048 characters")
         return value
+
+    @field_validator("host")
+    @classmethod
+    def _validate_host(cls, value: Any) -> str | None:
+        return _validate_health_check_host(value, "health_check.http.host")
 
     @field_validator("port")
     @classmethod
@@ -639,12 +669,33 @@ class HealthCheckHttpConfig(BaseModel):
         return value
 
 
+def _validate_health_check_host(value: Any, label: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{label} must be a non-empty string")
+    if "://" in normalized or "/" in normalized:
+        raise ValueError(f"{label} must be a host name or IP address, not a URL")
+    if len(normalized) > 253:
+        raise ValueError(f"{label} must be at most 253 characters")
+    return normalized
+
+
 class HealthCheckTcpConfig(BaseModel):
     """TCP probe sub-object."""
 
+    host: str | None = None
     port: int
 
     model_config = {"extra": "forbid"}
+
+    @field_validator("host")
+    @classmethod
+    def _validate_host(cls, value: Any) -> str | None:
+        return _validate_health_check_host(value, "health_check.tcp.host")
 
     @field_validator("port")
     @classmethod
@@ -714,7 +765,7 @@ class HealthCheckProfile(BaseModel):
     def _validate_strategy_specific_rules(self) -> "HealthCheckProfile":
         strategy = self.strategy
 
-        if strategy in {"runtime_native", "helm_status", "none"}:
+        if strategy in {"auto", "runtime_native", "helm_status", "none"}:
             if self.http is not None:
                 raise ValueError(
                     f"health_check.http must be absent when strategy is '{strategy}'"
@@ -724,17 +775,25 @@ class HealthCheckProfile(BaseModel):
                     f"health_check.tcp must be absent when strategy is '{strategy}'"
                 )
 
-        if strategy == "http":
+        if strategy in {"manual_http", "http"}:
             if self.http is None:
-                raise ValueError("health_check.http is required when strategy is 'http'")
+                raise ValueError(f"health_check.http is required when strategy is '{strategy}'")
+            if strategy == "manual_http" and self.http.host is None:
+                raise ValueError(
+                    "health_check.http.host is required when strategy is 'manual_http'"
+                )
             if self.tcp is not None:
-                raise ValueError("health_check.tcp must be absent when strategy is 'http'")
+                raise ValueError(f"health_check.tcp must be absent when strategy is '{strategy}'")
 
-        if strategy == "tcp":
+        if strategy in {"manual_tcp", "tcp"}:
             if self.tcp is None:
-                raise ValueError("health_check.tcp is required when strategy is 'tcp'")
+                raise ValueError(f"health_check.tcp is required when strategy is '{strategy}'")
+            if strategy == "manual_tcp" and self.tcp.host is None:
+                raise ValueError(
+                    "health_check.tcp.host is required when strategy is 'manual_tcp'"
+                )
             if self.http is not None:
-                raise ValueError("health_check.http must be absent when strategy is 'tcp'")
+                raise ValueError(f"health_check.http must be absent when strategy is '{strategy}'")
 
         if strategy == "none":
             if self.failure_policy != "mark_failed":
@@ -783,7 +842,7 @@ class HealthCheckProfile(BaseModel):
             raise ValueError(
                 f"no default strategy catalog entry for mode {target_mode!r}"
             )
-        if default_strategy in {"runtime_native", "helm_status"}:
+        if default_strategy in {"auto", "runtime_native", "helm_status"}:
             # Reasonable defaults for a real probe. Operators can tune them
             # via the UI; keeping them here keeps the zero-config path
             # actually usable out of the box.

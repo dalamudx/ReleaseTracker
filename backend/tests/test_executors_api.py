@@ -2380,10 +2380,10 @@ async def test_create_executor_accepts_runtime_native_health_check(
 
 
 @pytest.mark.asyncio
-async def test_create_executor_accepts_http_strategy_after_phase_d(
+async def test_create_executor_accepts_manual_http_strategy(
     authed_client, storage, monkeypatch
 ):
-    """Phase D enables `http`: the validator now accepts it end-to-end."""
+    """Manual HTTP health checks require a direct host and probe config."""
     runtime_id = await _create_runtime_connection(storage, name="hc-http-runtime")
     await _create_tracker(storage, name="hc-http-tracker")
     tracker_source_id = await _get_tracker_source_id(storage, "hc-http-tracker")
@@ -2401,18 +2401,19 @@ async def test_create_executor_accepts_http_strategy_after_phase_d(
             "update_mode": "manual",
             "target_ref": {"mode": "container", "container_id": "hc-http"},
             "health_check": {
-                "strategy": "http",
+                "strategy": "manual_http",
                 "grace_period_seconds": 5,
                 "attempt_timeout_seconds": 5,
                 "interval_seconds": 5,
                 "probe_window_seconds": 60,
                 "failure_policy": "mark_failed",
-                "http": {"path": "/healthz"},
+                "http": {"host": "api.internal", "path": "/healthz", "port": 8080},
             },
         },
     )
     assert response.status_code == 200
-    assert response.json()["health_check"]["strategy"] == "http"
+    assert response.json()["health_check"]["strategy"] == "manual_http"
+    assert response.json()["health_check"]["http"]["host"] == "api.internal"
 
 
 @pytest.mark.asyncio
@@ -2452,10 +2453,10 @@ async def test_create_executor_rejects_helm_status_on_container(
 
 
 @pytest.mark.asyncio
-async def test_create_executor_rejects_http_profile_without_http_sub_object(
+async def test_create_executor_rejects_manual_http_profile_without_http_sub_object(
     authed_client, storage, monkeypatch
 ):
-    """``strategy=http`` requires an ``http`` sub-object (Req 1.6)."""
+    """``strategy=manual_http`` requires an ``http`` sub-object."""
     runtime_id = await _create_runtime_connection(storage, name="hc-missing-http-runtime")
     await _create_tracker(storage, name="hc-missing-http-tracker")
     tracker_source_id = await _get_tracker_source_id(
@@ -2475,7 +2476,7 @@ async def test_create_executor_rejects_http_profile_without_http_sub_object(
             "update_mode": "manual",
             "target_ref": {"mode": "container", "container_id": "hc-missing-http"},
             "health_check": {
-                "strategy": "http",
+                "strategy": "manual_http",
                 "grace_period_seconds": 5,
                 "attempt_timeout_seconds": 5,
                 "interval_seconds": 5,
@@ -2487,6 +2488,41 @@ async def test_create_executor_rejects_http_profile_without_http_sub_object(
     assert response.status_code == 400
     detail = response.json()["detail"]
     assert "http" in detail
+
+
+@pytest.mark.asyncio
+async def test_create_executor_rejects_manual_http_without_host(
+    authed_client, storage, monkeypatch
+):
+    runtime_id = await _create_runtime_connection(storage, name="hc-manual-host-runtime")
+    await _create_tracker(storage, name="hc-manual-host-tracker")
+    tracker_source_id = await _get_tracker_source_id(storage, "hc-manual-host-tracker")
+
+    response = authed_client.post(
+        "/api/executors",
+        json={
+            "name": "hc-manual-host-executor",
+            "runtime_type": "docker",
+            "runtime_connection_id": runtime_id,
+            "tracker_name": "hc-manual-host-tracker",
+            "tracker_source_id": tracker_source_id,
+            "channel_name": "stable",
+            "enabled": True,
+            "update_mode": "manual",
+            "target_ref": {"mode": "container", "container_id": "hc-manual-host"},
+            "health_check": {
+                "strategy": "manual_http",
+                "grace_period_seconds": 5,
+                "attempt_timeout_seconds": 5,
+                "interval_seconds": 5,
+                "probe_window_seconds": 60,
+                "failure_policy": "mark_failed",
+                "http": {"path": "/healthz", "port": 8080},
+            },
+        },
+    )
+    assert response.status_code == 400
+    assert "host" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -2616,7 +2652,6 @@ async def _seed_executor_with_snapshot(
     from datetime import datetime as _dt
 
     from releasetracker.config import (
-        Channel,
         ExecutorConfig as _ExecutorConfig,
         RuntimeConnectionConfig as _RuntimeConnectionConfig,
     )

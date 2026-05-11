@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable
-
 import pytest
 
 from releasetracker.config import ExecutorConfig, HealthCheckProfile, RuntimeConnectionConfig
@@ -288,3 +286,49 @@ async def test_per_attempt_timeout_is_classified_as_timeout():
 
     assert result.outcome == "unhealthy"
     assert "timeout" in (result.last_error or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_attempt_timeout_is_capped_by_remaining_probe_window():
+    class _AdvancingClock:
+        def __init__(self) -> None:
+            self.now = 0.0
+
+        def monotonic(self) -> float:
+            return self.now
+
+        async def sleep(self, seconds: float) -> None:
+            self.now += seconds
+
+    class _WindowConsumingProbe(HealthCheckProbe):
+        def __init__(self, clock: _AdvancingClock) -> None:
+            self.clock = clock
+            self.calls = 0
+
+        async def attempt(self, ctx):
+            self.calls += 1
+            self.clock.now += 0.6
+            return ProbeAttemptResult(healthy=False, last_error="not ready")
+
+    clock = _AdvancingClock()
+    probe = _WindowConsumingProbe(clock)
+    runner = HealthCheckRunner(
+        probe,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+        now=lambda: datetime(2026, 5, 8, 12, 0, 0),
+    )
+    profile = HealthCheckProfile(
+        strategy="runtime_native",
+        grace_period_seconds=0,
+        attempt_timeout_seconds=1,
+        interval_seconds=1,
+        probe_window_seconds=1,
+        failure_policy="mark_failed",
+    )
+
+    result = await runner.run(_context(profile))
+
+    assert result.outcome == "unhealthy"
+    assert probe.calls == 1
+    assert clock.now <= 1.0

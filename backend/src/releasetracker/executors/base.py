@@ -102,6 +102,28 @@ class BaseRuntimeAdapter(ABC):
             f"{self.__class__.__name__} does not implement resolve_probe_hosts"
         )
 
+    async def resolve_auto_probe_hosts(
+        self,
+        target_ref: dict[str, Any],
+        *,
+        services: list[str] | None = None,
+        default_port: int | None = None,
+    ) -> list["Any"]:
+        """Return runtime-derived host targets for auto-mode fallback probes."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement auto host-port probing"
+        )
+
+    async def has_runtime_native_healthcheck(
+        self,
+        target_ref: dict[str, Any],
+        *,
+        services: list[str] | None = None,
+    ) -> bool:
+        """Return whether runtime-native app health is configured for auto mode."""
+        del target_ref, services
+        return False
+
     async def validate_probe_network_path(
         self,
         target_ref: dict[str, Any],

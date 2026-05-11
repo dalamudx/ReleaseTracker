@@ -977,13 +977,12 @@ export function ExecutorSheetHealthCheckFields({
 }: ExecutorSheetHealthCheckFieldsProps) {
     const { t } = useTranslation()
     const strategy = form.watch("health_check_strategy")
-    const httpPath = form.watch("health_check_http_path")
     const isHelmRelease = typeof selectedTargetRef === "object"
         && selectedTargetRef !== null
         && (selectedTargetRef as { mode?: string }).mode === "helm_release"
     const probeActive = strategy !== "none"
-    const isHttpProbe = strategy === "http"
-    const isTcpProbe = strategy === "tcp"
+    const isHttpProbe = strategy === "manual_http"
+    const isTcpProbe = strategy === "manual_tcp"
 
     return (
         <div className="space-y-4 border-t border-border/60 pt-4">
@@ -1020,17 +1019,20 @@ export function ExecutorSheetHealthCheckFields({
                                     </SelectTrigger>
                                 </FormControl>
                                 <SelectContent>
-                                    <SelectItem value="none">
-                                        {t("executors.healthCheck.strategy.none")}
+                                    <SelectItem value="auto">
+                                        {t("executors.healthCheck.strategy.auto")}
                                     </SelectItem>
                                     <SelectItem value="runtime_native">
                                         {t("executors.healthCheck.strategy.runtime_native")}
                                     </SelectItem>
-                                    <SelectItem value="http">
-                                        {t("executors.healthCheck.strategy.http")}
+                                    <SelectItem value="manual_http">
+                                        {t("executors.healthCheck.strategy.manual_http")}
                                     </SelectItem>
-                                    <SelectItem value="tcp">
-                                        {t("executors.healthCheck.strategy.tcp")}
+                                    <SelectItem value="manual_tcp">
+                                        {t("executors.healthCheck.strategy.manual_tcp")}
+                                    </SelectItem>
+                                    <SelectItem value="none">
+                                        {t("executors.healthCheck.strategy.none")}
                                     </SelectItem>
                                     {isHelmRelease ? (
                                         <SelectItem value="helm_status">
@@ -1084,7 +1086,7 @@ export function ExecutorSheetHealthCheckFields({
                     </div>
 
                     {isHttpProbe || isTcpProbe ? (
-                        <div className="space-y-3 rounded-lg border border-border/60 bg-background p-4">
+                        <div className="space-y-3">
                             <div>
                                 <div className="text-sm font-medium">
                                     {t("executors.healthCheck.sections.probe")}: {t(`executors.healthCheck.strategy.${strategy}`)}
@@ -1100,6 +1102,38 @@ export function ExecutorSheetHealthCheckFields({
                                 <div className="grid gap-4 md:grid-cols-2">
                                     <FormField
                                         control={form.control}
+                                        name="health_check_http_host"
+                                        rules={{ required: t("executors.validation.healthCheckHostRequired") }}
+                                        render={({ field }) => (
+                                            <FormItem>
+                                                <FormLabel>
+                                                    {t("executors.healthCheck.fields.host")}
+                                                </FormLabel>
+                                                <FormControl>
+                                                    <Input placeholder="127.0.0.1" {...field} />
+                                                </FormControl>
+                                                <FormMessage />
+                                            </FormItem>
+                                        )}
+                                    />
+                                    <FormField
+                                        control={form.control}
+                                        name="health_check_http_port"
+                                        rules={{ required: t("executors.validation.healthCheckTcpPortRequired") }}
+                                        render={({ field }) => (
+                                            <FormItem>
+                                                <FormLabel>
+                                                    {t("executors.healthCheck.fields.httpPort")}
+                                                </FormLabel>
+                                                <FormControl>
+                                                    <Input type="number" min={1} max={65535} step={1} placeholder="8080" {...field} />
+                                                </FormControl>
+                                                <FormMessage />
+                                            </FormItem>
+                                        )}
+                                    />
+                                    <FormField
+                                        control={form.control}
                                         name="health_check_http_path"
                                         rules={{
                                             required: t("executors.validation.healthCheckHttpPathRequired"),
@@ -1113,24 +1147,6 @@ export function ExecutorSheetHealthCheckFields({
                                                 <FormControl>
                                                     <Input placeholder="/health" {...field} />
                                                 </FormControl>
-                                                <FormMessage />
-                                            </FormItem>
-                                        )}
-                                    />
-                                    <FormField
-                                        control={form.control}
-                                        name="health_check_http_port"
-                                        render={({ field }) => (
-                                            <FormItem>
-                                                <FormLabel>
-                                                    {t("executors.healthCheck.fields.httpPort")}
-                                                </FormLabel>
-                                                <FormControl>
-                                                    <Input type="number" min={1} max={65535} step={1} placeholder="8080" {...field} />
-                                                </FormControl>
-                                                <FormDescription className="text-xs">
-                                                    {t("executors.healthCheck.hints.portOptional")}
-                                                </FormDescription>
                                                 <FormMessage />
                                             </FormItem>
                                         )}
@@ -1185,7 +1201,7 @@ export function ExecutorSheetHealthCheckFields({
                                         control={form.control}
                                         name="health_check_http_expected_status_codes"
                                         render={({ field }) => (
-                                            <FormItem className="md:col-span-2">
+                                            <FormItem>
                                                 <FormLabel>
                                                     {t("executors.healthCheck.fields.httpStatusCodes")}
                                                 </FormLabel>
@@ -1199,16 +1215,27 @@ export function ExecutorSheetHealthCheckFields({
                                             </FormItem>
                                         )}
                                     />
-                                    {httpPath ? (
-                                        <div className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground md:col-span-2">
-                                            {t("executors.healthCheck.hints.httpAdvancedViaApi")}
-                                        </div>
-                                    ) : null}
                                 </div>
                             ) : null}
 
                             {isTcpProbe ? (
                                 <div className="grid gap-4 md:grid-cols-2">
+                                    <FormField
+                                        control={form.control}
+                                        name="health_check_tcp_host"
+                                        rules={{ required: t("executors.validation.healthCheckHostRequired") }}
+                                        render={({ field }) => (
+                                            <FormItem>
+                                                <FormLabel>
+                                                    {t("executors.healthCheck.fields.host")}
+                                                </FormLabel>
+                                                <FormControl>
+                                                    <Input placeholder="127.0.0.1" {...field} />
+                                                </FormControl>
+                                                <FormMessage />
+                                            </FormItem>
+                                        )}
+                                    />
                                     <FormField
                                         control={form.control}
                                         name="health_check_tcp_port"
@@ -1230,9 +1257,14 @@ export function ExecutorSheetHealthCheckFields({
                         </div>
                     ) : null}
 
-                    <div className="space-y-3 rounded-lg border border-border/60 bg-background p-4">
-                        <div className="text-sm font-medium">
-                            {t("executors.healthCheck.sections.timing")}
+                    <div className="space-y-3">
+                        <div>
+                            <div className="text-sm font-medium">
+                                {t("executors.healthCheck.sections.timing")}
+                            </div>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                                {t("executors.healthCheck.hints.probeWindow")}
+                            </p>
                         </div>
                         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                             <FormField

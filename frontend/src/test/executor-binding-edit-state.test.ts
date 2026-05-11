@@ -125,11 +125,13 @@ function createValues(overrides: Partial<ExecutorFormValues>): ExecutorFormValue
         health_check_attempt_timeout_seconds: overrides.health_check_attempt_timeout_seconds ?? "0",
         health_check_interval_seconds: overrides.health_check_interval_seconds ?? "0",
         health_check_probe_window_seconds: overrides.health_check_probe_window_seconds ?? "0",
+        health_check_http_host: overrides.health_check_http_host ?? "",
         health_check_http_path: overrides.health_check_http_path ?? "/health",
         health_check_http_port: overrides.health_check_http_port ?? "",
         health_check_http_scheme: overrides.health_check_http_scheme ?? "http",
         health_check_http_method: overrides.health_check_http_method ?? "GET",
         health_check_http_expected_status_codes: overrides.health_check_http_expected_status_codes ?? "",
+        health_check_tcp_host: overrides.health_check_tcp_host ?? "",
         health_check_tcp_port: overrides.health_check_tcp_port ?? "",
     }
 }
@@ -207,7 +209,7 @@ describe("executor binding edit state helpers", () => {
             maintenance_window: null,
             description: null,
             health_check: {
-                strategy: "http",
+                strategy: "manual_http",
                 use_default_strategy: false,
                 failure_policy: "mark_failed",
                 grace_period_seconds: 5,
@@ -220,6 +222,7 @@ describe("executor binding edit state helpers", () => {
                     port: 8080,
                     scheme: "https",
                     method: "HEAD",
+                    host: "api.internal",
                     expected_status_codes: [200, 204],
                     expected_body_regex: "ok",
                     headers: { "X-Probe": "1" },
@@ -229,6 +232,7 @@ describe("executor binding edit state helpers", () => {
             },
         })
 
+        expect(hydrated.health_check_http_host).toBe("api.internal")
         expect(hydrated.health_check_http_path).toBe("/ready")
         expect(hydrated.health_check_http_port).toBe("8080")
         expect(hydrated.health_check_http_scheme).toBe("https")
@@ -238,6 +242,8 @@ describe("executor binding edit state helpers", () => {
         const payload = buildExecutorPayload({
             values: {
                 ...hydrated,
+                health_check_strategy: "manual_http",
+                health_check_http_host: "manual.internal",
                 health_check_http_path: "/live",
                 health_check_http_port: "9090",
                 health_check_http_scheme: "http",
@@ -247,7 +253,7 @@ describe("executor binding edit state helpers", () => {
             effectiveTrackerSourceId: "1",
             selectedTargetRef: { mode: "container", container_name: "api" },
             existingHealthCheck: {
-                strategy: "http",
+                strategy: "manual_http",
                 use_default_strategy: false,
                 failure_policy: "mark_failed",
                 grace_period_seconds: 5,
@@ -255,13 +261,14 @@ describe("executor binding edit state helpers", () => {
                 interval_seconds: 3,
                 probe_window_seconds: 30,
                 services: ["api"],
-                http: { expected_body_regex: "ok", headers: { "X-Probe": "1" }, path: "/ready", tls_skip_verify: true },
+                http: { expected_body_regex: "ok", headers: { "X-Probe": "1" }, host: "api.internal", path: "/ready", tls_skip_verify: true },
                 tcp: null,
             },
         })
 
         expect(payload.health_check?.http).toEqual({
             path: "/live",
+            host: "manual.internal",
             port: 9090,
             scheme: "http",
             method: "GET",
@@ -304,10 +311,11 @@ describe("executor binding edit state helpers", () => {
         expect(getExecutorValidationMessage({
             ...baseParams,
             values: createValues({
-                health_check_strategy: "http",
+                health_check_strategy: "manual_http",
                 health_check_attempt_timeout_seconds: "2",
                 health_check_interval_seconds: "3",
                 health_check_probe_window_seconds: "30",
+                health_check_http_host: "api.internal",
                 health_check_http_path: "health",
             }),
         })).toBe("executors.validation.healthCheckHttpPathInvalid")
@@ -315,10 +323,11 @@ describe("executor binding edit state helpers", () => {
         expect(getExecutorValidationMessage({
             ...baseParams,
             values: createValues({
-                health_check_strategy: "tcp",
+                health_check_strategy: "manual_tcp",
                 health_check_attempt_timeout_seconds: "2",
                 health_check_interval_seconds: "3",
                 health_check_probe_window_seconds: "30",
+                health_check_tcp_host: "127.0.0.1",
                 health_check_tcp_port: "",
             }),
         })).toBe("executors.validation.healthCheckTcpPortRequired")
@@ -905,12 +914,13 @@ describe("executor binding edit state helpers", () => {
     it("preserves hidden health-check probe config when editing basic fields", () => {
         const payload = buildExecutorPayload({
             values: createValues({
-                health_check_strategy: "http",
+                health_check_strategy: "manual_http",
                 health_check_failure_policy: "mark_failed_and_recover",
                 health_check_grace_period_seconds: "5",
                 health_check_attempt_timeout_seconds: "2",
                 health_check_interval_seconds: "3",
                 health_check_probe_window_seconds: "30",
+                health_check_http_host: "api.internal",
                 health_check_http_path: "/health",
                 health_check_http_port: "8080",
                 health_check_http_expected_status_codes: "204",
@@ -918,7 +928,7 @@ describe("executor binding edit state helpers", () => {
             effectiveTrackerSourceId: "1",
             selectedTargetRef: { mode: "container", container_name: "api" },
             existingHealthCheck: {
-                strategy: "http",
+                strategy: "manual_http",
                 use_default_strategy: false,
                 failure_policy: "mark_failed",
                 grace_period_seconds: 0,
@@ -926,20 +936,20 @@ describe("executor binding edit state helpers", () => {
                 interval_seconds: 1,
                 probe_window_seconds: 10,
                 services: ["api"],
-                http: { path: "/health", port: 8080, expected_status_codes: [204] },
+                http: { host: "api.internal", path: "/health", port: 8080, expected_status_codes: [204] },
                 tcp: null,
             },
         })
 
         expect(payload.health_check).toMatchObject({
-            strategy: "http",
+            strategy: "manual_http",
             failure_policy: "mark_failed_and_recover",
             grace_period_seconds: 5,
             attempt_timeout_seconds: 2,
             interval_seconds: 3,
             probe_window_seconds: 30,
             services: ["api"],
-            http: { path: "/health", port: 8080, expected_status_codes: [204] },
+            http: { host: "api.internal", path: "/health", port: 8080, expected_status_codes: [204] },
             tcp: null,
         })
     })
@@ -953,7 +963,7 @@ describe("executor binding edit state helpers", () => {
             effectiveTrackerSourceId: "1",
             selectedTargetRef: { mode: "container", container_name: "api" },
             existingHealthCheck: {
-                strategy: "tcp",
+                strategy: "manual_tcp",
                 use_default_strategy: false,
                 failure_policy: "mark_failed_and_recover",
                 grace_period_seconds: 5,
@@ -962,7 +972,7 @@ describe("executor binding edit state helpers", () => {
                 probe_window_seconds: 30,
                 services: ["api"],
                 http: null,
-                tcp: { port: 8080 },
+                tcp: { host: "api.internal", port: 8080 },
             },
         })
 

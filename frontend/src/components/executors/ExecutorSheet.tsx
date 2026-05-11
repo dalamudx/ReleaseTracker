@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react"
 import { ArrowLeft, ArrowRight, Loader2 } from "lucide-react"
 import { useForm, useWatch } from "react-hook-form"
 import { useTranslation } from "react-i18next"
@@ -58,6 +58,8 @@ import {
     STEP_ORDER,
     usesGroupedServiceBindings,
 } from "./executorSheetHelpers"
+
+type FormSubmitHandler = NonNullable<ComponentProps<"form">["onSubmit"]>
 
 interface ExecutorSheetProps {
     open: boolean
@@ -617,8 +619,9 @@ export function ExecutorSheet({
                 policyFields.push("maintenance_start_time", "maintenance_end_time")
             }
 
-            if (form.getValues("health_check_strategy") === "http") {
+            if (form.getValues("health_check_strategy") === "manual_http") {
                 policyFields.push(
+                    "health_check_http_host",
                     "health_check_http_path",
                     "health_check_http_port",
                     "health_check_http_scheme",
@@ -627,8 +630,8 @@ export function ExecutorSheet({
                 )
             }
 
-            if (form.getValues("health_check_strategy") === "tcp") {
-                policyFields.push("health_check_tcp_port")
+            if (form.getValues("health_check_strategy") === "manual_tcp") {
+                policyFields.push("health_check_tcp_host", "health_check_tcp_port")
             }
 
             const valid = await form.trigger(policyFields)
@@ -682,7 +685,7 @@ export function ExecutorSheet({
         }
     }
 
-    const handleImplicitFormSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    const handleImplicitFormSubmit: FormSubmitHandler = (event) => {
         event.preventDefault()
         runExecutorImplicitSubmitAction(step, {
             onNext: () => void handleNext(),

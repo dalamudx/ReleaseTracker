@@ -65,6 +65,19 @@ def _make_profile(port: int = 6379, **overrides) -> HealthCheckProfile:
     )
 
 
+def _make_manual_profile(host: str, port: int, **overrides) -> HealthCheckProfile:
+    return HealthCheckProfile(
+        strategy="manual_tcp",
+        grace_period_seconds=0,
+        attempt_timeout_seconds=overrides.pop("attempt_timeout_seconds", 5),
+        interval_seconds=1,
+        probe_window_seconds=overrides.pop("probe_window_seconds", 60),
+        failure_policy="mark_failed",
+        tcp=HealthCheckTcpConfig(host=host, port=port),
+        services=overrides.pop("services", None),
+    )
+
+
 def _context(
     profile: HealthCheckProfile,
     hosts: list[ProbeHost],
@@ -131,6 +144,21 @@ def _closed_port() -> int:
 
 
 # ---- Tests --------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_manual_tcp_probe_uses_configured_host_without_runtime_resolution():
+    server, port = await _start_listener()
+    try:
+        profile = _make_manual_profile("127.0.0.1", port)
+        ctx = _context(profile, [ProbeHost(service=None, host="unreachable.invalid", port=1)])
+        result = await TCPProbe(manual=True).attempt(ctx)
+        assert result.healthy is True
+        assert result.detail["tcp"][0]["host"] == "127.0.0.1"
+        assert result.detail["tcp"][0]["port"] == port
+    finally:
+        server.close()
+        await server.wait_closed()
 
 
 @pytest.mark.asyncio

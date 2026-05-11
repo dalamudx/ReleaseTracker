@@ -25,6 +25,9 @@ _POST_HANDSHAKE_CLOSE_BUDGET_SECONDS = 1
 
 
 class TCPProbe(HealthCheckProbe):
+    def __init__(self, *, manual: bool = False) -> None:
+        self._manual = manual
+
     async def attempt(self, ctx: "HealthCheckContext") -> ProbeAttemptResult:
         profile = ctx.executor_config.health_check
         tcp_cfg = profile.tcp
@@ -35,31 +38,40 @@ class TCPProbe(HealthCheckProbe):
                 last_error="health_check.tcp sub-object is missing at runtime",
             )
 
-        try:
-            hosts = await resolve_probe_hosts(
-                ctx.adapter,
-                ctx.executor_config.target_ref,
-                services=list(profile.services) if profile.services else None,
-                default_port=tcp_cfg.port,
-            )
-        except NotImplementedError as exc:
-            return ProbeAttemptResult(
-                healthy=False,
-                error_category="runtime_api_error",
-                last_error=f"host resolver not available: {exc}",
-            )
-        except ValueError as exc:
-            return ProbeAttemptResult(
-                healthy=False,
-                error_category="host_unresolvable",
-                last_error=str(exc),
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            return ProbeAttemptResult(
-                healthy=False,
-                error_category="runtime_api_error",
-                last_error=f"host resolution raised: {exc}",
-            )
+        if self._manual:
+            if not tcp_cfg.host:
+                return ProbeAttemptResult(
+                    healthy=False,
+                    error_category="host_unresolvable",
+                    last_error="health_check.tcp.host is required for manual TCP probes",
+                )
+            hosts = [ProbeHost(service=None, host=tcp_cfg.host, port=tcp_cfg.port)]
+        else:
+            try:
+                hosts = await resolve_probe_hosts(
+                    ctx.adapter,
+                    ctx.executor_config.target_ref,
+                    services=list(profile.services) if profile.services else None,
+                    default_port=tcp_cfg.port,
+                )
+            except NotImplementedError as exc:
+                return ProbeAttemptResult(
+                    healthy=False,
+                    error_category="runtime_api_error",
+                    last_error=f"host resolver not available: {exc}",
+                )
+            except ValueError as exc:
+                return ProbeAttemptResult(
+                    healthy=False,
+                    error_category="host_unresolvable",
+                    last_error=str(exc),
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                return ProbeAttemptResult(
+                    healthy=False,
+                    error_category="runtime_api_error",
+                    last_error=f"host resolution raised: {exc}",
+                )
 
         per_service: dict[str, ProbeAttemptResult] = {}
         aggregate_detail: dict[str, Any] = {"tcp": []}
@@ -99,7 +111,7 @@ class TCPProbe(HealthCheckProbe):
         self,
         *,
         host: ProbeHost,
-        default_port: int,
+        default_port: int | None,
         timeout_seconds: int,
     ) -> ProbeAttemptResult:
         port = host.port if host.port is not None else default_port

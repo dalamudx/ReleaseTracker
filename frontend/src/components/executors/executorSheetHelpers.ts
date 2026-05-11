@@ -48,11 +48,13 @@ export interface ExecutorFormValues {
     health_check_attempt_timeout_seconds: string
     health_check_interval_seconds: string
     health_check_probe_window_seconds: string
+    health_check_http_host: string
     health_check_http_path: string
     health_check_http_port: string
     health_check_http_scheme: "http" | "https"
     health_check_http_method: "GET" | "HEAD"
     health_check_http_expected_status_codes: string
+    health_check_tcp_host: string
     health_check_tcp_port: string
 }
 
@@ -829,17 +831,19 @@ export function createDefaultExecutorValues(defaultRuntimeConnection?: RuntimeCo
         maintenance_days: [],
         maintenance_start_time: "02:00",
         maintenance_end_time: "05:00",
-        health_check_strategy: "none",
+        health_check_strategy: "auto",
         health_check_failure_policy: "mark_failed",
-        health_check_grace_period_seconds: "0",
-        health_check_attempt_timeout_seconds: "0",
-        health_check_interval_seconds: "0",
-        health_check_probe_window_seconds: "0",
+        health_check_grace_period_seconds: "15",
+        health_check_attempt_timeout_seconds: "10",
+        health_check_interval_seconds: "5",
+        health_check_probe_window_seconds: "180",
+        health_check_http_host: "",
         health_check_http_path: "/health",
         health_check_http_port: "",
         health_check_http_scheme: "http",
         health_check_http_method: "GET",
         health_check_http_expected_status_codes: "",
+        health_check_tcp_host: "",
         health_check_tcp_port: "",
     }
 }
@@ -868,11 +872,13 @@ export function buildExecutorFormValues(config: ExecutorConfig): ExecutorFormVal
         health_check_attempt_timeout_seconds: String(health?.attempt_timeout_seconds ?? 0),
         health_check_interval_seconds: String(health?.interval_seconds ?? 0),
         health_check_probe_window_seconds: String(health?.probe_window_seconds ?? 0),
+        health_check_http_host: health?.http?.host ?? "",
         health_check_http_path: health?.http?.path ?? "/health",
         health_check_http_port: health?.http?.port == null ? "" : String(health.http.port),
         health_check_http_scheme: health?.http?.scheme ?? "http",
         health_check_http_method: health?.http?.method ?? "GET",
         health_check_http_expected_status_codes: formatStatusCodes(health?.http?.expected_status_codes),
+        health_check_tcp_host: health?.tcp?.host ?? "",
         health_check_tcp_port: health?.tcp?.port == null ? "" : String(health.tcp.port),
     }
 }
@@ -1184,14 +1190,23 @@ function getHealthCheckValidationMessage(values: ExecutorFormValues, t: TFunctio
         return t("executors.validation.healthCheckWindowTooSmall")
     }
 
-    if (values.health_check_strategy === "http") {
+    if (values.health_check_strategy === "manual_http") {
+        if (!values.health_check_http_host.trim()) {
+            return t("executors.validation.healthCheckHostRequired")
+        }
+        if (!isValidProbeHost(values.health_check_http_host)) {
+            return t("executors.validation.healthCheckHostInvalid")
+        }
         if (!values.health_check_http_path.trim()) {
             return t("executors.validation.healthCheckHttpPathRequired")
         }
         if (!values.health_check_http_path.trim().startsWith("/")) {
             return t("executors.validation.healthCheckHttpPathInvalid")
         }
-        if (!isOptionalPortValue(values.health_check_http_port)) {
+        if (!values.health_check_http_port.trim()) {
+            return t("executors.validation.healthCheckTcpPortRequired")
+        }
+        if (!isRequiredPortValue(values.health_check_http_port)) {
             return t("executors.validation.healthCheckPortInvalid")
         }
         if (!areStatusCodesValid(values.health_check_http_expected_status_codes)) {
@@ -1199,7 +1214,13 @@ function getHealthCheckValidationMessage(values: ExecutorFormValues, t: TFunctio
         }
     }
 
-    if (values.health_check_strategy === "tcp") {
+    if (values.health_check_strategy === "manual_tcp") {
+        if (!values.health_check_tcp_host.trim()) {
+            return t("executors.validation.healthCheckHostRequired")
+        }
+        if (!isValidProbeHost(values.health_check_tcp_host)) {
+            return t("executors.validation.healthCheckHostInvalid")
+        }
         if (!values.health_check_tcp_port.trim()) {
             return t("executors.validation.healthCheckTcpPortRequired")
         }
@@ -1262,8 +1283,8 @@ function buildHealthCheckPayload(values: ExecutorFormValues, existingHealthCheck
         interval_seconds: toNonNegativeInt(values.health_check_interval_seconds),
         probe_window_seconds: toNonNegativeInt(values.health_check_probe_window_seconds),
         services: strategy === "none" ? null : (existingHealthCheck?.services ?? null),
-        http: strategy === "http" ? buildHttpHealthCheckPayload(values, existingHealthCheck?.http ?? null) : null,
-        tcp: strategy === "tcp" ? { port: toNonNegativeInt(values.health_check_tcp_port) } : null,
+        http: strategy === "manual_http" ? buildHttpHealthCheckPayload(values, existingHealthCheck?.http ?? null) : null,
+        tcp: strategy === "manual_tcp" ? { host: values.health_check_tcp_host.trim(), port: toNonNegativeInt(values.health_check_tcp_port) } : null,
     }
 }
 
@@ -1275,6 +1296,7 @@ function buildHttpHealthCheckPayload(
 
     return {
         path: values.health_check_http_path.trim() || "/",
+        host: values.health_check_http_host.trim(),
         port: parseOptionalPort(values.health_check_http_port),
         scheme: values.health_check_http_scheme,
         method: values.health_check_http_method,
@@ -1322,8 +1344,12 @@ function areStatusCodesValid(value: string): boolean {
     })
 }
 
-function isOptionalPortValue(value: string): boolean {
-    return !value.trim() || isRequiredPortValue(value)
+function isValidProbeHost(value: string): boolean {
+    const normalized = value.trim()
+    return normalized.length > 0
+        && normalized.length <= 253
+        && !normalized.includes("://")
+        && !normalized.includes("/")
 }
 
 function isRequiredPortValue(value: string): boolean {

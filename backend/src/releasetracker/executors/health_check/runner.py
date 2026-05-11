@@ -113,8 +113,9 @@ class HealthCheckRunner:
                 break
 
             remaining = deadline - now_mono
-            per_attempt_timeout = min(attempt_timeout, int(remaining)) if remaining > 0 else 1
-            per_attempt_timeout = max(1, per_attempt_timeout)
+            per_attempt_timeout = min(attempt_timeout, remaining)
+            if per_attempt_timeout <= 0:
+                break
 
             attempt_count += 1
             attempt_started_at = self._now()
@@ -205,7 +206,7 @@ class HealthCheckRunner:
                 remaining_after_attempt = deadline - self._monotonic()
                 if remaining_after_attempt <= 0:
                     break
-                sleep_for = min(interval, int(remaining_after_attempt))
+                sleep_for = min(interval, remaining_after_attempt)
                 if sleep_for > 0:
                     try:
                         await self._sleep(sleep_for)

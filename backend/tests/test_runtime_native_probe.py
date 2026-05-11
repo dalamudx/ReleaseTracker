@@ -121,6 +121,50 @@ class _StubContainerAdapter(_ContainerRuntimeAdapter):
 
 
 @pytest.mark.asyncio
+async def test_auto_host_port_resolution_uses_runtime_socket_host_and_published_port():
+    runtime = _make_runtime_connection("docker")
+    runtime.config["socket"] = "tcp://10.10.20.53:2375"
+    client = _FakeDockerClient(
+        {
+            "c1": _FakeContainer(
+                attrs={"NetworkSettings": {"Ports": {"8080/tcp": [{"HostPort": "18080"}]}}}
+            )
+        }
+    )
+    adapter = _StubContainerAdapter(runtime, client=client)
+
+    hosts = await adapter.resolve_auto_probe_hosts(
+        {"mode": "container", "container_id": "c1"},
+        default_port=8080,
+    )
+
+    assert hosts[0].host == "10.10.20.53"
+    assert hosts[0].port == 18080
+
+
+@pytest.mark.asyncio
+async def test_auto_host_port_resolution_rejects_ambiguous_ports_without_container_port():
+    client = _FakeDockerClient(
+        {
+            "c1": _FakeContainer(
+                attrs={
+                    "NetworkSettings": {
+                        "Ports": {
+                            "8080/tcp": [{"HostPort": "18080"}],
+                            "9090/tcp": [{"HostPort": "19090"}],
+                        }
+                    }
+                }
+            )
+        }
+    )
+    adapter = _StubContainerAdapter(_make_runtime_connection("docker"), client=client)
+
+    with pytest.raises(ValueError, match="multiple published host ports"):
+        await adapter.resolve_auto_probe_hosts({"mode": "container", "container_id": "c1"})
+
+
+@pytest.mark.asyncio
 async def test_container_healthy_when_healthcheck_reports_healthy():
     client = _FakeDockerClient(
         {

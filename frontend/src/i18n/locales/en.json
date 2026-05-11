@@ -718,9 +718,11 @@
             "channelUnavailable": "The currently bound release channel is disabled. Please choose a new one.",
             "healthCheckTimingRequired": "Health checks need positive timeout, interval, and probe window values.",
             "healthCheckWindowTooSmall": "Probe window must be greater than or equal to attempt timeout.",
+            "healthCheckHostRequired": "Manual health checks need a host.",
+            "healthCheckHostInvalid": "Health check host must be a host name or IP address, not a URL.",
             "healthCheckHttpPathRequired": "HTTP health check path is required.",
             "healthCheckHttpPathInvalid": "HTTP health check path must start with '/'.",
-            "healthCheckTcpPortRequired": "TCP health check port is required.",
+            "healthCheckTcpPortRequired": "Health check port is required.",
             "healthCheckPortInvalid": "Health check port must be between 1 and 65535.",
             "healthCheckStatusCodesInvalid": "Expected status codes must be comma-separated values between 100 and 599."
         },
@@ -790,9 +792,12 @@
             "description": "Verify the updated service is healthy before marking the run successful.",
             "strategy": {
                 "none": "Disabled",
+                "auto": "Auto (recommended)",
                 "runtime_native": "Runtime native readiness",
-                "http": "HTTP probe",
-                "tcp": "TCP probe",
+                "manual_http": "Manual HTTP probe",
+                "manual_tcp": "Manual TCP probe",
+                "http": "Runtime-derived HTTP probe",
+                "tcp": "Runtime-derived TCP probe",
                 "helm_status": "Helm release status"
             },
             "failurePolicy": {
@@ -806,7 +811,8 @@
                 "gracePeriod": "Grace period (s)",
                 "attemptTimeout": "Attempt timeout (s)",
                 "interval": "Interval (s)",
-                "probeWindow": "Probe window (s)",
+                "probeWindow": "Total probe duration (s)",
+                "host": "Host",
                 "httpPath": "Path",
                 "httpPort": "Port",
                 "httpScheme": "Scheme",
@@ -819,11 +825,12 @@
                 "timing": "Timing"
             },
             "hints": {
-                "httpProbe": "Send an HTTP request to the resolved service host.",
-                "tcpProbe": "Open a TCP connection to the resolved service host.",
+                "httpProbe": "Send an HTTP request from the ReleaseTracker backend to the host and port you enter.",
+                "tcpProbe": "Open a TCP connection from the ReleaseTracker backend to the host and port you enter.",
                 "portOptional": "Leave blank to use the runtime-discovered port.",
                 "httpStatusCodes": "Comma-separated. Leave blank to accept any 2xx/3xx response.",
-                "httpAdvancedViaApi": "Headers, body regex, TLS skip-verify, and service filters are preserved from API-edited configs."
+                "httpAdvancedViaApi": "Headers, body regex, TLS skip-verify, and service filters are preserved from API-edited configs.",
+                "probeWindow": "The total duration bounds the complete probe loop after the grace period."
             }
         },
         "snapshots": {

@@ -27,6 +27,9 @@ _BODY_READ_CAP_BYTES = 65_536
 
 
 class HTTPProbe(HealthCheckProbe):
+    def __init__(self, *, manual: bool = False) -> None:
+        self._manual = manual
+
     async def attempt(self, ctx: "HealthCheckContext") -> ProbeAttemptResult:
         profile = ctx.executor_config.health_check
         http_cfg = profile.http
@@ -37,31 +40,40 @@ class HTTPProbe(HealthCheckProbe):
                 last_error="health_check.http sub-object is missing at runtime",
             )
 
-        try:
-            hosts = await resolve_probe_hosts(
-                ctx.adapter,
-                ctx.executor_config.target_ref,
-                services=list(profile.services) if profile.services else None,
-                default_port=http_cfg.port,
-            )
-        except NotImplementedError as exc:
-            return ProbeAttemptResult(
-                healthy=False,
-                error_category="runtime_api_error",
-                last_error=f"host resolver not available: {exc}",
-            )
-        except ValueError as exc:
-            return ProbeAttemptResult(
-                healthy=False,
-                error_category="host_unresolvable",
-                last_error=str(exc),
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            return ProbeAttemptResult(
-                healthy=False,
-                error_category="runtime_api_error",
-                last_error=f"host resolution raised: {exc}",
-            )
+        if self._manual:
+            if not http_cfg.host:
+                return ProbeAttemptResult(
+                    healthy=False,
+                    error_category="host_unresolvable",
+                    last_error="health_check.http.host is required for manual HTTP probes",
+                )
+            hosts = [ProbeHost(service=None, host=http_cfg.host, port=http_cfg.port)]
+        else:
+            try:
+                hosts = await resolve_probe_hosts(
+                    ctx.adapter,
+                    ctx.executor_config.target_ref,
+                    services=list(profile.services) if profile.services else None,
+                    default_port=http_cfg.port,
+                )
+            except NotImplementedError as exc:
+                return ProbeAttemptResult(
+                    healthy=False,
+                    error_category="runtime_api_error",
+                    last_error=f"host resolver not available: {exc}",
+                )
+            except ValueError as exc:
+                return ProbeAttemptResult(
+                    healthy=False,
+                    error_category="host_unresolvable",
+                    last_error=str(exc),
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                return ProbeAttemptResult(
+                    healthy=False,
+                    error_category="runtime_api_error",
+                    last_error=f"host resolution raised: {exc}",
+                )
 
         per_service: dict[str, ProbeAttemptResult] = {}
         aggregate_detail: dict[str, Any] = {"http": []}
