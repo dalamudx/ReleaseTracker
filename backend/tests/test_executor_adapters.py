@@ -5076,9 +5076,9 @@ async def test_podman_compose_grouped_update_recreates_pod_backed_targets_in_sam
     assert "pod-aware update completed" in (result.message or "")
     assert client.images.pull_calls == ["ghcr.io/acme/api:1.1", "ghcr.io/acme/worker:9.2"]
     assert worker.stop_calls == [True]
-    assert worker.remove_calls == [{"force": True}]
+    assert worker.remove_calls == [True]
     assert api.stop_calls == [True]
-    assert api.remove_calls == [{"force": True}]
+    assert api.remove_calls == [True]
     assert client.api.post_calls
     assert client.containers.create_calls == [
         {
@@ -6300,7 +6300,7 @@ async def test_podman_compose_grouped_update_tolerates_stop_json_decode_error_wh
 
     assert result.updated is True
     assert api.stop_calls == [True]
-    assert api.remove_calls == [{"force": True}]
+    assert api.remove_calls == [True]
     assert client.api.post_calls
     payloads = client.containers.create_calls
     assert payloads == [
@@ -6348,7 +6348,7 @@ async def test_podman_compose_grouped_update_tolerates_remove_json_decode_error_
 
     assert result.updated is True
     assert api.stop_calls == [True]
-    assert api.remove_calls == [{"force": True}]
+    assert api.remove_calls == [True]
     assert client.api.post_calls
     payloads = client.containers.create_calls
     assert payloads == [
