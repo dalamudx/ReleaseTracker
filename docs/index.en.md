@@ -41,7 +41,7 @@ ReleaseTracker is a lightweight, configurable release tracking and update orches
 - **Multi-source release tracking**: GitHub, GitLab (including self-hosted instances), Gitea, Helm charts, Docker Hub, GHCR, and private OCI registries.
 - **Aggregate trackers**: bind multiple sources under a single tracker; filter, merge, and display releases through release channel rules.
 - **Executor orchestration**: target discovery, binding, manual / scheduled execution, maintenance windows, and run history for containers, Compose projects, Portainer stacks, Kubernetes workloads, and Helm releases.
-- **Snapshot and rollback (selected executors)**: pre-update snapshots and manual rollback are supported only for Docker / Podman single-container executors and Helm release executors. Docker Compose, Portainer stack, and Kubernetes workload executors do not currently capture pre-update snapshots and cannot be rolled back from them.
+- **Snapshot and rollback (selected executors)**: full runtime configuration snapshots / restores are used for destructive Docker / Podman recreate targets: single containers and Compose grouped updates. Portainer stacks, Kubernetes workloads, and Helm releases rely on declarative updates, version history, or run history rather than full ReleaseTracker-managed runtime snapshots.
 - **Security**: local users plus JWT and OIDC; sensitive data is encrypted with Fernet; system keys are rotatable.
 - **Web UI configuration**: timezone, log level, release history retention, BASE URL, and key rotation are all handled from the browser without environment variables.
 

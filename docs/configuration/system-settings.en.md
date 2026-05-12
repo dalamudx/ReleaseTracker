@@ -42,11 +42,11 @@ With an empty BASE URL, ReleaseTracker falls back to the address the browser use
 
 **Executor snapshot retention** is per executor. Snapshots beyond the retention count are pruned:
 
-- After every successful `pre_update` / `pre_rollback` snapshot capture.
+- After every successful pre-update or pre-rollback snapshot capture.
 - When **System Settings → Maintenance → Cleanup Snapshot History** is triggered manually.
 
 !!! note "Snapshot capture is scoped"
-    Only Docker / Podman single-container executors and Helm release executors capture pre-update snapshots. Other executor modes do not produce snapshots, so retention has no practical effect on them. See [Known Limitations](../limitations.en.md).
+    Full runtime configuration snapshots are used only for destructive Docker / Podman recreate targets: single containers and Compose grouped updates. Portainer stacks, Kubernetes workloads, and Helm releases are not full ReleaseTracker-managed configuration snapshot targets, so retention usually has no practical effect on them. See [Known Limitations](../limitations.en.md).
 
 ## 4. System key rotation
 
@@ -81,7 +81,7 @@ Log level changes take effect immediately (via `logging.getLogger().setLevel(...
 
 ## 6. Where the timezone applies
 
-- Maintenance windows: executor `maintenance_window` rules interpret allowed days and time windows in this timezone.
+- Maintenance windows: when an executor uses the **Maintenance window** policy, allowed days and time windows are interpreted in this timezone.
 - Cleanup reports and scheduler log timestamps render in this timezone.
 - Most UI timestamps also follow this timezone, though a handful of system fields remain in UTC.
 

@@ -58,7 +58,7 @@ If references exist, the endpoint returns `409` with the reference list. Remove 
 
 - Form: `ghp_*` personal access tokens or fine-grained PATs.
 - Scope: read access to releases / tags on the target repositories. Even for public repos, a token is recommended to avoid anonymous rate limits.
-- Applies to both the GraphQL and REST fetch paths; the tracker `fetch_mode` chooses between them.
+- Applies to both GraphQL and REST fetch paths; the tracker **GitHub Fetch Priority** setting chooses which path is tried first.
 
 ### GitLab token
 

@@ -15,23 +15,26 @@ This page lists constraints worth knowing before running ReleaseTracker in produ
 
 ## 2. Snapshot and rollback coverage
 
-Pre-update snapshots and manual rollback work **only** for these target modes:
+Full runtime configuration snapshots and manual rollback work **only** for these destructive recreate targets:
 
-- `container` (Docker / Podman single containers)
-- `helm_release` (Helm 3 releases on Kubernetes)
+- Docker / Podman single containers
+- Docker / Podman Compose grouped updates
 
-The following modes do **not** capture pre-update snapshots and cannot be rolled back via `POST /api/executors/{id}/rollback`:
+These targets capture enough runtime configuration before updates to recover from the executor detail page when a snapshot is available. Compose / Podman pod scenarios do not guarantee stable container IDs or pod IDs; rollback resolves current runtime objects from stable names.
 
-- `docker_compose`
-- `portainer_stack`
-- `kubernetes_workload`
+The following targets are not full ReleaseTracker-managed runtime snapshot targets today:
 
-The UI still surfaces rollback controls for those modes, but the call returns 404 due to the missing snapshot. Recover with native tooling (`kubectl rollout undo`, `docker compose up -d`, Portainer UI, etc.).
+- Portainer stacks: update through the declarative stack-file API and primarily rely on Portainer / stack-file state.
+- Kubernetes workloads: patch image fields on Deployment / StatefulSet / DaemonSet objects; use Kubernetes-native rollback.
+- Helm releases: use Helm 3 upgrade / release history; use Helm-native rollback.
+
+Rollback calls for these targets return 404 when no snapshot is available. Recover with native tooling (`kubectl rollout undo`, `helm rollback`, Portainer UI, etc.).
 
 ## 3. Health check framework
 
-- `http` and `tcp` strategies are shipped, but the **recovery hook** (automatic rollback on failure) only works end-to-end on targets that support both snapshots and a runtime-native probe. Grouped modes with `failure_policy=mark_failed_and_recover` still get marked as failed without rolling back.
-- The default timings (`grace=15s / attempt=10s / interval=5s / window=180s`) suit most workloads, but complex startup sequences need hand-tuning.
+- **Manual HTTP probe** / **Manual TCP probe** support explicit host / port / path probe configuration; Docker / Podman can use runtime-native healthchecks or runtime-state fallback. Kubernetes, Portainer, and Helm grouped update pipelines are still being wired into health checks, so do not assume they support arbitrary host-port probing.
+- **Mark as failed and roll back** only works end-to-end when the target has both an available snapshot and matching health-probe wiring. Targets without full snapshots cannot be rolled back from ReleaseTracker snapshots even if that UI option is selected.
+- The default timings (15-second grace period, 10-second attempt timeout, 5-second interval, 180-second total probe duration) suit most workloads, but complex startup sequences need hand-tuning.
 
 ## 4. Authentication and accounts
 
@@ -50,7 +53,7 @@ The UI still surfaces rollback controls for those modes, but the call returns 40
 - Only Helm 3 is supported. Helm 2 is not.
 - Helm release discovery relies on Helm 3's Secret-backed storage. Deployments using a ConfigMap-backed storage driver (rare) will not be recognised.
 - Kubernetes workload support covers `Deployment`, `StatefulSet`, and `DaemonSet` only. CronJob, Job, and others are not supported.
-- Multi-container workloads must use `service_bindings` to bind each container explicitly.
+- Multi-container workloads require choosing a version source explicitly for each container in the executor service-binding step.
 
 ## 7. Notifications
 
@@ -62,11 +65,11 @@ The UI still surfaces rollback controls for those modes, but the call returns 40
 ## 8. Trackers
 
 - Release channel names are restricted to `stable` / `prerelease` / `beta` / `canary`. Custom names are not allowed.
-- `include_pattern` and `exclude_pattern` match against `tag_name` only. Filtering on release body, author, or other fields is not supported.
+- Include / exclude regexes match version tags only. Filtering on release body, author, or other fields is not supported.
 - Anonymous GitHub and Docker Hub access is heavily rate-limited. In practice, credentials are required.
-- Container source `published_at` accuracy depends on the registry; rate-limited registries may force `first_observed` mode.
+- Container source publish-time accuracy depends on the registry; rate-limited registries may force the **First observed time** strategy.
 
-## 9. Data model and migrations
+## 9. Database and migrations
 
 - dbmate migrations are **forward-only**. Once a newer version's migrations have run, downgrading the container can fail to start due to schema mismatch; recovery means restoring from backup.
 - Database backups must be paired with `system-secrets.json`. Without both, encrypted data cannot be recovered.

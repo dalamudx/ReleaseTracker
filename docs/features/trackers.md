@@ -4,119 +4,90 @@ title: 追踪器
 
 # 追踪器
 
-追踪器定义了 ReleaseTracker 从哪些版本源拉取 release / tag、按什么规则筛选与归并，以及生成什么样的版本视图供后续执行器使用。
+追踪器定义 ReleaseTracker 从哪些上游获取版本、如何筛选与归并版本，以及向执行器提供哪一个“当前版本”。
 
-## 1. 模型
+## 1. 创建追踪器时需要选择什么
 
-每个追踪器是一个 **聚合追踪器**（Aggregate Tracker），可以绑定一个或多个 **版本源**（Tracker Source）。每个版本源可以携带自己的一组**发布渠道规则**（Release Channel）。
+在 **追踪器 → 新建** 中，通常会配置：
 
-```text
-AggregateTracker
-├── primary_changelog_source_key   # 决定 release notes 来源
-├── sources[]
-│   ├── source_key                  # 源内唯一标识
-│   ├── source_type                 # github / gitlab / gitea / helm / container
-│   ├── source_config               # 类型相关字段
-│   ├── credential_name             # 引用的凭证
-│   └── release_channels[]          # 渠道筛选规则
-└── ...
-```
+- **追踪器名称**：这个追踪器代表的项目或组件。
+- **追踪渠道**：一个追踪器可以包含多个上游来源，例如 GitHub release、Helm Chart 仓库和容器镜像仓库。
+- **主要 changelog 渠道**：多个渠道报告同一版本时，界面展示的 release notes 来自这里。
+- **发布渠道**：把一个追踪渠道发现的版本拆分为正式版、预发布版、测试版或金丝雀版。
+- **包含 / 排除正则**：按版本标签筛选每个发布渠道可见的版本。
+- **凭证**：可选，用于提高 GitHub / Docker Hub 等上游的访问额度，或访问私有仓库。
 
-## 2. 支持的版本源类型
+## 2. 支持的追踪渠道
 
-| 类型 | `source_config` 必填 | 可选字段 |
+| 界面渠道类型 | 需要填写 | 可选设置 |
 | ---- | ---- | ---- |
-| `github` | `repo`（`owner/name`） | `fetch_mode`（`graphql_first` / `rest_first`，默认 `rest_first`） |
-| `gitlab` | `project`（`group/project`） | `instance`（自托管实例 URL） |
-| `gitea` | `repo`（`owner/name`） | `instance`（Gitea 实例 URL） |
-| `helm` | `repo`（Chart 仓库 URL） + `chart`（Chart 名） | —— |
-| `container` | `image`（例如 `library/nginx` 或 `owner/image`） + `registry`（Registry 根地址） | `published_at_mode`（`auto` / `prefer_real` / `first_observed`，默认 `auto`） |
+| GitHub | 仓库路径（`owner/name`） | 抓取优先策略：REST 优先或 GraphQL 优先 |
+| GitLab | 项目路径（`group/project`） | 自托管实例 URL |
+| Gitea | 仓库路径（`owner/name`） | Gitea 实例 URL |
+| Helm | Chart 仓库 URL 和 Chart 名称 | —— |
+| 容器 | 镜像名（如 `library/nginx` 或 `owner/image`）和 Registry 根地址 | 发布时间策略：自动、优先真实发布时间、首次观察时间 |
 
-字段会在保存时做类型校验（全部必须为非空字符串），配置不合法时 API 直接返回 400。
+保存时会校验必填项；缺少仓库、镜像、Chart 等关键配置会返回 400，并在界面提示修正。
 
 ### 关键选项
 
-- **`github.fetch_mode`**
-  - `graphql_first`：优先走 GraphQL releases 接口；如失败（例如 token 无权限 / GraphQL 配额耗尽）再回落到 REST。
-  - `rest_first`（默认）：直接使用 REST API。
-- **`container.published_at_mode`**
-  - `auto`（默认）：对行为良好的 Registry（如自建 / GHCR）拉取 image config blob 获取真实发布时间；对匿名访问受限的 Registry（如 Docker Hub、未登录的 Quay）退化为「首次观察到的时间」。
-  - `prefer_real`：总是尝试拉取 config blob，操作员接受由此产生的速率限制成本。
-  - `first_observed`：从不拉取 config blob，仅用服务端首次观察到的时间作为版本发布时间。
+- **GitHub 抓取优先策略**
+  - **GraphQL 优先**：优先使用 GraphQL releases 接口；如失败（例如 token 权限不足或配额耗尽）再回落到 REST。
+  - **REST 优先**（默认）：直接使用 REST API。
+- **容器发布时间策略**
+  - **自动**（默认）：对行为良好的 Registry（如自建 / GHCR）拉取 image config blob 获取真实发布时间；对匿名访问受限的 Registry（如 Docker Hub、未登录的 Quay）退化为“首次观察到的时间”。
+  - **优先真实发布时间**：总是尝试拉取 config blob，操作员接受由此产生的速率限制成本。
+  - **首次观察时间**：从不拉取 config blob，仅用服务端首次观察到的时间作为版本发布时间。
 
-### fallback_tags（聚合追踪器级）
+### 仅使用 tag 的仓库
 
-当版本源本身没有 release 数据（常见于只打 tag、不用 release 功能的仓库），开启 `fallback_tags=true` 会让追踪器退化到「从 `refs/tags` 解析版本」。这是追踪器级的开关，不是每个 source 独立开关。
+当 GitHub / GitLab / Gitea 仓库本身没有 release 数据（常见于只打 tag、不用 release 功能的仓库），可在追踪器级别开启“回退到 tag”能力，让 ReleaseTracker 从 tag 解析版本。这是整个追踪器的开关，不是单个追踪渠道的开关。
 
 ## 3. 发布渠道
 
-发布渠道用于把一个版本源产出的所有 release 按规则拆分到 `stable` / `prerelease` / `beta` / `canary` 四个槽位。
-
-```text
-ReleaseChannel {
-  release_channel_key: string    # 源内唯一
-  name:                stable | prerelease | beta | canary
-  type:                release | prerelease | null
-  include_pattern:     regex | null
-  exclude_pattern:     regex | null
-  enabled:             bool
-}
-```
+发布渠道用于把一个追踪渠道产出的版本拆分到四个界面分类：**正式版**、**预发布版**、**测试版**、**金丝雀版**。当前只能使用这四个分类，不能自定义新的发布渠道名称。
 
 规则：
 
-- `name` **必须**是上述四个枚举之一，不允许自定义名字。
-- `type` 只对 GitHub / GitLab / Gitea 三类源生效（这些源在平台层区分 release 与 prerelease）；对 Helm、Container 源会被忽略。
-- `include_pattern` 使用 Python `re.search` 匹配版本的 `tag_name`；匹配才纳入。
-- `exclude_pattern` 匹配则排除，**优先级高于** `include_pattern`。
-- `enabled=false` 的渠道不参与筛选，相当于"不生效"。
-- 单个版本可以同时进入多个渠道（不同渠道独立判断）。
+- 发布类型筛选只对 GitHub / GitLab / Gitea 生效，因为这些平台区分 release 与 prerelease；Helm 和容器镜像来源会忽略这个筛选。
+- **包含正则**匹配版本标签时，该版本才会进入当前发布渠道；留空表示包含所有版本。
+- **排除正则**匹配版本标签时，即使包含正则命中也会排除该版本。
+- 关闭的发布渠道不参与筛选。
+- 单个版本可以同时进入多个发布渠道；不同渠道独立判断。
 
-匹配候选集：当前 `exclude_pattern` 仅对 `tag_name` 做匹配；`include_pattern` 同样如此。
+当前包含 / 排除正则只匹配版本标签，不会匹配 release body、作者等其他信息。
 
-## 4. 聚合与「当前视图」
+## 4. 聚合与“当前视图”
 
-调度器定期扫描每个启用的版本源，并把发现的版本写入各自的历史：
+调度器定期扫描每个启用的追踪渠道，并把发现的版本写入历史。随后 ReleaseTracker 会按发布渠道规则筛选、去重、合并，并为每个发布渠道选出一条当前最高版本，供执行器使用。
 
-```
-上游源
-  ↓ 调度器抓取
-SourceReleaseObservation（每次抓取的原始观察）
-  ↓ 去重
-SourceReleaseHistory（按 identity_key 去重的历史）
-  ↓ 渠道筛选 + 源间合并
-TrackerReleaseHistory（聚合追踪器级历史）
-  ↓ 按规则选出当前最高版本
-TrackerCurrentRelease（当前视图）
-```
-
-「当前视图」里每个渠道只会保留**一条**最新可执行版本，供执行器消费。changelog 来源由 `primary_changelog_source_key` 决定：在多个源都产出对应版本时，取指定 source 的 release body 作为展示内容。
+当多个追踪渠道产出同一个版本时，版本本身会合并展示；changelog 内容来自你选择的主要 changelog 渠道。
 
 ## 5. 调度与手动检查
 
-- 每个聚合追踪器有独立的 `interval`（分钟，默认 `360`）。
+- 每个追踪器有独立的扫描间隔（分钟，默认 360）。
 - 可在追踪器详情页点击「立即检查」手动触发一次扫描。
 - 手动检查受服务端节流：同一追踪器距离上次完成的检查小于 30 秒时，再次手动触发会被跳过并直接返回上次结果。
-- 调度器内部对每种源类型都有并发上限（GitHub、GitLab、Gitea、Helm、Container 各自允许 2 并发），避免同一时间对同一上游施压过多。
+- 调度器内部对每种渠道类型都有并发上限（GitHub、GitLab、Gitea、Helm、容器各自允许 2 并发），避免同一时间对同一上游施压过多。
 
 ## 6. 速率限制与凭证
 
-- **GitHub**：未配置 token 的匿名访问速率非常有限。对中等规模的追踪器列表而言，强烈建议配置 GitHub 凭证（`credential_type=github`）。
-- **Docker Hub**：匿名拉取镜像 manifest / config blob 的速率限制很严，推荐配置 `docker` 类型凭证；`published_at_mode=first_observed` 可以作为临时规避手段。
-- **自托管 GitLab / Gitea**：`instance` 需要包含协议，例如 `https://gitlab.company.internal`。
+- **GitHub**：未配置 token 的匿名访问速率非常有限。对中等规模的追踪器列表而言，强烈建议配置 GitHub 凭证。
+- **Docker Hub**：匿名拉取镜像 manifest / config blob 的速率限制很严，推荐配置 Docker 类型凭证；也可临时把容器发布时间策略改为“首次观察时间”来避开 config blob 拉取。
+- **自托管 GitLab / Gitea**：实例地址需要包含协议，例如 `https://gitlab.company.internal`。
 
 ## 7. 常见问题
 
-!!! failure "新建追踪器保存时报 400：`source_config must be a non-empty string`"
-    源配置字段漏填或填了空值。对照第 2 节的必填字段表补齐。
+!!! failure "新建追踪器保存时报 400，提示配置不能为空"
+    必填配置漏填或填了空值。对照第 2 节补齐仓库路径、镜像名、Registry、Chart 等必要信息。
 
 !!! failure "GitHub 扫描很快失败，日志里出现 403 / 429"
-    命中了 GitHub 的速率限制。配置一个 GitHub token 类型凭证并在源上引用，或将 `fetch_mode` 切到 `graphql_first`（GraphQL 用 token 时有较高配额）。
+    命中了 GitHub 的速率限制。配置一个 GitHub token 类型凭证并在追踪渠道上引用，或将 GitHub 抓取优先策略切到 GraphQL 优先（GraphQL 用 token 时有较高配额）。
 
 !!! failure "容器追踪器版本时间不准"
-    如果用匿名访问公共 Registry，切到 `published_at_mode=first_observed` 可以避开 config blob 拉取，代价是时间是"首次被 ReleaseTracker 观察到"的时刻。
+    如果用匿名访问公共 Registry，切到“首次观察时间”可以避开 config blob 拉取，代价是时间是“首次被 ReleaseTracker 观察到”的时刻。
 
 !!! failure "渠道配置看起来正确，但版本没出现"
-    - 检查 `exclude_pattern` 是否意外匹配（它优先于 include）。
-    - 检查 `name` 是否拼写错误（只能是 `stable` / `prerelease` / `beta` / `canary`）。
-    - 检查源级 `enabled` 与渠道级 `enabled` 是否都为 `true`。
+    - 检查排除正则是否意外匹配（它优先于包含正则）。
+    - 检查发布渠道是否选成了预期的正式版、预发布版、测试版或金丝雀版。
+    - 检查追踪渠道与发布渠道是否都处于启用状态。

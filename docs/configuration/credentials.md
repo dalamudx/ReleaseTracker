@@ -58,7 +58,7 @@ Credential {
 
 - 形式：`ghp_*` 的 Personal Access Token，或 Fine-grained PAT。
 - 权限：至少读取目标仓库的 release / tag。对公共仓库亦建议填 token，可显著缓解匿名访问的速率限制。
-- 用途：同时作用于 GraphQL 与 REST 两条 fetch 路径（见追踪器配置里的 `fetch_mode`）。
+- 用途：同时作用于 GraphQL 与 REST 两条抓取路径；追踪器中的「GitHub 抓取优先策略」决定优先尝试哪一条。
 
 ### GitLab Token
 

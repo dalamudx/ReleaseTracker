@@ -4,119 +4,120 @@ title: 执行器
 
 # 执行器
 
-执行器把追踪器的当前版本绑定到一个具体的运行时目标，并按指定模式执行更新。
+执行器把一个已追踪的发布渠道连接到具体运行时目标，并按你选择的策略更新容器镜像或 Helm Chart 版本。
 
-## 1. 绑定模型
+## 1. 创建执行器时需要选择什么
 
-```text
-ExecutorConfig
-├── runtime_type            # docker / podman / kubernetes / portainer
-├── runtime_connection_id   # 关联「运行时连接」
-├── tracker_name            # 聚合追踪器名称
-├── tracker_source_id       # 绑定的具体版本源
-├── channel_name            # 绑定的发布渠道
-├── enabled                 # 关闭后配置保留但不执行
-├── update_mode             # manual / maintenance_window / immediate
-├── target_ref              # 运行时目标引用（按 mode 区分）
-├── service_bindings[]      # 用于分组目标模式
-├── image_selection_mode    # 新镜像如何由当前镜像 + 目标版本合成
-├── image_reference_mode    # 发出的引用使用 tag 还是 digest
-├── maintenance_window      # update_mode=maintenance_window 时必填
-└── health_check            # 更新后健康检查配置
-```
+在 **执行器 → 新建** 中，配置会按步骤完成：
 
-## 2. 支持的目标模式
+- **运行时连接**：选择 Docker、Podman、Portainer 或 Kubernetes 连接，ReleaseTracker 会从该连接发现可更新目标。
+- **目标**：选择一个已发现的容器、Docker Compose 项目、Portainer Stack、Kubernetes 工作负载或 Helm Release。
+- **版本来源与发布渠道**：选择追踪器中的镜像来源或 Helm Chart 来源，再选择要跟随的发布渠道。
+- **服务绑定**：对 Compose、Portainer Stack、Kubernetes 工作负载这类多服务目标，把每个服务 / container 绑定到对应的版本来源与发布渠道。
+- **执行策略**：选择手动、维护窗口或立即自动执行。
+- **镜像策略与目标策略**：决定更新时保留当前镜像名，还是使用追踪到的镜像名；以及优先使用不可变镜像引用还是版本标签。
+- **更新后健康检查**：可选，用来在标记运行成功前验证服务是否健康。
 
-| `target_ref.mode` | 支持的 `runtime_type` | 适用对象 |
+关闭执行器不会删除配置；它只会停止自动运行，也不能被手动触发。
+
+## 2. 支持的目标类型
+
+| 界面目标类型 | 可用运行时连接 | 适用对象 |
 | ---- | ---- | ---- |
-| `container` | `docker`、`podman` | 单个容器 |
-| `docker_compose` | `docker`、`podman` | Compose 项目 |
-| `portainer_stack` | `portainer` | Portainer 上的 standalone stack |
-| `kubernetes_workload` | `kubernetes` | Deployment / StatefulSet / DaemonSet |
-| `helm_release` | `kubernetes` | Helm 3 release |
+| 容器 | Docker、Podman | 单个容器 |
+| Docker Compose 项目 | Docker、Podman | Compose 项目中的一个或多个服务 |
+| Portainer Stack | Portainer | Portainer 上的 standalone stack |
+| Kubernetes 工作负载 | Kubernetes | Deployment / StatefulSet / DaemonSet |
+| Helm Release | Kubernetes | Helm 3 release |
 
-不满足组合的 `(runtime_type, mode)` 在保存时被 Pydantic 校验拦截，直接返回 400。
+如果目标类型和运行时连接不匹配，保存时会被拒绝；请回到目标选择步骤重新选择。
 
-## 3. 版本来源限制
+## 3. 可绑定的版本来源
 
-只有 `source_type ∈ { container, helm }` 的追踪器源可以绑定为执行器来源 —— 这是由代码里的 `EXECUTOR_BINDABLE_SOURCE_TYPES` 约束的。Git 平台（GitHub / GitLab / Gitea）的 release / tag 不会直接驱动执行器更新。
+执行器来源选择器只会显示能直接产出更新目标的来源：**容器镜像来源**和 **Helm Chart 来源**。GitHub、GitLab、Gitea 的 release / tag 可以作为版本视图与 changelog 来源，但当前不会直接驱动执行器更新。
 
-## 4. 更新模式
+## 4. 执行策略
 
-| `update_mode` | 行为 |
+| 界面选项 | 行为 |
 | ---- | ---- |
-| `manual` | 不参与调度，只能通过「运行一次」按钮触发。 |
-| `maintenance_window` | 在所配置的本地维护窗口内自动运行，窗口外会被跳过并在历史中记录 `outside maintenance window`。 |
-| `immediate` | 只要追踪器产出更高目标版本就立即执行更新。 |
+| 手动 | 不参与自动调度；仅在操作员点击「立即执行」时运行一次。 |
+| 维护窗口 | 自动检查是否需要更新，但只会在配置的本地维护窗口内执行；窗口外的触发会被跳过并在运行历史中记录原因。 |
+| 立即 | 一旦检测到更高的目标版本，就自动执行更新。 |
 
-`maintenance_window` 使用「系统设置」中的时区解释时间，例如允许日期 + 时间范围。
+维护窗口使用 **系统设置** 中的时区解释「允许日期」与开始 / 结束时间。
 
-## 5. 镜像策略
+## 5. 镜像策略与目标策略
 
-- **`image_selection_mode`**
-  - `replace_tag_on_current_image`（默认）：保留目标运行时当前镜像的 repo，仅替换 tag 为追踪器当前版本。举例：当前镜像 `ghcr.io/owner/app:1.2.0`、追踪器目标版本 `1.3.0` → 新镜像 `ghcr.io/owner/app:1.3.0`。
-  - `use_tracker_image_and_tag`：直接使用追踪器源里配置的 `registry + image` 作为新镜像 repo，tag 取自追踪器当前版本。
-- **`image_reference_mode`**
-  - `digest`（默认）：发出的镜像引用带 `@sha256:...` 摘要，可重放性强。
-  - `tag`：仅使用 tag 引用。对无法稳定拉取 digest 的来源（某些自托管 Registry）更方便，但失去内容寻址的保证。
+- **镜像策略**
+  - **保留当前镜像名**（默认）：保留目标运行时当前镜像的仓库名，只把版本替换为追踪器当前版本。举例：当前镜像 `ghcr.io/owner/app:1.2.0`、追踪器目标版本 `1.3.0` → 新镜像 `ghcr.io/owner/app:1.3.0`。
+  - **使用追踪到的镜像名**：使用所选来源提供的镜像名和版本。
+- **目标策略**
+  - **优先使用不可变镜像**（默认）：可用时使用带 `@sha256:...` 摘要的镜像引用，可重放性更强。
+  - **优先使用版本标签**：只使用 tag 引用。对无法稳定拉取摘要的来源（某些自托管 Registry）更方便，但失去内容寻址的保证。
 
 ## 6. 快照与回滚
 
-仅以下模式会在**更新前**自动捕获快照：
+完整运行时配置快照 / 恢复仅用于 Docker / Podman 的破坏性重建目标：
 
-- `container`（Docker / Podman 单容器）
-- `helm_release`
+- Docker / Podman 单容器
+- Docker / Podman Compose 分组更新
 
-其余模式 (`docker_compose`、`portainer_stack`、`kubernetes_workload`) 执行更新时**不生成快照**，`POST /api/executors/{id}/rollback` 无法对它们生效（缺少可用快照会返回 404）。详见 [已知限制](../limitations.md)。
+这些目标在更新前保存用于重建的运行时配置；在失败恢复或手动回滚时，会尽量按快照重建容器、网络、卷、端口、标签等配置。Podman Compose 回滚会基于稳定的容器 / service 名称解析当前 pod 与运行时对象，不应假定容器 ID 或 pod ID 在更新后保持不变。
 
-快照保留数量由系统设置的 `executor_snapshot_retention_count`（默认 10）控制。
+Portainer Stack、Kubernetes 工作负载、Helm Release 不作为 ReleaseTracker 管理的完整运行时配置快照目标：Portainer Stack 通过声明式 stack-file API 更新，Kubernetes 工作负载更新 Deployment / StatefulSet / DaemonSet 的镜像配置，Helm Release 通过 Helm 3 升级流程与版本历史管理。
+
+快照保留数量由 **系统设置 → 执行器快照保留数量** 控制（默认 10）。快照历史面板仅对上述破坏性重建且具备快照能力的执行器显示；历史项支持带确认的回滚与删除。
 
 ## 7. 健康检查
 
-每个执行器可配置一个 `health_check` 策略。按目标模式允许的策略：
+每个执行器可配置一个更新后健康检查策略。常用策略包括：
 
-| 模式 | 可选策略 |
+- **关闭**：不执行更新后探测。
+- **自动（推荐）/ 运行时原生就绪**：优先使用运行时原生健康信息；Docker / Podman 可读取容器 healthcheck 或回退到运行状态判断。
+- **手动 HTTP 探针**：按配置的主机、端口、路径、协议、方法、状态码、响应内容正则、请求头与 TLS 选项执行 HTTP 探测。
+- **手动 TCP 探针**：按配置的主机和端口执行 TCP 探测。
+- **Helm 发布状态**：Helm Release 的默认策略，用于 Helm 状态检查。
+
+默认策略：
+
+| 目标类型 | 默认策略 |
 | ---- | ---- |
-| `container` / `docker_compose` / `portainer_stack` / `kubernetes_workload` | `none`、`auto`、`runtime_native`、`manual_http`、`manual_tcp`、`http`、`tcp` |
-| `helm_release` | `none`、`auto`、`helm_status`、`runtime_native`、`manual_http`、`manual_tcp`、`http`、`tcp` |
+| 容器 / Docker Compose 项目 / Portainer Stack / Kubernetes 工作负载 | 自动（推荐） |
+| Helm Release | Helm 发布状态 |
 
-默认值（`use_default_strategy=true` 时）：
-
-| 模式 | 默认策略 |
-| ---- | ---- |
-| `container` / `docker_compose` / `portainer_stack` / `kubernetes_workload` | `auto` |
-| `helm_release` | `helm_status` |
-
-默认模板使用：`grace_period_seconds=15`、`attempt_timeout_seconds=10`、`interval_seconds=5`、`probe_window_seconds=180`、`failure_policy=mark_failed`。
+默认模板使用 15 秒等待期、10 秒单次超时、5 秒探测间隔、180 秒总探测时长，失败时把运行标记为失败。探测窗口、单次超时与间隔均有上限校验；使用手动 HTTP / TCP 策略时需要显式提供可从 ReleaseTracker 后端访问的主机。
 
 !!! note "健康检查仍在完善中"
-    健康检查框架已上线，但恢复挂钩（自动回滚）仅在那些既支持快照又支持运行时原生探测的目标上完整工作。`docker_compose` / `portainer_stack` / `kubernetes_workload` 即使启用 `failure_policy=mark_failed_and_recover`，也会因为没有快照而无法回滚，此时仅表现为运行结果被标记为失败。
+    Docker / Podman 单容器路径已接入更新后健康检查与失败策略。分组目标（Compose / Portainer Stack / Kubernetes 工作负载 / Helm Release）的更新流水线与健康检查接线仍在演进，不应把 Kubernetes、Portainer 或 Helm 文档化为已支持任意 host-port 探测的目标。自动恢复（失败时回滚）只有在目标既有可用快照，又有对应探测接线时才可能端到端生效。
 
 ## 8. 运行结果状态
 
-- `success`：更新完成且（若启用）健康检查通过。
-- `failed`：更新本身失败，或健康检查在 `mark_failed` 策略下失败。
-- `skipped`：当前目标已经处于目标版本、执行器被禁用、非维护窗口、或必要条件缺失等。
+- **成功**：更新完成且（若启用）健康检查通过。
+- **失败**：更新本身失败，或健康检查按所选失败处理策略把运行标记为失败。
+- **跳过**：当前目标已经处于目标版本、执行器被禁用、非维护窗口、或必要条件缺失等。
 
-分组目标（compose / stack / workload）的运行结果会把每个 service 的结果合并到 `diagnostics` 字段中，便于排查。
+分组目标（Compose / Stack / Workload）的运行结果会把每个服务的结果合并到诊断详情中，便于排查。
 
 ## 9. 运行历史
 
-- **执行器 → 运行历史** 展示单次运行的 from / to 版本、状态、消息与诊断 JSON。
+- **执行器 → 运行历史** 展示单次运行的起始版本、目标版本、状态、消息与诊断详情。
 - 历史条目可在详情页「清空历史」一键删除（不影响快照）。
 
 ## 10. 常见问题
 
-!!! failure "保存执行器返回 `target_ref.mode '...' is only supported when runtime_type is '...'`"
-    运行时类型与目标模式不匹配。对照第 2 节的矩阵修正。
+!!! failure "保存执行器提示目标类型与运行时不匹配"
+    运行时连接类型与目标类型不匹配。对照第 2 节的矩阵修正。
 
 !!! failure "绑定追踪器源时不显示某个源"
-    只有 `container` / `helm` 两类源可绑定。Git 平台的源需要改造目标架构后才能支持，当前未支持。
+    只有容器镜像来源和 Helm Chart 来源可绑定。Git 平台的源需要改造目标架构后才能支持，当前未支持。
 
-!!! failure "Kubernetes 工作负载 / Compose / Portainer Stack 执行器的「回滚」按钮灰了 / 返回 404"
-    这些模式当前不会生成快照，因此无法回滚。遇到更新失败时需要通过原生工具手动恢复，例如 `kubectl rollout undo`、`docker compose up -d` 等。
+!!! failure "Kubernetes 工作负载 / Portainer Stack / Helm Release 执行器的「回滚」按钮灰了 / 返回 404"
+    这些目标当前不作为完整运行时配置快照目标，因此无法通过 ReleaseTracker 快照回滚。遇到更新失败时需要通过原生工具手动恢复，例如 `kubectl rollout undo`、Helm rollback、Portainer UI 等。
 
-!!! failure "维护窗口模式的执行器长期没跑"
+!!! info "Compose 回滚后容器或 pod ID 变化"
+    Docker / Podman Compose 回滚会按快照重建运行时对象，容器 ID 或 pod ID 可能变化。Podman Compose 会基于稳定名称解析当前 pod / 容器，避免依赖旧的 pod ID。
+
+!!! failure "维护窗口策略的执行器长期没跑"
     - 确认系统设置里的时区与运营时区一致（维护窗口按该时区解释）。
     - 确认「允许日期」没有无意间留空出现错误匹配；留空代表允许所有日期。
-    - 到达时间窗口时会自动扫描一次；运行日志里会记录 `inside maintenance window` 或 `outside maintenance window`。
+    - 到达时间窗口时会自动扫描一次；运行历史会标注触发是在窗口内还是窗口外。

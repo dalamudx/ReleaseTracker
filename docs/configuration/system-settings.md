@@ -42,11 +42,11 @@ OIDC callback 的完整形式：
 
 **执行器快照保留**按执行器计数，超出数量的旧快照会在以下时机被修剪：
 
-- 每次成功捕获一个新的 `pre_update` / `pre_rollback` 快照之后；
+- 每次成功捕获更新前快照或回滚前快照之后；
 - 手动触发 **系统设置 → 维护 → 清理快照历史** 时。
 
 !!! note "快照捕获范围有限"
-    仅 Docker / Podman 单容器模式与 Helm Release 模式会捕获更新前快照；其他执行器模式不会产生快照，因此保留数量对它们无实际影响。详见 [已知限制](../limitations.md)。
+    完整运行时配置快照仅用于 Docker / Podman 的破坏性重建目标：单容器与 Compose 分组更新。Portainer Stack、Kubernetes Workload、Helm Release 不作为 ReleaseTracker 管理的完整配置快照目标，因此保留数量对它们通常无实际影响。详见 [已知限制](../limitations.md)。
 
 ## 4. 系统密钥轮换
 
@@ -81,7 +81,7 @@ ReleaseTracker 维护两把密钥，保存在 `data/system-secrets.json`：
 
 ## 6. 时区对哪些行为生效
 
-- 维护窗口：执行器的 `maintenance_window` 使用该时区解析允许日期和时间窗口。
+- 维护窗口：执行器中选择「维护窗口」策略时，允许日期和时间窗口会按该时区解析。
 - 清理统计：版本历史清理、调度日志中的时间戳按该时区展示。
 - 前端格式化：界面上多数时间显示会遵循该时区（除了一些强制以 UTC 显示的系统字段）。
 

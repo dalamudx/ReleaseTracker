@@ -4,119 +4,90 @@ title: Trackers
 
 # Trackers
 
-A tracker defines which version sources ReleaseTracker scans, how it filters and merges releases, and what version view is produced for executors to consume.
+A tracker defines which upstreams ReleaseTracker scans, how versions are filtered and merged, and which “current version” is offered to executors.
 
-## 1. Model
+## 1. What you choose when creating a tracker
 
-Each tracker is an **aggregate tracker** that binds one or more **tracker sources**. Each source can carry its own set of **release channel** rules.
+In **Trackers → New**, you typically configure:
 
-```text
-AggregateTracker
-├── primary_changelog_source_key   # Chooses which source provides release notes
-├── sources[]
-│   ├── source_key                  # Unique within the tracker
-│   ├── source_type                 # github / gitlab / gitea / helm / container
-│   ├── source_config               # Type-specific fields
-│   ├── credential_name             # Reference into Credentials
-│   └── release_channels[]          # Channel filter rules
-└── ...
-```
+- **Tracker name**: the project or component represented by this tracker.
+- **Tracked channels**: one tracker can include multiple upstreams, such as GitHub releases, a Helm chart repository, and a container image registry.
+- **Primary changelog channel**: when multiple channels report the same version, release notes shown in the UI come from this channel.
+- **Release channels**: split versions from a tracked channel into Stable, Pre-Release, Beta, or Canary.
+- **Include / exclude regex**: filter which version tags are visible in each release channel.
+- **Credentials**: optional, used to increase GitHub / Docker Hub rate limits or access private repositories.
 
-## 2. Supported source types
+## 2. Supported tracked channels
 
-| Type | Required `source_config` | Optional |
-| ---- | ------------------------ | -------- |
-| `github` | `repo` (`owner/name`) | `fetch_mode` (`graphql_first` / `rest_first`; default `rest_first`) |
-| `gitlab` | `project` (`group/project`) | `instance` (self-hosted URL) |
-| `gitea` | `repo` (`owner/name`) | `instance` (Gitea URL) |
-| `helm` | `repo` (chart repository URL) + `chart` | — |
-| `container` | `image` (e.g. `library/nginx` or `owner/image`) + `registry` | `published_at_mode` (`auto` / `prefer_real` / `first_observed`; default `auto`) |
+| UI channel type | Required input | Optional settings |
+| --------------- | -------------- | ----------------- |
+| GitHub | Repository path (`owner/name`) | Fetch priority: REST First or GraphQL First |
+| GitLab | Project path (`group/project`) | Self-hosted instance URL |
+| Gitea | Repository path (`owner/name`) | Gitea instance URL |
+| Helm | Chart repository URL and chart name | — |
+| Container | Image name (for example `library/nginx` or `owner/image`) and registry root URL | Publish-time strategy: Auto, Prefer real publish time, or First observed time |
 
-All fields are validated as non-empty strings at save time; invalid configs return `400`.
+Required inputs are validated when saving. Missing repositories, images, charts, or similar key settings return `400` and are surfaced in the UI.
 
 ### Notable options
 
-- **`github.fetch_mode`**
-  - `graphql_first`: try the GraphQL releases endpoint first; fall back to REST if it fails (token scope mismatch, GraphQL quota exhaustion, …).
-  - `rest_first` (default): use the REST API directly.
-- **`container.published_at_mode`**
-  - `auto` (default): fetch the image config blob for well-behaved registries; fall back to "first observed time" for rate-limited anonymous registries such as Docker Hub or Quay without credentials.
-  - `prefer_real`: always attempt to fetch the config blob. Operators accept the rate-limit cost.
-  - `first_observed`: never fetch the config blob; use the time ReleaseTracker first observed the tag.
+- **GitHub Fetch Priority**
+  - **GraphQL First**: try the GraphQL releases endpoint first; fall back to REST if it fails (token scope mismatch, GraphQL quota exhaustion, and similar cases).
+  - **REST First** (default): use the REST API directly.
+- **Container publish-time strategy**
+  - **Auto** (default): fetch the image config blob for well-behaved registries; fall back to “first observed time” for rate-limited anonymous registries such as Docker Hub or Quay without credentials.
+  - **Prefer real publish time**: always attempt to fetch the config blob. Operators accept the rate-limit cost.
+  - **First observed time**: never fetch the config blob; use the time ReleaseTracker first observed the tag.
 
-### `fallback_tags` (aggregate level)
+### Tag-only repositories
 
-When a source has no release data (common for repositories that only tag), enabling `fallback_tags=true` lets the tracker derive versions from `refs/tags`. This is an aggregate-level toggle, not per source.
+When a GitHub / GitLab / Gitea repository has no release data (common for repositories that only tag), enable the tracker-level “fallback to tags” capability so ReleaseTracker derives versions from tags. This is a whole-tracker switch, not a per-channel setting.
 
 ## 3. Release channels
 
-Release channels split releases from a source into one of four slots: `stable`, `prerelease`, `beta`, `canary`.
-
-```text
-ReleaseChannel {
-  release_channel_key: string         # Unique within the source
-  name:                stable | prerelease | beta | canary
-  type:                release | prerelease | null
-  include_pattern:     regex | null
-  exclude_pattern:     regex | null
-  enabled:             bool
-}
-```
+Release channels split versions from a tracked channel into four UI categories: **Stable**, **Pre-Release**, **Beta**, and **Canary**. These are the only supported categories today; custom release channel names are not supported.
 
 Rules:
 
-- `name` **must** be one of the four enum values; custom names are not allowed.
-- `type` only applies to GitHub / GitLab / Gitea sources (platforms that distinguish release vs. prerelease). It is ignored for Helm and container sources.
-- `include_pattern` uses Python's `re.search` against `tag_name`; the release must match to be included.
-- `exclude_pattern` excludes matching releases and **takes precedence** over `include_pattern`.
-- A channel with `enabled=false` does not participate in filtering (effectively inactive).
-- A single release may qualify for multiple channels; each channel is evaluated independently.
+- Release-type filtering only applies to GitHub / GitLab / Gitea because those platforms distinguish releases from pre-releases. Helm and container image sources ignore this filter.
+- The **include regex** must match the version tag for the version to enter the selected release channel. Leaving it empty includes all versions.
+- The **exclude regex** blocks matching version tags even if the include regex also matches.
+- Disabled release channels do not participate in filtering.
+- A single version can qualify for multiple release channels; each channel is evaluated independently.
 
-Match scope: `include_pattern` and `exclude_pattern` both currently match against `tag_name` only.
+Include / exclude regexes currently match version tags only. They do not match release body, author, or other metadata.
 
-## 4. Aggregation and the "current view"
+## 4. Aggregation and the “current view”
 
-The scheduler periodically scans each enabled source and writes observations into their histories:
+The scheduler periodically scans each enabled tracked channel and writes discovered versions into history. ReleaseTracker then filters, deduplicates, merges, and chooses one current highest version per release channel for executors to consume.
 
-```
-Upstream source
-  ↓ scheduler fetch
-SourceReleaseObservation  (raw per-fetch observation)
-  ↓ dedup
-SourceReleaseHistory      (per-source history, keyed by identity_key)
-  ↓ channel filter + cross-source merge
-TrackerReleaseHistory     (aggregate-level history)
-  ↓ pick the best entry per rule
-TrackerCurrentRelease     (current view)
-```
-
-The current view keeps exactly **one** entry per channel — the latest executable version, consumed by executors. The changelog source is chosen by `primary_changelog_source_key`: when the same version appears in multiple sources, the body from the selected source is used for display.
+When multiple tracked channels report the same version, the version is merged for display; changelog text comes from the primary changelog channel you selected.
 
 ## 5. Scheduling and manual checks
 
-- Each aggregate tracker has its own `interval` in minutes (default `360`).
-- "Check now" from the tracker detail page triggers a one-off scan.
+- Each tracker has its own scan interval in minutes (default `360`).
+- **Check now** from the tracker detail page triggers a one-off scan.
 - Manual checks are throttled: a second manual trigger within 30 seconds of the previous completion is skipped, returning the previous result immediately.
-- The scheduler enforces per-provider concurrency caps (2 concurrent fetches each for GitHub, GitLab, Gitea, Helm, and Container sources) to avoid hammering upstreams.
+- The scheduler enforces per-provider concurrency caps (2 concurrent fetches each for GitHub, GitLab, Gitea, Helm, and Container channels) to avoid hammering upstreams.
 
 ## 6. Rate limits and credentials
 
-- **GitHub**: anonymous access has strict rate limits. For any non-trivial list of trackers, configuring a GitHub credential (`credential_type=github`) is strongly recommended.
-- **Docker Hub**: anonymous manifest / config blob pulls hit rate limits quickly. Configure a `docker` credential, or use `published_at_mode=first_observed` as a temporary workaround.
-- **Self-hosted GitLab / Gitea**: include the scheme in `instance`, for example `https://gitlab.company.internal`.
+- **GitHub**: anonymous access has strict rate limits. For any non-trivial list of trackers, configuring a GitHub credential is strongly recommended.
+- **Docker Hub**: anonymous manifest / config blob pulls hit rate limits quickly. Configure a Docker credential, or temporarily switch the container publish-time strategy to **First observed time** to avoid config blob pulls.
+- **Self-hosted GitLab / Gitea**: include the scheme in the instance URL, for example `https://gitlab.company.internal`.
 
 ## 7. Common issues
 
-!!! failure "Saving a tracker returns `source_config must be a non-empty string`"
-    A required source_config field is missing or empty. Cross-check the required fields in section 2.
+!!! failure "Saving a tracker returns 400 and says configuration cannot be empty"
+    A required setting is missing or empty. Cross-check section 2 and fill in the repository path, image name, registry, chart, or other required input.
 
 !!! failure "GitHub scans fail with 403 / 429"
-    You have hit GitHub's rate limits. Attach a GitHub token credential, or switch `fetch_mode` to `graphql_first` (GraphQL has a separate, often higher quota for authenticated calls).
+    You have hit GitHub's rate limits. Attach a GitHub token credential to the tracked channel, or switch GitHub Fetch Priority to GraphQL First (GraphQL has a separate, often higher quota for authenticated calls).
 
 !!! failure "Container tracker shows wrong release times"
-    Anonymous access to public registries can make config blob fetches unreliable. Switching to `published_at_mode=first_observed` avoids the blob fetch, at the cost of reporting ReleaseTracker's observation time rather than the true publish time.
+    Anonymous access to public registries can make config blob fetches unreliable. Switching to **First observed time** avoids the blob fetch, at the cost of reporting ReleaseTracker's observation time rather than the true publish time.
 
 !!! failure "Channel configuration looks correct but no release appears"
-    - Check that `exclude_pattern` is not unintentionally matching (it wins over include).
-    - Confirm the channel `name` is one of `stable` / `prerelease` / `beta` / `canary`.
-    - Confirm the source-level and channel-level `enabled` flags are both `true`.
+    - Check that the exclude regex is not unintentionally matching (it wins over include).
+    - Confirm the release channel is set to the expected Stable, Pre-Release, Beta, or Canary category.
+    - Confirm both the tracked channel and release channel are enabled.
