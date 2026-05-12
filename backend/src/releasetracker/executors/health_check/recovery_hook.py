@@ -1,13 +1,9 @@
-"""Recovery Hook Coordinator.
+"""Snapshot recovery coordinator for manual rollback.
 
-When a post-update health check concludes unhealthy and the executor's
-``failure_policy`` is ``mark_failed_and_recover``, the coordinator:
-1. Loads the most recent ``ExecutorSnapshot`` from the multi-row history.
-2. Validates it via the runtime adapter.
-3. Invokes ``recover_from_snapshot`` under a wall-clock budget.
-4. Maps exceptions to a ``recovery_outcome`` string and preserves the
-   underlying error text so callers can persist it into
-   ``diagnostics.recovery_error``.
+The coordinator is used by manual rollback flows to apply a selected
+``ExecutorSnapshot``. Post-update health checks and update failures must not
+call this helper automatically; operators trigger rollback explicitly via the
+UI/API.
 """
 
 from __future__ import annotations
@@ -96,16 +92,15 @@ class RecoveryHookCoordinator:
         budget_seconds: int,
         snapshot: ExecutorSnapshot | None = None,
     ) -> RecoveryResult:
-        # Manual rollbacks supply the explicit target snapshot so the
-        # coordinator does not pick up a pre_rollback row the caller
-        # just inserted. Automatic recovery from a failed post-update
-        # health check passes ``None`` and relies on "most recent" semantics.
+        # Manual rollbacks normally supply the explicit target snapshot so the
+        # coordinator does not pick up a pre_rollback row the caller just
+        # inserted. A ``None`` snapshot is retained for direct callers that want
+        # latest-snapshot recovery, but scheduler failure paths must not call it
+        # automatically.
         if snapshot is None:
             snapshot = await self._storage.get_executor_snapshot(executor_id)
         if snapshot is None:
-            logger.info(
-                "recovery_hook_no_snapshot executor_id=%s", executor_id
-            )
+            logger.info("recovery_hook_no_snapshot executor_id=%s", executor_id)
             return RecoveryResult(outcome="no_snapshot")
 
         snapshot_data = snapshot.snapshot_data
@@ -148,9 +143,7 @@ class RecoveryHookCoordinator:
             )
             return RecoveryResult(
                 outcome="timeout",
-                error=_truncate_error(
-                    f"recovery exceeded {budget_seconds}s budget"
-                ),
+                error=_truncate_error(f"recovery exceeded {budget_seconds}s budget"),
             )
         except Exception as exc:
             logger.warning(
@@ -174,8 +167,10 @@ class RecoveryHookCoordinator:
             )
 
         message = getattr(result, "message", None)
-        error = _truncate_error(message) if isinstance(message, str) and message else (
-            "recovery completed without applying changes"
+        error = (
+            _truncate_error(message)
+            if isinstance(message, str) and message
+            else ("recovery completed without applying changes")
         )
         return RecoveryResult(
             outcome="failed",

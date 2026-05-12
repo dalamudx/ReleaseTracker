@@ -62,7 +62,7 @@ Full runtime configuration snapshots / restores are used only for destructive Do
 - Docker / Podman single containers
 - Docker / Podman Compose grouped updates
 
-These targets persist enough runtime configuration before updates to rebuild containers, networks, volumes, ports, labels, and related settings during recovery or manual rollback. Podman Compose rollback resolves the current pod and runtime objects from stable container / service names; do not assume container IDs or pod IDs remain stable across updates.
+These targets persist enough runtime configuration before updates to rebuild containers, networks, volumes, ports, labels, and related settings during manual rollback. Failed updates and failed health checks do not trigger automatic rollback; operators choose whether to restore from an available snapshot. Podman Compose rollback resolves the current pod and runtime objects from stable container / service names; do not assume container IDs or pod IDs remain stable across updates.
 
 Portainer stacks, Kubernetes workloads, and Helm releases are not treated as full ReleaseTracker-managed runtime snapshot targets: Portainer stacks update through the declarative stack-file API, Kubernetes workloads patch image fields on Deployment / StatefulSet / DaemonSet objects, and Helm releases use Helm 3 upgrade flow and release history.
 
@@ -88,7 +88,7 @@ Defaults:
 The default template uses a 15-second grace period, 10-second attempt timeout, 5-second interval, 180-second total probe duration, and marks the run as failed on health-check failure. Probe window, attempt timeout, and interval values are bounded; manual HTTP / TCP strategies require an explicit host reachable from the ReleaseTracker backend.
 
 !!! note "Health checks are still evolving"
-    The Docker / Podman single-container path is wired for post-update health checks and failure policies. Grouped update pipelines (Compose / Portainer stack / Kubernetes workload / Helm release) are still being wired into health checks, so Kubernetes, Portainer, and Helm should not be documented as arbitrary host-port probe targets. Automatic recovery (rollback on failure) can only work end-to-end when the target has both an available snapshot and the matching probe wiring.
+    The Docker / Podman single-container path is wired for post-update health checks and failure policies. Grouped update pipelines (Compose / Portainer stack / Kubernetes workload / Helm release) are still being wired into health checks, so Kubernetes, Portainer, and Helm should not be documented as arbitrary host-port probe targets. Health-check failures mark the run failed or degraded according to policy, but rollback remains a manual UI/API action.
 
 ## 8. Run statuses
 

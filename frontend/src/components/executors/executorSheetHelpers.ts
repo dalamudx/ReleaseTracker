@@ -867,7 +867,7 @@ export function buildExecutorFormValues(config: ExecutorConfig): ExecutorFormVal
         maintenance_start_time: config.maintenance_window?.start_time ?? "02:00",
         maintenance_end_time: config.maintenance_window?.end_time ?? "05:00",
         health_check_strategy: health?.strategy ?? "none",
-        health_check_failure_policy: health?.failure_policy ?? "mark_failed",
+        health_check_failure_policy: normalizeHealthCheckFailurePolicy(health?.failure_policy),
         health_check_grace_period_seconds: String(health?.grace_period_seconds ?? 0),
         health_check_attempt_timeout_seconds: String(health?.attempt_timeout_seconds ?? 0),
         health_check_interval_seconds: String(health?.interval_seconds ?? 0),
@@ -1272,12 +1272,16 @@ export function buildExecutorPayload({
     }
 }
 
+function normalizeHealthCheckFailurePolicy(value: unknown): HealthCheckFailurePolicy {
+    return value === "mark_degraded" ? "mark_degraded" : "mark_failed"
+}
+
 function buildHealthCheckPayload(values: ExecutorFormValues, existingHealthCheck: HealthCheckProfile | null): HealthCheckProfile {
     const strategy = values.health_check_strategy
     return {
         strategy,
         use_default_strategy: false,
-        failure_policy: strategy === "none" ? "mark_failed" : values.health_check_failure_policy,
+        failure_policy: strategy === "none" ? "mark_failed" : normalizeHealthCheckFailurePolicy(values.health_check_failure_policy),
         grace_period_seconds: toNonNegativeInt(values.health_check_grace_period_seconds),
         attempt_timeout_seconds: toNonNegativeInt(values.health_check_attempt_timeout_seconds),
         interval_seconds: toNonNegativeInt(values.health_check_interval_seconds),

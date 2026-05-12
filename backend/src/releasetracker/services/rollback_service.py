@@ -12,7 +12,6 @@ from fastapi import HTTPException
 from ..executors.health_check.recovery_hook import (
     RecoveryHookCoordinator,
     RecoveryOutcome,
-    RecoveryResult,
 )
 from ..models import ExecutorRunHistory, ExecutorSnapshot
 

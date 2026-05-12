@@ -55,8 +55,8 @@ class FakeContainer:
         if self._event_log is not None:
             self._event_log.append(f"stop:{self.name}")
 
-    def remove(self) -> None:
-        self.remove_calls.append(True)
+    def remove(self, **kwargs) -> None:
+        self.remove_calls.append(kwargs or True)
         if self._event_log is not None:
             self._event_log.append(f"remove:{self.name}")
         if self._on_remove is not None:
@@ -4492,7 +4492,7 @@ async def test_docker_compose_grouped_update_orders_only_targeted_specs_and_igno
 
 
 @pytest.mark.asyncio
-async def test_docker_compose_grouped_update_recovers_recreated_services_after_partial_failure():
+async def test_docker_compose_grouped_update_cleans_replacements_after_partial_failure():
     runtime = RuntimeConnectionConfig(
         name="docker-prod",
         type="docker",
@@ -4552,7 +4552,7 @@ async def test_docker_compose_grouped_update_recovers_recreated_services_after_p
 
     with pytest.raises(
         RuntimeMutationError,
-        match="docker compose grouped update failed after destructive steps began and recovery succeeded best-effort",
+        match="docker compose grouped update failed after destructive steps began; manual rollback from snapshot is required",
     ) as exc_info:
         await adapter.update_compose_services(
             {"mode": "docker_compose", "project": "release-stack"},
@@ -4566,8 +4566,6 @@ async def test_docker_compose_grouped_update_recovers_recreated_services_after_p
     assert [call["image"] for call in client.containers.create_calls] == [
         "ghcr.io/acme/worker:9.2",
         "ghcr.io/acme/api:1.2.4",
-        "ghcr.io/acme/worker:9.1",
-        "ghcr.io/acme/api:1.2.3",
     ]
     assert client.containers.event_log == [
         "stop:release-stack-api-1",
@@ -4579,19 +4577,15 @@ async def test_docker_compose_grouped_update_recovers_recreated_services_after_p
         "create:release-stack-api-1",
         "start:release-stack-api-1",
         "remove:release-stack-worker-1",
-        "create:release-stack-worker-1",
-        "start:release-stack-worker-1",
         "remove:release-stack-api-1",
-        "create:release-stack-api-1",
-        "start:release-stack-api-1",
     ]
-    assert len(client.containers._created) == 4
+    assert len(client.containers._created) == 2
     assert len(client.containers._created[0].remove_calls) == 1
     assert len(client.containers._created[1].remove_calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_docker_compose_grouped_update_recovery_uses_snapshot_payload_not_failed_replacement():
+async def test_docker_compose_grouped_update_cleans_created_replacements_without_snapshot_restore():
     runtime = RuntimeConnectionConfig(
         name="docker-prod",
         type="docker",
@@ -4639,33 +4633,22 @@ async def test_docker_compose_grouped_update_recovery_uses_snapshot_payload_not_
     client.containers.fail_start_for_images.add("ghcr.io/acme/api:1.2.4")
     adapter = DockerRuntimeAdapter(runtime, client=client)
 
-    with pytest.raises(RuntimeMutationError, match="recovery succeeded best-effort"):
+    with pytest.raises(
+        RuntimeMutationError,
+        match="manual rollback from snapshot is required",
+    ):
         await adapter.update_compose_services(
             {"mode": "docker_compose", "project": "release-stack"},
             {"api": "ghcr.io/acme/api:1.2.4"},
         )
 
-    assert client.containers.create_calls[0]["image"] == "ghcr.io/acme/api:1.2.4"
-    assert client.containers.create_calls[1] == {
-        "image": "ghcr.io/acme/api:1.2.3",
-        "name": "release-stack-api-1",
-        "environment": ["APP_MODE=stable"],
-        "ports": {"8000/tcp": [("", 8080), ("127.0.0.1", 18080)]},
-        "volumes": {"/srv/api": {"bind": "/app/data", "mode": "ro"}},
-        "restart_policy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
-        "network_mode": "release-stack_default",
-        "labels": labels,
-    }
+    assert [call["image"] for call in client.containers.create_calls] == ["ghcr.io/acme/api:1.2.4"]
+    assert len(client.containers._created) == 1
+    assert len(client.containers._created[0].remove_calls) == 1
     assert client.networks.disconnect_calls == [
-        ("release-stack_default", "release-stack-api-1", True),
         ("release-stack_default", "release-stack-api-1", True),
     ]
     assert client.networks.connect_calls == [
-        (
-            "release-stack_default",
-            "release-stack-api-1",
-            {"aliases": ["api", "release-stack-api-1"]},
-        ),
         (
             "release-stack_default",
             "release-stack-api-1",
@@ -5093,9 +5076,9 @@ async def test_podman_compose_grouped_update_recreates_pod_backed_targets_in_sam
     assert "pod-aware update completed" in (result.message or "")
     assert client.images.pull_calls == ["ghcr.io/acme/api:1.1", "ghcr.io/acme/worker:9.2"]
     assert worker.stop_calls == [True]
-    assert worker.remove_calls == [True]
+    assert worker.remove_calls == [{"force": True}]
     assert api.stop_calls == [True]
-    assert api.remove_calls == [True]
+    assert api.remove_calls == [{"force": True}]
     assert client.api.post_calls
     assert client.containers.create_calls == [
         {
@@ -5968,7 +5951,7 @@ async def test_podman_compose_grouped_update_recreates_same_pod_sibling_without_
 
 
 @pytest.mark.asyncio
-async def test_podman_compose_grouped_update_records_renamed_backup_before_recovery():
+async def test_podman_compose_grouped_update_does_not_restore_renamed_backup_automatically():
     runtime = RuntimeConnectionConfig(
         name="podman-prod",
         type="podman",
@@ -5994,7 +5977,7 @@ async def test_podman_compose_grouped_update_records_renamed_backup_before_recov
     client.containers.fail_remove_for_names.add("core-api-1-rt-backup-api-1")
     adapter = PodmanRuntimeAdapter(runtime, client=client)
 
-    with pytest.raises(RuntimeMutationError, match="recovery succeeded best-effort"):
+    with pytest.raises(RuntimeMutationError, match="manual rollback from snapshot is required"):
         await adapter.update_compose_services(
             {"mode": "docker_compose", "project": "core"},
             {"api": "ghcr.io/acme/api:1.1"},
@@ -6004,11 +5987,10 @@ async def test_podman_compose_grouped_update_records_renamed_backup_before_recov
         "stop:core-api-1",
         "rename:core-api-1->core-api-1-rt-backup-api-1",
         "remove:core-api-1-rt-backup-api-1",
-        "rename:core-api-1-rt-backup-api-1->core-api-1",
-        "start:core-api-1",
-        "start:core-api-1",
     ]
-    assert [container.name for container in client.containers.list(all=True)] == ["core-api-1"]
+    assert [container.name for container in client.containers.list(all=True)] == [
+        "core-api-1-rt-backup-api-1"
+    ]
 
 
 @pytest.mark.asyncio
@@ -6318,7 +6300,7 @@ async def test_podman_compose_grouped_update_tolerates_stop_json_decode_error_wh
 
     assert result.updated is True
     assert api.stop_calls == [True]
-    assert api.remove_calls == [True]
+    assert api.remove_calls == [{"force": True}]
     assert client.api.post_calls
     payloads = client.containers.create_calls
     assert payloads == [
@@ -6366,7 +6348,7 @@ async def test_podman_compose_grouped_update_tolerates_remove_json_decode_error_
 
     assert result.updated is True
     assert api.stop_calls == [True]
-    assert api.remove_calls == [True]
+    assert api.remove_calls == [{"force": True}]
     assert client.api.post_calls
     payloads = client.containers.create_calls
     assert payloads == [
@@ -7094,7 +7076,7 @@ async def test_podman_compose_grouped_update_fails_fast_for_mixed_pod_topology_b
 
 
 @pytest.mark.asyncio
-async def test_podman_compose_grouped_update_recovers_best_effort_after_partial_failure():
+async def test_podman_compose_grouped_update_leaves_failed_partial_update_for_manual_rollback():
     runtime = RuntimeConnectionConfig(
         name="podman-prod",
         type="podman",
@@ -7136,7 +7118,7 @@ async def test_podman_compose_grouped_update_recovers_best_effort_after_partial_
 
     with pytest.raises(
         RuntimeMutationError,
-        match="podman grouped compose update failed after destructive steps began and recovery succeeded best-effort",
+        match="podman grouped compose update failed after destructive steps began; manual rollback from snapshot is required",
     ) as exc_info:
         await adapter.update_compose_services(
             {"mode": "docker_compose", "project": "core"},
@@ -7150,8 +7132,6 @@ async def test_podman_compose_grouped_update_recovers_best_effort_after_partial_
     assert [call["image"] for call in client.containers.create_calls] == [
         "ghcr.io/acme/api:1.1",
         "ghcr.io/acme/worker:9.2",
-        "ghcr.io/acme/api:1.0",
-        "ghcr.io/acme/worker:9.1",
     ]
     assert all(call["pod"] == "core-pod" for call in client.containers.create_calls)
     assert all(call["pod"] != "pod-core" for call in client.containers.create_calls)
@@ -7167,17 +7147,11 @@ async def test_podman_compose_grouped_update_recovers_best_effort_after_partial_
         "start:core-api-1",
         "create:core-worker-1",
         "start:core-worker-1",
-        "remove:core-api-1",
-        "create:core-api-1",
-        "start:core-api-1",
-        "remove:core-worker-1",
-        "create:core-worker-1",
-        "start:core-worker-1",
     ]
 
 
 @pytest.mark.asyncio
-async def test_podman_compose_grouped_update_recovery_uses_snapshot_payload_not_failed_replacement():
+async def test_podman_compose_grouped_update_does_not_restore_snapshot_on_failure():
     runtime = RuntimeConnectionConfig(
         name="podman-prod",
         type="podman",
@@ -7213,7 +7187,7 @@ async def test_podman_compose_grouped_update_recovery_uses_snapshot_payload_not_
     client.containers.fail_start_for_images.add("ghcr.io/acme/api:1.1")
     adapter = PodmanRuntimeAdapter(runtime, client=client)
 
-    with pytest.raises(RuntimeMutationError, match="recovery succeeded best-effort"):
+    with pytest.raises(RuntimeMutationError, match="manual rollback from snapshot is required"):
         await adapter.update_compose_services(
             {"mode": "docker_compose", "project": "core"},
             {"api": "ghcr.io/acme/api:1.1"},
@@ -7221,40 +7195,25 @@ async def test_podman_compose_grouped_update_recovery_uses_snapshot_payload_not_
 
     assert client.api.post_calls
     payloads = client.containers.create_calls
-    assert payloads[0] == {
-        "image": "ghcr.io/acme/api:1.1",
-        "name": "core-api-1",
-        "env": {"APP_MODE": "stable"},
-        "mounts": [
-            {
-                "type": "bind",
-                "source": "/srv/api",
-                "destination": "/app/data",
-                "options": ["ro"],
-            }
-        ],
-        "restart_policy": "unless-stopped",
-        "restart_tries": 0,
-        "labels": labels,
-        "pod": "core-pod",
-    }
-    assert payloads[1] == {
-        "image": "ghcr.io/acme/api:1.0",
-        "name": "core-api-1",
-        "env": {"APP_MODE": "stable"},
-        "mounts": [
-            {
-                "type": "bind",
-                "source": "/srv/api",
-                "destination": "/app/data",
-                "options": ["ro"],
-            }
-        ],
-        "restart_policy": "unless-stopped",
-        "restart_tries": 0,
-        "labels": labels,
-        "pod": "core-pod",
-    }
+    assert payloads == [
+        {
+            "image": "ghcr.io/acme/api:1.1",
+            "name": "core-api-1",
+            "env": {"APP_MODE": "stable"},
+            "mounts": [
+                {
+                    "type": "bind",
+                    "source": "/srv/api",
+                    "destination": "/app/data",
+                    "options": ["ro"],
+                }
+            ],
+            "restart_policy": "unless-stopped",
+            "restart_tries": 0,
+            "labels": labels,
+            "pod": "core-pod",
+        }
+    ]
     low_level_payloads = [call["data"] for call in client.api.post_calls]
     assert all(not isinstance(payload.get("volumes"), dict) for payload in low_level_payloads)
     for payload in payloads:
@@ -7523,7 +7482,7 @@ def test_podman_safe_exception_message_redacts_json_style_secret_payloads():
 
 
 @pytest.mark.asyncio
-async def test_podman_compose_grouped_update_recovery_drops_empty_network_values(caplog):
+async def test_podman_compose_grouped_update_failure_sanitizes_empty_network_values(caplog):
     runtime = RuntimeConnectionConfig(
         name="podman-prod",
         type="podman",
@@ -7568,7 +7527,7 @@ async def test_podman_compose_grouped_update_recovery_drops_empty_network_values
     adapter = PodmanRuntimeAdapter(runtime, client=client)
 
     with caplog.at_level(logging.DEBUG, logger="releasetracker.executors.podman"):
-        with pytest.raises(RuntimeMutationError, match="recovery succeeded best-effort"):
+        with pytest.raises(RuntimeMutationError, match="manual rollback from snapshot is required"):
             await adapter.update_compose_services(
                 {"mode": "docker_compose", "project": "nginx"},
                 {"nginx": "docker.io/library/nginx:1.26"},
@@ -7576,7 +7535,6 @@ async def test_podman_compose_grouped_update_recovery_drops_empty_network_values
 
     assert [call["image"] for call in client.containers.create_calls] == [
         "docker.io/library/nginx:1.26",
-        "docker.io/library/nginx:1.25",
     ]
     assert all(
         "network_mode" not in call

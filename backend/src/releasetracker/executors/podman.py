@@ -147,12 +147,7 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         for image in sorted(set(update_plan.values())):
             client.images.pull(image)
 
-        snapshots_by_spec_key = {
-            self._grouped_runtime_recreate_spec_key(spec): dict(spec.snapshot_payload)
-            for spec in specs
-        }
         new_container_ids: list[str] = []
-        renamed_backups: list[tuple[str, str]] = []
         backup_names_by_spec_key: dict[str, str] = {}
         removal_order = list(reversed(specs))
         try:
@@ -171,7 +166,6 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                     if not isinstance(original_name, str) or not original_name.strip():
                         raise ValueError("podman grouped recreate spec missing container name")
                     self._rename_grouped_container_for_replacement(container, backup_name)
-                    renamed_backups.append((backup_name, original_name.strip()))
                     self._remove_grouped_container_with_sdk_decode_tolerance(client, container)
                 else:
                     self._remove_grouped_container_with_sdk_decode_tolerance(client, container)
@@ -214,22 +208,10 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
                 self._safe_exception_message(exc),
                 len(specs),
             )
-            backup_recovery_error = self._recover_renamed_grouped_backups(client, renamed_backups)
-            recovery_error = await self._recover_grouped_compose_runtime_update(
-                specs, snapshots_by_spec_key
-            )
-            if recovery_error is not None:
-                combined_recovery_error = recovery_error
-                if backup_recovery_error is not None:
-                    combined_recovery_error = f"{backup_recovery_error}; {recovery_error}"
-                raise RuntimeMutationError(
-                    "podman grouped compose update failed after destructive steps began; "
-                    f"best-effort recovery also failed: {combined_recovery_error}; original error: {exc}",
-                    destructive_started=True,
-                ) from exc
             raise RuntimeMutationError(
-                "podman grouped compose update failed after destructive steps began and recovery "
-                f"succeeded best-effort: {exc}",
+                "podman grouped compose update failed after destructive steps began; "
+                "manual rollback from snapshot is required: "
+                f"{exc}",
                 destructive_started=True,
             ) from exc
 
@@ -626,39 +608,6 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
         )
         create_config = dict(spec.create_config)
         return self._apply_podman_host_config_preservation(create_config, host_config)
-
-    async def _recover_grouped_compose_runtime_update(
-        self,
-        specs: list[GroupedRuntimeRecreateSpec],
-        snapshots_by_spec_key: dict[str, dict[str, Any]],
-    ) -> str | None:
-        recovery_failures: list[str] = []
-        client = self._get_client()
-        current_pod_refs = self._recover_snapshot_pods(
-            client,
-            [snapshot for snapshot in snapshots_by_spec_key.values() if isinstance(snapshot, dict)],
-        )
-        for spec in specs:
-            snapshot = snapshots_by_spec_key.get(self._grouped_runtime_recreate_spec_key(spec))
-            if not isinstance(snapshot, dict) or not snapshot:
-                recovery_failures.append(
-                    f"missing snapshot for {spec.container_name or spec.container_id or 'unknown container'}"
-                )
-                continue
-            try:
-                await self._recover_grouped_container_from_snapshot(
-                    snapshot,
-                    client=client,
-                    pod_ref_override=self._snapshot_pod_ref_override(snapshot, current_pod_refs),
-                )
-            except Exception as recovery_exc:
-                recovery_failures.append(
-                    f"{spec.container_name or spec.container_id or 'unknown container'}: {recovery_exc}"
-                )
-
-        if recovery_failures:
-            return "; ".join(recovery_failures)
-        return None
 
     async def _recover_grouped_container_from_snapshot(
         self,
@@ -1593,30 +1542,6 @@ class PodmanRuntimeAdapter(_ContainerRuntimeAdapter):
             except Exception:
                 return
             raise
-
-    def _recover_renamed_grouped_backups(
-        self,
-        client,
-        renamed_backups: list[tuple[str, str]],
-    ) -> str | None:
-        failures: list[str] = []
-        for backup_name, original_name in reversed(renamed_backups):
-            try:
-                backup_container = client.containers.get(backup_name)
-            except Exception:
-                continue
-            try:
-                try:
-                    existing = client.containers.get(original_name)
-                except Exception:
-                    existing = None
-                if existing is not None:
-                    self._remove_container_if_present(existing)
-                self._rename_grouped_container_for_replacement(backup_container, original_name)
-                backup_container.start()
-            except Exception as exc:
-                failures.append(f"{backup_name}: {exc}")
-        return "; ".join(failures) or None
 
     def _remove_container_if_present(self, container) -> None:
         # Force-remove so a still-running container doesn't block the

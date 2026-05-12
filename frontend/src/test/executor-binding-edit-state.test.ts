@@ -915,7 +915,7 @@ describe("executor binding edit state helpers", () => {
         const payload = buildExecutorPayload({
             values: createValues({
                 health_check_strategy: "manual_http",
-                health_check_failure_policy: "mark_failed_and_recover",
+                health_check_failure_policy: "mark_degraded",
                 health_check_grace_period_seconds: "5",
                 health_check_attempt_timeout_seconds: "2",
                 health_check_interval_seconds: "3",
@@ -943,7 +943,7 @@ describe("executor binding edit state helpers", () => {
 
         expect(payload.health_check).toMatchObject({
             strategy: "manual_http",
-            failure_policy: "mark_failed_and_recover",
+            failure_policy: "mark_degraded",
             grace_period_seconds: 5,
             attempt_timeout_seconds: 2,
             interval_seconds: 3,
@@ -958,14 +958,14 @@ describe("executor binding edit state helpers", () => {
         const payload = buildExecutorPayload({
             values: createValues({
                 health_check_strategy: "none",
-                health_check_failure_policy: "mark_failed_and_recover",
+                health_check_failure_policy: "mark_degraded",
             }),
             effectiveTrackerSourceId: "1",
             selectedTargetRef: { mode: "container", container_name: "api" },
             existingHealthCheck: {
                 strategy: "manual_tcp",
                 use_default_strategy: false,
-                failure_policy: "mark_failed_and_recover",
+                failure_policy: "mark_failed",
                 grace_period_seconds: 5,
                 attempt_timeout_seconds: 2,
                 interval_seconds: 3,
@@ -983,6 +983,56 @@ describe("executor binding edit state helpers", () => {
             http: null,
             tcp: null,
         })
+    })
+
+    it("normalizes legacy recover health-check policy while hydrating and saving", () => {
+        const hydrated = buildExecutorFormValues({
+            name: "executor",
+            runtime_type: "docker",
+            runtime_connection_id: 1,
+            tracker_name: "tracker",
+            tracker_source_id: 1,
+            channel_name: "stable",
+            enabled: true,
+            update_mode: "manual",
+            image_selection_mode: "replace_tag_on_current_image",
+            image_reference_mode: "digest",
+            target_ref: { mode: "container", container_name: "api" },
+            service_bindings: [],
+            maintenance_window: null,
+            description: null,
+            health_check: {
+                strategy: "runtime_native",
+                use_default_strategy: false,
+                failure_policy: "mark_failed_and_recover" as unknown as "mark_failed",
+                grace_period_seconds: 5,
+                attempt_timeout_seconds: 2,
+                interval_seconds: 3,
+                probe_window_seconds: 30,
+                services: null,
+                http: null,
+                tcp: null,
+            },
+        })
+
+        expect(hydrated.health_check_failure_policy).toBe("mark_failed")
+
+        const payload = buildExecutorPayload({
+            values: {
+                ...createValues({
+                    health_check_strategy: "runtime_native",
+                    health_check_grace_period_seconds: "5",
+                    health_check_attempt_timeout_seconds: "2",
+                    health_check_interval_seconds: "3",
+                    health_check_probe_window_seconds: "30",
+                }),
+                health_check_failure_policy: "mark_failed_and_recover" as unknown as "mark_failed",
+            },
+            effectiveTrackerSourceId: "1",
+            selectedTargetRef: { mode: "container", container_name: "api" },
+        })
+
+        expect(payload.health_check?.failure_policy).toBe("mark_failed")
     })
 
     it("builds portainer stack executor payloads with child service bindings", () => {

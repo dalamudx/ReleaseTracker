@@ -16,7 +16,6 @@ from ..config import (
     normalize_executor_target_ref,
 )
 from ..models import (
-    Credential,
     ExecutorDesiredState,
     ExecutorRunHistory,
     ExecutorSnapshot,

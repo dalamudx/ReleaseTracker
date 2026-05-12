@@ -524,9 +524,7 @@ HealthCheckStrategy = Literal[
     "tcp",
     "helm_status",
 ]
-HealthCheckFailurePolicy = Literal[
-    "mark_failed", "mark_failed_and_recover", "mark_degraded"
-]
+HealthCheckFailurePolicy = Literal["mark_failed", "mark_degraded"]
 
 # Legacy ``http`` / ``tcp`` strategies are still accepted for stored
 # runtime-derived configs, but the UI only exposes explicit manual modes.
@@ -618,9 +616,7 @@ class HealthCheckHttpConfig(BaseModel):
             )
         for entry in value:
             if not isinstance(entry, int) or isinstance(entry, bool):
-                raise ValueError(
-                    "health_check.http.expected_status_codes entries must be integers"
-                )
+                raise ValueError("health_check.http.expected_status_codes entries must be integers")
             if entry < 100 or entry > 599:
                 raise ValueError(
                     "health_check.http.expected_status_codes entries must be in 100..599"
@@ -656,9 +652,7 @@ class HealthCheckHttpConfig(BaseModel):
         if value is None:
             return {}
         if not isinstance(value, dict) or len(value) > 50:
-            raise ValueError(
-                "health_check.http.headers must be a map with at most 50 entries"
-            )
+            raise ValueError("health_check.http.headers must be a map with at most 50 entries")
         for key, entry in value.items():
             if not isinstance(key, str) or not isinstance(entry, str):
                 raise ValueError("health_check.http.headers keys and values must be strings")
@@ -732,13 +726,18 @@ class HealthCheckProfile(BaseModel):
     @classmethod
     def _validate_timing(cls, value: Any, info) -> int:
         if not isinstance(value, int) or isinstance(value, bool):
-            raise ValueError(
-                f"health_check.{info.field_name} must be an integer seconds value"
-            )
+            raise ValueError(f"health_check.{info.field_name} must be an integer seconds value")
         if value < 0 or value > 86400:
             raise ValueError(
                 f"health_check.{info.field_name} must be in the range 0..86400 seconds"
             )
+        return value
+
+    @field_validator("failure_policy", mode="before")
+    @classmethod
+    def _normalize_legacy_failure_policy(cls, value: Any) -> Any:
+        if value == "mark_failed_and_recover":
+            return "mark_failed"
         return value
 
     @field_validator("services")
@@ -747,15 +746,11 @@ class HealthCheckProfile(BaseModel):
         if value is None:
             return None
         if not isinstance(value, list) or not (1 <= len(value) <= 64):
-            raise ValueError(
-                "health_check.services must be a list of 1..64 service names"
-            )
+            raise ValueError("health_check.services must be a list of 1..64 service names")
         normalized: list[str] = []
         for entry in value:
             if not isinstance(entry, str) or not entry.strip():
-                raise ValueError(
-                    "health_check.services entries must be non-empty strings"
-                )
+                raise ValueError("health_check.services entries must be non-empty strings")
             normalized.append(entry.strip().lower())
         if len(set(normalized)) != len(normalized):
             raise ValueError("health_check.services must not contain duplicates")
@@ -767,13 +762,9 @@ class HealthCheckProfile(BaseModel):
 
         if strategy in {"auto", "runtime_native", "helm_status", "none"}:
             if self.http is not None:
-                raise ValueError(
-                    f"health_check.http must be absent when strategy is '{strategy}'"
-                )
+                raise ValueError(f"health_check.http must be absent when strategy is '{strategy}'")
             if self.tcp is not None:
-                raise ValueError(
-                    f"health_check.tcp must be absent when strategy is '{strategy}'"
-                )
+                raise ValueError(f"health_check.tcp must be absent when strategy is '{strategy}'")
 
         if strategy in {"manual_http", "http"}:
             if self.http is None:
@@ -789,9 +780,7 @@ class HealthCheckProfile(BaseModel):
             if self.tcp is None:
                 raise ValueError(f"health_check.tcp is required when strategy is '{strategy}'")
             if strategy == "manual_tcp" and self.tcp.host is None:
-                raise ValueError(
-                    "health_check.tcp.host is required when strategy is 'manual_tcp'"
-                )
+                raise ValueError("health_check.tcp.host is required when strategy is 'manual_tcp'")
             if self.http is not None:
                 raise ValueError(f"health_check.http must be absent when strategy is '{strategy}'")
 
@@ -819,9 +808,7 @@ class HealthCheckProfile(BaseModel):
                 f"health_check.interval_seconds must be > 0 when strategy is '{strategy}'"
             )
         if self.probe_window_seconds < self.attempt_timeout_seconds:
-            raise ValueError(
-                "health_check.probe_window_seconds must be >= attempt_timeout_seconds"
-            )
+            raise ValueError("health_check.probe_window_seconds must be >= attempt_timeout_seconds")
 
         # Gate for http/tcp strategies. When disabled the validator rejects
         # them with a clear message so operators know the option will exist
@@ -839,9 +826,7 @@ class HealthCheckProfile(BaseModel):
         """Return the published default profile for a target mode."""
         default_strategy = HEALTH_CHECK_DEFAULT_STRATEGY.get(target_mode)
         if default_strategy is None:
-            raise ValueError(
-                f"no default strategy catalog entry for mode {target_mode!r}"
-            )
+            raise ValueError(f"no default strategy catalog entry for mode {target_mode!r}")
         if default_strategy in {"auto", "runtime_native", "helm_status"}:
             # Reasonable defaults for a real probe. Operators can tune them
             # via the UI; keeping them here keeps the zero-config path

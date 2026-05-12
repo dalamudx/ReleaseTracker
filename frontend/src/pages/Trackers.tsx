@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { Plus, Search, X } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
@@ -71,15 +71,10 @@ export default function TrackersPage() {
     }, [rawTrackers, search])
 
     const total = data?.total ?? 0
-
-    // Drop the selection if the tracker is no longer in the current page, so
-    // the detail view doesn't stick to a phantom name after paginating.
-    useEffect(() => {
-        if (!selectedTrackerName) return
-        if (!rawTrackers.some((tracker) => tracker.name === selectedTrackerName)) {
-            setSelectedTrackerName(null)
-        }
-    }, [rawTrackers, selectedTrackerName])
+    const visibleSelectedTrackerName = selectedTrackerName !== null
+        && rawTrackers.some((tracker) => tracker.name === selectedTrackerName)
+        ? selectedTrackerName
+        : null
 
     const deleteTracker = useDeleteTracker()
     const checkTracker = useCheckTracker()
@@ -190,7 +185,7 @@ export default function TrackersPage() {
                     <TrackerList
                         trackers={trackers}
                         loading={loading}
-                        selectedTrackerName={selectedTrackerName}
+                        selectedTrackerName={visibleSelectedTrackerName}
                         onSelect={setSelectedTrackerName}
                         onEdit={handleEdit}
                         onDelete={setDeleteName}
@@ -208,7 +203,7 @@ export default function TrackersPage() {
 
                 <div className="min-h-0 overflow-y-auto">
                     <TrackerDetail
-                        trackerName={selectedTrackerName}
+                        trackerName={visibleSelectedTrackerName}
                         refreshKey={detailRefreshKey}
                     />
                 </div>

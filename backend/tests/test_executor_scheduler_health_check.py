@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
-from unittest.mock import AsyncMock
-
 import pytest
 
 from helpers.executor_runtime import save_docker_tracker_config, seed_docker_release
@@ -168,7 +166,7 @@ async def test_strategy_none_preserves_pre_feature_success_semantics(storage, sc
     )
     adapter = _FakeAdapter(
         await storage.get_runtime_connection(executor.runtime_connection_id),
-        current_image=f"hc-none:1.0.0",
+        current_image="hc-none:1.0.0",
         update_result=RuntimeUpdateResult(
             updated=True, old_image="hc-none:1.0.0", new_image="hc-none:2.0.0"
         ),
@@ -308,9 +306,7 @@ async def test_runtime_native_unhealthy_mark_degraded_uses_degraded_prefix(stora
 
 
 @pytest.mark.asyncio
-async def test_notification_payload_includes_health_check_object(
-    storage, scheduler, monkeypatch
-):
+async def test_notification_payload_includes_health_check_object(storage, scheduler, monkeypatch):
     """Webhook payloads include health check details without changing existing fields."""
     executor = await _build_executor(
         storage,
@@ -350,9 +346,7 @@ async def test_notification_payload_includes_health_check_object(
     async def _fake_notify(self, event, payload):
         captured.append((event, payload))
 
-    monkeypatch.setattr(
-        "releasetracker.notifiers.webhook.WebhookNotifier.notify", _fake_notify
-    )
+    monkeypatch.setattr("releasetracker.notifiers.webhook.WebhookNotifier.notify", _fake_notify)
 
     outcome = await scheduler.run_executor_now(executor.id)
 
@@ -406,9 +400,7 @@ async def test_notification_payload_omits_health_check_when_strategy_none(
     async def _fake_notify(self, event, payload):
         captured.append((event, payload))
 
-    monkeypatch.setattr(
-        "releasetracker.notifiers.webhook.WebhookNotifier.notify", _fake_notify
-    )
+    monkeypatch.setattr("releasetracker.notifiers.webhook.WebhookNotifier.notify", _fake_notify)
 
     await scheduler.run_executor_now(executor.id)
 
@@ -418,103 +410,50 @@ async def test_notification_payload_omits_health_check_when_strategy_none(
     assert "recovery_outcome" not in payload
 
 
-# ---- mark_failed_and_recover --------------------------------------------
+# ---- manual-only health check failures -----------------------------------
 
 
-class _RecoveringAdapter(_FakeAdapter):
-    """FakeAdapter variant that lets tests script recover_from_snapshot."""
+class _NoAutoRecoverAdapter(_FakeAdapter):
+    """FakeAdapter variant that records whether recover_from_snapshot is called."""
 
-    def __init__(
-        self,
-        *args,
-        recover_raises: Exception | None = None,
-        recover_result: RuntimeUpdateResult | None = None,
-        **kwargs,
-    ):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._recover_raises = recover_raises
-        self._recover_result = recover_result or RuntimeUpdateResult(
-            updated=True, old_image=None, new_image="recovered"
-        )
         self.recover_calls: int = 0
 
     async def recover_from_snapshot(self, target_ref, snapshot):
         self.recover_calls += 1
-        if self._recover_raises is not None:
-            raise self._recover_raises
-        return self._recover_result
-
-
-async def _run_unhealthy_recovering_executor(
-    storage,
-    scheduler,
-    *,
-    tracker_name: str,
-    recover_raises: Exception | None = None,
-    recover_result: RuntimeUpdateResult | None = None,
-):
-    executor = await _build_executor(
-        storage,
-        tracker_name=tracker_name,
-        profile=HealthCheckProfile(
-            strategy="runtime_native",
-            grace_period_seconds=0,
-            attempt_timeout_seconds=1,
-            interval_seconds=1,
-            probe_window_seconds=2,
-            failure_policy="mark_failed_and_recover",
-        ),
-    )
-    adapter = _RecoveringAdapter(
-        await storage.get_runtime_connection(executor.runtime_connection_id),
-        current_image=f"{tracker_name}:1.0.0",
-        update_result=RuntimeUpdateResult(
+        return RuntimeUpdateResult(
             updated=True,
-            old_image=f"{tracker_name}:1.0.0",
-            new_image=f"{tracker_name}:2.0.0",
-        ),
-        health_results=[ProbeAttemptResult(healthy=False, last_error="still unready")] * 5,
-        recover_raises=recover_raises,
-        recover_result=recover_result,
-    )
-    scheduler._adapters[executor.id] = adapter
-    await scheduler.run_executor_now(executor.id)
-    return await scheduler.storage.get_latest_executor_run(executor.id), adapter
+            old_image=None,
+            new_image="recovered",
+            new_container_id="recovered-container-id",
+        )
 
 
 @pytest.mark.asyncio
-async def test_mark_failed_and_recover_invokes_recovery_hook_and_records_outcome(
-    storage, scheduler
-):
-    """unhealthy + mark_failed_and_recover → Recovery
-    Hook runs, outcome=succeeded, diagnostics + notification carry the
-    recovery_outcome."""
+async def test_unhealthy_health_check_never_invokes_snapshot_recovery(storage, scheduler):
+    """Unhealthy probes fail the run and leave rollback as a manual action."""
     executor = await _build_executor(
         storage,
-        tracker_name="hc-recover",
+        tracker_name="hc-manual-only",
         profile=HealthCheckProfile(
             strategy="runtime_native",
             grace_period_seconds=0,
             attempt_timeout_seconds=1,
             interval_seconds=1,
             probe_window_seconds=2,
-            failure_policy="mark_failed_and_recover",
+            failure_policy="mark_failed",
         ),
     )
-    adapter = _RecoveringAdapter(
+    adapter = _NoAutoRecoverAdapter(
         await storage.get_runtime_connection(executor.runtime_connection_id),
-        current_image="hc-recover:1.0.0",
+        current_image="hc-manual-only:1.0.0",
         update_result=RuntimeUpdateResult(
-            updated=True, old_image="hc-recover:1.0.0", new_image="hc-recover:2.0.0"
+            updated=True,
+            old_image="hc-manual-only:1.0.0",
+            new_image="hc-manual-only:2.0.0",
         ),
-        health_results=[
-            ProbeAttemptResult(
-                healthy=False,
-                error_category="runtime_api_error",
-                last_error="container not ready",
-            )
-        ]
-        * 5,
+        health_results=[ProbeAttemptResult(healthy=False, last_error="still unready")] * 5,
     )
     scheduler._adapters[executor.id] = adapter
 
@@ -522,60 +461,22 @@ async def test_mark_failed_and_recover_invokes_recovery_hook_and_records_outcome
 
     assert outcome.status == "failed"
     assert outcome.message.startswith("health_check_failed:")
+    assert adapter.recover_calls == 0
     run = await scheduler.storage.get_latest_executor_run(executor.id)
-    assert run.diagnostics["recovery_outcome"] == "succeeded"
-    assert adapter.recover_calls == 1
-
-
-@pytest.mark.asyncio
-async def test_mark_failed_and_recover_records_not_supported_when_adapter_cannot_recover(
-    storage, scheduler
-):
-    run, _adapter = await _run_unhealthy_recovering_executor(
-        storage,
-        scheduler,
-        tracker_name="hc-recover-notimpl",
-        recover_raises=NotImplementedError("adapter cannot recover"),
-    )
-    assert run.diagnostics["recovery_outcome"] == "not_supported"
+    assert run.diagnostics["health_check"]["outcome"] == "unhealthy"
+    assert "recovery_outcome" not in run.diagnostics
     assert "recovery_error" not in run.diagnostics
 
 
 @pytest.mark.asyncio
-async def test_mark_failed_and_recover_refreshes_container_id_after_recreate(
-    storage, scheduler
-):
-    run, _adapter = await _run_unhealthy_recovering_executor(
-        storage,
-        scheduler,
-        tracker_name="hc-recover-container-id",
-        recover_result=RuntimeUpdateResult(
-            updated=True,
-            old_image=None,
-            new_image="hc-recover-container-id:1.0.0",
-            new_container_id="recovered-container-id",
-        ),
+async def test_legacy_mark_failed_and_recover_normalizes_to_mark_failed():
+    profile = HealthCheckProfile(
+        strategy="runtime_native",
+        grace_period_seconds=0,
+        attempt_timeout_seconds=1,
+        interval_seconds=1,
+        probe_window_seconds=2,
+        failure_policy="mark_failed_and_recover",
     )
 
-    refreshed = await scheduler.storage.get_executor_config(run.executor_id)
-    assert refreshed.target_ref["container_id"] == "recovered-container-id"
-
-
-@pytest.mark.asyncio
-async def test_mark_failed_and_recover_records_recovery_error_when_recovery_fails(
-    storage, scheduler
-):
-    run, adapter = await _run_unhealthy_recovering_executor(
-        storage,
-        scheduler,
-        tracker_name="hc-recover-failed",
-        recover_raises=RuntimeError("container name already in use"),
-    )
-    assert adapter.recover_calls == 1
-    assert run.status == "failed"
-    assert run.diagnostics["health_check"]["outcome"] == "unhealthy"
-    assert run.diagnostics["recovery_outcome"] == "failed"
-    assert run.diagnostics["recovery_error"] == "container name already in use"
-
-    history = await scheduler.storage.get_executor_run_history(run.executor_id, skip=0, limit=10)
-    assert history[0].diagnostics["recovery_error"] == "container name already in use"
+    assert profile.failure_policy == "mark_failed"

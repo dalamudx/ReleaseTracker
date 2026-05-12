@@ -407,7 +407,7 @@ class ExecutorScheduler:
             hc_result = await runner.run(ctx)
         except asyncio.CancelledError:
             # Cancellation during post-update health checks finalizes the run
-            # as failed; Recovery Hook never fires.
+            # as failed; no rollback or snapshot recovery is invoked.
             return _HealthCheckOutcome(
                 status="failed",
                 message="health check cancelled",
@@ -432,40 +432,13 @@ class ExecutorScheduler:
                 diagnostics=diagnostics,
             )
 
-        # Unhealthy path: pick the finalization semantics from the
-        # operator outcome policy. mark_failed_and_recover also invokes
-        # the Recovery Hook and persists the recovery_outcome into
-        # diagnostics so notifications can surface it.
+        # Unhealthy path: health checks never trigger automatic rollback or
+        # snapshot recovery. Operators can use the retained snapshots for a
+        # manual rollback from the UI/API.
         failure_policy = profile.failure_policy
         message_prefix = "health_check_failed"
         if failure_policy == "mark_degraded":
             message_prefix = "degraded"
-
-        recovery_outcome: str | None = None
-        if failure_policy == "mark_failed_and_recover" and executor_config.id is not None:
-            from .executors.health_check.recovery_hook import RecoveryHookCoordinator
-
-            coordinator = RecoveryHookCoordinator(self.storage)
-            recovery_result = await coordinator.recover_detailed(
-                executor_id=executor_config.id,
-                adapter=adapter,
-                target_ref=executor_config.target_ref,
-                budget_seconds=int(profile.probe_window_seconds),
-            )
-            recovery_outcome = recovery_result.outcome
-            diagnostics["recovery_outcome"] = recovery_outcome
-            if recovery_result.error:
-                diagnostics["recovery_error"] = recovery_result.error
-            target_mode = executor_config.target_ref.get("mode", "container")
-            if recovery_result.new_container_id and target_mode == "container":
-                refreshed_ref = {
-                    **executor_config.target_ref,
-                    "container_id": recovery_result.new_container_id,
-                }
-                await self.storage.update_executor_target_ref(
-                    executor_config.id,
-                    refreshed_ref,
-                )
 
         message_body = (health_last_error or "health check failed")[:500]
         message = f"{message_prefix}: {message_body}"
@@ -1247,25 +1220,17 @@ class ExecutorScheduler:
                     from_version=current_image,
                 )
             except RuntimeMutationError as exc:
-                if not snapshot_created:
-                    message = str(exc) or exc.__class__.__name__
-                    return await self._finalize_run(
-                        executor_config,
-                        run_id,
-                        status="failed",
-                        to_version=target_image,
-                        message=message,
-                        last_error=message,
-                        from_version=current_image,
-                    )
-                return await self._recover_after_mutation_failure(
+                message = str(exc) or exc.__class__.__name__
+                diagnostics = self._manual_rollback_diagnostics(snapshot_created=snapshot_created)
+                return await self._finalize_run(
                     executor_config,
-                    adapter,
-                    run_id=run_id,
-                    target_image=target_image,
+                    run_id,
+                    status="failed",
+                    to_version=target_image,
+                    message=message,
+                    last_error=message,
                     from_version=current_image,
-                    update_error=exc,
-                    target_ref=executor_config.target_ref,
+                    diagnostics=diagnostics,
                 )
             except Exception as exc:
                 return await self._finalize_run(
@@ -2217,6 +2182,7 @@ class ExecutorScheduler:
             pending_updates.clear()
 
         group_update_message: str | None = None
+        snapshot_created = False
         if pending_updates:
             service_target_images = {
                 service: target_image for service, (_, target_image) in pending_updates.items()
@@ -2224,8 +2190,6 @@ class ExecutorScheduler:
             current_image_summary = self._compose_snapshot_image_summary(
                 {service: current_image for service, (current_image, _) in pending_updates.items()}
             )
-            target_image_summary = self._compose_snapshot_image_summary(service_target_images)
-            snapshot_created = False
             try:
                 if self._supports_persisted_full_config_snapshots(executor_config):
                     snapshot_created = await self._capture_pre_update_snapshot(
@@ -2254,20 +2218,7 @@ class ExecutorScheduler:
                         )
                     )
             except RuntimeMutationError as exc:
-                if exc.destructive_started and snapshot_created:
-                    recovery_outcome = await self._recover_after_mutation_failure(
-                        executor_config,
-                        adapter,
-                        run_id=run_id,
-                        target_image=target_image_summary,
-                        from_version=current_image_summary,
-                        update_error=exc,
-                        target_ref=executor_config.target_ref,
-                        finalize_run=False,
-                    )
-                    error_message = recovery_outcome.message or str(exc) or exc.__class__.__name__
-                else:
-                    error_message = str(exc) or exc.__class__.__name__
+                error_message = str(exc) or exc.__class__.__name__
                 for service_name in sorted(pending_updates):
                     current_image, target_image = pending_updates[service_name]
                     binding_results.append(
@@ -2303,6 +2254,8 @@ class ExecutorScheduler:
             binding_results,
             group_message=group_update_message,
         )
+        if any(result.status == "failed" for result in binding_results):
+            diagnostics.update(self._manual_rollback_diagnostics(snapshot_created=snapshot_created))
         from_version, to_version = self._summarize_grouped_image_versions(binding_results)
         return await self._finalize_run(
             executor_config,
@@ -2609,98 +2562,12 @@ class ExecutorScheduler:
         finally:
             pass
 
-    async def _recover_after_mutation_failure(
-        self,
-        executor_config: ExecutorConfig,
-        adapter: BaseRuntimeAdapter,
-        *,
-        run_id: int,
-        target_image: str,
-        from_version: str | None,
-        update_error: Exception,
-        target_ref: dict[str, Any] | None = None,
-        finalize_run: bool = True,
-    ) -> ExecutorRunOutcome:
-        if executor_config.id is None:
-            raise ValueError("Executor config must have id")
-
-        snapshot = await self.storage.get_executor_snapshot(executor_config.id)
-        update_message = str(update_error) or update_error.__class__.__name__
-        effective_target_ref = target_ref or executor_config.target_ref
-
-        async def _build_outcome(
-            *,
-            status: str,
-            to_version: str | None,
-            message: str,
-            last_error: str | None,
-        ) -> ExecutorRunOutcome:
-            if finalize_run:
-                return await self._finalize_run(
-                    executor_config,
-                    run_id,
-                    status=status,
-                    to_version=to_version,
-                    message=message,
-                    last_error=last_error,
-                    from_version=from_version,
-                )
-            return ExecutorRunOutcome(
-                status=status,
-                from_version=from_version,
-                to_version=to_version,
-                message=message,
-            )
-
-        if snapshot is None:
-            return await _build_outcome(
-                status="failed",
-                to_version=target_image,
-                message=f"update failed after destructive steps and no snapshot was available for recovery: {update_message}",
-                last_error=update_message,
-            )
-
-        try:
-            recovery_result = await adapter.recover_from_snapshot(
-                effective_target_ref,
-                snapshot.snapshot_data,
-            )
-            recovered_version = recovery_result.new_image or from_version
-            recovery_message = recovery_result.message or "runtime recovered from snapshot"
-
-            target_mode = effective_target_ref.get("mode", "container")
-            if (
-                recovery_result.new_container_id
-                and executor_config.id is not None
-                and target_mode == "container"
-            ):
-                refreshed_ref = {
-                    **effective_target_ref,
-                    "container_id": recovery_result.new_container_id,
-                }
-                await self.storage.update_executor_target_ref(executor_config.id, refreshed_ref)
-                executor_config = executor_config.model_copy(update={"target_ref": refreshed_ref})
-
-            return await _build_outcome(
-                status="failed",
-                to_version=recovered_version,
-                message=(
-                    f"update failed after destructive steps: {update_message}; "
-                    f"automatic recovery succeeded: {recovery_message}"
-                ),
-                last_error=update_message,
-            )
-        except Exception as recovery_exc:
-            recovery_message = str(recovery_exc) or recovery_exc.__class__.__name__
-            return await _build_outcome(
-                status="failed",
-                to_version=from_version,
-                message=(
-                    f"update failed after destructive steps: {update_message}; "
-                    f"automatic recovery failed: {recovery_message}"
-                ),
-                last_error=f"{update_message}; recovery failed: {recovery_message}",
-            )
+    @staticmethod
+    def _manual_rollback_diagnostics(*, snapshot_created: bool) -> dict[str, Any]:
+        return {
+            "manual_rollback_available": snapshot_created,
+            "automatic_recovery": "disabled",
+        }
 
     async def _resolve_tracker_latest_version(
         self,

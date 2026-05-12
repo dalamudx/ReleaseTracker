@@ -1646,7 +1646,7 @@ async def test_invalid_snapshot_aborts_before_runtime_mutation(storage):
 
 
 @pytest.mark.asyncio
-async def test_failed_update_triggers_automatic_recovery_from_snapshot(storage):
+async def test_failed_update_retains_snapshot_without_automatic_recovery(storage):
     runtime_id = await _create_runtime_connection(storage)
     tracker_name = "recoverable-sample-web"
     await save_docker_tracker_config(
@@ -1696,29 +1696,34 @@ async def test_failed_update_triggers_automatic_recovery_from_snapshot(storage):
     outcome = await scheduler.run_executor_now(executor_id)
 
     assert outcome.status == "failed"
-    assert "simulated update failure after destructive steps" in (outcome.message or "")
-    assert "automatic recovery succeeded: runtime recovered from snapshot" in (
-        outcome.message or ""
-    )
+    assert outcome.message == "simulated update failure after destructive steps"
     assert adapter.update_calls == ["ghcr.io/acme/recoverable-sample-web:1.1.0"]
-    assert len(adapter.recovery_calls) == 1
-    assert adapter.current_image == "ghcr.io/acme/recoverable-sample-web:1.0.0"
+    assert len(adapter.recovery_calls) == 0
+    assert adapter.current_image == "broken:partial"
+
+    snapshot = await storage.get_executor_snapshot(executor_id)
+    assert snapshot is not None
+    assert snapshot.trigger == "pre_update"
 
     history = await storage.get_executor_run_history(executor_id, limit=1)
     assert history[0].status == "failed"
-    assert "automatic recovery succeeded" in (history[0].message or "")
+    assert history[0].message == "simulated update failure after destructive steps"
     assert history[0].from_version == "ghcr.io/acme/recoverable-sample-web:1.0.0"
-    assert history[0].to_version == "ghcr.io/acme/recoverable-sample-web:1.0.0"
+    assert history[0].to_version == "ghcr.io/acme/recoverable-sample-web:1.1.0"
+    assert history[0].diagnostics == {
+        "manual_rollback_available": True,
+        "automatic_recovery": "disabled",
+    }
 
     status = await storage.get_executor_status(executor_id)
     assert status is not None
     assert status.last_result == "failed"
-    assert status.last_version == "ghcr.io/acme/recoverable-sample-web:1.0.0"
+    assert status.last_version == "ghcr.io/acme/recoverable-sample-web:1.1.0"
     assert status.last_error == "simulated update failure after destructive steps"
 
 
 @pytest.mark.asyncio
-async def test_recovery_failure_is_surfaced_clearly(storage):
+async def test_mutation_failure_is_surfaced_without_recovery_attempt(storage):
     runtime_id = await _create_runtime_connection(storage)
     tracker_name = "recovery-failure"
     await save_docker_tracker_config(
@@ -1769,21 +1774,22 @@ async def test_recovery_failure_is_surfaced_clearly(storage):
     outcome = await scheduler.run_executor_now(executor_id)
 
     assert outcome.status == "failed"
-    assert "simulated update failure after destructive steps" in (outcome.message or "")
-    assert "automatic recovery failed: simulated recovery failure" in (outcome.message or "")
+    assert outcome.message == "simulated update failure after destructive steps"
     assert adapter.update_calls == ["recovery-failure:1.1.0"]
-    assert len(adapter.recovery_calls) == 1
+    assert len(adapter.recovery_calls) == 0
 
     history = await storage.get_executor_run_history(executor_id, limit=1)
     assert history[0].status == "failed"
-    assert "automatic recovery failed" in (history[0].message or "")
+    assert history[0].message == "simulated update failure after destructive steps"
+    assert history[0].diagnostics == {
+        "manual_rollback_available": True,
+        "automatic_recovery": "disabled",
+    }
 
     status = await storage.get_executor_status(executor_id)
     assert status is not None
     assert status.last_result == "failed"
-    assert status.last_error == (
-        "simulated update failure after destructive steps; recovery failed: simulated recovery failure"
-    )
+    assert status.last_error == "simulated update failure after destructive steps"
 
 
 @pytest.mark.asyncio
@@ -1881,7 +1887,7 @@ async def test_docker_scheduler_recreates_container_when_image_only_update_is_un
 
 
 @pytest.mark.asyncio
-async def test_docker_scheduler_recovers_from_snapshot_after_recreate_failure(storage):
+async def test_docker_scheduler_retains_snapshot_after_recreate_failure(storage):
     runtime_id = await _create_runtime_connection(storage)
     tracker_name = "docker-fallback-recovery"
     await save_docker_tracker_config(
@@ -1948,17 +1954,17 @@ async def test_docker_scheduler_recovers_from_snapshot_after_recreate_failure(st
 
     assert outcome.status == "failed"
     assert "docker update failed after destructive steps began" in (outcome.message or "")
-    assert "automatic recovery succeeded: runtime recovered from snapshot" in (
-        outcome.message or ""
-    )
-    assert client.images.pull_calls == [
-        "docker-fallback-recovery:1.1.0",
-        "docker-fallback-recovery:1.0.0",
-    ]
+    assert "manual rollback from snapshot is required" in (outcome.message or "")
+    assert client.images.pull_calls == ["docker-fallback-recovery:1.1.0"]
     assert len(container.stop_calls) == 1
     assert len(container.remove_calls) == 1
-    assert len(container.start_calls) == 1
+    assert len(container.start_calls) == 0
     assert len(client.containers.create_calls) == 1
+
+    snapshot = await storage.get_executor_snapshot(executor_id)
+    assert snapshot is not None
+    assert snapshot.trigger == "pre_update"
+    assert snapshot.snapshot_data["image"] == "docker-fallback-recovery:1.0.0"
 
     updated_config = await storage.get_executor_config(executor_id)
     assert updated_config is not None
@@ -1967,9 +1973,9 @@ async def test_docker_scheduler_recovers_from_snapshot_after_recreate_failure(st
     status = await storage.get_executor_status(executor_id)
     assert status is not None
     assert status.last_result == "failed"
-    assert status.last_version == "docker-fallback-recovery:1.0.0"
+    assert status.last_version == "docker-fallback-recovery:1.1.0"
     assert status.last_error == (
-        "docker update failed after destructive steps began: simulated docker recreate failure"
+        "docker update failed after destructive steps began; manual rollback from snapshot is required: simulated docker recreate failure"
     )
 
 
@@ -3777,7 +3783,7 @@ async def test_target_ref_container_id_refreshed_after_recreate_update(storage):
 
 
 @pytest.mark.asyncio
-async def test_target_ref_container_id_refreshed_after_recovery(storage):
+async def test_target_ref_container_id_not_refreshed_after_failed_update(storage):
     runtime_id = await _create_runtime_connection(storage)
     tracker_name = "recover-app"
     await save_docker_tracker_config(
@@ -3826,11 +3832,11 @@ async def test_target_ref_container_id_refreshed_after_recovery(storage):
     outcome = await scheduler.run_executor_now(executor_id)
 
     assert outcome.status == "failed"
-    assert "automatic recovery succeeded" in (outcome.message or "")
+    assert outcome.message == "simulated update failure"
 
     refreshed = await storage.get_executor_config(executor_id)
     assert refreshed is not None
-    assert refreshed.target_ref["container_id"] == "recovered-container-id"
+    assert refreshed.target_ref["container_id"] == "old-container-id"
     assert refreshed.target_ref["container_name"] == "recover-app"
 
 
@@ -4183,7 +4189,9 @@ async def test_docker_compose_executor_updates_only_bound_services_via_single_gr
     snapshot = await storage.get_executor_snapshot(executor_id)
     assert snapshot is not None
     assert snapshot.trigger == "pre_update"
-    assert snapshot.image_at_capture == "api=ghcr.io/acme/api:1.0.0; worker=ghcr.io/acme/worker:1.0.0"
+    assert (
+        snapshot.image_at_capture == "api=ghcr.io/acme/api:1.0.0; worker=ghcr.io/acme/worker:1.0.0"
+    )
     assert snapshot.snapshot_data["mode"] == "docker_compose"
     assert snapshot.snapshot_data["project"] == "release-stack"
     assert [item["compose_service"] for item in snapshot.snapshot_data["snapshots"]] == [
@@ -4644,8 +4652,8 @@ async def test_podman_compose_executor_reports_runtime_mutation_failure(storage)
         ),
         current_images={"api": "ghcr.io/acme/api:1.0.0"},
         fail_update=(
-            "podman grouped compose update failed after destructive steps began "
-            "and recovery succeeded best-effort"
+            "podman grouped compose update failed after destructive steps began; "
+            "manual rollback from snapshot is required"
         ),
     )
     scheduler._adapters[executor_id] = adapter
@@ -4655,7 +4663,7 @@ async def test_podman_compose_executor_reports_runtime_mutation_failure(storage)
     assert outcome.status == "failed"
     assert outcome.message is not None
     assert "podman-compose run finished: 0 updated, 0 skipped, 1 failed" in outcome.message
-    assert "recovery succeeded best-effort" in outcome.message
+    assert "manual rollback from snapshot is required" in outcome.message
     assert "grouped runtime recreate is not supported in phase 1" not in outcome.message
     assert adapter.update_calls == [
         (
@@ -4663,7 +4671,7 @@ async def test_podman_compose_executor_reports_runtime_mutation_failure(storage)
             {"api": "ghcr.io/acme/api:1.1.0"},
         )
     ]
-    assert len(adapter.recover_calls) == 1
+    assert len(adapter.recover_calls) == 0
     snapshot = await storage.get_executor_snapshot(executor_id)
     assert snapshot is not None
     assert snapshot.trigger == "pre_update"
@@ -4675,14 +4683,14 @@ async def test_podman_compose_executor_reports_runtime_mutation_failure(storage)
     history = await storage.get_executor_run_history(executor_id, limit=1)
     assert history[0].status == "failed"
     assert history[0].message is not None
-    assert "recovery succeeded best-effort" in history[0].message
+    assert "manual rollback from snapshot is required" in history[0].message
     assert "grouped runtime recreate is not supported in phase 1" not in history[0].message
 
     status = await storage.get_executor_status(executor_id)
     assert status is not None
     assert status.last_result == "failed"
     assert status.last_error is not None
-    assert "recovery succeeded best-effort" in status.last_error
+    assert "manual rollback from snapshot is required" in status.last_error
     assert "grouped runtime recreate is not supported in phase 1" not in status.last_error
 
 

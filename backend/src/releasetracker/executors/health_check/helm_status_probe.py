@@ -100,7 +100,7 @@ class HelmStatusProbe(HealthCheckProbe):
                 healthy=False,
                 error_category="helm_failed",
                 detail=detail,
-                last_error=f"helm release status is 'failed'",
+                last_error="helm release status is 'failed'",
                 terminate_phase=True,
             )
 

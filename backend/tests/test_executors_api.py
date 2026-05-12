@@ -2729,6 +2729,41 @@ async def test_create_executor_rejects_failure_policy_other_than_mark_failed_for
 
 
 @pytest.mark.asyncio
+async def test_create_executor_normalizes_legacy_recover_failure_policy(
+    authed_client, storage, monkeypatch
+):
+    runtime_id = await _create_runtime_connection(storage, name="hc-legacy-policy-runtime")
+    await _create_tracker(storage, name="hc-legacy-policy-tracker")
+    tracker_source_id = await _get_tracker_source_id(storage, "hc-legacy-policy-tracker")
+
+    response = authed_client.post(
+        "/api/executors",
+        json={
+            "name": "hc-legacy-policy-executor",
+            "runtime_type": "docker",
+            "runtime_connection_id": runtime_id,
+            "tracker_name": "hc-legacy-policy-tracker",
+            "tracker_source_id": tracker_source_id,
+            "channel_name": "stable",
+            "enabled": True,
+            "update_mode": "manual",
+            "target_ref": {"mode": "container", "container_id": "hc-legacy-policy"},
+            "health_check": {
+                "strategy": "runtime_native",
+                "grace_period_seconds": 15,
+                "attempt_timeout_seconds": 10,
+                "interval_seconds": 5,
+                "probe_window_seconds": 120,
+                "failure_policy": "mark_failed_and_recover",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["health_check"]["failure_policy"] == "mark_failed"
+
+
+@pytest.mark.asyncio
 async def test_get_executor_response_round_trips_health_check_profile(
     authed_client, storage, monkeypatch
 ):

@@ -72,7 +72,7 @@ const STATUS_ICON_MAP: Record<StatusKey, React.ReactNode> = {
     skipped: <CircleSlash className="h-3 w-3" />,
 }
 
-// Recovery Hook outcome badge.
+// Manual rollback recovery outcome badge.
 type RecoveryOutcomeKey =
     | "succeeded"
     | "failed"

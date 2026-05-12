@@ -810,7 +810,6 @@
             },
             "failurePolicy": {
                 "mark_failed": "Mark run as failed",
-                "mark_failed_and_recover": "Mark as failed and roll back",
                 "mark_degraded": "Mark as degraded"
             },
             "fields": {

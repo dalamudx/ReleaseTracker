@@ -16,8 +16,8 @@ class FakeDockerContainer:
     def stop(self) -> None:
         self.stop_calls.append(True)
 
-    def remove(self) -> None:
-        self.remove_calls.append(True)
+    def remove(self, **kwargs) -> None:
+        self.remove_calls.append(kwargs or True)
 
     def start(self) -> None:
         self.start_calls.append(True)

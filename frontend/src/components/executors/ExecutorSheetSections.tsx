@@ -1071,9 +1071,6 @@ export function ExecutorSheetHealthCheckFields({
                                             <SelectItem value="mark_failed">
                                                 {t("executors.healthCheck.failurePolicy.mark_failed")}
                                             </SelectItem>
-                                            <SelectItem value="mark_failed_and_recover">
-                                                {t("executors.healthCheck.failurePolicy.mark_failed_and_recover")}
-                                            </SelectItem>
                                             <SelectItem value="mark_degraded">
                                                 {t("executors.healthCheck.failurePolicy.mark_degraded")}
                                             </SelectItem>

@@ -811,7 +811,6 @@
       },
       "failurePolicy": {
         "mark_failed": "标记为失败",
-        "mark_failed_and_recover": "失败并回滚",
         "mark_degraded": "标记为降级"
       },
       "fields": {

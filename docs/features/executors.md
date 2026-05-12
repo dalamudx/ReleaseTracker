@@ -62,7 +62,7 @@ title: 执行器
 - Docker / Podman 单容器
 - Docker / Podman Compose 分组更新
 
-这些目标在更新前保存用于重建的运行时配置；在失败恢复或手动回滚时，会尽量按快照重建容器、网络、卷、端口、标签等配置。Podman Compose 回滚会基于稳定的容器 / service 名称解析当前 pod 与运行时对象，不应假定容器 ID 或 pod ID 在更新后保持不变。
+这些目标在更新前保存用于重建的运行时配置；手动回滚时，会尽量按快照重建容器、网络、卷、端口、标签等配置。更新失败或健康检查失败不会自动回滚，操作员需要自行决定是否从可用快照恢复。Podman Compose 回滚会基于稳定的容器 / service 名称解析当前 pod 与运行时对象，不应假定容器 ID 或 pod ID 在更新后保持不变。
 
 Portainer Stack、Kubernetes 工作负载、Helm Release 不作为 ReleaseTracker 管理的完整运行时配置快照目标：Portainer Stack 通过声明式 stack-file API 更新，Kubernetes 工作负载更新 Deployment / StatefulSet / DaemonSet 的镜像配置，Helm Release 通过 Helm 3 升级流程与版本历史管理。
 
@@ -88,7 +88,7 @@ Portainer Stack、Kubernetes 工作负载、Helm Release 不作为 ReleaseTracke
 默认模板使用 15 秒等待期、10 秒单次超时、5 秒探测间隔、180 秒总探测时长，失败时把运行标记为失败。探测窗口、单次超时与间隔均有上限校验；使用手动 HTTP / TCP 策略时需要显式提供可从 ReleaseTracker 后端访问的主机。
 
 !!! note "健康检查仍在完善中"
-    Docker / Podman 单容器路径已接入更新后健康检查与失败策略。分组目标（Compose / Portainer Stack / Kubernetes 工作负载 / Helm Release）的更新流水线与健康检查接线仍在演进，不应把 Kubernetes、Portainer 或 Helm 文档化为已支持任意 host-port 探测的目标。自动恢复（失败时回滚）只有在目标既有可用快照，又有对应探测接线时才可能端到端生效。
+    Docker / Podman 单容器路径已接入更新后健康检查与失败策略。分组目标（Compose / Portainer Stack / Kubernetes 工作负载 / Helm Release）的更新流水线与健康检查接线仍在演进，不应把 Kubernetes、Portainer 或 Helm 文档化为已支持任意 host-port 探测的目标。健康检查失败会按策略把运行标记为失败或降级，但回滚始终是手动 UI/API 操作。
 
 ## 8. 运行结果状态
 

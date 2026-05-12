@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import {
     ChevronLeft,
     ChevronRight,
@@ -232,28 +232,19 @@ interface PageInputProps {
  */
 function PageInput({ currentPage, totalPages, onJump }: PageInputProps) {
     const { t } = useTranslation()
-    const [draft, setDraft] = useState(String(currentPage))
-    const [editing, setEditing] = useState(false)
-
-    // Keep the draft in sync with the current page whenever the caller
-    // navigates externally (buttons, programmatic jump, …).
-    useEffect(() => {
-        if (!editing) setDraft(String(currentPage))
-    }, [currentPage, editing])
+    const [editDraft, setEditDraft] = useState<string | null>(null)
+    const draft = editDraft ?? String(currentPage)
 
     const commit = () => {
         const parsed = Number.parseInt(draft, 10)
         if (Number.isFinite(parsed) && parsed >= 1 && parsed <= totalPages) {
             onJump(parsed)
-        } else {
-            setDraft(String(currentPage))
         }
-        setEditing(false)
+        setEditDraft(null)
     }
 
     const cancel = () => {
-        setDraft(String(currentPage))
-        setEditing(false)
+        setEditDraft(null)
     }
 
     return (
@@ -267,10 +258,10 @@ function PageInput({ currentPage, totalPages, onJump }: PageInputProps) {
                 min={1}
                 max={totalPages}
                 onFocus={(event) => {
-                    setEditing(true)
+                    setEditDraft(String(currentPage))
                     event.currentTarget.select()
                 }}
-                onChange={(event) => setDraft(event.target.value)}
+                onChange={(event) => setEditDraft(event.target.value)}
                 onBlur={commit}
                 onKeyDown={(event) => {
                     if (event.key === "Enter") {

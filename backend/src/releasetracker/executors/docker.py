@@ -75,11 +75,6 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         specs = self._build_grouped_runtime_recreate_specs(service_containers, update_plan)
         self._validate_grouped_runtime_recreate_specs(specs)
         ordered_specs = self._order_grouped_runtime_recreate_specs(specs)
-        snapshots_by_spec_key = {
-            self._grouped_runtime_recreate_spec_key(spec): dict(spec.snapshot_payload)
-            for spec in ordered_specs
-        }
-
         client = self._get_client()
         images = getattr(client, "images", None)
         if images is not None and hasattr(images, "pull"):
@@ -95,23 +90,16 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
 
             for spec in ordered_specs:
                 new_container = self._create_docker_container(client, spec.create_config)
+                created_containers.append(new_container)
                 self._restore_container_networks(client, new_container, spec)
                 new_container.start()
-                created_containers.append(new_container)
         except Exception as exc:
-            recovery_error = await self._recover_grouped_compose_runtime_update(
-                ordered_specs,
-                snapshots_by_spec_key,
-            )
-            if recovery_error is not None:
-                raise RuntimeMutationError(
-                    "docker compose grouped update failed after destructive steps began; "
-                    f"best-effort recovery also failed: {recovery_error}; original error: {exc}",
-                    destructive_started=True,
-                ) from exc
+            for container in created_containers:
+                self._remove_container_if_present(container)
             raise RuntimeMutationError(
-                "docker compose grouped update failed after destructive steps began and recovery "
-                f"succeeded best-effort: {exc}",
+                "docker compose grouped update failed after destructive steps began; "
+                "manual rollback from snapshot is required: "
+                f"{exc}",
                 destructive_started=True,
             ) from exc
 
@@ -198,7 +186,9 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
             if new_container is not None:
                 self._remove_container_if_present(new_container)
             raise RuntimeMutationError(
-                f"docker update failed after destructive steps began: {exc}",
+                "docker update failed after destructive steps began; "
+                "manual rollback from snapshot is required: "
+                f"{exc}",
                 destructive_started=True,
             ) from exc
 
@@ -564,50 +554,6 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         if isinstance(status, str):
             return status.strip().lower() == "running"
         return False
-
-    async def _recover_grouped_compose_runtime_update(
-        self,
-        ordered_specs: list[GroupedRuntimeRecreateSpec],
-        snapshots_by_spec_key: dict[str, dict[str, Any]],
-    ) -> str | None:
-        recovery_failures: list[str] = []
-        for spec in ordered_specs:
-            snapshot = snapshots_by_spec_key.get(self._grouped_runtime_recreate_spec_key(spec))
-            if not isinstance(snapshot, dict) or not snapshot:
-                recovery_failures.append(
-                    f"missing snapshot for {spec.container_name or spec.container_id or 'unknown container'}"
-                )
-                continue
-            try:
-                await self.recover_from_snapshot(
-                    self._grouped_runtime_recreate_target_ref(spec), snapshot
-                )
-            except Exception as recovery_exc:
-                recovery_failures.append(
-                    f"{spec.container_name or spec.container_id or 'unknown container'}: {recovery_exc}"
-                )
-
-        if recovery_failures:
-            return "; ".join(recovery_failures)
-        return None
-
-    def _grouped_runtime_recreate_spec_key(self, spec: GroupedRuntimeRecreateSpec) -> str:
-        identifier = spec.container_id or spec.container_name
-        if not isinstance(identifier, str) or not identifier.strip():
-            raise ValueError("grouped recreate spec missing container identity")
-        return identifier
-
-    def _grouped_runtime_recreate_target_ref(
-        self, spec: GroupedRuntimeRecreateSpec
-    ) -> dict[str, str]:
-        target_ref: dict[str, str] = {}
-        if isinstance(spec.container_id, str) and spec.container_id.strip():
-            target_ref["container_id"] = spec.container_id
-        if isinstance(spec.container_name, str) and spec.container_name.strip():
-            target_ref["container_name"] = spec.container_name
-        if not target_ref:
-            raise ValueError("grouped recreate spec missing container identity")
-        return target_ref
 
     def _extract_create_kwargs(self, container, image: str) -> dict[str, Any]:
         spec = self._build_recreate_spec_from_inspect(container, image)

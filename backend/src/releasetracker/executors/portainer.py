@@ -18,11 +18,10 @@ _PORTAINER_STACK_TYPE_MAP = {
 }
 _PORTAINER_DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=20.0, write=20.0, pool=5.0)
 _PORTAINER_STACK_UPDATE_TIMEOUT = httpx.Timeout(connect=5.0, read=90.0, write=90.0, pool=5.0)
-# How long ``recover_from_snapshot`` is allowed to wait for Portainer to
-# report the restored stack as active before returning control to the
-# scheduler. The scheduler itself enforces the Recovery Hook wall-clock
-# budget — this bound only guards against Portainer getting stuck
-# mid-update.
+# How long manual ``recover_from_snapshot`` rollback is allowed to wait for
+# Portainer to report the restored stack as active before returning control to
+# the rollback coordinator. The coordinator enforces the wall-clock budget —
+# this bound only guards against Portainer getting stuck mid-restore.
 _PORTAINER_RECOVERY_POLL_TIMEOUT_SECONDS = 120
 _PORTAINER_RECOVERY_POLL_INTERVAL_SECONDS = 2
 
@@ -294,8 +293,7 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         Enforces: snapshot is non-empty, stack file is a non-empty string,
         recorded stack type is a supported Portainer variant, and the live
         target's stack type matches the snapshot's. Any mismatch raises
-        ``ValueError`` so the Recovery Hook can surface it as
-        ``invalid_snapshot``.
+        ``ValueError`` so manual rollback can surface it as ``invalid_snapshot``.
         """
         if not isinstance(snapshot, dict) or not snapshot:
             raise ValueError("snapshot must be a non-empty dict")

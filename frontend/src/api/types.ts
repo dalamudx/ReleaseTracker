@@ -624,7 +624,7 @@ export interface ExecutorRunDiagnostics {
     services: ExecutorRunServiceDiagnostic[]
     /** Health check outcome payload attached when post-update checks ran. */
     health_check?: Record<string, unknown> | null
-    /** Recovery hook outcome persisted on mark_failed_and_recover runs. */
+    /** Recovery outcome persisted on manual rollback runs. */
     recovery_outcome?: RecoveryOutcome | null
     /** Underlying adapter error when recovery_outcome is not 'succeeded'. */
     recovery_error?: string | null
@@ -673,7 +673,6 @@ export type HealthCheckStrategy = 'none' | 'auto' | 'runtime_native' | 'manual_h
 
 export type HealthCheckFailurePolicy =
     | 'mark_failed'
-    | 'mark_failed_and_recover'
     | 'mark_degraded'
 
 export interface HealthCheckHttpConfig {
