@@ -15,42 +15,39 @@ title: 运行时连接
 | `kubernetes` | 通过 kubeconfig 或集群内 ServiceAccount |
 | `portainer` | 通过 Portainer HTTP API |
 
-## 2. 公共字段
+## 2. 创建或编辑运行时连接
 
-```text
-RuntimeConnection {
-  name:          string         # 全局唯一
-  type:          docker | podman | kubernetes | portainer
-  enabled:       bool           # 关闭后仍保留配置，但不会被调度器使用
-  config:        map<string, any>   # 类型相关，见下文
-  credential_id: int | null     # 关联「凭证管理」里的条目
-  description:   string | null
-}
-```
+打开 **执行器 → 运行时连接 → 新建连接**，主要填写：
+
+- **名称**：在 ReleaseTracker 内唯一，后续创建执行器时会用它选择目标运行时。
+- **类型**：选择 Docker、Podman、Kubernetes 或 Portainer。不同类型会展示不同的连接字段。
+- **启用状态**：关闭后配置会保留，但执行器不会使用该连接执行更新。
+- **凭证**：按需选择「凭证管理」中已创建的条目。Docker / Podman 本地套接字通常不需要凭证；Kubernetes 与 Portainer 通常需要。
+- **描述**：可选，用于记录环境、负责人或访问范围。
 
 ## 3. Docker / Podman
 
-| `config` 字段 | 必填 | 约束 |
+| UI 字段 | 必填 | 说明 |
 | ---- | ---- | ---- |
-| `socket` | 是 | 必须以 `unix://` 或 `tcp://` 开头。常见值：`unix:///var/run/docker.sock`、`tcp://docker.example.com:2376`。 |
-| `tls_verify` | 否 | 布尔值。启用时要求客户端证书由信任 CA 签发。 |
-| `api_version` | 否 | 指定 Docker API 版本；为空时使用 SDK 默认。 |
+| Socket / API 地址 | 是 | 必须以 `unix://` 或 `tcp://` 开头。常见值：`unix:///var/run/docker.sock`、`tcp://docker.example.com:2376`。 |
+| TLS 验证 | 否 | 连接远程 TLS 端点时启用，客户端会校验证书链。 |
+| API 版本 | 否 | 指定 Docker API 版本；留空时使用 SDK 默认值。 |
 
-`credential_id` 在 Docker / Podman 下**通常留空** —— 直接连接本地 Unix 套接字无需鉴权。如果需要通过 TLS 双向认证的 TCP 端点连接远程 Docker，再创建对应 `docker_runtime` / `podman_runtime` 凭证并引用。
+Docker / Podman 本地 Unix 套接字通常无需凭证。如果需要通过 TLS 双向认证的 TCP 端点连接远程 Docker 或 Podman，请先创建对应的 `docker_runtime` / `podman_runtime` 凭证，再在此处选择。
 
 ## 4. Kubernetes
 
-| `config` 字段 | 必填 | 约束 |
+| UI 字段 | 必填 | 说明 |
 | ---- | ---- | ---- |
-| `in_cluster` | 否 | 布尔值。为 `true` 时使用 Pod 自身的 ServiceAccount，无需凭证。 |
-| `context` | 否 | 指定 kubeconfig 中的 context 名。 |
-| `namespace` | 否 | 单个 namespace，用于所有发现操作。 |
-| `namespaces` | 否 | namespace 列表，每项为非空字符串。 |
-| *凭证* | `in_cluster` 未开启时必填 | `kubernetes_runtime` 类型凭证，内含 `kubeconfig` YAML。 |
+| 使用集群内配置 | 否 | 开启后使用 ReleaseTracker 所在 Pod 的 ServiceAccount，无需选择 kubeconfig 凭证。 |
+| kubeconfig context | 否 | 指定 kubeconfig 中的 context 名。 |
+| 单个 Namespace | 否 | 限定所有发现操作使用的单个 namespace。 |
+| Namespace 列表 | 否 | 显式列出允许扫描的多个 namespace。 |
+| 凭证 | 未开启集群内配置时必填 | 选择 `kubernetes_runtime` 类型凭证，其中包含 kubeconfig YAML。 |
 
 发现规则：
 
-- 同时填写 `namespace` 与 `namespaces` 时，`namespaces` 优先生效，作用于目标发现与 namespace 授权。
+- 同时填写「单个 Namespace」与「Namespace 列表」时，列表优先生效，作用于目标发现与 namespace 授权。
 - 两者都不填时，只有被 kubeconfig 授权的 namespace 会被扫描。
 - 可以通过 **执行器 → 运行时连接 → 发现 Namespace** 按钮预览当前 kubeconfig 能访问到的 namespace 列表。
 
@@ -65,18 +62,18 @@ RuntimeConnection {
 
 ## 5. Portainer
 
-| `config` 字段 | 必填 | 约束 |
+| UI 字段 | 必填 | 说明 |
 | ---- | ---- | ---- |
-| `base_url` | 是 | Portainer 实例的 HTTP/HTTPS 根地址。 |
-| `endpoint_id` | 是 | Portainer 内的 Endpoint ID（正整数）。 |
-| *凭证* | 是 | `portainer_runtime` 类型，`secrets.token` 为 Portainer API Key。 |
+| Portainer 地址 | 是 | Portainer 实例的 HTTP/HTTPS 根地址。 |
+| Endpoint ID | 是 | Portainer 内的 Endpoint ID（正整数）。 |
+| 凭证 | 是 | 选择 `portainer_runtime` 类型凭证，凭证内容为 Portainer API Key。 |
 
 已知限制：**仅支持 Portainer 中 `standalone` 类型的 stack**，不支持 Swarm stack；发现与更新路径均会跳过非 standalone stack。详见 [已知限制](../limitations.md) 的 Portainer 一节。
 
 ## 6. 启用 / 禁用
 
-- `enabled=false` 会让执行器运行时跳过此运行时连接（调度中会记录 `runtime connection disabled` 失败），但配置本身保留。
-- 关联该运行时连接的执行器若不重新绑定，其本轮运行会失败而非跳过 —— 目的是让操作员尽快察觉。
+- 关闭运行时连接会让执行器运行失败并记录原因，而不是静默跳过。这样可以让操作员尽快发现连接不可用。
+- 已禁用的连接不会丢失配置；重新启用后可继续使用。
 
 ## 7. 删除与重命名
 
@@ -93,7 +90,7 @@ RuntimeConnection {
 
 !!! failure "Portainer: `401 Invalid Access Token`"
     - Portainer API Key 已过期或被删除，重新生成并更新凭证。
-    - `endpoint_id` 与 API Key 所在环境不匹配。
+    - Endpoint ID 与 API Key 所在环境不匹配。
 
 !!! failure "Kubernetes: Namespace 发现返回空列表"
-    通常是 ServiceAccount 无权 `list` Namespace。可改用 `config.namespaces` 白名单显式指定需要扫描的 namespace。
+    通常是 ServiceAccount 无权 `list` Namespace。可改用 Namespace 列表白名单显式指定需要扫描的 namespace。

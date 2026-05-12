@@ -86,7 +86,22 @@ Open <http://localhost:8000> (or the address exposed by the reverse proxy). A de
 !!! danger "Change the default password immediately"
     After signing in, open the **user menu at the bottom-left of the sidebar → User Settings → Change Password** and set a strong password. An instance exposed to the internet with default credentials can be taken over by anyone.
 
-## 4. Data directory layout
+## 4. Quick start
+
+After the service is installed and reachable, use this workflow for the first setup:
+
+1. **Open the web UI and sign in**: Visit the deployed address and sign in with the default administrator account. Change the default password immediately after the first login.
+2. **Review System Settings**: Open **System Settings** and confirm that BASE URL, language, log level, retention, and other basic settings match the deployment. When using a reverse proxy or OIDC, BASE URL must match the externally reachable address.
+3. **Add notification channels**: Open **Notifications** and configure and test Webhook or other notification channels. Notifications are optional, but recommended before enabling Immediate or Maintenance window execution so failures, skips, and successes are visible.
+4. **Add credentials only when needed**: Add credentials under **Credentials** only for private repositories, protected GitHub / GitLab / Gitea projects, private image registries, Kubernetes, Portainer, or similar protected services. Public sources can be tracked without credentials.
+5. **Add runtime connections**: If ReleaseTracker will run updates, add Docker, Podman, Kubernetes, or Portainer connections under **Runtime Connections**. Helm release executors use Kubernetes connections. Skip this when you only need version tracking.
+6. **Add trackers and release sources**: Add projects, images, or Helm charts under **Trackers**, then configure release channels or source filters as needed.
+7. **Create executors**: Create executors from supported version sources, choose the target runtime and update target, then select an execution policy. Start with manual execution to validate the setup before enabling Immediate or Maintenance window execution.
+8. **Configure health checks**: Add HTTP, TCP, Helm status, or runtime-native health checks when they are available for the target and the service needs availability verification. A failed health check records a failed run, but it does not trigger automatic rollback.
+9. **Run once or wait for scheduling**: Run an executor manually for validation, or wait for trackers and executors to run on their schedules.
+10. **Review history, snapshots, and rollback**: Review each run in execution history. Destructive Docker / Podman single-container and Docker / Podman Compose grouped targets keep pre-update snapshots; update or health-check failures do not roll back automatically, so operators must manually trigger rollback after confirming the snapshot is suitable.
+
+## 5. Data directory layout
 
 The volume mounted at `/app/backend/data` typically contains:
 
@@ -104,7 +119,7 @@ Backup guidance:
 - **`system-secrets.json` and the database must travel together.** Without the keys, the encrypted columns (credentials, OIDC client secrets, runtime connection secrets) cannot be decrypted.
 - For production backups, stop the container (`docker compose stop` or `docker stop releasetracker`) before performing file-level copies.
 
-## 5. Reverse proxy (optional but recommended)
+## 6. Reverse proxy (optional but recommended)
 
 ReleaseTracker is typically placed behind Nginx / Traefik / Caddy for HTTPS, access control, or sub-path hosting.
 
@@ -163,10 +178,10 @@ After deployment, set **System Settings → Global Settings → BASE URL** to ma
 
 A mismatched BASE URL most commonly surfaces as OIDC logins redirecting to the wrong host or failing with `redirect_uri_mismatch`.
 
-## 6. Upgrades
+## 7. Upgrades
 
 1. Stop the running container: `docker compose stop`, or `docker stop releasetracker`.
-2. Back up the `./data/` directory (see section 4).
+2. Back up the `./data/` directory (see section 5).
 3. Pull the new image: `docker compose pull`, or `docker pull ghcr.io/dalamudx/releasetracker:latest`.
 4. Start again: `docker compose up -d`. The `migrate-and-serve` entry command runs dbmate migrations before the server boots.
 5. Follow the logs to confirm the migration completed: `docker compose logs -f`.
@@ -174,7 +189,7 @@ A mismatched BASE URL most commonly surfaces as OIDC logins redirecting to the w
 !!! note "About downgrades"
     dbmate migrations are forward-only. After a new version's migrations have been applied, reverting to an older container may refuse to start due to schema mismatch; recovery requires restoring from the backup taken in step 2.
 
-## 7. Local development
+## 8. Local development
 
 For contributors and local debugging only.
 
@@ -194,7 +209,7 @@ Default ports:
 
 In development, Vite proxies `/api` to the backend, so only the frontend port needs to be visited from the browser.
 
-## 8. Common deployment issues
+## 9. Common deployment issues
 
 !!! failure "Container cannot write to `data/`"
     The container runs as `root` by default, so permission errors are uncommon. If deploying with rootless Docker, SELinux, or another runtime that restricts write access, make sure the mount is writable for the process, for example:
@@ -219,8 +234,8 @@ In development, Vite proxies `/api` to the backend, so only the frontend port ne
     ```
     Schema conflicts typically indicate the database was modified by hand; restore from backup.
 
-## 9. Next steps
+## 10. Next steps
 
-- Configure a reverse proxy and set the BASE URL as needed (section 5).
+- Configure a reverse proxy and set the BASE URL as needed (section 6).
 - Add tokens, OIDC client secrets, and runtime connection secrets under **Credentials**.
 - Watch for the upcoming **Configuration / Trackers / Executors / Operations** chapters.

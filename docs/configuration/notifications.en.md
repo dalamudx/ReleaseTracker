@@ -6,19 +6,16 @@ title: Notifications
 
 ReleaseTracker currently supports webhook notifications only. The webhook payload is both Discord- and Slack-compatible, and messages can be rendered in English or Chinese.
 
-## 1. Data model
+## 1. Creating a webhook notification
 
-```text
-Notifier {
-  name:        string
-  type:        webhook        # webhook is the only supported type today
-  url:         string         # Target HTTP/HTTPS URL
-  events:      list<string>   # Subscribed events; an empty list is effectively disabled
-  enabled:     bool
-  language:    en | zh
-  description: string | null
-}
-```
+Open **Notifications → New** and fill in:
+
+- **Name**: identifies this notifier in the list.
+- **Webhook URL**: the target address. It must be a complete HTTP/HTTPS URL.
+- **Subscribed events**: check the events you want to deliver. Unchecked events are not sent.
+- **Enabled state**: turning it off suppresses delivery even when events fire.
+- **Language**: choose whether messages are rendered in English or Chinese.
+- **Description**: optional notes about the channel, team, or purpose.
 
 ## 2. Supported events
 
@@ -32,16 +29,7 @@ Notifier {
 
 `new_release` and `republish` are emitted by the release scheduler. The three `executor_*` events are emitted by the executor scheduler.
 
-## 3. Creating a webhook
-
-**Notifications → New**. Key fields:
-
-- `URL`: webhook target. Must be a complete HTTP/HTTPS address.
-- `events`: check the events you want to subscribe to. Unchecked events are not delivered.
-- `language`: `en` or `zh`.
-- `enabled`: turning it off suppresses delivery even when events fire.
-
-## 4. Test sending
+## 3. Test sending
 
 Every notifier has a **Test** button that POSTs a fixed test payload to the target URL:
 
@@ -50,7 +38,7 @@ Every notifier has a **Test** button that POSTs a fixed test payload to the targ
 
 Timeout: 10 seconds. The UI surfaces non-2xx responses or connection errors verbatim.
 
-## 5. Discord / Slack compatibility
+## 4. Discord / Slack compatibility
 
 The generated JSON contains both:
 
@@ -59,13 +47,13 @@ The generated JSON contains both:
 
 Paste a Discord "Incoming Webhook" URL or a Slack "Incoming Webhook" URL directly. Custom HTTP receivers can parse the same payload.
 
-## 6. Retries and failure behaviour
+## 5. Retries and failure behaviour
 
 - Webhook requests use a 10-second timeout.
 - There is **no automatic retry**. Failed deliveries are logged on the server but not queued for replay.
 - To compensate for a transient outage, re-trigger the underlying action (e.g. a manual tracker check or executor run) once the target is reachable again.
 
-## 7. Privacy and security notes
+## 6. Privacy and security notes
 
 - Webhook URLs typically embed a secret path segment (Discord and Slack both work this way). The URL column is stored in SQLite but **is not encrypted**. Anyone with database access can read it in plaintext.
 - Avoid sending sensitive release notes or image names to channels outside your team.

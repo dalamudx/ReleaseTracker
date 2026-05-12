@@ -4,53 +4,49 @@ title: Credentials
 
 # Credentials
 
-Credentials centralize tokens, usernames / passwords, and runtime authentication material. Every sensitive field is encrypted with Fernet (key sourced from `system-secrets.json`) before being written to disk.
+Credentials centralize the sensitive values ReleaseTracker needs to access GitHub, GitLab, container registries, Kubernetes, Portainer, and other external systems. Trackers and runtime connections can reference a saved credential instead of repeating tokens or kubeconfigs in multiple places.
+
+Sensitive inputs are encrypted with Fernet before they are written to SQLite. The encryption key is stored in `data/system-secrets.json`.
 
 ## 1. Supported credential types
 
-| Type | Purpose | Typical `secrets` fields |
-| ---- | ------- | ----------------------- |
-| `github` | GitHub release / tag scans | `token` |
-| `gitlab` | GitLab release / tag scans (including self-hosted) | `token` |
-| `gitea` | Gitea release / tag scans | `token` |
-| `helm` | Private Helm chart repositories | `token` (e.g. `username:password` or Basic auth string) |
-| `docker` | OCI registry authentication (GHCR / Docker Hub / private registries) | `token` (`username:password` or registry token) |
-| `docker_runtime` | Docker runtime connection metadata (usually requires no secret) | — |
-| `podman_runtime` | Podman runtime connection metadata | — |
-| `kubernetes_runtime` | Kubernetes runtime connection | `kubeconfig` (full YAML as a string) |
-| `portainer_runtime` | Portainer runtime connection | `token` (Portainer API key) |
+| Credential type | Purpose | What to enter |
+| ---- | ------- | ------------- |
+| `github` | GitHub release / tag scans | GitHub personal access token or fine-grained PAT. |
+| `gitlab` | GitLab release / tag scans, including self-hosted instances | GitLab personal access token or project access token. |
+| `gitea` | Gitea release / tag scans | Gitea access token. |
+| `helm` | Private Helm chart repositories | Basic Auth string, repository token, or whatever the chart repository requires. |
+| `docker` | OCI registry authentication for GHCR, Docker Hub, or private registries | `username:password`, registry token, or the registry's login token. |
+| `docker_runtime` | Docker runtime connections | Usually no secret is needed for local Docker API access; use this only for remote or certificate-based setups. |
+| `podman_runtime` | Podman runtime connections | Usually no secret is needed for local Podman API access; use this only for remote or certificate-based setups. |
+| `kubernetes_runtime` | Kubernetes runtime connections | Full kubeconfig YAML. |
+| `portainer_runtime` | Portainer runtime connections | Portainer API key. |
 
-The strings above are the enum values stored server-side. The UI may localize their display labels.
+The UI may localize these labels. The values in the table help you recognize the type names shown in logs or API responses.
 
-## 2. Data model
+## 2. Creating or editing a credential
 
-```text
-Credential {
-  name:        string            # Globally unique
-  type:        CredentialType    # See the table above
-  token:       string            # Legacy field; mirrored to secrets.token
-  secrets:     map<string, any>  # Primary secret container (encrypted)
-  description: string | null
-}
-```
+Open **Credentials → New Credential** and fill in:
 
-- `token` exists purely for backward compatibility with earlier versions; new entries should put the value under `secrets.token`. The model mirrors the two automatically: writing `token` copies into `secrets.token` and vice versa.
-- Additional keys inside `secrets` are also encrypted. They are available for future extensions (e.g. OIDC secrets, custom headers).
+- **Name**: unique within ReleaseTracker. This is the value you select later from tracker or runtime connection forms. Use names that describe the purpose, such as `github-prod-readonly` or `portainer-main`.
+- **Type**: the service or runtime the credential belongs to. The type controls which sensitive inputs are shown in the form.
+- **Sensitive value**: the token, API key, kubeconfig, or username/password value required by the selected type.
+- **Description**: optional notes such as source, permission scope, expiry date, or owner.
 
-## 3. List and detail responses
+When editing a credential, leaving a sensitive input blank keeps the existing value. Enter a new value only when you want to replace it.
 
-- List and detail endpoints **mask** every sensitive value. Strings longer than 8 characters are shown as `AAAA...ZZZZ`; shorter values become `****`.
-- Plaintext is decrypted server-side only when a scheduler or executor needs it; it is never returned through the API.
-- When editing, leaving a secret field empty keeps the existing value. Submit a new value to overwrite.
+## 3. Where credentials are used
 
-## 4. Deletion rules
+- **Trackers**: GitHub, GitLab, Gitea, Helm, Docker / OCI, and similar sources can use credentials to access private resources or raise public API rate limits.
+- **Runtime connections**: Kubernetes, Portainer, and authenticated remote Docker / Podman connections can use runtime credentials.
 
-Before a credential can be deleted, the server checks for references:
+Before deleting a credential, ReleaseTracker checks whether trackers or runtime connections still reference it. If references exist, deletion is blocked and the UI shows which objects need to be rewired first.
 
-- Any tracker that points at the credential.
-- Any runtime connection that points at the credential.
+## 4. Display and security behaviour
 
-If references exist, the endpoint returns `409` with the reference list. Remove or rewire the referencing objects first, then retry the delete.
+- Lists and detail pages never show full secret values; they only show masked summaries.
+- Plaintext is decrypted temporarily on the server only when a scan, target discovery, or executor run needs it. It is not returned to the frontend API.
+- To rotate a token, edit the credential and enter the new value. Trackers and runtime connections that use it will pick up the change on their next operation.
 
 ## 5. Suggestions per credential type
 
@@ -64,7 +60,7 @@ If references exist, the endpoint returns `409` with the reference list. Remove 
 
 - Form: personal access token or project access token.
 - Scope: `read_api` is sufficient.
-- Self-hosted instances use the same credential type; the tracker's `instance` field points at your GitLab host.
+- Self-hosted instances use the same credential type; enter your GitLab host in the tracker's instance field.
 
 ### OCI registry token
 
@@ -79,12 +75,12 @@ If references exist, the endpoint returns `409` with the reference list. Remove 
 
 ### Kubernetes kubeconfig
 
-- Put the full kubeconfig YAML into `secrets.kubeconfig`.
-- If the runtime connection sets `in_cluster=true`, no credential is required and `kubeconfig` can be omitted.
+- Paste the full kubeconfig YAML.
+- If the runtime connection uses in-cluster configuration, no credential is required and kubeconfig can be omitted.
 
 ## 6. Encryption and key rotation
 
-- Every `secrets` value (and the legacy `token` field) is stored as a Fernet-encrypted string in SQLite.
+- Sensitive credential values are stored in SQLite as Fernet-encrypted strings.
 - The encryption key lives in `data/system-secrets.json`; losing that file means the encrypted credentials cannot be recovered.
 - Rotating the encryption key re-encrypts every credential in bulk. If any row cannot be decrypted with the current key (usually from hand-edited databases or a mismatch between `system-secrets.json` and the DB), rotation aborts with `400` and no data is changed. See the "System key rotation" section in [System Settings](system-settings.en.md).
 
