@@ -1,62 +1,62 @@
 .PHONY: help install run-backend run-frontend lint format clean build dbmate-migrate version
 
-# 默认目标
+# Default target
 .DEFAULT_GOAL := help
 
-# 变量定义
+# Variable definitions
 PYTHON = python3
 UV = uv
 PIP = uv pip
 NPM = npm
 
-help: ## 显示帮助信息
-	@echo "使用方法: make [target]"
+help: ## Show help information
+	@echo "Usage: make [target]"
 	@echo ""
-	@echo "目标列表:"
+	@echo "Available targets:"
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-install: ## 安装所有依赖 (后端和前端)
-	@echo "📦 安装后端依赖..."
+install: ## Install all dependencies (backend and frontend)
+	@echo "📦 Installing backend dependencies..."
 	cd backend && $(PIP) install -e ".[dev]"
-	@echo "📦 安装前端依赖..."
+	@echo "📦 Installing frontend dependencies..."
 	cd frontend && $(NPM) install
 
-run-backend: ## 运行后端服务
-	@echo "🚀 启动后端服务..."
+run-backend: ## Run the backend service
+	@echo "🚀 Starting backend service..."
 	cd backend && $(UV) run uvicorn releasetracker.main:app --host 0.0.0.0 --port 8000 --reload
 
-run-frontend: ## 运行前端服务
-	@echo "🚀 启动前端服务..."
+run-frontend: ## Run the frontend service
+	@echo "🚀 Starting frontend service..."
 	cd frontend && $(NPM) run dev
 
-dev: ## 同时运行后端和前端 (需要 make -j2)
-	@echo "🚀 启动开发环境..."
+dev: ## Run the backend and frontend together (requires make -j2)
+	@echo "🚀 Starting the development environment..."
 	@$(MAKE) -j2 run-backend run-frontend
 
-lint: ## 代码检查 (后端 ruff/black, 前端 eslint)
-	@echo "🔍 检查后端代码..."
+lint: ## Check code (backend ruff/black, frontend eslint)
+	@echo "🔍 Checking backend code..."
 	cd backend && ruff check . && black --check .
-	@echo "� 检查前端代码..."
+	@echo "� Checking frontend code..."
 	cd frontend && $(NPM) run lint
 
-format: ## 代码格式化 (后端 black/ruff)
-	@echo "✨ 格式化后端代码..."
+format: ## Format code (backend black/ruff)
+	@echo "✨ Formatting backend code..."
 	cd backend && black . && ruff check . --fix
 
-build: ## 构建前端生产代码
-	@echo "🏗️ 构建前端..."
+build: ## Build the frontend production bundle
+	@echo "🏗️ Building frontend..."
 	cd frontend && $(NPM) run build
 
-version: ## 同步版本号，用法：make version VERSION=1.0.1
+version: ## Synchronize the version number. Usage: make version VERSION=1.0.1
 	@test -n "$(VERSION)" || (echo "VERSION is required, for example: make version VERSION=1.0.1" && exit 1)
 	UV=$(UV) $(PYTHON) scripts/sync_version.py $(VERSION)
 
-dbmate-migrate: ## 对当前 releases.db 执行 dbmate 迁移
-	@echo "🛫 执行 dbmate 迁移..."
+dbmate-migrate: ## Run dbmate migrations against the current releases.db
+	@echo "🛫 Running dbmate migrations..."
 	cd backend && dbmate --url "sqlite:$$(pwd)/data/releases.db" --migrations-dir dbmate/migrations migrate
 
-clean: ## 清理构建产物和缓存
-	@echo "🧹 清理垃圾文件..."
+clean: ## Clean build artifacts and caches
+	@echo "🧹 Cleaning build artifacts and caches..."
 	find . -type d -name "__pycache__" -exec rm -rf {} +
 	find . -type d -name ".pytest_cache" -exec rm -rf {} +
 	find . -type d -name ".ruff_cache" -exec rm -rf {} +

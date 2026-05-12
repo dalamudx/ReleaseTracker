@@ -356,7 +356,7 @@ async def test_rollback_not_supported_when_adapter_cannot_recover(storage):
 
 @pytest.mark.asyncio
 async def test_rollback_does_not_run_health_check_phase(storage):
-    """Rollback run terminates without a Health Check Phase."""
+    """Rollback run terminates without post-update health checks."""
     executor = await _create_executor(storage, name="rb-no-hc")
     await _seed_snapshot(storage, executor.id, image="acme/api:1.0.0")
 

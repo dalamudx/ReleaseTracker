@@ -373,7 +373,7 @@ class ExecutorScheduler:
         run_id: int,
         update_result: "RuntimeUpdateResult",
     ) -> "_HealthCheckOutcome | None":
-        """Drive the Health Check Phase after a successful Update Phase.
+        """Drive post-update health checks after a successful image update.
 
         Returns ``None`` when the phase is skipped (strategy=none), which
         is the caller's signal to finalize with pre-feature semantics.
@@ -406,7 +406,7 @@ class ExecutorScheduler:
         try:
             hc_result = await runner.run(ctx)
         except asyncio.CancelledError:
-            # Cancellation during the Health Check Phase finalizes the run
+            # Cancellation during post-update health checks finalizes the run
             # as failed; Recovery Hook never fires.
             return _HealthCheckOutcome(
                 status="failed",
@@ -483,7 +483,7 @@ class ExecutorScheduler:
         adapter: BaseRuntimeAdapter,
         update_result: "RuntimeUpdateResult",
     ) -> dict[str, Any]:
-        """Capture adapter-specific state at the end of the Update Phase.
+        """Capture adapter-specific state at the end of the image update.
 
         The runtime-native probes (container restart count, Kubernetes
         ``metadata.generation``) need a reference point from the moment
@@ -1214,7 +1214,7 @@ class ExecutorScheduler:
                         update={"target_ref": refreshed_ref}
                     )
 
-                # --- Health Check Phase --------------------------------
+                # --- Post-update health check --------------------------
                 # Only runs for container-mode executors in this branch.
                 # Grouped modes (compose / portainer stack / kubernetes
                 # workload / helm_release) go through separate pipelines

@@ -622,7 +622,7 @@ export interface ExecutorRunDiagnostics {
         group_message: string | null
     }
     services: ExecutorRunServiceDiagnostic[]
-    /** Health check outcome payload attached when a Health Check Phase ran. */
+    /** Health check outcome payload attached when post-update checks ran. */
     health_check?: Record<string, unknown> | null
     /** Recovery hook outcome persisted on mark_failed_and_recover runs. */
     recovery_outcome?: RecoveryOutcome | null

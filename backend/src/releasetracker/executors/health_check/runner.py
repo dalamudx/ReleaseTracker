@@ -1,4 +1,4 @@
-"""HealthCheckRunner — Health Check Phase lifecycle.
+"""HealthCheckRunner — post-update health check lifecycle.
 
 Implements the grace-period → probe-loop → outcome pipeline.
 
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 class HealthCheckRunner:
-    """Runs the Health Check Phase end-to-end.
+    """Runs the post-update health check end-to-end.
 
     The runner is stateless; each ``run()`` call owns its own timing and
     diagnostics. Probes are injected so tests can drive a scripted

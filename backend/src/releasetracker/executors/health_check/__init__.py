@@ -1,6 +1,6 @@
 """Post-update health check subsystem.
 
-This subpackage hosts the Health Check Phase runtime: the lifecycle runner,
+This subpackage hosts the post-update health check runtime: the lifecycle runner,
 the strategy probe abstraction, and the concrete probe implementations.
 """
 

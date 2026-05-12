@@ -1,4 +1,4 @@
-"""Shared dataclasses for the Health Check Phase runtime.
+"""Shared dataclasses for post-update health check runtime.
 
 Kept tiny and import-cheap so the scheduler, runner, and individual probes
 can all consume the same vocabulary without pulling in FastAPI, httpx, or
@@ -50,7 +50,7 @@ class HealthCheckContext:
     ``ExecutorScheduler._capture_update_phase_baseline`` — it carries
     adapter-specific state the runtime-native probe needs, for example
     Kubernetes ``metadata.generation`` or a container restart count at the
-    end of the Update Phase.
+    end of the image update.
     """
 
     executor_config: Any  # ExecutorConfig; typed as Any to avoid import cycle
@@ -91,7 +91,7 @@ class ServiceHealthResult:
 
 @dataclass
 class HealthCheckResult:
-    """Aggregate outcome of a Health Check Phase, ready for persistence.
+    """Aggregate post-update health check outcome, ready for persistence.
 
     ``to_dict`` emits the JSON form the scheduler merges into
     ``executor_run_history.diagnostics``.

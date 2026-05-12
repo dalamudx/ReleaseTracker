@@ -1,6 +1,6 @@
 """Recovery Hook Coordinator.
 
-When a Health Check Phase concludes unhealthy and the executor's
+When a post-update health check concludes unhealthy and the executor's
 ``failure_policy`` is ``mark_failed_and_recover``, the coordinator:
 1. Loads the most recent ``ExecutorSnapshot`` from the multi-row history.
 2. Validates it via the runtime adapter.
@@ -98,8 +98,8 @@ class RecoveryHookCoordinator:
     ) -> RecoveryResult:
         # Manual rollbacks supply the explicit target snapshot so the
         # coordinator does not pick up a pre_rollback row the caller
-        # just inserted. Automatic recovery from a failed Health Check
-        # Phase passes ``None`` and relies on "most recent" semantics.
+        # just inserted. Automatic recovery from a failed post-update
+        # health check passes ``None`` and relies on "most recent" semantics.
         if snapshot is None:
             snapshot = await self._storage.get_executor_snapshot(executor_id)
         if snapshot is None:

@@ -100,7 +100,7 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
         Healthy iff the container state is ``running`` AND either the image
         reports ``healthy`` via Docker/Podman HEALTHCHECK or (when no
         HEALTHCHECK is defined) the restart count has not increased above
-        the baseline recorded at the end of the Update Phase.
+        the baseline recorded at the end of the image update.
         """
         # Imported here to avoid a circular dependency via
         # ``health_check.types`` → ``config`` → ``executors`` → ``container_runtime``.

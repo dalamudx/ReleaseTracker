@@ -332,7 +332,7 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
 
         Healthy iff:
         - ``status.observedGeneration >= metadata.generation`` recorded at
-          the end of the Update Phase.
+          the end of the image update.
         - Workload-specific rollout completion condition has fired.
         - Ready replicas match desired replicas.
 

@@ -6,9 +6,13 @@ on:
       - main
     paths:
       - VERSION
+      - Dockerfile
       - backend/pyproject.toml
+      - backend/uv.lock
+      - frontend/.npmrc
       - frontend/package.json
       - frontend/package-lock.json
+      - .github/workflows/release.yml
   workflow_dispatch:
     inputs:
       tag_latest:
@@ -61,8 +65,26 @@ jobs:
           curl -fsSL -o /usr/local/bin/dbmate "https://github.com/amacneil/dbmate/releases/download/v2.32.0/dbmate-linux-amd64"
           chmod +x /usr/local/bin/dbmate
 
+      - name: Install backend dependencies
+        run: uv --directory backend sync --locked --extra dev
+
+      - name: Generate backend locked requirements
+        run: |
+          mkdir -p artifacts
+          uv --directory backend export --locked --extra dev --no-emit-project --format requirements.txt --output-file artifacts/backend-requirements.txt > /dev/null
+          test -s artifacts/backend-requirements.txt
+
+      - name: Upload backend locked requirements
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-locked-requirements
+          path: artifacts/backend-requirements.txt
+
+      - name: Audit backend dependencies
+        run: uvx pip-audit -r artifacts/backend-requirements.txt
+
       - name: Run backend tests
-        run: uv --directory backend run --extra dev pytest -q
+        run: uv --directory backend run --locked --extra dev pytest -q
 
       - name: Set up Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
@@ -73,6 +95,21 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm --prefix frontend ci
+
+      - name: Audit frontend dependencies
+        run: npm --prefix frontend audit --audit-level=high
+
+      - name: Generate frontend SBOM
+        run: |
+          mkdir -p artifacts
+          npm --prefix frontend sbom --sbom-format=cyclonedx > artifacts/frontend-sbom.cdx.json
+          test -s artifacts/frontend-sbom.cdx.json
+
+      - name: Upload frontend SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-sbom-cyclonedx
+          path: artifacts/frontend-sbom.cdx.json
 
       - name: Run frontend tests
         run: npm --prefix frontend run test

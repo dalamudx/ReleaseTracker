@@ -1,4 +1,4 @@
-"""Scheduler-level integration tests for the Health Check Phase."""
+"""Scheduler-level integration tests for post-update health checks."""
 
 from __future__ import annotations
 
@@ -311,8 +311,7 @@ async def test_runtime_native_unhealthy_mark_degraded_uses_degraded_prefix(stora
 async def test_notification_payload_includes_health_check_object(
     storage, scheduler, monkeypatch
 ):
-    """webhook payload gains a ``health_check`` object when the
-    Health Check Phase ran. Pre-feature fields stay unchanged."""
+    """Webhook payloads include health check details without changing existing fields."""
     executor = await _build_executor(
         storage,
         tracker_name="hc-notify",
@@ -375,8 +374,7 @@ async def test_notification_payload_includes_health_check_object(
 async def test_notification_payload_omits_health_check_when_strategy_none(
     storage, scheduler, monkeypatch
 ):
-    """runs without a Health Check Phase must keep the pre-feature
-    payload shape — no ``health_check`` key."""
+    """Runs without post-update health checks omit the ``health_check`` key."""
     executor = await _build_executor(
         storage,
         tracker_name="hc-no-notify",
