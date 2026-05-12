@@ -33,7 +33,7 @@ Rollback calls for these targets return 404 when no snapshot is available. Recov
 ## 3. Health check framework
 
 - **Manual HTTP probe** / **Manual TCP probe** support explicit host / port / path probe configuration; Docker / Podman can use runtime-native healthchecks or runtime-state fallback. Kubernetes, Portainer, and Helm grouped update pipelines are still being wired into health checks, so do not assume they support arbitrary host-port probing.
-- **Mark as failed and roll back** only works end-to-end when the target has both an available snapshot and matching health-probe wiring. Targets without full snapshots cannot be rolled back from ReleaseTracker snapshots even if that UI option is selected.
+- Update failures and health-check failures only record a failed run; they do not trigger automatic rollback. Operators can manually trigger ReleaseTracker snapshot rollback only when the target has an available snapshot; targets without full snapshots need native recovery tools.
 - The default timings (15-second grace period, 10-second attempt timeout, 5-second interval, 180-second total probe duration) suit most workloads, but complex startup sequences need hand-tuning.
 
 ## 4. Authentication and accounts
@@ -43,38 +43,48 @@ Rollback calls for these targets return 404 when no snapshot is available. Recov
 - **There are no roles or fine-grained permissions.** Every authenticated user sees the same data and can perform the same actions (except key rotation).
 - **Default account `admin` / `admin`.** Change the password immediately after the first login. A stock instance on the internet is equivalent to a compromised machine.
 
-## 5. Portainer
+## 5. Supply-chain checks
+
+The current release workflow includes dependency supply-chain verification, scoped to locked dependencies and audits:
+
+- The frontend runs `npm ci` from `package-lock.json`, runs `npm audit` at high severity, and uploads a CycloneDX SBOM artifact; `frontend/.npmrc` disables dependency install scripts by default to reduce install-time execution risk.
+- The backend installs dependencies with uv's locked mode, exports a locked requirements artifact, and scans that requirements file with `pip-audit`.
+- GitHub Actions token permissions are least-privilege by job: `contents: read` by default, `packages: write` only for image publishing, and `contents: write` only for GitHub Release creation.
+
+These checks run in CI / release workflows and do not require deployers to edit the SBOM or requirements artifacts. There is currently no image vulnerability scanning step; add one in your own deployment pipeline if you need image-level scanning.
+
+## 6. Portainer
 
 - Only Portainer `standalone` stacks are supported (Swarm stacks are not). Discovery skips non-standalone stacks, and save-time validation rejects them.
 - Portainer endpoint health is not pre-flighted; unhealthy endpoints surface Portainer's error verbatim during updates.
 
-## 6. Kubernetes / Helm
+## 7. Kubernetes / Helm
 
 - Only Helm 3 is supported. Helm 2 is not.
 - Helm release discovery relies on Helm 3's Secret-backed storage. Deployments using a ConfigMap-backed storage driver (rare) will not be recognised.
 - Kubernetes workload support covers `Deployment`, `StatefulSet`, and `DaemonSet` only. CronJob, Job, and others are not supported.
 - Multi-container workloads require choosing a version source explicitly for each container in the executor service-binding step.
 
-## 7. Notifications
+## 8. Notifications
 
 - Webhook is the only supported channel.
 - Webhook URLs are stored in SQLite **without encryption**. Anyone with database access can read them in plaintext.
 - Webhook delivery **does not retry** on failure; failures are logged but not queued for replay.
 - Webhooks with custom HTTP headers are not supported — authentication relies on the secret embedded in the URL.
 
-## 8. Trackers
+## 9. Trackers
 
 - Release channel names are restricted to `stable` / `prerelease` / `beta` / `canary`. Custom names are not allowed.
 - Include / exclude regexes match version tags only. Filtering on release body, author, or other fields is not supported.
 - Anonymous GitHub and Docker Hub access is heavily rate-limited. In practice, credentials are required.
 - Container source publish-time accuracy depends on the registry; rate-limited registries may force the **First observed time** strategy.
 
-## 9. Database and migrations
+## 10. Database and migrations
 
 - dbmate migrations are **forward-only**. Once a newer version's migrations have run, downgrading the container can fail to start due to schema mismatch; recovery means restoring from backup.
 - Database backups must be paired with `system-secrets.json`. Without both, encrypted data cannot be recovered.
 
-## 10. API / UI
+## 11. API / UI
 
 - There is no public API versioning strategy. `/api` is implicit v1. Breaking changes are infrequent, but surface through the README roadmap and release notes.
 - There is no built-in audit log. Run histories (`ExecutorRunHistory`, `SourceFetchRun`) provide most of the traceability.

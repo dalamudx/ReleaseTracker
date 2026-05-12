@@ -43,6 +43,7 @@ ReleaseTracker is a lightweight, configurable release tracking and update orches
 - **Executor orchestration**: target discovery, binding, manual / scheduled execution, maintenance windows, and run history for containers, Compose projects, Portainer stacks, Kubernetes workloads, and Helm releases.
 - **Snapshot and rollback (selected executors)**: full runtime configuration snapshots / restores are used for destructive Docker / Podman recreate targets: single containers and Compose grouped updates. Portainer stacks, Kubernetes workloads, and Helm releases rely on declarative updates, version history, or run history rather than full ReleaseTracker-managed runtime snapshots.
 - **Security**: local users plus JWT and OIDC; sensitive data is encrypted with Fernet; system keys are rotatable.
+- **Supply-chain hardening**: releases include frontend lockfile installs, high-severity audit, a CycloneDX SBOM artifact, backend uv locked installs, pip-audit, a locked requirements artifact, and least-privilege workflow tokens.
 - **Web UI configuration**: timezone, log level, release history retention, BASE URL, and key rotation are all handled from the browser without environment variables.
 
 ## Next steps

@@ -6,7 +6,7 @@
 
 [中文](README.md) | [English](README.en.md)
 
-ReleaseTracker is a lightweight, configurable release tracking and update orchestration tool. It tracks releases and tags from GitHub, GitLab, Gitea, Helm charts, and OCI container registries, and maps version changes to runtime targets such as Docker, Podman, Portainer, Kubernetes, and Helm.
+ReleaseTracker is a lightweight, configurable release tracking and update orchestration tool. It tracks releases and tags from GitHub, GitLab, Gitea, Helm charts, and OCI container registries, then helps apply selected version changes to supported runtime targets such as Docker, Podman, Portainer, Kubernetes, and Helm.
 
 ![Python](https://img.shields.io/badge/Python-3.12+-blue)
 ![React](https://img.shields.io/badge/React-19-61dafb)
@@ -19,9 +19,12 @@ ReleaseTracker is a lightweight, configurable release tracking and update orches
 - **Aggregate trackers**: bind multiple sources under one tracker; filter, merge, and display via release channel rules.
 - **History + current projection**: keep full release history while maintaining the latest installable version view.
 - **Runtime connections**: Docker, Podman, Portainer, Kubernetes; secrets centrally managed and encrypted.
-- **Executor orchestration**: target discovery, binding, manual / scheduled execution, maintenance windows, and run history for containers, Compose projects, Portainer stacks, Kubernetes workloads, and Helm releases.
-- **Snapshot & rollback**: pre-update snapshots with rollback and health-check-driven recovery.
+- **Executor orchestration**: target discovery, binding, manual / scheduled execution, maintenance windows, and run history for Docker / Podman containers and Compose projects, Portainer stacks, Kubernetes workloads, and Helm releases.
+- **Runtime updates**: Docker / Podman single-container and Compose grouped updates recreate targets from inspected configuration; Portainer stack, Kubernetes workload, and Helm release updates use their platform control planes, declarative state, or Helm release history, and ReleaseTracker does not claim to manage full snapshots for those targets.
+- **Snapshots & manual rollback**: destructive Docker / Podman updates capture full configuration snapshots for operator-initiated rollback via the UI or API; snapshot history supports rollback and can be deleted where that action is available.
+- **Health checks**: automatic runtime-native checks and manually configured HTTP / TCP probes run with bounded timing; failures are recorded for operator action and do not trigger automatic rollback, and ReleaseTracker does not claim host-port probing is always available for Kubernetes / Portainer / Helm targets.
 - **Security**: local users + JWT + OIDC; sensitive data encrypted with Fernet; rotatable system keys.
+- **Supply-chain hardening**: frontend `.npmrc`, `npm ci`, audit, CycloneDX SBOM artifact; backend uv locked install, pip-audit, locked requirements artifact; least-privilege release workflow permissions.
 - **System settings**: timezone, log level, history retention, BASE URL, key rotation — all from the Web UI.
 - **Notifications**: webhook with event filtering, bilingual messages, and Discord / Slack compatible fields.
 - **Modern frontend**: React 19 + TypeScript + TailwindCSS, bilingual (zh/en), dark mode, responsive layout.
@@ -154,7 +157,7 @@ For local development: `make dbmate-migrate`.
 
 ## Development Commands
 
-Common: `make install`, `make dev`, `make lint`, `make build`, `make version VERSION=x.y.z`. Run `make help` for the full list.
+Common: `make install`, `make dev`, `make lint`, `make build`, `make version VERSION=x.y.z`. The version target synchronizes backend/frontend metadata and refreshes `backend/uv.lock`. Run `make help` for the full list.
 
 Tests:
 
@@ -166,8 +169,8 @@ npm --prefix frontend run test           # Frontend
 ## Roadmap
 
 - [x] Executor runtime update reliability
-- [x] Add executor snapshot and recovery features
-- [x] Add post-update health check features
+- [x] Add executor snapshots and manual rollback for destructive Docker / Podman updates
+- [x] Add bounded post-update health checks without automatic rollback
 - [ ] Add customizable CHANGELOG support
 - [ ] Add more notification channels
 
