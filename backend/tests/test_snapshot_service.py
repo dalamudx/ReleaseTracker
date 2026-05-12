@@ -1,4 +1,4 @@
-"""SnapshotService list / detail tests (Phase E)."""
+"""SnapshotService list / detail tests."""
 
 from __future__ import annotations
 
@@ -177,5 +177,5 @@ async def test_redact_for_persist_returns_redacted_payload_and_flag(storage):
     }
     redacted, needs_marker = service.redact_for_persist(payload, runtime_type="portainer")
     assert redacted["env"][0]["value"] == REDACTED_MARKER
-    # Phase E redactor covers Portainer + K8s thoroughly; the flag stays False.
+    # The redactor covers Portainer + K8s thoroughly; the flag stays False.
     assert needs_marker is False

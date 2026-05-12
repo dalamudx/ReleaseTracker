@@ -1,4 +1,4 @@
-"""Portainer adapter snapshot / recover tests (Phase B).
+"""Portainer adapter snapshot / recover tests.
 
 Uses an in-memory ``FakePortainerHttpClient`` that records requests and
 returns scripted responses. The tests never touch a real Portainer server
@@ -328,7 +328,7 @@ async def test_recover_from_snapshot_rejects_invalid_snapshot_before_update():
 @pytest.mark.asyncio
 async def test_recover_from_snapshot_reuses_runtime_connection_without_new_credential(monkeypatch):
     # Use a local import to prove we have not imported the credentials
-    # module into the adapter namespace. If Phase B accidentally added a
+    # module into the adapter namespace. If the adapter accidentally added a
     # re-materialization path this test would import the helper and the
     # adapter would call it — we prove it does not by monkeypatching.
     from releasetracker.services import runtime_credentials as rc_module
@@ -338,7 +338,7 @@ async def test_recover_from_snapshot_reuses_runtime_connection_without_new_crede
     def _spy(*args, **kwargs):  # pragma: no cover - defensive only
         calls.append((args, kwargs))
         raise AssertionError(
-            "Phase B adapter must reuse the supplied RuntimeConnection; "
+            "Portainer adapter must reuse the supplied RuntimeConnection; "
             "no new credential materialization is allowed."
         )
 

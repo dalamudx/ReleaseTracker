@@ -1,4 +1,4 @@
-"""TCPProbe unit tests (Req 5.*)."""
+"""TCPProbe unit tests."""
 
 from __future__ import annotations
 
@@ -207,7 +207,7 @@ async def test_tcp_probe_dns_failure():
     assert result.healthy is False
     # Either gaierror (dns_failure) or, on some resolvers, OSError wrapped
     # as network_unreachable. Both are acceptable non-OK transport
-    # classifications per Req 5.5.
+    # classifications for DNS failures.
     assert result.error_category in {"dns_failure", "network_unreachable"}
 
 

@@ -1,4 +1,4 @@
-"""Unit tests for the runtime-native health probe (Req 3.1-3.7)."""
+"""Unit tests for the runtime-native health probe."""
 
 from __future__ import annotations
 

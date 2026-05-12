@@ -1,4 +1,4 @@
-"""Tests for the Phase A snapshot retention pruning service."""
+"""Tests for the snapshot retention pruning service."""
 
 from __future__ import annotations
 

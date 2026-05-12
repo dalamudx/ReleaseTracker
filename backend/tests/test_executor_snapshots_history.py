@@ -1,6 +1,6 @@
 """Storage-level tests for the multi-row executor snapshot history.
 
-Focuses on the new storage surface added in Phase A:
+Focuses on the multi-row storage surface:
 - ``create_executor_snapshot`` inserts distinct rows per capture.
 - ``get_executor_snapshot`` returns the most recent snapshot.
 - ``list_executor_snapshots`` pages newest-first.
@@ -248,7 +248,7 @@ async def test_save_executor_snapshot_shim_delegates_to_history_insert(storage):
 
 
 # ============================================================
-# Phase E: SnapshotService list + detail
+# SnapshotService list + detail
 # ============================================================
 
 

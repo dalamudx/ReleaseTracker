@@ -2454,7 +2454,7 @@ async def test_delete_executor_snapshot_returns_409_for_in_flight_snapshot(authe
 
 
 # ============================================================
-# Health Check profile API validation (Phase C, Req 1.*, 2.*)
+# Health Check profile API validation
 # ============================================================
 
 
@@ -2559,7 +2559,7 @@ async def test_create_executor_accepts_manual_http_strategy(authed_client, stora
 async def test_create_executor_rejects_helm_status_on_container(
     authed_client, storage, monkeypatch
 ):
-    """``helm_status`` belongs only to helm_release targets (Req 2.1-2.5, 2.6)."""
+    """``helm_status`` belongs only to helm_release targets."""
     runtime_id = await _create_runtime_connection(storage, name="hc-helm-runtime")
     await _create_tracker(storage, name="hc-helm-tracker")
     tracker_source_id = await _get_tracker_source_id(storage, "hc-helm-tracker")
@@ -2666,7 +2666,7 @@ async def test_create_executor_rejects_manual_http_without_host(
 async def test_create_executor_rejects_probe_window_shorter_than_attempt_timeout(
     authed_client, storage, monkeypatch
 ):
-    """``probe_window_seconds`` must be >= ``attempt_timeout_seconds`` (Req 1.11)."""
+    """``probe_window_seconds`` must be >= ``attempt_timeout_seconds``."""
     runtime_id = await _create_runtime_connection(storage, name="hc-window-runtime")
     await _create_tracker(storage, name="hc-window-tracker")
     tracker_source_id = await _get_tracker_source_id(storage, "hc-window-tracker")
@@ -2701,7 +2701,7 @@ async def test_create_executor_rejects_probe_window_shorter_than_attempt_timeout
 async def test_create_executor_rejects_failure_policy_other_than_mark_failed_for_none_strategy(
     authed_client, storage, monkeypatch
 ):
-    """``strategy=none`` forces ``failure_policy=mark_failed`` (Req 1.9)."""
+    """``strategy=none`` forces ``failure_policy=mark_failed``."""
     runtime_id = await _create_runtime_connection(storage, name="hc-none-policy-runtime")
     await _create_tracker(storage, name="hc-none-policy-tracker")
     tracker_source_id = await _get_tracker_source_id(storage, "hc-none-policy-tracker")
@@ -2732,7 +2732,7 @@ async def test_create_executor_rejects_failure_policy_other_than_mark_failed_for
 async def test_get_executor_response_round_trips_health_check_profile(
     authed_client, storage, monkeypatch
 ):
-    """Req 22.5: GET /api/executors/{id}/config exposes the saved health_check."""
+    """GET /api/executors/{id}/config exposes the saved health_check."""
     runtime_id = await _create_runtime_connection(storage, name="hc-get-runtime")
     await _create_tracker(storage, name="hc-get-tracker")
     tracker_source_id = await _get_tracker_source_id(storage, "hc-get-tracker")
@@ -2773,7 +2773,7 @@ async def test_get_executor_response_round_trips_health_check_profile(
 
 
 # ================================================================
-# Snapshot listing / detail / rollback API (Phase E, Req 18, 19)
+# Snapshot listing / detail / rollback API
 # ================================================================
 
 
@@ -2915,7 +2915,7 @@ async def test_rollback_endpoint_returns_run_and_recovery_outcome(
     executor_id, snapshot_id = await _seed_executor_with_snapshot(storage, name="snap-rollback-ok")
 
     # Stub the Docker adapter so the endpoint runs end-to-end without a
-    # real Docker daemon. Phase E endpoint resolves the adapter via
+    # real Docker daemon. The rollback endpoint resolves the adapter via
     # materialize_runtime_connection_credentials + _get_runtime_adapter,
     # so we patch DockerRuntimeAdapter to a canned class.
     from releasetracker.executors.base import (

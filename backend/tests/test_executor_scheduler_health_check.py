@@ -1,4 +1,4 @@
-"""Scheduler-level integration tests for the Health Check Phase (Req 7, 9, 11)."""
+"""Scheduler-level integration tests for the Health Check Phase."""
 
 from __future__ import annotations
 
@@ -159,7 +159,7 @@ async def _build_executor(
 
 @pytest.mark.asyncio
 async def test_strategy_none_preserves_pre_feature_success_semantics(storage, scheduler):
-    """Req 7.10, 22.6: strategy=none must not change run status or add any
+    """strategy=none must not change run status or add any
     ``health_check`` diagnostics."""
     executor = await _build_executor(
         storage,
@@ -185,7 +185,7 @@ async def test_strategy_none_preserves_pre_feature_success_semantics(storage, sc
 
 @pytest.mark.asyncio
 async def test_runtime_native_healthy_finalizes_success_with_diagnostics(storage, scheduler):
-    """Req 7.7, 8.1, 9.4: healthy probe → status=success + health_check diagnostics."""
+    """healthy probe → status=success + health_check diagnostics."""
     executor = await _build_executor(
         storage,
         tracker_name="hc-healthy",
@@ -220,7 +220,7 @@ async def test_runtime_native_healthy_finalizes_success_with_diagnostics(storage
 
 @pytest.mark.asyncio
 async def test_runtime_native_unhealthy_mark_failed_finalizes_failed(storage, scheduler):
-    """Req 7.8, 9.1: unhealthy + mark_failed → status=failed + diagnostics."""
+    """unhealthy + mark_failed → status=failed + diagnostics."""
     executor = await _build_executor(
         storage,
         tracker_name="hc-unhealthy",
@@ -269,7 +269,7 @@ async def test_runtime_native_unhealthy_mark_failed_finalizes_failed(storage, sc
 
 @pytest.mark.asyncio
 async def test_runtime_native_unhealthy_mark_degraded_uses_degraded_prefix(storage, scheduler):
-    """Req 9.3: mark_degraded → status=failed with ``degraded:`` prefix."""
+    """mark_degraded → status=failed with ``degraded:`` prefix."""
     executor = await _build_executor(
         storage,
         tracker_name="hc-degraded",
@@ -311,7 +311,7 @@ async def test_runtime_native_unhealthy_mark_degraded_uses_degraded_prefix(stora
 async def test_notification_payload_includes_health_check_object(
     storage, scheduler, monkeypatch
 ):
-    """Req 11.1: webhook payload gains a ``health_check`` object when the
+    """webhook payload gains a ``health_check`` object when the
     Health Check Phase ran. Pre-feature fields stay unchanged."""
     executor = await _build_executor(
         storage,
@@ -375,7 +375,7 @@ async def test_notification_payload_includes_health_check_object(
 async def test_notification_payload_omits_health_check_when_strategy_none(
     storage, scheduler, monkeypatch
 ):
-    """Req 22.3: runs without a Health Check Phase must keep the pre-feature
+    """runs without a Health Check Phase must keep the pre-feature
     payload shape — no ``health_check`` key."""
     executor = await _build_executor(
         storage,
@@ -420,7 +420,7 @@ async def test_notification_payload_omits_health_check_when_strategy_none(
     assert "recovery_outcome" not in payload
 
 
-# ---- Phase D: mark_failed_and_recover -----------------------------------
+# ---- mark_failed_and_recover --------------------------------------------
 
 
 class _RecoveringAdapter(_FakeAdapter):
@@ -488,7 +488,7 @@ async def _run_unhealthy_recovering_executor(
 async def test_mark_failed_and_recover_invokes_recovery_hook_and_records_outcome(
     storage, scheduler
 ):
-    """Req 9.2, 10.5, 11.4: unhealthy + mark_failed_and_recover → Recovery
+    """unhealthy + mark_failed_and_recover → Recovery
     Hook runs, outcome=succeeded, diagnostics + notification carry the
     recovery_outcome."""
     executor = await _build_executor(

@@ -1,4 +1,4 @@
-"""Unit tests for the Helm release status health probe (Req 6.*)."""
+"""Unit tests for the Helm release status health probe."""
 
 from __future__ import annotations
 

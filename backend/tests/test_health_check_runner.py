@@ -1,4 +1,4 @@
-"""HealthCheckRunner lifecycle tests (Req 7.5-7.11, 13.1-13.4)."""
+"""HealthCheckRunner lifecycle tests."""
 
 from __future__ import annotations
 

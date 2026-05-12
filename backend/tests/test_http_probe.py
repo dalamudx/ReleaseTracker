@@ -1,4 +1,4 @@
-"""HTTPProbe unit tests (Req 4.*)."""
+"""HTTPProbe unit tests."""
 
 from __future__ import annotations
 
@@ -82,7 +82,7 @@ def _make_profile(**overrides) -> HealthCheckProfile:
         http=http_config,
     )
     base.update(overrides)
-    # Enable Phase D so the validator accepts strategy=http.
+    # Enable the HTTP/TCP strategy flag so the validator accepts strategy=http.
     import releasetracker.config as config_module
 
     config_module._PHASE_D_ENABLED = True

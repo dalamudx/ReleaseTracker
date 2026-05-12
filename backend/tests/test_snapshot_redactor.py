@@ -1,4 +1,4 @@
-"""Golden-file tests for SnapshotRedactor (Req 21.1, 21.4, 21.5)."""
+"""Golden-file tests for SnapshotRedactor."""
 
 from __future__ import annotations
 
