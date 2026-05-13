@@ -1,6 +1,9 @@
 export type TrackerChannelType = 'github' | 'gitlab' | 'gitea' | 'helm' | 'container'
 export type TrackerSourceType = 'github' | 'gitlab' | 'gitea' | 'helm' | 'container'
 export type TrackerChangelogPolicy = 'primary_channel' | 'primary_source'
+export type ReleaseNotesSource = 'release_notes' | 'custom_changelog'
+export type ChangelogRefStrategy = 'default_branch' | 'release_tag' | 'configured_ref'
+export type ChangelogExtractionMode = 'whole_file' | 'version_section' | 'version_section_from_subheading'
 export type GitHubFetchMode = 'graphql_first' | 'rest_first'
 
 export interface ReleaseNotesSubject {
@@ -158,6 +161,17 @@ export interface TrackerChannel {
  */
 export type ContainerPublishedAtMode = "auto" | "prefer_real" | "first_observed"
 
+export interface TrackerReleaseNotesConfig {
+    source: ReleaseNotesSource
+    changelog_source_key?: string | null
+    path_template: string
+    ref_strategy: ChangelogRefStrategy
+    ref?: string | null
+    extraction_mode: ChangelogExtractionMode
+    version_heading_template?: string | null
+    subheading_prefix?: string | null
+}
+
 export type TrackerSource = TrackerChannel
 
 export interface AggregateTracker {
@@ -167,6 +181,7 @@ export interface AggregateTracker {
     description?: string | null
     changelog_policy?: TrackerChangelogPolicy
     primary_changelog_source_key: string | null
+    release_notes?: TrackerReleaseNotesConfig
     sources: TrackerChannel[]
     interval: number
     version_sort_mode: 'published_at' | 'semver'

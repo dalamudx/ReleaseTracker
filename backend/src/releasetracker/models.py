@@ -52,6 +52,11 @@ class TrackerStatus(BaseModel):
 
 TrackerSourceType = Literal["github", "gitlab", "gitea", "helm", "container"]
 TrackerChangelogPolicy = Literal["primary_source"]
+ReleaseNotesSource = Literal["release_notes", "custom_changelog"]
+ChangelogRefStrategy = Literal["default_branch", "release_tag", "configured_ref"]
+ChangelogExtractionMode = Literal[
+    "whole_file", "version_section", "version_section_from_subheading"
+]
 CanonicalReleaseContributionKind = Literal["primary", "supporting"]
 SourceFetchRunTriggerMode = Literal["scheduled", "manual", "bootstrap"]
 SourceFetchRunStatus = Literal["running", "success", "partial", "failed"]
@@ -352,6 +357,60 @@ class TrackerCurrentRelease(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.now)
 
 
+class TrackerReleaseNotesConfig(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    source: ReleaseNotesSource = "release_notes"
+    changelog_source_key: str | None = None
+    path_template: str = "CHANGELOG.md"
+    ref_strategy: ChangelogRefStrategy = "default_branch"
+    ref: str | None = None
+    extraction_mode: ChangelogExtractionMode = "version_section"
+    version_heading_template: str | None = None
+    subheading_prefix: str | None = None
+
+    @field_validator(
+        "changelog_source_key",
+        "path_template",
+        "ref",
+        "version_heading_template",
+        "subheading_prefix",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_strings(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return value
+        normalized_value = value.strip()
+        return normalized_value or None
+
+    @model_validator(mode="after")
+    def validate_custom_changelog(self):
+        if self.source == "release_notes":
+            self.changelog_source_key = None
+            self.path_template = "CHANGELOG.md"
+            self.ref_strategy = "default_branch"
+            self.ref = None
+            self.extraction_mode = "version_section"
+            self.version_heading_template = None
+            self.subheading_prefix = None
+            return self
+
+        if not self.changelog_source_key:
+            raise ValueError("changelog_source_key is required when custom changelog is selected")
+        if not self.path_template:
+            raise ValueError("path_template is required when custom changelog is selected")
+        if self.ref_strategy == "configured_ref" and not self.ref:
+            raise ValueError("ref is required when using a configured changelog ref")
+        if self.extraction_mode == "version_section_from_subheading" and not self.subheading_prefix:
+            raise ValueError(
+                "subheading_prefix is required when starting from a matched subheading"
+            )
+        return self
+
+
 class AggregateTracker(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -364,6 +423,7 @@ class AggregateTracker(BaseModel):
         validation_alias=AliasChoices("primary_changelog_source_key"),
     )
     description: str | None = None
+    release_notes: TrackerReleaseNotesConfig = Field(default_factory=TrackerReleaseNotesConfig)
     sources: list[TrackerSource] = Field(
         default_factory=list,
         validation_alias=AliasChoices("sources"),
@@ -418,6 +478,24 @@ class AggregateTracker(BaseModel):
             raise ValueError(
                 "primary_changelog_source_key must reference one of the tracker sources"
             )
+
+        if self.release_notes.source == "custom_changelog":
+            changelog_source = next(
+                (
+                    source
+                    for source in self.sources
+                    if source.source_key == self.release_notes.changelog_source_key
+                ),
+                None,
+            )
+            if changelog_source is None:
+                raise ValueError(
+                    "custom changelog source must reference one of the tracker sources"
+                )
+            if changelog_source.source_type not in {"github", "gitlab", "gitea"}:
+                raise ValueError(
+                    "custom changelog source must be a GitHub, GitLab, or Gitea source"
+                )
 
         return self
 

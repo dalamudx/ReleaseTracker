@@ -19,6 +19,7 @@ from .models import (
 from .notifiers import WebhookNotifier
 from .notifiers.base import BaseNotifier, NotificationEvent
 from .scheduler_host import SchedulerHost
+from .services.changelog import fetch_and_extract_changelog
 from .storage.sqlite import SQLiteStorage
 from .trackers import GitHubTracker, GitLabTracker, GiteaTracker, HelmTracker, DockerTracker
 from .trackers.base import BaseTracker
@@ -601,6 +602,49 @@ class ReleaseScheduler:
             body=canonical_release.body,
         )
 
+    async def _apply_custom_changelog_notes(
+        self,
+        *,
+        aggregate_tracker: AggregateTracker,
+        source: TrackerSource,
+        source_config: TrackerConfig,
+        releases: list[Release],
+    ) -> tuple[list[Release], list[str]]:
+        release_notes = aggregate_tracker.release_notes
+        if release_notes.source != "custom_changelog":
+            return releases, []
+
+        if source.source_key != release_notes.changelog_source_key:
+            return [release.model_copy(update={"body": None, "changelog_url": None}) for release in releases], []
+
+        token = None
+        if source.credential_name:
+            credential = await self.storage.get_credential_by_name(source.credential_name)
+            if credential:
+                token = credential.token
+
+        rewritten_releases: list[Release] = []
+        diagnostics: list[str] = []
+        for release in releases:
+            try:
+                result = await fetch_and_extract_changelog(
+                    source=source,
+                    release=release,
+                    config=release_notes,
+                    token=token,
+                    timeout=source_config.fetch_timeout,
+                )
+                rewritten_releases.append(
+                    release.model_copy(update={"body": result.body, "changelog_url": None})
+                )
+            except Exception as exc:
+                diagnostics.append(
+                    f"{source.source_key}/{release.tag_name or release.version}: {str(exc) or exc.__class__.__name__}"
+                )
+                rewritten_releases.append(release.model_copy(update={"body": None, "changelog_url": None}))
+
+        return rewritten_releases, diagnostics
+
     def _make_source_tracker_config(
         self,
         tracker_name: str,
@@ -851,6 +895,15 @@ class ReleaseScheduler:
                     )
                     for release in fetched_releases
                 ]
+                mapped_releases, changelog_errors = await self._apply_custom_changelog_notes(
+                    aggregate_tracker=aggregate_tracker,
+                    source=source,
+                    source_config=source_config,
+                    releases=mapped_releases,
+                )
+                source_errors.extend(
+                    f"Release notes extraction failed: {error}" for error in changelog_errors
+                )
                 if source_config.channels:
                     mapped_releases = self._assign_first_matching_channel(
                         self.storage,

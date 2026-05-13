@@ -398,6 +398,34 @@
           "excludePatternDescription": "即使包含正则命中，只要匹配该正则也会被当前渠道排除。"
         }
       },
+      "releaseNotes": {
+        "title": "发布说明",
+        "description": "可以使用上游 Release Notes，也可以从现有仓库来源读取 changelog 文件。",
+        "noRepositoryDescription": "自定义 Changelog 需要此追踪器包含 GitHub、GitLab 或 Gitea 来源。",
+        "options": {
+          "releaseNotes": "使用 Release Notes",
+          "customChangelog": "使用自定义 Changelog"
+        },
+        "fields": {
+          "source": "发布说明来源",
+          "repositorySource": "Changelog 仓库来源",
+          "repositorySourcePlaceholder": "选择仓库来源",
+          "pathTemplate": "Changelog 路径模板",
+          "pathTemplateDescription": "支持占位符：{tag}、{version}、{major}、{minor}、{patch}。",
+          "refStrategy": "文件引用",
+          "refStrategyDefaultBranch": "默认分支",
+          "refStrategyReleaseTag": "发布标签",
+          "refStrategyConfiguredRef": "指定引用",
+          "ref": "指定引用",
+          "extractionMode": "提取方式",
+          "extractionModeWholeFile": "整个文件",
+          "extractionModeVersionSection": "匹配版本段落",
+          "extractionModeFromSubheading": "从匹配段落的子标题开始",
+          "versionHeadingTemplate": "版本标题模板",
+          "versionHeadingTemplateDescription": "留空时会匹配常见标题，例如 ## [1.2.3]、## 1.2.3 和 # v1.2.3。",
+          "subheadingPrefix": "起始子标题"
+        }
+      },
       "fetching": {
         "title": "抓取偏好",
         "description": "这些设置作用于整个追踪器。"

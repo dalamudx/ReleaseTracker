@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import aiosqlite
 
-from ..models import AggregateTracker, TrackerSource
+from ..models import AggregateTracker, TrackerReleaseNotesConfig, TrackerSource
 
 if TYPE_CHECKING:
     from .sqlite import SQLiteStorage
@@ -134,6 +134,7 @@ async def load_aggregate_tracker_from_row(
         changelog_policy=row["changelog_policy"],
         primary_changelog_source_key=primary_source_key,
         description=row["description"],
+        release_notes=TrackerReleaseNotesConfig(**_load_json(row["release_notes_config"])),
         sources=sources,
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
@@ -253,8 +254,8 @@ async def create_aggregate_tracker(
     cursor = await db.execute(
         """
         INSERT INTO aggregate_trackers
-        (name, enabled, changelog_policy, primary_changelog_source_id, description, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        (name, enabled, changelog_policy, primary_changelog_source_id, description, release_notes_config, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             tracker.name,
@@ -262,6 +263,7 @@ async def create_aggregate_tracker(
             tracker.changelog_policy,
             None,
             tracker.description,
+            storage._dump_json(tracker.release_notes.model_dump(mode="json")),
             tracker.created_at.isoformat(),
             now.isoformat(),
         ),
@@ -365,6 +367,7 @@ async def update_aggregate_tracker(
             changelog_policy = ?,
             primary_changelog_source_id = NULL,
             description = ?,
+            release_notes_config = ?,
             updated_at = ?
         WHERE id = ?
         """,
@@ -373,6 +376,7 @@ async def update_aggregate_tracker(
             1 if tracker.enabled else 0,
             tracker.changelog_policy,
             tracker.description,
+            storage._dump_json(tracker.release_notes.model_dump(mode="json")),
             now,
             existing_row["id"],
         ),

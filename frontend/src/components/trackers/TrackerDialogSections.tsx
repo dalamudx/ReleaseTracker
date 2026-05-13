@@ -28,9 +28,12 @@ import { Textarea } from "@/components/ui/textarea"
 import { TrackerDialogSourceConfigFields } from "./TrackerDialogSourceConfigFields"
 import { getCredentialTypeLabel } from "@/components/credentials/credentialTypeLabels"
 import {
+    CHANGELOG_EXTRACTION_MODE_OPTIONS,
+    CHANGELOG_REF_STRATEGY_OPTIONS,
     getCredentialTypeFilter,
     getReleaseChannelHeaderLabel,
     getReleaseChannelIdentity,
+    getSupportedChangelogSources,
     getTrackerSourceHeaderLabel,
     RELEASE_CHANNEL_PRESETS,
     RELEASE_TYPE_OPTIONS,
@@ -327,6 +330,198 @@ export function TrackerDialogTrackerChannelsSection({
                         </div>
                     )
                 })}
+            </CardContent>
+        </Card>
+    )
+}
+
+interface TrackerDialogReleaseNotesSectionProps {
+    form: UseFormReturn<TrackerFormValues>
+    watchedTrackerChannels: TrackerFormValues["sources"]
+}
+
+export function TrackerDialogReleaseNotesSection({ form, watchedTrackerChannels }: TrackerDialogReleaseNotesSectionProps) {
+    const { t } = useTranslation()
+    const supportedSources = getSupportedChangelogSources({ sources: watchedTrackerChannels })
+    const customChangelogDisabled = supportedSources.length === 0
+    const selectedSource = form.watch("release_notes.source")
+    const selectedRefStrategy = form.watch("release_notes.ref_strategy")
+    const selectedExtractionMode = form.watch("release_notes.extraction_mode")
+
+    return (
+        <Card className="gap-4 border-border/70 bg-background shadow-sm">
+            <CardHeader className="pb-3">
+                <CardTitle>{t("trackers.aggregate.releaseNotes.title")}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+                <FormField
+                    control={form.control}
+                    name="release_notes.source"
+                    render={({ field }) => (
+                        <FormItem>
+                            <FormLabel>{t("trackers.aggregate.releaseNotes.fields.source")}</FormLabel>
+                            <Select
+                                value={field.value}
+                                onValueChange={(value) => field.onChange(value)}
+                            >
+                                <FormControl>
+                                    <SelectTrigger className="w-full max-w-md">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                    <SelectItem value="release_notes">{t("trackers.aggregate.releaseNotes.options.releaseNotes")}</SelectItem>
+                                    <SelectItem value="custom_changelog" disabled={customChangelogDisabled}>
+                                        {t("trackers.aggregate.releaseNotes.options.customChangelog")}
+                                    </SelectItem>
+                                </SelectContent>
+                            </Select>
+                            {customChangelogDisabled ? (
+                                <FormDescription>{t("trackers.aggregate.releaseNotes.noRepositoryDescription")}</FormDescription>
+                            ) : (
+                                <FormDescription>{t("trackers.aggregate.releaseNotes.description")}</FormDescription>
+                            )}
+                            <FormMessage />
+                        </FormItem>
+                    )}
+                />
+
+                {selectedSource === "custom_changelog" ? (
+                    <div className="grid items-start gap-4 md:grid-cols-2">
+                        <FormField
+                            control={form.control}
+                            name="release_notes.changelog_source_key"
+                            render={({ field }) => (
+                                <FormItem className="w-full max-w-md">
+                                    <FormLabel>{t("trackers.aggregate.releaseNotes.fields.repositorySource")}</FormLabel>
+                                    <Select value={field.value} onValueChange={field.onChange}>
+                                        <FormControl>
+                                            <SelectTrigger>
+                                                <SelectValue placeholder={t("trackers.aggregate.releaseNotes.fields.repositorySourcePlaceholder")} />
+                                            </SelectTrigger>
+                                        </FormControl>
+                                        <SelectContent>
+                                            {supportedSources.map((source) => (
+                                                <SelectItem key={source.source_key} value={source.source_key}>
+                                                    {source.source_key} ({t(SOURCE_TYPE_OPTIONS.find((option) => option.value === source.source_type)?.labelKey ?? "")})
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    <FormMessage />
+                                </FormItem>
+                            )}
+                        />
+
+                        <FormField
+                            control={form.control}
+                            name="release_notes.path_template"
+                            render={({ field }) => (
+                                <FormItem className="w-full max-w-md">
+                                    <FormLabel>{t("trackers.aggregate.releaseNotes.fields.pathTemplate")}</FormLabel>
+                                    <FormControl>
+                                        <Input {...field} placeholder="CHANGELOG.md" />
+                                    </FormControl>
+                                    <FormDescription>{t("trackers.aggregate.releaseNotes.fields.pathTemplateDescription")}</FormDescription>
+                                    <FormMessage />
+                                </FormItem>
+                            )}
+                        />
+
+                        <FormField
+                            control={form.control}
+                            name="release_notes.ref_strategy"
+                            render={({ field }) => (
+                                <FormItem className="w-full max-w-md">
+                                    <FormLabel>{t("trackers.aggregate.releaseNotes.fields.refStrategy")}</FormLabel>
+                                    <Select value={field.value} onValueChange={field.onChange}>
+                                        <FormControl>
+                                            <SelectTrigger>
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                        </FormControl>
+                                        <SelectContent>
+                                            {CHANGELOG_REF_STRATEGY_OPTIONS.map((option) => (
+                                                <SelectItem key={option.value} value={option.value}>{t(option.labelKey)}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    <FormMessage />
+                                </FormItem>
+                            )}
+                        />
+
+                        {selectedRefStrategy === "configured_ref" ? (
+                            <FormField
+                                control={form.control}
+                                name="release_notes.ref"
+                                render={({ field }) => (
+                                    <FormItem className="w-full max-w-md">
+                                        <FormLabel>{t("trackers.aggregate.releaseNotes.fields.ref")}</FormLabel>
+                                        <FormControl>
+                                            <Input {...field} placeholder="main" />
+                                        </FormControl>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+                        ) : null}
+
+                        <FormField
+                            control={form.control}
+                            name="release_notes.extraction_mode"
+                            render={({ field }) => (
+                                <FormItem className="w-full max-w-md">
+                                    <FormLabel>{t("trackers.aggregate.releaseNotes.fields.extractionMode")}</FormLabel>
+                                    <Select value={field.value} onValueChange={field.onChange}>
+                                        <FormControl>
+                                            <SelectTrigger>
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                        </FormControl>
+                                        <SelectContent>
+                                            {CHANGELOG_EXTRACTION_MODE_OPTIONS.map((option) => (
+                                                <SelectItem key={option.value} value={option.value}>{t(option.labelKey)}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    <FormMessage />
+                                </FormItem>
+                            )}
+                        />
+
+                        <FormField
+                            control={form.control}
+                            name="release_notes.version_heading_template"
+                            render={({ field }) => (
+                                <FormItem className="w-full max-w-md">
+                                    <FormLabel>{t("trackers.aggregate.releaseNotes.fields.versionHeadingTemplate")}</FormLabel>
+                                    <FormControl>
+                                        <Input {...field} placeholder="# {tag}" />
+                                    </FormControl>
+                                    <FormDescription>{t("trackers.aggregate.releaseNotes.fields.versionHeadingTemplateDescription")}</FormDescription>
+                                    <FormMessage />
+                                </FormItem>
+                            )}
+                        />
+
+                        {selectedExtractionMode === "version_section_from_subheading" ? (
+                            <FormField
+                                control={form.control}
+                                name="release_notes.subheading_prefix"
+                                render={({ field }) => (
+                                    <FormItem className="w-full max-w-md">
+                                        <FormLabel>{t("trackers.aggregate.releaseNotes.fields.subheadingPrefix")}</FormLabel>
+                                        <FormControl>
+                                            <Input {...field} placeholder="Changelog since" />
+                                        </FormControl>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+                        ) : null}
+                    </div>
+                ) : null}
             </CardContent>
         </Card>
     )

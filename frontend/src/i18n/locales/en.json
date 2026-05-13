@@ -398,6 +398,34 @@
                     "excludePatternDescription": "Versions matching this regex are blocked even if the include regex matches."
                 }
             },
+            "releaseNotes": {
+                "title": "Release notes",
+                "description": "Use release notes from the provider, or read changelog files from an existing repository source.",
+                "noRepositoryDescription": "Custom Changelog requires a GitHub, GitLab, or Gitea source on this tracker.",
+                "options": {
+                    "releaseNotes": "Use Release Notes",
+                    "customChangelog": "Use custom Changelog"
+                },
+                "fields": {
+                    "source": "Release notes source",
+                    "repositorySource": "Changelog repository source",
+                    "repositorySourcePlaceholder": "Select repository source",
+                    "pathTemplate": "Changelog path template",
+                    "pathTemplateDescription": "Supported placeholders: {tag}, {version}, {major}, {minor}, {patch}.",
+                    "refStrategy": "File ref",
+                    "refStrategyDefaultBranch": "Default branch",
+                    "refStrategyReleaseTag": "Release tag",
+                    "refStrategyConfiguredRef": "Configured ref",
+                    "ref": "Configured ref",
+                    "extractionMode": "Extraction mode",
+                    "extractionModeWholeFile": "Entire file",
+                    "extractionModeVersionSection": "Matched version section",
+                    "extractionModeFromSubheading": "Matched version section from subheading",
+                    "versionHeadingTemplate": "Version heading template",
+                    "versionHeadingTemplateDescription": "Leave empty to match common headings such as ## [1.2.3], ## 1.2.3, and # v1.2.3.",
+                    "subheadingPrefix": "Start from subheading"
+                }
+            },
             "fetching": {
                 "title": "Fetch preferences",
                 "description": "These settings apply to the whole tracker."

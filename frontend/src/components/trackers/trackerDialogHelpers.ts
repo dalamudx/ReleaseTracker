@@ -2,10 +2,13 @@ import type { TFunction } from "i18next"
 
 import type {
     AggregateTracker,
+    ChangelogExtractionMode,
+    ChangelogRefStrategy,
     ContainerPublishedAtMode,
     CreateTrackerRequest,
     GitHubFetchMode,
     ReleaseChannelInput,
+    ReleaseNotesSource,
     TrackerChannelType,
 } from "@/api/types"
 
@@ -35,12 +38,24 @@ export interface TrackerFormSource {
     source_rank: number
 }
 
+export interface TrackerReleaseNotesFormValues {
+    source: ReleaseNotesSource
+    changelog_source_key: string
+    path_template: string
+    ref_strategy: ChangelogRefStrategy
+    ref: string
+    extraction_mode: ChangelogExtractionMode
+    version_heading_template: string
+    subheading_prefix: string
+}
+
 export interface TrackerFormValues {
     name: string
     enabled: boolean
     description?: string
     changelog_policy?: "primary_source"
     primary_changelog_source_key: string
+    release_notes: TrackerReleaseNotesFormValues
     sources: TrackerFormSource[]
     interval: number
     version_sort_mode: "published_at" | "semver"
@@ -77,6 +92,18 @@ export const GITHUB_FETCH_MODE_OPTIONS: Array<{ value: GitHubFetchMode; labelKey
     { value: "graphql_first", labelKey: "tracker.fields.githubFetchModeGraphql" },
 ]
 
+export const CHANGELOG_REF_STRATEGY_OPTIONS: Array<{ value: ChangelogRefStrategy; labelKey: string }> = [
+    { value: "default_branch", labelKey: "trackers.aggregate.releaseNotes.fields.refStrategyDefaultBranch" },
+    { value: "release_tag", labelKey: "trackers.aggregate.releaseNotes.fields.refStrategyReleaseTag" },
+    { value: "configured_ref", labelKey: "trackers.aggregate.releaseNotes.fields.refStrategyConfiguredRef" },
+]
+
+export const CHANGELOG_EXTRACTION_MODE_OPTIONS: Array<{ value: ChangelogExtractionMode; labelKey: string }> = [
+    { value: "whole_file", labelKey: "trackers.aggregate.releaseNotes.fields.extractionModeWholeFile" },
+    { value: "version_section", labelKey: "trackers.aggregate.releaseNotes.fields.extractionModeVersionSection" },
+    { value: "version_section_from_subheading", labelKey: "trackers.aggregate.releaseNotes.fields.extractionModeFromSubheading" },
+]
+
 export function normalizeTrackerSourceType(sourceType?: string | null): TrackerChannelType {
     return (sourceType ?? "github") as TrackerChannelType
 }
@@ -109,6 +136,19 @@ export function createDefaultReleaseChannel(
     }
 }
 
+export function createDefaultReleaseNotes(): TrackerReleaseNotesFormValues {
+    return {
+        source: "release_notes",
+        changelog_source_key: "source-1",
+        path_template: "CHANGELOG.md",
+        ref_strategy: "default_branch",
+        ref: "",
+        extraction_mode: "version_section",
+        version_heading_template: "",
+        subheading_prefix: "",
+    }
+}
+
 export function createDefaultValues(): TrackerFormValues {
     return {
         name: "",
@@ -116,6 +156,7 @@ export function createDefaultValues(): TrackerFormValues {
         description: "",
         changelog_policy: "primary_source",
         primary_changelog_source_key: "source-1",
+        release_notes: createDefaultReleaseNotes(),
         sources: [createDefaultSource(0)],
         interval: 360,
         version_sort_mode: "published_at",
@@ -170,12 +211,22 @@ export function normalizeReleaseChannelForForm(
 }
 
 export function buildTrackerFormValues(trackerData: AggregateTracker): TrackerFormValues {
+    const defaultReleaseNotes = createDefaultReleaseNotes()
+
     return {
         name: trackerData.name,
         enabled: trackerData.enabled,
         description: trackerData.description ?? "",
         changelog_policy: "primary_source",
         primary_changelog_source_key: trackerData.primary_changelog_source_key ?? "",
+        release_notes: {
+            ...defaultReleaseNotes,
+            ...trackerData.release_notes,
+            changelog_source_key: trackerData.release_notes?.changelog_source_key ?? defaultReleaseNotes.changelog_source_key,
+            ref: trackerData.release_notes?.ref ?? "",
+            version_heading_template: trackerData.release_notes?.version_heading_template ?? "",
+            subheading_prefix: trackerData.release_notes?.subheading_prefix ?? "",
+        },
         sources: trackerData.sources.map(normalizeSourceForForm),
         interval: trackerData.interval,
         version_sort_mode: trackerData.version_sort_mode,
@@ -403,6 +454,19 @@ export function getReleaseChannelIdentity(
     return ensureReleaseChannelKey(releaseChannel, ownerSourceKey, releaseChannelIndex)
 }
 
+export function getSupportedChangelogSources(values: Pick<TrackerFormValues, "sources">): TrackerFormSource[] {
+    return values.sources.filter((source) => REPO_PREFERRED_SOURCE_TYPES.includes(source.source_type))
+}
+
+export function getEffectiveCustomChangelogSourceKey(values: Pick<TrackerFormValues, "sources" | "release_notes">): string {
+    const selectedKey = values.release_notes.changelog_source_key?.trim()
+    const supportedSources = getSupportedChangelogSources(values)
+    if (selectedKey && supportedSources.some((source) => source.source_key.trim() === selectedKey)) {
+        return selectedKey
+    }
+    return supportedSources[0]?.source_key?.trim() ?? ""
+}
+
 export function getEffectivePrimarySourceKey(values: TrackerFormValues): string {
     const repoPreferredSource = values.sources.find((source) =>
         REPO_PREFERRED_SOURCE_TYPES.includes(source.source_type),
@@ -432,6 +496,14 @@ export function buildNormalizedTrackerFormValues(values: TrackerFormValues, effe
         ...values,
         changelog_policy: "primary_source",
         primary_changelog_source_key: effectivePrimarySourceKey,
+        release_notes: {
+            ...values.release_notes,
+            changelog_source_key: getEffectiveCustomChangelogSourceKey(values),
+            path_template: values.release_notes.path_template.trim(),
+            ref: values.release_notes.ref.trim(),
+            version_heading_template: values.release_notes.version_heading_template.trim(),
+            subheading_prefix: values.release_notes.subheading_prefix.trim(),
+        },
         sources: values.sources.map((source, index) => ({
             ...source,
             source_key: source.source_key.trim(),
@@ -463,6 +535,18 @@ export function buildTrackerPayload(values: TrackerFormValues, effectivePrimaryS
         description: trimOrUndefined(values.description),
         changelog_policy: "primary_source",
         primary_changelog_source_key: effectivePrimarySourceKey,
+        release_notes: values.release_notes.source === "custom_changelog"
+            ? {
+                source: "custom_changelog",
+                changelog_source_key: getEffectiveCustomChangelogSourceKey(values),
+                path_template: values.release_notes.path_template.trim(),
+                ref_strategy: values.release_notes.ref_strategy,
+                ref: trimOrUndefined(values.release_notes.ref),
+                extraction_mode: values.release_notes.extraction_mode,
+                version_heading_template: trimOrUndefined(values.release_notes.version_heading_template),
+                subheading_prefix: trimOrUndefined(values.release_notes.subheading_prefix),
+            }
+            : createDefaultReleaseNotes(),
         sources,
         channels: sources.flatMap((source) => source.release_channels),
         interval: values.interval,

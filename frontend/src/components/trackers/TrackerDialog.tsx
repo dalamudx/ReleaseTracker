@@ -20,6 +20,7 @@ import { toast } from "sonner"
 import {
     TrackerDialogFetchingSection,
     TrackerDialogIdentitySection,
+    TrackerDialogReleaseNotesSection,
     TrackerDialogTrackerChannelsSection,
 } from "./TrackerDialogSections"
 import {
@@ -30,6 +31,7 @@ import {
     createDefaultReleaseChannel,
     createDefaultValues,
     getApiErrorDetailMessage,
+    getEffectiveCustomChangelogSourceKey,
     getEffectivePrimarySourceKey,
     getReleaseChannelIdentity,
     getRequiredConfigKeys,
@@ -109,6 +111,17 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
         form.setValue("primary_changelog_source_key", effectivePrimaryChannelKey, {
             shouldDirty: true,
         })
+
+        const values = form.getValues()
+        const effectiveChangelogSourceKey = getEffectiveCustomChangelogSourceKey({
+            sources: watchedTrackerChannels,
+            release_notes: values.release_notes,
+        })
+        if (effectiveChangelogSourceKey) {
+            form.setValue("release_notes.changelog_source_key", effectiveChangelogSourceKey, {
+                shouldDirty: true,
+            })
+        }
     }, [form, trackerChannelKeySignature, watchedTrackerChannels])
 
     const handleAddSource = () => {
@@ -245,6 +258,51 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
         return isValid
     }
 
+    const validateReleaseNotes = (values: TrackerFormValues): boolean => {
+        if (values.release_notes.source !== "custom_changelog") {
+            return true
+        }
+
+        let isValid = true
+        const supportedSourceKey = getEffectiveCustomChangelogSourceKey(values)
+        if (!supportedSourceKey) {
+            form.setError("release_notes.source", {
+                type: "manual",
+                message: t("trackers.aggregate.releaseNotes.noRepositoryDescription"),
+            })
+            isValid = false
+        }
+
+        if (!values.release_notes.path_template.trim()) {
+            form.setError("release_notes.path_template", {
+                type: "manual",
+                message: t("trackers.aggregate.validation.requiredField"),
+            })
+            isValid = false
+        }
+
+        if (values.release_notes.ref_strategy === "configured_ref" && !values.release_notes.ref.trim()) {
+            form.setError("release_notes.ref", {
+                type: "manual",
+                message: t("trackers.aggregate.validation.requiredField"),
+            })
+            isValid = false
+        }
+
+        if (
+            values.release_notes.extraction_mode === "version_section_from_subheading"
+            && !values.release_notes.subheading_prefix.trim()
+        ) {
+            form.setError("release_notes.subheading_prefix", {
+                type: "manual",
+                message: t("trackers.aggregate.validation.requiredField"),
+            })
+            isValid = false
+        }
+
+        return isValid
+    }
+
     const validateReleaseChannels = (values: TrackerFormValues): boolean => {
         let isValid = true
         let totalReleaseChannels = 0
@@ -321,9 +379,10 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
 
         const normalizedValues = buildNormalizedTrackerFormValues(values, effectivePrimaryChannelKey)
         const sourcesAreValid = validateSources(normalizedValues)
+        const releaseNotesAreValid = validateReleaseNotes(normalizedValues)
         const releaseChannelsAreValid = validateReleaseChannels(normalizedValues)
 
-        if (!sourcesAreValid || !releaseChannelsAreValid) {
+        if (!sourcesAreValid || !releaseNotesAreValid || !releaseChannelsAreValid) {
             return
         }
 
@@ -373,6 +432,10 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
                                 <TrackerDialogIdentitySection form={form} trackerName={trackerName} />
                                 <TrackerDialogFetchingSection form={form} />
                             </div>
+                            <TrackerDialogReleaseNotesSection
+                                form={form}
+                                watchedTrackerChannels={watchedTrackerChannels}
+                            />
                             <TrackerDialogTrackerChannelsSection
                                 form={form}
                                 trackerChannelsFieldArray={trackerChannelsFieldArray}

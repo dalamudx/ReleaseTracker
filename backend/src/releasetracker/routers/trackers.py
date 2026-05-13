@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..config import Channel, TrackerConfig
 from ..dependencies import get_current_user, get_scheduler, get_storage
-from ..models import AggregateTracker, Release, TrackerSource
+from ..models import AggregateTracker, Release, TrackerReleaseNotesConfig, TrackerSource
 from ..scheduler import ReleaseScheduler
 from ..storage.sqlite import SQLiteStorage
 
@@ -24,6 +24,7 @@ class AggregateTrackerPayload(BaseModel):
     description: str | None = None
     changelog_policy: Literal["primary_source"] = "primary_source"
     primary_changelog_source_key: str
+    release_notes: TrackerReleaseNotesConfig = Field(default_factory=TrackerReleaseNotesConfig)
     sources: Annotated[list[TrackerSource], Field(min_length=1)]
     interval: int = 360
     version_sort_mode: Literal["published_at", "semver"] = "published_at"
@@ -41,6 +42,7 @@ class AggregateTrackerPayload(BaseModel):
             description=self.description,
             changelog_policy=self.changelog_policy,
             primary_changelog_source_key=self.primary_changelog_source_key,
+            release_notes=self.release_notes,
             sources=self.sources,
         )
         return self
@@ -52,6 +54,7 @@ class AggregateTrackerPayload(BaseModel):
             description=self.description,
             changelog_policy=self.changelog_policy,
             primary_changelog_source_key=self.primary_changelog_source_key,
+            release_notes=self.release_notes,
             sources=self.sources,
         )
 
@@ -467,6 +470,7 @@ async def _build_tracker_response(
         "enabled": tracker.enabled,
         "description": tracker.description,
         "primary_changelog_source_key": tracker.primary_changelog_source_key,
+        "release_notes": tracker.release_notes.model_dump(mode="json"),
         "interval": runtime_config.interval if runtime_config else 360,
         "version_sort_mode": runtime_config.version_sort_mode if runtime_config else "published_at",
         "fetch_limit": runtime_config.fetch_limit if runtime_config else 10,
