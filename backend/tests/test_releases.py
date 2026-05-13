@@ -278,6 +278,15 @@ async def test_releases_stats(authed_client, storage):
 @pytest.mark.asyncio
 async def test_releases_stats_groups_naive_published_at_in_system_timezone(authed_client, storage):
     await storage.set_setting("system.timezone", "Asia/Shanghai")
+    # Use a relative date so the release always falls within the 7-day stats window.
+    # The stats code treats naive published_at as being in the configured timezone
+    # (Asia/Shanghai), so a naive datetime two days ago at 18:06:37 will be grouped
+    # under that calendar date in Shanghai regardless of the server's local timezone.
+    two_days_ago = datetime.now() - timedelta(days=2)
+    naive_published_at = two_days_ago.replace(hour=18, minute=6, second=37, microsecond=0)
+    expected_date = naive_published_at.date().isoformat()
+    next_date = (naive_published_at.date() + timedelta(days=1)).isoformat()
+
     release = Release(
         tracker_name="naive-timezone-stats-tracker",
         version="v2.2.0",
@@ -285,7 +294,7 @@ async def test_releases_stats_groups_naive_published_at_in_system_timezone(authe
         tag_name="v2.2.0",
         channel_name="stable",
         url="http://example.com/v2.2.0",
-        published_at=datetime(2026, 5, 6, 18, 6, 37),
+        published_at=naive_published_at,
         prerelease=False,
     )
     await _seed_runtime_release(storage, release)
@@ -297,8 +306,8 @@ async def test_releases_stats_groups_naive_published_at_in_system_timezone(authe
     channels_by_date = {
         item["date"]: item["channels"] for item in stats["daily_stats"] if item["channels"]
     }
-    assert channels_by_date["2026-05-06"] == {"stable": 1}
-    assert "2026-05-07" not in channels_by_date
+    assert channels_by_date[expected_date] == {"stable": 1}
+    assert next_date not in channels_by_date
 
 
 @pytest.mark.asyncio

@@ -172,9 +172,8 @@ CREATE TABLE aggregate_trackers (
     changelog_policy TEXT NOT NULL DEFAULT 'primary_source',
     primary_changelog_source_id INTEGER,
     description TEXT,
-    release_notes_config TEXT NOT NULL DEFAULT '{"source":"release_notes"}',
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL, release_notes_config TEXT NOT NULL DEFAULT '{"source":"release_notes"}',
     FOREIGN KEY (primary_changelog_source_id) REFERENCES aggregate_tracker_sources(id) ON DELETE SET NULL
 );
 CREATE TABLE aggregate_tracker_sources (

@@ -432,10 +432,6 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
                                 <TrackerDialogIdentitySection form={form} trackerName={trackerName} />
                                 <TrackerDialogFetchingSection form={form} />
                             </div>
-                            <TrackerDialogReleaseNotesSection
-                                form={form}
-                                watchedTrackerChannels={watchedTrackerChannels}
-                            />
                             <TrackerDialogTrackerChannelsSection
                                 form={form}
                                 trackerChannelsFieldArray={trackerChannelsFieldArray}
@@ -450,6 +446,10 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
                                 onRemoveReleaseChannel={handleRemoveReleaseChannel}
                                 onToggleReleaseChannelExpanded={toggleReleaseChannelExpanded}
                                 onClearReleaseChannelListError={() => setReleaseChannelListError(null)}
+                            />
+                            <TrackerDialogReleaseNotesSection
+                                form={form}
+                                watchedTrackerChannels={watchedTrackerChannels}
                             />
                         </div>
 
