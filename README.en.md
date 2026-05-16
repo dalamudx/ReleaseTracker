@@ -170,7 +170,7 @@ npm --prefix frontend run test           # Frontend
 - [x] Executor runtime update reliability
 - [x] Add executor snapshots and manual rollback for destructive Docker / Podman updates
 - [x] Add bounded post-update health checks without automatic rollback
-- [ ] Add customizable CHANGELOG support
+- [x] Add customizable CHANGELOG support
 - [ ] Add more notification channels
 
 ## License

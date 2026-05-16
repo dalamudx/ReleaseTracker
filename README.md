@@ -170,7 +170,7 @@ npm --prefix frontend run test           # 前端
 - [x] 执行器运行时更新可靠性
 - [x] 为 Docker / Podman 破坏性更新增加执行器快照与手动回滚
 - [x] 增加有时间边界、不会自动回滚的更新后健康检查
-- [ ] 支持 CHANGELOG 自定义功能
+- [x] 支持 CHANGELOG 自定义功能
 - [ ] 更多通知渠道
 
 ## 许可证
