@@ -173,6 +173,10 @@ npm --prefix frontend run test           # Frontend
 - [x] Add customizable CHANGELOG support
 - [ ] Add more notification channels
 
+## Special Thanks
+
+[![LINUX.DO](https://img.shields.io/badge/LINUX.DO-Community-blue)](https://linux.do)
+
 ## License
 
 GPL-3.0 License

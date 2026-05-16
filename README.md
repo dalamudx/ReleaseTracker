@@ -173,6 +173,10 @@ npm --prefix frontend run test           # 前端
 - [x] 支持 CHANGELOG 自定义功能
 - [ ] 更多通知渠道
 
+## 特别感谢
+
+[![LINUX.DO](https://img.shields.io/badge/LINUX.DO-Community-blue)](https://linux.do)
+
 ## 许可证
 
 GPL-3.0 License
