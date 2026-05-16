@@ -24,7 +24,6 @@ ReleaseTracker is a lightweight, configurable release tracking and update orches
 - **Snapshots & manual rollback**: destructive Docker / Podman updates capture full configuration snapshots for operator-initiated rollback via the UI or API; snapshot history supports rollback and can be deleted where that action is available.
 - **Health checks**: automatic runtime-native checks and manually configured HTTP / TCP probes run with bounded timing; failures are recorded for operator action and do not trigger automatic rollback, and ReleaseTracker does not claim host-port probing is always available for Kubernetes / Portainer / Helm targets.
 - **Security**: local users + JWT + OIDC; sensitive data encrypted with Fernet; rotatable system keys.
-- **Supply-chain hardening**: frontend `.npmrc`, `npm ci`, audit, CycloneDX SBOM artifact; backend uv locked install, pip-audit, locked requirements artifact; least-privilege release workflow permissions.
 - **System settings**: timezone, log level, history retention, BASE URL, key rotation — all from the Web UI.
 - **Notifications**: webhook with event filtering, bilingual messages, and Discord / Slack compatible fields.
 - **Modern frontend**: React 19 + TypeScript + TailwindCSS, bilingual (zh/en), dark mode, responsive layout.
