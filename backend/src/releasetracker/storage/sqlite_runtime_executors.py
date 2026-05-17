@@ -439,6 +439,7 @@ def _row_to_executor_snapshot(storage: "SQLiteStorage", row: Any) -> ExecutorSna
     unredacted_persisted = (
         bool(row["unredacted_persisted"]) if "unredacted_persisted" in row_keys else False
     )
+    locked = bool(row["locked"]) if "locked" in row_keys else False
     return ExecutorSnapshot(
         id=row["id"],
         executor_id=row["executor_id"],
@@ -447,6 +448,7 @@ def _row_to_executor_snapshot(storage: "SQLiteStorage", row: Any) -> ExecutorSna
         image_at_capture=image_at_capture,
         executor_run_id=executor_run_id,
         unredacted_persisted=unredacted_persisted,
+        locked=locked,
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
@@ -853,7 +855,6 @@ async def update_executor_target_ref(
     await db.commit()
 
 
-
 async def get_executor_run(storage: "SQLiteStorage", run_id: int) -> ExecutorRunHistory | None:
     db = await storage._get_connection()
     db.row_factory = aiosqlite.Row
@@ -945,13 +946,13 @@ async def prune_old_executor_runs(storage: "SQLiteStorage", days: int = 90) -> i
     await db.commit()
     deleted = result.rowcount or 0
     if deleted > 0:
-        logger.info(f"Executor run history cleanup complete: deleted {deleted} records older than {days} days")
+        logger.info(
+            f"Executor run history cleanup complete: deleted {deleted} records older than {days} days"
+        )
     return deleted
 
 
-async def create_executor_snapshot(
-    storage: "SQLiteStorage", snapshot: ExecutorSnapshot
-) -> int:
+async def create_executor_snapshot(storage: "SQLiteStorage", snapshot: ExecutorSnapshot) -> int:
     """Insert a new snapshot row as part of the multi-row history.
 
     Returns the new snapshot id. Never overwrites an existing row;
@@ -970,8 +971,8 @@ async def create_executor_snapshot(
         """
         INSERT INTO executor_snapshots
         (executor_id, snapshot_data, trigger, image_at_capture,
-         executor_run_id, unredacted_persisted, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         executor_run_id, unredacted_persisted, locked, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             snapshot.executor_id,
@@ -980,6 +981,7 @@ async def create_executor_snapshot(
             snapshot.image_at_capture,
             snapshot.executor_run_id,
             1 if snapshot.unredacted_persisted else 0,
+            1 if snapshot.locked else 0,
             created_at,
             updated_at,
         ),
@@ -1088,6 +1090,22 @@ async def delete_executor_snapshots(
     )
     await db.commit()
     return result.rowcount or 0
+
+
+async def set_executor_snapshot_locked(
+    storage: "SQLiteStorage", executor_id: int, snapshot_id: int, *, locked: bool
+) -> bool:
+    """Set the locked flag on a snapshot scoped to an executor.
+
+    Returns True when the row was found and updated, False when not found.
+    """
+    db = await storage._get_connection()
+    result = await db.execute(
+        "UPDATE executor_snapshots SET locked = ?, updated_at = ? WHERE id = ? AND executor_id = ?",
+        (1 if locked else 0, datetime.now().isoformat(), snapshot_id, executor_id),
+    )
+    await db.commit()
+    return bool(result.rowcount)
 
 
 async def upsert_executor_desired_state(

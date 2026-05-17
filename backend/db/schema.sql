@@ -422,7 +422,7 @@ CREATE TABLE IF NOT EXISTS "executor_snapshots" (
     executor_run_id INTEGER,
     unredacted_persisted INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL, locked INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (executor_id) REFERENCES executors(id) ON DELETE CASCADE,
     FOREIGN KEY (executor_run_id) REFERENCES executor_run_history(id) ON DELETE SET NULL
 );
@@ -437,4 +437,5 @@ INSERT INTO "schema_migrations" (version) VALUES
   ('20000101000001'),
   ('20260508152003'),
   ('20260508153215'),
-  ('20260513000001');
+  ('20260513000001'),
+  ('20260517000001');

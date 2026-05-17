@@ -741,6 +741,7 @@ export interface SnapshotListItem {
     image_at_capture: string | null
     executor_run_id: number | null
     unredacted_persisted: boolean
+    locked: boolean
 }
 
 export interface SnapshotDetail extends SnapshotListItem {
@@ -757,6 +758,11 @@ export interface PaginatedSnapshots {
 export interface DeleteSnapshotResponse {
     message: string
     deleted: number
+}
+
+export interface LockSnapshotResponse {
+    message: string
+    locked: boolean
 }
 
 export interface RollbackRequest {

@@ -4077,6 +4077,13 @@ class SQLiteStorage:
     async def delete_executor_snapshots(self, executor_id: int, ids: list[int]) -> int:
         return await sqlite_runtime_executors.delete_executor_snapshots(self, executor_id, ids)
 
+    async def set_executor_snapshot_locked(
+        self, executor_id: int, snapshot_id: int, *, locked: bool
+    ) -> bool:
+        return await sqlite_runtime_executors.set_executor_snapshot_locked(
+            self, executor_id, snapshot_id, locked=locked
+        )
+
     async def upsert_executor_desired_state(
         self,
         *,

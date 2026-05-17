@@ -31,6 +31,7 @@ import type {
     PaginatedSnapshots,
     SnapshotDetail,
     DeleteSnapshotResponse,
+    LockSnapshotResponse,
     RollbackRequest,
     RollbackResponse,
     ReleaseHistoryItem,
@@ -336,6 +337,10 @@ export const api = {
         apiClient.get<SnapshotDetail>(`/api/executors/${executorId}/snapshots/${snapshotId}`).then(res => res.data),
     deleteExecutorSnapshot: (executorId: number, snapshotId: number) =>
         apiClient.delete<DeleteSnapshotResponse>(`/api/executors/${executorId}/snapshots/${snapshotId}`).then(res => res.data),
+    lockExecutorSnapshot: (executorId: number, snapshotId: number) =>
+        apiClient.post<LockSnapshotResponse>(`/api/executors/${executorId}/snapshots/${snapshotId}/lock`).then(res => res.data),
+    unlockExecutorSnapshot: (executorId: number, snapshotId: number) =>
+        apiClient.post<LockSnapshotResponse>(`/api/executors/${executorId}/snapshots/${snapshotId}/unlock`).then(res => res.data),
     rollbackExecutor: (id: number, payload?: RollbackRequest) =>
         apiClient.post<RollbackResponse>(`/api/executors/${id}/rollback`, payload ?? {}).then(res => res.data),
 }

@@ -580,6 +580,30 @@ export function useDeleteExecutorSnapshot() {
   })
 }
 
+export function useLockExecutorSnapshot() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ executorId, snapshotId }: { executorId: number; snapshotId: number }) =>
+      api.lockExecutorSnapshot(executorId, snapshotId),
+    onSuccess: (_data, { executorId }) =>
+      queryClient.invalidateQueries({
+        queryKey: ["executors", executorId, "snapshots"],
+      }),
+  })
+}
+
+export function useUnlockExecutorSnapshot() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ executorId, snapshotId }: { executorId: number; snapshotId: number }) =>
+      api.unlockExecutorSnapshot(executorId, snapshotId),
+    onSuccess: (_data, { executorId }) =>
+      queryClient.invalidateQueries({
+        queryKey: ["executors", executorId, "snapshots"],
+      }),
+  })
+}
+
 export function useRollbackExecutor() {
   const queryClient = useQueryClient()
   return useMutation({

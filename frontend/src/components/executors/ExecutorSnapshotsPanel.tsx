@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { AlertTriangle, Info, Loader2, RotateCcw, Trash2 } from "lucide-react"
+import { AlertTriangle, Info, Loader2, Lock, LockOpen, RotateCcw, Trash2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
@@ -17,7 +17,12 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { DataPagination } from "@/components/common/DataPagination"
-import { useDeleteExecutorSnapshot, useExecutorSnapshots } from "@/hooks/queries"
+import {
+    useDeleteExecutorSnapshot,
+    useExecutorSnapshots,
+    useLockExecutorSnapshot,
+    useUnlockExecutorSnapshot,
+} from "@/hooks/queries"
 import { usePageSize } from "@/hooks/use-page-size"
 import { cn } from "@/lib/utils"
 
@@ -59,6 +64,8 @@ export function ExecutorSnapshotsPanel({
         page_size: pageSize,
     })
     const deleteSnapshotMutation = useDeleteExecutorSnapshot()
+    const lockSnapshotMutation = useLockExecutorSnapshot()
+    const unlockSnapshotMutation = useUnlockExecutorSnapshot()
     const previousRefreshKeyRef = useRef(refreshKey)
 
     const items = useMemo(() => snapshotsQuery.data?.items ?? [], [snapshotsQuery.data?.items])
@@ -112,6 +119,31 @@ export function ExecutorSnapshotsPanel({
         }
     }
 
+    const handleToggleLock = async (item: SnapshotListItem) => {
+        if (!executor?.id) return
+        try {
+            if (item.locked) {
+                await unlockSnapshotMutation.mutateAsync({
+                    executorId: executor.id,
+                    snapshotId: item.id,
+                })
+                toast.success(t("executors.snapshots.toasts.unlockSuccess"))
+            } else {
+                await lockSnapshotMutation.mutateAsync({
+                    executorId: executor.id,
+                    snapshotId: item.id,
+                })
+                toast.success(t("executors.snapshots.toasts.lockSuccess"))
+            }
+        } catch {
+            toast.error(
+                item.locked
+                    ? t("executors.snapshots.toasts.unlockFailed")
+                    : t("executors.snapshots.toasts.lockFailed"),
+            )
+        }
+    }
+
     if (!executor) {
         return (
             <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
@@ -158,6 +190,10 @@ export function ExecutorSnapshotsPanel({
                         {items.map((item) => {
                             const captured = new Date(item.created_at)
                             const capturedLabel = captured.toLocaleString(i18n.language)
+                            const isLockPending =
+                                (lockSnapshotMutation.isPending || unlockSnapshotMutation.isPending) &&
+                                (lockSnapshotMutation.variables?.snapshotId === item.id ||
+                                    unlockSnapshotMutation.variables?.snapshotId === item.id)
                             return (
                                 <li
                                     key={item.id}
@@ -176,6 +212,16 @@ export function ExecutorSnapshotsPanel({
                                         <span className="text-xs text-muted-foreground tabular-nums">
                                             {capturedLabel}
                                         </span>
+                                        {item.locked ? (
+                                            <Badge
+                                                variant="outline"
+                                                className="h-5 shrink-0 gap-1 text-[10px]"
+                                                data-testid="executor-snapshot-locked-badge"
+                                            >
+                                                <Lock className="h-3 w-3" />
+                                                {t("executors.snapshots.locked")}
+                                            </Badge>
+                                        ) : null}
                                         {item.unredacted_persisted ? (
                                             <Badge
                                                 variant="outline"
@@ -213,7 +259,28 @@ export function ExecutorSnapshotsPanel({
                                             <Button
                                                 size="sm"
                                                 variant="outline"
+                                                onClick={() => void handleToggleLock(item)}
+                                                disabled={isLockPending}
+                                                aria-label={
+                                                    item.locked
+                                                        ? t("executors.snapshots.actions.unlock")
+                                                        : t("executors.snapshots.actions.lock")
+                                                }
+                                                data-testid={item.locked ? "executor-snapshot-unlock" : "executor-snapshot-lock"}
+                                            >
+                                                {isLockPending ? (
+                                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                ) : item.locked ? (
+                                                    <LockOpen className="h-3.5 w-3.5" />
+                                                ) : (
+                                                    <Lock className="h-3.5 w-3.5" />
+                                                )}
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
                                                 onClick={() => setDeleteSnapshot(item)}
+                                                disabled={item.locked}
                                                 data-testid="executor-snapshot-delete"
                                             >
                                                 <Trash2 className="mr-1.5 h-3.5 w-3.5" />

@@ -8,12 +8,16 @@ import type { ExecutorListItem, PaginatedSnapshots, SnapshotListItem } from "@/a
 const {
   deleteExecutorSnapshotMock,
   getExecutorSnapshotsMock,
+  lockExecutorSnapshotMock,
+  unlockExecutorSnapshotMock,
   toastErrorMock,
   toastSuccessMock,
   translateMock,
 } = vi.hoisted(() => ({
   deleteExecutorSnapshotMock: vi.fn(),
   getExecutorSnapshotsMock: vi.fn(),
+  lockExecutorSnapshotMock: vi.fn(),
+  unlockExecutorSnapshotMock: vi.fn(),
   toastErrorMock: vi.fn(),
   toastSuccessMock: vi.fn(),
   translateMock: (key: string) => key,
@@ -30,6 +34,8 @@ vi.mock("@/api/client", () => ({
   api: {
     deleteExecutorSnapshot: deleteExecutorSnapshotMock,
     getExecutorSnapshots: getExecutorSnapshotsMock,
+    lockExecutorSnapshot: lockExecutorSnapshotMock,
+    unlockExecutorSnapshot: unlockExecutorSnapshotMock,
   },
 }))
 
@@ -87,6 +93,7 @@ function createSnapshot(overrides: Partial<SnapshotListItem> = {}): SnapshotList
     image_at_capture: "image_at_capture" in overrides ? overrides.image_at_capture! : "docker.io/library/sample:1.0.0",
     executor_run_id: "executor_run_id" in overrides ? overrides.executor_run_id! : 100,
     unredacted_persisted: overrides.unredacted_persisted ?? false,
+    locked: overrides.locked ?? false,
   }
 }
 
@@ -118,6 +125,8 @@ describe("ExecutorSnapshotsPanel", () => {
   beforeEach(() => {
     deleteExecutorSnapshotMock.mockReset()
     getExecutorSnapshotsMock.mockReset()
+    lockExecutorSnapshotMock.mockReset()
+    unlockExecutorSnapshotMock.mockReset()
     toastErrorMock.mockReset()
     toastSuccessMock.mockReset()
   })
@@ -130,9 +139,10 @@ describe("ExecutorSnapshotsPanel", () => {
     const snapshotItem = await screen.findByTestId("executor-snapshot-item")
     const buttons = within(snapshotItem).getAllByRole("button")
 
-    expect(buttons).toHaveLength(2)
-    expect(buttons[0]).toHaveAccessibleName("executors.snapshots.actions.delete")
-    expect(buttons[1]).toHaveAccessibleName("executors.snapshots.actions.rollback")
+    // lock button + delete button + rollback button
+    expect(buttons).toHaveLength(3)
+    expect(buttons[1]).toHaveAccessibleName("executors.snapshots.actions.delete")
+    expect(buttons[2]).toHaveAccessibleName("executors.snapshots.actions.rollback")
   })
 
   it("deletes a snapshot after confirmation and reloads the list", async () => {
@@ -175,5 +185,91 @@ describe("ExecutorSnapshotsPanel", () => {
     })
 
     expect(toastErrorMock).toHaveBeenCalledWith("executors.snapshots.toasts.deleteFailed")
+  })
+
+  it("disables the delete button for locked snapshots", async () => {
+    getExecutorSnapshotsMock.mockResolvedValue(
+      paginatedSnapshots([createSnapshot({ id: 42, locked: true })]),
+    )
+
+    renderWithQueryClient(<ExecutorSnapshotsPanel executor={createExecutor({ id: 1 })} refreshKey={0} />)
+
+    const snapshotItem = await screen.findByTestId("executor-snapshot-item")
+    const deleteButton = within(snapshotItem).getByRole("button", {
+      name: "executors.snapshots.actions.delete",
+    })
+    expect(deleteButton).toBeDisabled()
+  })
+
+  it("shows a locked badge for locked snapshots", async () => {
+    getExecutorSnapshotsMock.mockResolvedValue(
+      paginatedSnapshots([createSnapshot({ id: 42, locked: true })]),
+    )
+
+    renderWithQueryClient(<ExecutorSnapshotsPanel executor={createExecutor({ id: 1 })} refreshKey={0} />)
+
+    await screen.findByTestId("executor-snapshot-locked-badge")
+  })
+
+  it("does not show a locked badge for unlocked snapshots", async () => {
+    getExecutorSnapshotsMock.mockResolvedValue(
+      paginatedSnapshots([createSnapshot({ id: 42, locked: false })]),
+    )
+
+    renderWithQueryClient(<ExecutorSnapshotsPanel executor={createExecutor({ id: 1 })} refreshKey={0} />)
+
+    await screen.findByTestId("executor-snapshot-item")
+    expect(screen.queryByTestId("executor-snapshot-locked-badge")).toBeNull()
+  })
+
+  it("calls lockExecutorSnapshot and shows success toast when locking an unlocked snapshot", async () => {
+    getExecutorSnapshotsMock.mockResolvedValue(
+      paginatedSnapshots([createSnapshot({ id: 42, locked: false })]),
+    )
+    lockExecutorSnapshotMock.mockResolvedValue({ message: "Snapshot locked", locked: true })
+
+    renderWithQueryClient(<ExecutorSnapshotsPanel executor={createExecutor({ id: 7 })} refreshKey={0} />)
+
+    const snapshotItem = await screen.findByTestId("executor-snapshot-item")
+    fireEvent.click(within(snapshotItem).getByTestId("executor-snapshot-lock"))
+
+    await waitFor(() => {
+      expect(lockExecutorSnapshotMock).toHaveBeenCalledWith(7, 42)
+    })
+    expect(toastSuccessMock).toHaveBeenCalledWith("executors.snapshots.toasts.lockSuccess")
+  })
+
+  it("calls unlockExecutorSnapshot and shows success toast when unlocking a locked snapshot", async () => {
+    getExecutorSnapshotsMock.mockResolvedValue(
+      paginatedSnapshots([createSnapshot({ id: 42, locked: true })]),
+    )
+    unlockExecutorSnapshotMock.mockResolvedValue({ message: "Snapshot unlocked", locked: false })
+
+    renderWithQueryClient(<ExecutorSnapshotsPanel executor={createExecutor({ id: 7 })} refreshKey={0} />)
+
+    const snapshotItem = await screen.findByTestId("executor-snapshot-item")
+    fireEvent.click(within(snapshotItem).getByTestId("executor-snapshot-unlock"))
+
+    await waitFor(() => {
+      expect(unlockExecutorSnapshotMock).toHaveBeenCalledWith(7, 42)
+    })
+    expect(toastSuccessMock).toHaveBeenCalledWith("executors.snapshots.toasts.unlockSuccess")
+  })
+
+  it("shows an error toast when locking fails", async () => {
+    getExecutorSnapshotsMock.mockResolvedValue(
+      paginatedSnapshots([createSnapshot({ id: 42, locked: false })]),
+    )
+    lockExecutorSnapshotMock.mockRejectedValue(new Error("lock failed"))
+
+    renderWithQueryClient(<ExecutorSnapshotsPanel executor={createExecutor({ id: 7 })} refreshKey={0} />)
+
+    const snapshotItem = await screen.findByTestId("executor-snapshot-item")
+    fireEvent.click(within(snapshotItem).getByTestId("executor-snapshot-lock"))
+
+    await waitFor(() => {
+      expect(lockExecutorSnapshotMock).toHaveBeenCalledWith(7, 42)
+    })
+    expect(toastErrorMock).toHaveBeenCalledWith("executors.snapshots.toasts.lockFailed")
   })
 })

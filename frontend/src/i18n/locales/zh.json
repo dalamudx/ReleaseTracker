@@ -888,7 +888,9 @@
       },
       "actions": {
         "delete": "删除",
-        "rollback": "回滚"
+        "rollback": "回滚",
+        "lock": "锁定",
+        "unlock": "解锁"
       },
       "deleteDialog": {
         "title": "删除快照？",
@@ -898,12 +900,17 @@
       "toasts": {
         "loadFailed": "加载快照失败",
         "deleteSuccess": "快照已删除",
-        "deleteFailed": "删除快照失败"
+        "deleteFailed": "删除快照失败",
+        "lockSuccess": "快照已锁定",
+        "lockFailed": "锁定快照失败",
+        "unlockSuccess": "快照已解锁",
+        "unlockFailed": "解锁快照失败"
       },
       "banners": {
         "unredacted": "该快照包含无法自动脱敏的字段，分享前请先复核。",
         "pruning": "已达到保留上限 — 新快照会替换最早的快照。"
-      }
+      },
+      "locked": "已锁定"
     },
     "rollback": {
       "dialog": {

@@ -22,7 +22,7 @@ from ..executors import (
 from ..models import ExecutorStatus, User
 from ..services.rollback_service import RollbackService
 from ..services.runtime_credentials import materialize_runtime_connection_credentials
-from ..services.snapshot_service import SnapshotInUseError
+from ..services.snapshot_service import SnapshotInUseError, SnapshotLockedError
 from ..storage.sqlite import SQLiteStorage
 
 from pydantic import BaseModel
@@ -696,6 +696,7 @@ def _serialize_snapshot_list_item(item) -> dict[str, Any]:
         "image_at_capture": item.image_at_capture,
         "executor_run_id": item.executor_run_id,
         "unredacted_persisted": item.unredacted_persisted,
+        "locked": item.locked,
     }
 
 
@@ -792,12 +793,60 @@ async def delete_executor_snapshot(
             executor_id,
             snapshot_id,
         )
+    except SnapshotLockedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except SnapshotInUseError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     if not deleted:
         raise HTTPException(status_code=404, detail="Snapshot not found")
     return {"message": "Snapshot deleted", "deleted": 1}
+
+
+@router.post(
+    "/{executor_id}/snapshots/{snapshot_id}/lock",
+    dependencies=[Depends(get_current_user)],
+)
+async def lock_executor_snapshot(
+    executor_id: int,
+    snapshot_id: int,
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    scheduler: Annotated[ExecutorScheduler, Depends(get_executor_scheduler)],
+):
+    """Lock a snapshot so it is excluded from retention pruning and cannot be deleted."""
+    executor = await storage.get_executor_config(executor_id)
+    if not executor:
+        raise HTTPException(status_code=404, detail="Executor not found")
+
+    updated = await scheduler.snapshot_service.set_snapshot_locked(
+        executor_id, snapshot_id, locked=True
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    return {"message": "Snapshot locked", "locked": True}
+
+
+@router.post(
+    "/{executor_id}/snapshots/{snapshot_id}/unlock",
+    dependencies=[Depends(get_current_user)],
+)
+async def unlock_executor_snapshot(
+    executor_id: int,
+    snapshot_id: int,
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    scheduler: Annotated[ExecutorScheduler, Depends(get_executor_scheduler)],
+):
+    """Unlock a snapshot so it can be deleted or pruned by retention policy."""
+    executor = await storage.get_executor_config(executor_id)
+    if not executor:
+        raise HTTPException(status_code=404, detail="Executor not found")
+
+    updated = await scheduler.snapshot_service.set_snapshot_locked(
+        executor_id, snapshot_id, locked=False
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    return {"message": "Snapshot unlocked", "locked": False}
 
 
 @router.post(

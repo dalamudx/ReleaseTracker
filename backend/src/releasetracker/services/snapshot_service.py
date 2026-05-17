@@ -75,11 +75,12 @@ class SnapshotListItemView:
     image_at_capture: str | None
     executor_run_id: int | None
     unredacted_persisted: bool
+    locked: bool
 
 
 @dataclass(frozen=True)
 class SnapshotDetailView(SnapshotListItemView):
-    snapshot_data: dict[str, Any]
+    snapshot_data: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -193,6 +194,10 @@ class SnapshotInUseError(RuntimeError):
     """Raised when a snapshot is being consumed by an in-flight rollback."""
 
 
+class SnapshotLockedError(RuntimeError):
+    """Raised when a locked snapshot is targeted for deletion."""
+
+
 class SnapshotService:
     def __init__(
         self,
@@ -239,7 +244,9 @@ class SnapshotService:
             return []
 
         overflow = snapshots[retention:]
-        prune_ids = [s.id for s in overflow if s.id is not None and s.id not in excluded]
+        prune_ids = [
+            s.id for s in overflow if s.id is not None and s.id not in excluded and not s.locked
+        ]
         if not prune_ids:
             return []
 
@@ -298,20 +305,32 @@ class SnapshotService:
             image_at_capture=snapshot.image_at_capture,
             executor_run_id=snapshot.executor_run_id,
             unredacted_persisted=snapshot.unredacted_persisted,
+            locked=snapshot.locked,
             snapshot_data=redacted_payload if isinstance(redacted_payload, dict) else {},
         )
 
     async def delete_snapshot(self, executor_id: int, snapshot_id: int) -> bool:
-        """Delete a snapshot scoped to an executor unless rollback is consuming it."""
+        """Delete a snapshot scoped to an executor unless rollback is consuming it or it is locked."""
         snapshot = await self._storage.get_executor_snapshot_by_id(executor_id, snapshot_id)
         if snapshot is None:
             return False
+
+        if snapshot.locked:
+            raise SnapshotLockedError("Snapshot is locked and cannot be deleted")
 
         if snapshot_id in await self._registry.snapshot_ids():
             raise SnapshotInUseError("Snapshot is currently in use by a rollback")
 
         deleted = await self._storage.delete_executor_snapshots(executor_id, [snapshot_id])
         return deleted > 0
+
+    async def set_snapshot_locked(
+        self, executor_id: int, snapshot_id: int, *, locked: bool
+    ) -> bool:
+        """Lock or unlock a snapshot. Returns True when found and updated."""
+        return await self._storage.set_executor_snapshot_locked(
+            executor_id, snapshot_id, locked=locked
+        )
 
     def _to_list_item(self, snapshot: "ExecutorSnapshot") -> SnapshotListItemView:
         return SnapshotListItemView(
@@ -321,6 +340,7 @@ class SnapshotService:
             image_at_capture=snapshot.image_at_capture,
             executor_run_id=snapshot.executor_run_id,
             unredacted_persisted=snapshot.unredacted_persisted,
+            locked=snapshot.locked,
         )
 
     def redact_for_persist(
@@ -341,6 +361,7 @@ __all__ = [
     "REDACTED_MARKER",
     "SnapshotDetailView",
     "SnapshotInUseError",
+    "SnapshotLockedError",
     "SnapshotListItemView",
     "SnapshotRedactor",
     "SnapshotService",

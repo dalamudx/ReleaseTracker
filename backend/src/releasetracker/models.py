@@ -610,6 +610,7 @@ class ExecutorSnapshot(BaseModel):
     image_at_capture: str | None = None
     executor_run_id: int | None = None
     unredacted_persisted: bool = False
+    locked: bool = False
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
 
