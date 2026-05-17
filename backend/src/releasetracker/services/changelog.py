@@ -64,7 +64,10 @@ def _heading_matches(title: str, release: Release, template: str | None) -> bool
         expected = render_changelog_template(template, release).strip()
         expected_match = _HEADING_RE.match(expected)
         expected_title = expected_match.group("title") if expected_match else expected
-        return title.strip() == expected_title.strip()
+        # Normalize both sides: strip markdown link syntax such as [text](url) or [text]
+        # so that templates like "# [{tag}]" and headings like "# [v1.2.3](url)" both
+        # reduce to the bare version token before comparison.
+        return _normalize_heading_title(title) == _normalize_heading_title(expected_title)
 
     normalized_title = _normalize_heading_title(title)
     candidates = {
@@ -121,7 +124,9 @@ def _extract_section(content: str, release: Release, config: TrackerReleaseNotes
 
     extracted = "\n".join(section_lines).strip()
     if not extracted:
-        raise ValueError(f"Matched changelog section for {release.tag_name or release.version} is empty")
+        raise ValueError(
+            f"Matched changelog section for {release.tag_name or release.version} is empty"
+        )
     return extracted
 
 

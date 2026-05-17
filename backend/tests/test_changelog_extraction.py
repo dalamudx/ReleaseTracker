@@ -183,3 +183,140 @@ def test_kubernetes_style_version_section_from_subheading_does_not_include_next_
     # Must not bleed into the next version section
     assert "old feature" not in extracted
     assert "Old binary downloads" not in extracted
+
+
+# ---------------------------------------------------------------------------
+# Heading normalization in template mode
+# ---------------------------------------------------------------------------
+
+_KUBERNETES_PLAIN_HEADINGS = """\
+# v1.35.5
+
+## Downloads for v1.35.5
+Binary downloads here
+
+## Changelog since v1.35.4
+- fix A
+
+# v1.35.4
+
+## Changelog since v1.35.3
+- fix B
+"""
+
+_KUBERNETES_LINK_HEADINGS = """\
+# [v1.35.5](https://github.com/kubernetes/kubernetes/blob/master/CHANGELOG/CHANGELOG-1.35.md#v1355)
+
+## Downloads for v1.35.5
+Binary downloads here
+
+## Changelog since v1.35.4
+- fix A
+
+# [v1.35.4](https://github.com/kubernetes/kubernetes/blob/master/CHANGELOG/CHANGELOG-1.35.md#v1354)
+
+## Changelog since v1.35.3
+- fix B
+"""
+
+_KUBERNETES_MIXED_HEADINGS = """\
+# v1.35.5
+
+## Changelog since v1.35.4
+- fix A
+
+# [v1.35.4](https://github.com/kubernetes/kubernetes/blob/master/CHANGELOG/CHANGELOG-1.35.md#v1354)
+
+## Changelog since v1.35.3
+- fix B
+"""
+
+
+def _release_k8s(tag: str, version: str):
+    return Release(
+        tracker_name="tracker",
+        tracker_type="github",
+        name=tag,
+        tag_name=tag,
+        version=version,
+        published_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        url="https://example.test/release",
+    )
+
+
+def test_template_hash_tag_matches_plain_heading():
+    """Template '# {tag}' must match plain headings like '# v1.35.5'."""
+    config = TrackerReleaseNotesConfig(
+        source="custom_changelog",
+        changelog_source_key="source-1",
+        extraction_mode="version_section",
+        version_heading_template="# {tag}",
+    )
+    release = _release_k8s("v1.35.5", "1.35.5")
+    extracted = extract_changelog_content(_KUBERNETES_PLAIN_HEADINGS, release, config)
+    assert "fix A" in extracted
+    assert "fix B" not in extracted
+
+
+def test_template_hash_tag_matches_link_style_heading():
+    """Template '# {tag}' must match headings with markdown link syntax like '# [v1.35.5](url)'."""
+    config = TrackerReleaseNotesConfig(
+        source="custom_changelog",
+        changelog_source_key="source-1",
+        extraction_mode="version_section",
+        version_heading_template="# {tag}",
+    )
+    release = _release_k8s("v1.35.5", "1.35.5")
+    extracted = extract_changelog_content(_KUBERNETES_LINK_HEADINGS, release, config)
+    assert "fix A" in extracted
+    assert "fix B" not in extracted
+
+
+def test_template_hash_bracket_tag_bracket_matches_plain_heading():
+    """Template '# [{tag}]' must match plain headings like '# v1.35.5' after normalization."""
+    config = TrackerReleaseNotesConfig(
+        source="custom_changelog",
+        changelog_source_key="source-1",
+        extraction_mode="version_section",
+        version_heading_template="# [{tag}]",
+    )
+    release = _release_k8s("v1.35.5", "1.35.5")
+    extracted = extract_changelog_content(_KUBERNETES_PLAIN_HEADINGS, release, config)
+    assert "fix A" in extracted
+    assert "fix B" not in extracted
+
+
+def test_template_hash_bracket_tag_bracket_matches_link_style_heading():
+    """Template '# [{tag}]' must match link-style headings like '# [v1.35.5](url)'."""
+    config = TrackerReleaseNotesConfig(
+        source="custom_changelog",
+        changelog_source_key="source-1",
+        extraction_mode="version_section",
+        version_heading_template="# [{tag}]",
+    )
+    release = _release_k8s("v1.35.5", "1.35.5")
+    extracted = extract_changelog_content(_KUBERNETES_LINK_HEADINGS, release, config)
+    assert "fix A" in extracted
+    assert "fix B" not in extracted
+
+
+def test_template_matches_all_versions_in_mixed_heading_styles():
+    """Both plain and link-style headings in the same file must be matchable by template."""
+    config = TrackerReleaseNotesConfig(
+        source="custom_changelog",
+        changelog_source_key="source-1",
+        extraction_mode="version_section",
+        version_heading_template="# {tag}",
+    )
+
+    # v1.35.5 has a plain heading
+    release_5 = _release_k8s("v1.35.5", "1.35.5")
+    extracted_5 = extract_changelog_content(_KUBERNETES_MIXED_HEADINGS, release_5, config)
+    assert "fix A" in extracted_5
+    assert "fix B" not in extracted_5
+
+    # v1.35.4 has a link-style heading
+    release_4 = _release_k8s("v1.35.4", "1.35.4")
+    extracted_4 = extract_changelog_content(_KUBERNETES_MIXED_HEADINGS, release_4, config)
+    assert "fix B" in extracted_4
+    assert "fix A" not in extracted_4
