@@ -87,7 +87,7 @@ jobs:
         run: uvx pip-audit -r "$GITHUB_WORKSPACE/artifacts/backend-requirements.txt"
 
       - name: Run backend tests
-        run: uv --directory backend run --locked --extra dev pytest -q
+        run: uv --directory backend run --locked --extra dev pytest -v --tb=short
 
       - name: Set up Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
