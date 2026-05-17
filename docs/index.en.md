@@ -49,4 +49,3 @@ ReleaseTracker is a lightweight, configurable release tracking and update orches
 
 - Follow [Installation](getting-started/installation.en.md) to deploy ReleaseTracker.
 - Change the default administrator password after first login.
-- Add the credentials and tokens you will need later under **Credentials**.

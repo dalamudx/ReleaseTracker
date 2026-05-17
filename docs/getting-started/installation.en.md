@@ -236,6 +236,4 @@ In development, Vite proxies `/api` to the backend, so only the frontend port ne
 
 ## 10. Next steps
 
-- Configure a reverse proxy and set the BASE URL as needed (section 6).
-- Add tokens, OIDC client secrets, and runtime connection secrets under **Credentials**.
-- Watch for the upcoming **Configuration / Trackers / Executors / Operations** chapters.
+After installation, see the [Configuration guide](../configuration/flow.md) for the full walkthrough of trackers, credentials, and executors.
