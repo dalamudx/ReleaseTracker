@@ -62,13 +62,7 @@ plugins:
             快速开始: Getting Started
             安装部署: Installation
             配置说明: Configuration
-            系统设置: System Settings
-            凭证管理: Credentials
-            运行时连接: Runtime Connections
-            通知: Notifications
-            功能说明: Features
-            追踪器: Trackers
-            执行器: Executors
+            配置与功能: Configuration & Features
             已知限制: Known Limitations
 
 markdown_extensions:
@@ -106,13 +100,7 @@ nav:
   - 快速开始:
       - 安装部署: getting-started/installation.md
   - 配置说明:
-      - 系统设置: configuration/system-settings.md
-      - 凭证管理: configuration/credentials.md
-      - 运行时连接: configuration/runtime-connections.md
-      - 通知: configuration/notifications.md
-  - 功能说明:
-      - 追踪器: features/trackers.md
-      - 执行器: features/executors.md
+      - 配置与功能: configuration/flow.md
   - 已知限制: limitations.md
 
 extra:

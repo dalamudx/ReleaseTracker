@@ -8,7 +8,7 @@ title: 使用配置说明
 
 ## 1. 登录系统
 
-![Login](../../images/login.png)
+![Login](../images/login.png)
 
 使用默认用户名`admin`密码`admin`登录到系统
 
@@ -19,7 +19,7 @@ title: 使用配置说明
 
 ### 全局配置
 
-![Settings](../../images/settings.png)
+![Settings](../images/settings.png)
 
 `Base URL` : 实例的对外访问地址，用于消息通知中的链接跳转以及 OIDC 回调地址，必须与实际访问 URL 保持一致
 
@@ -35,7 +35,7 @@ title: 使用配置说明
 
 ### 安全密钥
 
-![Settings](../../images/settings-keys.png)
+![Settings](../images/settings-keys.png)
 
 `会话密钥`: 用于 JWT 会话签名，轮换后所有已登录用户将被强制退出，需重新登录
 
@@ -45,7 +45,7 @@ title: 使用配置说明
 
 ### OIDC
 
-![Settings](../../images/settings-oidc.png)
+![Settings](../images/settings-oidc.png)
 
 用于与企业或个人 SSO 提供商进行集成，方便统一身份认证登录。目前最多支持配置一个 OIDC 提供商。
 
@@ -83,7 +83,7 @@ title: 使用配置说明
 
 ## 3. 消息通知
 
-![Notifications](../../images/notifications.png)
+![Notifications](../images/notifications.png)
 
 目前仅支持 Webhook 类型，兼容 Discord、Slack 及任何接受 JSON POST 请求的服务。
 
@@ -110,7 +110,7 @@ title: 使用配置说明
 
 ## 4. 凭证
 
-![Credentials](../../images/credentials.png)
+![Credentials](../images/credentials.png)
 
 凭证用于保存访问各类平台所需的鉴权材料，所有数据经统一加密模块加密后存储在本地数据库中。
 
@@ -130,7 +130,7 @@ title: 使用配置说明
 
 ## 5. 运行时连接
 
-![Runtime](../../images/runtime.png)
+![Runtime](../images/runtime.png)
 
 运行时连接用于对接实际运行容器或服务的基础设施，不同类型所需配置各不相同：
 
@@ -176,13 +176,13 @@ title: 使用配置说明
 
 ## 6. 追踪器
 
-![Trackers](../../images/trackers.png)
+![Trackers](../images/trackers.png)
 
 ### 添加追踪器
 
-![Trackers-add](../../images/trackers-add.png)
-![Trackers-add](../../images/trackers-channels.png)
-![Trackers-add](../../images/trackers-changelog.png)
+![Trackers-add](../images/trackers-add.png)
+![Trackers-add](../images/trackers-channels.png)
+![Trackers-add](../images/trackers-changelog.png)
 
 #### 追踪器标识
 
@@ -274,28 +274,28 @@ title: 使用配置说明
 `起始子标题` : 仅在提取方式选择"从匹配段落的子标题开始"时显示，填写子标题的前缀文本，例如 `Changelog since`
 
 一般情况下如果 Release 版本包含发布说明则使用默认`release note`方式，如果不包含，比如是这样：
-![Trackers-add](../../images/trackers-changelog1.png)
+![Trackers-add](../images/trackers-changelog1.png)
 则使用`changelog`模式，当仓库中有相关 CHANGELOG 文件作为版本发布说明记录，做下相关配置即可
-![Trackers-add](../../images/trackers-changelog.png)
+![Trackers-add](../images/trackers-changelog.png)
 最终效果如下：
-![Trackers-add](../../images/trackers-changelog2.png)
+![Trackers-add](../images/trackers-changelog2.png)
 
 完成添加追踪器后，可以手动检查版本更新，来验证版本筛选正则表达式和期望版本是否符合预期，因为该版本数据会直接参与容器镜像版本更新，所以一定要准确。
 
 ## 7. 执行器
 
-![Executors](../../images/executors.png)
+![Executors](../images/executors.png)
 
 
 ### 目标发现
 
-![Executors-add](../../images/executors-add.png)
+![Executors-add](../images/executors-add.png)
 
 选择已配置的运行时连接后，系统会自动扫描该连接下所有可管理的容器、服务、Stack 或工作负载，列出可供绑定的目标列表。
 
 ### 绑定
 
-![Executors-add](../../images/executors-binding.png)
+![Executors-add](../images/executors-binding.png)
 
 将追踪器的版本来源与发现的运行时目标关联起来，指定哪个追踪器的哪个发布渠道负责驱动哪个容器或服务的镜像更新。
 
@@ -303,7 +303,7 @@ title: 使用配置说明
 
 ### 策略
 
-![Executors-add](../../images/executors-policy.png)
+![Executors-add](../images/executors-policy.png)
 
 配置版本更新的触发方式：**手动**模式需在界面上主动触发；**立即**模式在检测到新版本后自动执行；**维护窗口**模式仅在指定的时间段内自动执行，适合对更新时机有要求的生产环境。
 
@@ -371,13 +371,13 @@ title: 使用配置说明
 
 ### 复核
 
-![Executors-add](../../images/executors-confirm.png)
+![Executors-add](../images/executors-confirm.png)
 
 查看目标版本是否符合预期后保存，可使用立即执行测试版本更新是否符合预期。
 
 ### 快照
 
-![Executors-add](../../images/executors-snapshot.png)
+![Executors-add](../images/executors-snapshot.png)
 
 由于 Docker、Podman、Compose 容器组的版本更新是破坏性的操作（删除容器 → 更新镜像 → 启动新容器），目前做不到 100% 还原所有配置，为了以防配置丢失，更新前会从接口获取完整的运行状态下的配置并作为快照保存，在更新出错时可使用快照回滚功能尝试版本回滚，但要注意具体应用是否支持回退。
 

@@ -8,7 +8,7 @@ This page explains the configuration process and key considerations for ReleaseT
 
 ## 1. Log In
 
-![Login](../../images/login.png)
+![Login](../images/login.png)
 
 Log in with the default username `admin` and password `admin`.
 
@@ -19,7 +19,7 @@ Log in with the default username `admin` and password `admin`.
 
 ### Global Configuration
 
-![Settings](../../images/settings.png)
+![Settings](../images/settings.png)
 
 `Base URL` : The externally accessible address of this instance. Used for notification links and OIDC callback URLs — must match the actual URL used to access the instance.
 
@@ -35,7 +35,7 @@ Log in with the default username `admin` and password `admin`.
 
 ### Security Keys
 
-![Settings](../../images/settings-keys.png)
+![Settings](../images/settings-keys.png)
 
 `Session Key` : Used for JWT session signing. Rotating this key forces all currently logged-in users to log out and re-authenticate.
 
@@ -45,7 +45,7 @@ These keys are used for data encryption and user session encryption.
 
 ### OIDC
 
-![Settings](../../images/settings-oidc.png)
+![Settings](../images/settings-oidc.png)
 
 Integrates with enterprise or personal SSO providers for unified identity authentication. Currently supports configuring one OIDC provider at a time.
 
@@ -83,7 +83,7 @@ Integrates with enterprise or personal SSO providers for unified identity authen
 
 ## 3. Notifications
 
-![Notifications](../../images/notifications.png)
+![Notifications](../images/notifications.png)
 
 Currently only Webhook type is supported, compatible with Discord, Slack, and any service that accepts JSON POST requests.
 
@@ -110,7 +110,7 @@ After configuring, use the **Send Test** button in the action menu to send a tes
 
 ## 4. Credentials
 
-![Credentials](../../images/credentials.png)
+![Credentials](../images/credentials.png)
 
 Credentials store the authentication material needed to access various platforms. All data is encrypted by the unified encryption module before being stored in the local database.
 
@@ -130,7 +130,7 @@ Credentials store the authentication material needed to access various platforms
 
 ## 5. Runtime Connections
 
-![Runtime](../../images/runtime.png)
+![Runtime](../images/runtime.png)
 
 Runtime connections link to the infrastructure running your containers or services. Configuration varies by type:
 
@@ -176,13 +176,13 @@ Runtime connections link to the infrastructure running your containers or servic
 
 ## 6. Trackers
 
-![Trackers](../../images/trackers.png)
+![Trackers](../images/trackers.png)
 
 ### Adding a Tracker
 
-![Trackers-add](../../images/trackers-add.png)
-![Trackers-add](../../images/trackers-channels.png)
-![Trackers-add](../../images/trackers-changelog.png)
+![Trackers-add](../images/trackers-add.png)
+![Trackers-add](../images/trackers-channels.png)
+![Trackers-add](../images/trackers-changelog.png)
 
 #### Tracker Identity
 
@@ -274,28 +274,28 @@ When **Use Custom Changelog** is selected, the following fields appear:
 `Starting Subheading` : Shown only when Extraction Mode is set to "From Subheading in Matched Section". Enter the prefix text of the subheading, e.g. `Changelog since`.
 
 In general, if the upstream release includes release notes, use the default `Release Notes` mode. If it does not — for example:
-![Trackers-add](../../images/trackers-changelog1.png)
+![Trackers-add](../images/trackers-changelog1.png)
 — use `Custom Changelog` mode. When the repository contains a CHANGELOG file as the version release record, configure the fields accordingly:
-![Trackers-add](../../images/trackers-changelog.png)
+![Trackers-add](../images/trackers-changelog.png)
 The final result looks like this:
-![Trackers-add](../../images/trackers-changelog2.png)
+![Trackers-add](../images/trackers-changelog2.png)
 
 After adding a tracker, you can manually trigger a version check to verify that the version filter patterns and expected versions match your intent. Since this version data directly drives container image updates, accuracy is essential.
 
 ## 7. Executors
 
-![Executors](../../images/executors.png)
+![Executors](../images/executors.png)
 
 
 ### Target Discovery
 
-![Executors-add](../../images/executors-add.png)
+![Executors-add](../images/executors-add.png)
 
 After selecting a configured runtime connection, the system automatically scans all manageable containers, services, stacks, or workloads under that connection and lists them as bindable targets.
 
 ### Binding
 
-![Executors-add](../../images/executors-binding.png)
+![Executors-add](../images/executors-binding.png)
 
 Associates a tracker's version source with a discovered runtime target, specifying which tracker's release channel drives image updates for which container or service.
 
@@ -303,7 +303,7 @@ For multi-service targets such as Docker Compose, Portainer Stacks, and Kubernet
 
 ### Policy
 
-![Executors-add](../../images/executors-policy.png)
+![Executors-add](../images/executors-policy.png)
 
 Configures how version updates are triggered: **Manual** mode requires explicit action in the UI; **Immediate** mode runs automatically when a new version is detected; **Maintenance Window** mode runs automatically only within a specified time window, suitable for production environments with update timing requirements.
 
@@ -371,13 +371,13 @@ After an update, the executor can perform a health check on the target service t
 
 ### Review
 
-![Executors-add](../../images/executors-confirm.png)
+![Executors-add](../images/executors-confirm.png)
 
 Review whether the target version matches your expectations before saving. You can use the immediate execution option to test whether the version update behaves as expected.
 
 ### Snapshots
 
-![Executors-add](../../images/executors-snapshot.png)
+![Executors-add](../images/executors-snapshot.png)
 
 Because version updates for Docker, Podman, and Compose container groups are destructive operations (remove container → update image → start new container), full configuration restoration is not guaranteed. To guard against configuration loss, the system fetches and saves a complete snapshot of the running configuration before each update. If an update fails, the snapshot rollback feature can be used to attempt a version rollback — though whether a specific application supports rollback depends on the application itself.
 

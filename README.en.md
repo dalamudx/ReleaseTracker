@@ -32,7 +32,7 @@ ReleaseTracker is a lightweight, configurable release tracking and update orches
 
 See [FEATURES.md](FEATURES.md) for UI screenshots.
 
-![Trackers](images/trackers.png)
+![Trackers](docs/images/trackers.png)
 
 ## Architecture
 
