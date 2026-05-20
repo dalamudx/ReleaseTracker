@@ -10,6 +10,7 @@ from datetime import datetime
 
 from ..storage.sqlite import SQLiteStorage
 from ..services.auth import AuthService
+from ..services.jwt_tokens import decode_jwt
 from ..oidc_models import OIDCProvider, OIDCUserInfo
 from ..models import User, Session, TokenPair
 
@@ -133,7 +134,11 @@ class OIDCService:
                 raise ValueError(f"Token exchange failed: {e.response.status_code}")
 
         # 2. Fetch user information
-        userinfo = self._parse_id_token(token["id_token"], provider_slug) if token.get("id_token") else None
+        userinfo = (
+            self._parse_id_token(token["id_token"], provider_slug)
+            if token.get("id_token")
+            else None
+        )
         if provider.userinfo_url and token.get("access_token"):
             async with httpx.AsyncClient(timeout=10) as http:
                 ui_resp = await http.get(
@@ -153,8 +158,6 @@ class OIDCService:
         token_pair = self.auth_service._create_token_pair(user)
 
         # 5. Create a session
-        import jwt as pyjwt
-
         user_id = _require_user_id(user)
 
         session = Session(
@@ -164,11 +167,7 @@ class OIDCService:
             user_agent=user_agent,
             ip_address=ip_address,
             expires_at=datetime.fromtimestamp(
-                pyjwt.decode(
-                    token_pair.access_token,
-                    key=self.auth_service.secret_key,
-                    algorithms=["HS256"],
-                )["exp"]
+                decode_jwt(token_pair.access_token, self.auth_service.secret_key)["exp"]
             ),
         )
         await self.storage.create_session(session)
@@ -236,7 +235,10 @@ class OIDCService:
                 email=userinfo.email,
                 avatar_url=userinfo.picture,
             )
-            return await self.storage.get_user_by_oauth(userinfo.provider_slug, userinfo.sub) or existing
+            return (
+                await self.storage.get_user_by_oauth(userinfo.provider_slug, userinfo.sub)
+                or existing
+            )
 
         # 2. Match by username and link automatically
         by_username = await self.storage.get_user_by_username(username)

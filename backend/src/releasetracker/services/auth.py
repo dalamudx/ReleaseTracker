@@ -6,8 +6,9 @@ from typing import TYPE_CHECKING, Optional
 import hashlib
 import uuid
 
-import jwt
 from passlib.context import CryptContext
+
+from .jwt_tokens import JWTTokenError, decode_jwt, encode_jwt
 
 from ..models import (
     User,
@@ -28,7 +29,6 @@ logger = logging.getLogger(__name__)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # JWT Configuration
-ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
 
@@ -89,7 +89,7 @@ class AuthService:
             user_agent=user_agent,
             ip_address=ip_address,
             expires_at=datetime.fromtimestamp(
-                jwt.decode(token_pair.access_token, self.secret_key, algorithms=[ALGORITHM])["exp"]
+                decode_jwt(token_pair.access_token, self.secret_key)["exp"]
             ),
         )
 
@@ -120,7 +120,7 @@ class AuthService:
     async def refresh_token(self, refresh_token: str) -> TokenPair:
         """Refresh token"""
         try:
-            payload = jwt.decode(refresh_token, self.secret_key, algorithms=[ALGORITHM])
+            payload = decode_jwt(refresh_token, self.secret_key)
             username = payload.get("sub")
             token_type = payload.get("type")
 
@@ -146,22 +146,20 @@ class AuthService:
                 token_hash=self._hash_token(token_pair.access_token),
                 refresh_token_hash=self._hash_token(token_pair.refresh_token),
                 expires_at=datetime.fromtimestamp(
-                    jwt.decode(token_pair.access_token, self.secret_key, algorithms=[ALGORITHM])[
-                        "exp"
-                    ]
+                    decode_jwt(token_pair.access_token, self.secret_key)["exp"]
                 ),
             )
             if not session_updated:
                 raise ValueError("Invalid refresh token")
             return token_pair
 
-        except jwt.PyJWTError:
+        except JWTTokenError:
             raise ValueError("Invalid refresh token")
 
     async def get_current_user(self, token: str) -> User:
         """Get the current user from a token"""
         try:
-            payload = jwt.decode(token, self.secret_key, algorithms=[ALGORITHM])
+            payload = decode_jwt(token, self.secret_key)
             username = payload.get("sub")
             if username is None:
                 raise ValueError("Invalid token")
@@ -181,7 +179,7 @@ class AuthService:
 
             return user
 
-        except jwt.PyJWTError:
+        except JWTTokenError:
             raise ValueError("Invalid token")
 
     def _create_token_pair(self, user: User) -> TokenPair:
@@ -208,7 +206,7 @@ class AuthService:
         else:
             expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         to_encode.update({"exp": expire})
-        encoded_jwt = jwt.encode(to_encode, self.secret_key, algorithm=ALGORITHM)
+        encoded_jwt = encode_jwt(to_encode, self.secret_key)
         return encoded_jwt
 
     def _create_refresh_token(self, data: dict, expires_delta: Optional[timedelta] = None):
@@ -220,7 +218,7 @@ class AuthService:
         else:
             expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
         to_encode.update({"exp": expire})
-        encoded_jwt = jwt.encode(to_encode, self.secret_key, algorithm=ALGORITHM)
+        encoded_jwt = encode_jwt(to_encode, self.secret_key)
         return encoded_jwt
 
     async def ensure_admin_user(self):

@@ -4,7 +4,6 @@ import pytest_asyncio
 from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import Any, cast
-import jwt
 from fastapi.testclient import TestClient
 from db_helpers import clone_sqlite_database, initialize_storage_with_schema
 
@@ -15,6 +14,7 @@ from releasetracker.executor_scheduler import ExecutorScheduler
 from releasetracker.scheduler_host import SchedulerHost
 from releasetracker.models import RegisterRequest, Session
 from releasetracker.services.auth import AuthService
+from releasetracker.services.jwt_tokens import decode_jwt
 from releasetracker.services.system_keys import SystemKeyManager
 from unittest.mock import AsyncMock
 
@@ -134,9 +134,7 @@ async def authed_client(client, auth_service):
     access_token = token_pair.access_token
     token_hash = auth_service._hash_token(access_token)
     refresh_token_hash = auth_service._hash_token(token_pair.refresh_token)
-    expires_at = datetime.fromtimestamp(
-        jwt.decode(access_token, auth_service.secret_key, algorithms=["HS256"])["exp"]
-    )
+    expires_at = datetime.fromtimestamp(decode_jwt(access_token, auth_service.secret_key)["exp"])
     await auth_service.storage.create_session(
         Session(
             user_id=user.id,
