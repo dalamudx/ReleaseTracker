@@ -5,7 +5,13 @@ import pytest
 
 from releasetracker.config import TrackerConfig
 from releasetracker.scheduler import ReleaseScheduler
-from releasetracker.models import AggregateTracker, Release, ReleaseChannel, TrackerSource, TrackerStatus
+from releasetracker.models import (
+    AggregateTracker,
+    Release,
+    ReleaseChannel,
+    TrackerSource,
+    TrackerStatus,
+)
 
 
 def make_tracker_payload(name: str, **overrides):
@@ -52,7 +58,9 @@ async def _materialize_projection_rows(
 
     projected_releases: list[Release] = []
     for source_key, releases in releases_by_source_key.items():
-        source = next(source for source in aggregate_tracker.sources if source.source_key == source_key)
+        source = next(
+            source for source in aggregate_tracker.sources if source.source_key == source_key
+        )
         assert source.id is not None
         if releases:
             await storage.save_source_observations(
@@ -363,12 +371,6 @@ async def test_tracker_status_last_version_uses_projection_derived_latest_identi
         )
     )
 
-    repo_source = next(
-        source for source in aggregate_tracker.sources if source.source_key == "repo"
-    )
-    image_source = next(
-        source for source in aggregate_tracker.sources if source.source_key == "image"
-    )
     repo_release = Release(
         tracker_name="tracker-status-mixed",
         tracker_type="github",
@@ -449,9 +451,7 @@ async def test_tracker_status_last_version_uses_container_history_for_container_
 
 
 @pytest.mark.asyncio
-async def test_tracker_response_exposes_source_channel_current_digest(
-    authed_client, storage
-):
+async def test_tracker_response_exposes_source_channel_current_digest(authed_client, storage):
     digest = "sha256:" + "d" * 64
     aggregate_tracker = await storage.create_aggregate_tracker(
         AggregateTracker(
@@ -491,12 +491,81 @@ async def test_tracker_response_exposes_source_channel_current_digest(
         {"image": [image_release]},
     )
 
+    list_response = authed_client.get("/api/trackers")
     detail_response = authed_client.get("/api/trackers/tracker-source-channel-digest")
 
+    assert list_response.status_code == 200, list_response.text
     assert detail_response.status_code == 200, detail_response.text
+    listed_item = next(
+        item
+        for item in list_response.json()["items"]
+        if item["name"] == "tracker-source-channel-digest"
+    )
+    assert listed_item["sources"][0]["release_channels"][0]["last_version"] == "1.30.0-trixie"
+    assert listed_item["sources"][0]["release_channels"][0]["digest"] == digest
     source = detail_response.json()["sources"][0]
     assert source["release_channels"][0]["last_version"] == "1.30.0-trixie"
     assert source["release_channels"][0]["digest"] == digest
+
+
+@pytest.mark.asyncio
+async def test_tracker_response_handles_helm_source_channel_without_app_version_error(
+    authed_client, storage
+):
+    aggregate_tracker = await storage.create_aggregate_tracker(
+        AggregateTracker(
+            name="tracker-helm-source-channel-no-500",
+            primary_changelog_source_key="chart",
+            sources=[
+                TrackerSource(
+                    source_key="chart",
+                    source_type="helm",
+                    source_rank=0,
+                    source_config={"repo": "https://charts.example.com", "chart": "example"},
+                    release_channels=[
+                        ReleaseChannel(
+                            release_channel_key="chart-stable",
+                            name="stable",
+                            type="release",
+                        )
+                    ],
+                )
+            ],
+        )
+    )
+    chart_release = Release(
+        tracker_name="tracker-helm-source-channel-no-500",
+        tracker_type="helm",
+        version="1.2.3",
+        app_version="4.5.6",
+        chart_version="1.2.3",
+        name="example-1.2.3",
+        tag_name="1.2.3",
+        url="http://example.com/charts/example-1.2.3.tgz",
+        published_at=datetime(2026, 5, 2, 12, 0, 0),
+        prerelease=False,
+    )
+    await _materialize_projection_rows(
+        storage,
+        aggregate_tracker,
+        {"chart": [chart_release]},
+    )
+
+    list_response = authed_client.get("/api/trackers")
+    detail_response = authed_client.get("/api/trackers/tracker-helm-source-channel-no-500")
+
+    assert list_response.status_code == 200, list_response.text
+    assert detail_response.status_code == 200, detail_response.text
+    listed_item = next(
+        item
+        for item in list_response.json()["items"]
+        if item["name"] == "tracker-helm-source-channel-no-500"
+    )
+    assert "last_version" not in listed_item["sources"][0]["release_channels"][0]
+    assert "digest" not in listed_item["sources"][0]["release_channels"][0]
+    source = detail_response.json()["sources"][0]
+    assert "last_version" not in source["release_channels"][0]
+    assert "digest" not in source["release_channels"][0]
 
 
 @pytest.mark.asyncio
@@ -518,7 +587,6 @@ async def test_tracker_status_last_version_prefers_current_projection_over_stale
         )
     )
 
-    repo_source = aggregate_tracker.sources[0]
     observed_at = datetime(2025, 11, 1, 12, 0, 0)
 
     repo_release = Release(
@@ -660,9 +728,6 @@ async def test_update_tracker_rebuilds_existing_observations_without_remote_refe
 
     aggregate_tracker = await storage.get_aggregate_tracker("local-rebuild-only")
     assert aggregate_tracker is not None
-    repo_source = next(
-        source for source in aggregate_tracker.sources if source.source_key == "repo"
-    )
 
     release_timestamp = datetime(2025, 10, 1, 12, 0, 0)
     await _materialize_projection_rows(
@@ -803,7 +868,9 @@ async def test_tracker_current_redesign_only_response_shape(authed_client, stora
 
 
 @pytest.mark.asyncio
-async def test_tracker_current_latest_release_emits_channel_name_when_available(authed_client, storage):
+async def test_tracker_current_latest_release_emits_channel_name_when_available(
+    authed_client, storage
+):
     aggregate_tracker = await storage.create_aggregate_tracker(
         AggregateTracker(
             name="current-channel-name-shape",
@@ -1105,7 +1172,7 @@ async def test_tracker_api_persists_channel_regex_edits_across_create_and_update
             "enabled": False,
         },
     ]
-    
+
     updated_detail = authed_client.get("/api/trackers/regex-roundtrip/config")
     assert updated_detail.status_code == 200, updated_detail.text
     assert updated_detail.json()["channels"] == update_body["channels"]
@@ -1204,7 +1271,6 @@ async def test_get_trackers_cleans_up_blank_tracker_rows(authed_client, storage)
     assert status_count is not None
     assert [row[0] for row in tracker_rows] == ["valid-tracker"]
     assert status_count[0] == 0
-
 
 
 @pytest.mark.asyncio
@@ -1319,9 +1385,7 @@ async def test_create_tracker_preserves_nested_release_channel_types_per_source(
         }
     ]
     assert detail_response.status_code == 200, detail_response.text
-    detail_sources = {
-        source["source_key"]: source for source in detail_response.json()["sources"]
-    }
+    detail_sources = {source["source_key"]: source for source in detail_response.json()["sources"]}
     assert detail_sources["repo"]["release_channels"][0]["type"] == "prerelease"
     assert detail_sources["image"]["release_channels"][0]["release_channel_key"] == "image-stable"
     assert sources["image"]["release_channels"] == [

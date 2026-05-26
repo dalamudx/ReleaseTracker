@@ -345,14 +345,14 @@ def _serialize_current_summary(summary: dict[str, Any] | None) -> dict[str, Any]
     }
 
 
-def _release_current_identity_values(
+def _container_release_current_identity_values(
     storage: SQLiteStorage,
     rows: list[dict[str, Any]],
     release: Release,
 ) -> dict[str, str | None]:
     identity_key = storage.release_identity_key_for_source(
         release,
-        source_type=release.tracker_type,
+        source_type="container",
     )
     row = next((item for item in rows if item["identity_key"] == identity_key), None)
     return {
@@ -361,7 +361,7 @@ def _release_current_identity_values(
     }
 
 
-def _release_channel_winner_values_by_key(
+def _container_release_channel_winner_values_by_key(
     storage: SQLiteStorage,
     releases: list[Release],
     channels: list[Any],
@@ -375,26 +375,27 @@ def _release_channel_winner_values_by_key(
         use_immutable_identity=True,
     )
     return {
-        channel_key: _release_current_identity_values(storage, rows, release)
+        channel_key: _container_release_current_identity_values(storage, rows, release)
         for channel_key, release in channel_winners.items()
     }
 
 
-async def _build_tracker_release_channel_current_values(
+async def _build_container_source_release_channel_current_values(
     storage: SQLiteStorage,
     tracker: AggregateTracker,
     runtime_config: TrackerConfig | None,
-) -> tuple[dict[str, dict[str, str | None]], dict[str, dict[str, dict[str, str | None]]]]:
-    current_rows = await storage.get_tracker_current_release_rows(tracker.name)
-    sort_mode = runtime_config.version_sort_mode if runtime_config is not None else "published_at"
+) -> dict[str, dict[str, dict[str, str | None]]]:
+    container_sources = [
+        source
+        for source in tracker.sources
+        if source.source_type == "container" and source.release_channels
+    ]
+    if not container_sources:
+        return {}
 
-    tracker_values = _release_channel_winner_values_by_key(
-        storage,
-        [row["release"].model_copy(update={"tracker_name": tracker.name}) for row in current_rows],
-        runtime_config.channels if runtime_config is not None else [],
-        sort_mode,
-        current_rows,
-    )
+    current_rows = await storage.get_tracker_current_release_rows(tracker.name)
+    if not current_rows:
+        return {source.source_key: {} for source in container_sources}
 
     contributions_by_history_id = await _load_current_source_contributions(
         storage,
@@ -403,11 +404,16 @@ async def _build_tracker_release_channel_current_values(
     source_rows_by_source_key: dict[str, list[dict[str, Any]]] = {}
     source_releases_by_source_key: dict[str, list[Release]] = {}
     for current_row in current_rows:
-        for contribution in contributions_by_history_id.get(current_row["tracker_release_history_id"], []):
+        for contribution in contributions_by_history_id.get(
+            current_row["tracker_release_history_id"], []
+        ):
+            if contribution["source_type"] != "container":
+                continue
+
             source_key = contribution["source_key"]
             release = Release(
                 tracker_name=tracker.name,
-                tracker_type=contribution["source_type"],
+                tracker_type="container",
                 version=contribution["version"],
                 name=contribution["tag_name"] or contribution["version"],
                 tag_name=contribution["tag_name"] or contribution["version"],
@@ -421,24 +427,24 @@ async def _build_tracker_release_channel_current_values(
             )
             identity_key = storage.release_identity_key_for_source(
                 release,
-                source_type=release.tracker_type,
+                source_type="container",
             )
             source_rows_by_source_key.setdefault(source_key, []).append(
                 {**current_row, "identity_key": identity_key, "digest": contribution["digest"]}
             )
             source_releases_by_source_key.setdefault(source_key, []).append(release)
 
-    source_values: dict[str, dict[str, dict[str, str | None]]] = {}
-    for source in tracker.sources:
-        source_values[source.source_key] = _release_channel_winner_values_by_key(
+    sort_mode = runtime_config.version_sort_mode if runtime_config is not None else "published_at"
+    return {
+        source.source_key: _container_release_channel_winner_values_by_key(
             storage,
             source_releases_by_source_key.get(source.source_key, []),
             source.release_channels,
             sort_mode,
             source_rows_by_source_key.get(source.source_key, []),
         )
-
-    return tracker_values, source_values
+        for source in container_sources
+    }
 
 
 def _augment_release_channels_with_current_values(
@@ -516,9 +522,7 @@ async def _build_tracker_current_view(
                 "primary_source": (
                     {
                         **row["primary_source"],
-                        "source_type": (
-                            row["primary_source"]["source_type"]
-                        ),
+                        "source_type": (row["primary_source"]["source_type"]),
                     }
                     if row["primary_source"] is not None
                     else None
@@ -574,7 +578,7 @@ async def _build_tracker_response(
         tracker_status = await storage.get_tracker_current_status_derivation(tracker.name)
 
     enabled_sources = [source for source in tracker.sources if source.enabled]
-    tracker_channel_values, source_channel_values = await _build_tracker_release_channel_current_values(
+    source_channel_values = await _build_container_source_release_channel_current_values(
         storage,
         tracker,
         runtime_config,
@@ -582,11 +586,12 @@ async def _build_tracker_response(
     sources = []
     for source in tracker.sources:
         source_payload = source.model_dump(mode="json")
-        source_payload["release_channels"] = _augment_release_channels_with_current_values(
-            storage,
-            source.release_channels,
-            source_channel_values.get(source.source_key, {}),
-        )
+        if source.source_type == "container":
+            source_payload["release_channels"] = _augment_release_channels_with_current_values(
+                storage,
+                source.release_channels,
+                source_channel_values.get(source.source_key, {}),
+            )
         sources.append(source_payload)
 
     return {
@@ -603,11 +608,7 @@ async def _build_tracker_response(
         "fallback_tags": runtime_config.fallback_tags if runtime_config else False,
         "github_fetch_mode": runtime_config.github_fetch_mode if runtime_config else "rest_first",
         "channels": (
-            _augment_release_channels_with_current_values(
-                storage,
-                runtime_config.channels or [],
-                tracker_channel_values,
-            )
+            [channel.model_dump() for channel in (runtime_config.channels or [])]
             if runtime_config
             else []
         ),
@@ -618,9 +619,7 @@ async def _build_tracker_response(
             "error": tracker_status["error"] if tracker_status else None,
             "source_count": len(tracker.sources),
             "enabled_source_count": len(enabled_sources),
-            "source_types": sorted(
-                {(source.source_type) for source in tracker.sources}
-            ),
+            "source_types": sorted({(source.source_type) for source in tracker.sources}),
         },
         "created_at": tracker.created_at,
         "updated_at": tracker.updated_at,
@@ -753,7 +752,9 @@ async def create_tracker(
         await storage.save_tracker_runtime_config(runtime_config)
         persisted_runtime = await storage.get_tracker_config(aggregate_tracker.name)
         if persisted_runtime is None:
-            raise HTTPException(status_code=500, detail="Failed to write tracker runtime configuration")
+            raise HTTPException(
+                status_code=500, detail="Failed to write tracker runtime configuration"
+            )
         await scheduler.refresh_tracker(aggregate_tracker.name)
 
         created_tracker = await storage.get_aggregate_tracker(aggregate_tracker.name)
@@ -790,7 +791,9 @@ async def update_tracker(
         await storage.save_tracker_runtime_config(runtime_config)
         persisted_runtime = await storage.get_tracker_config(tracker_name)
         if persisted_runtime is None:
-            raise HTTPException(status_code=500, detail="Failed to write tracker runtime configuration")
+            raise HTTPException(
+                status_code=500, detail="Failed to write tracker runtime configuration"
+            )
         await scheduler.refresh_tracker(tracker_name)
         await scheduler.rebuild_tracker_views_from_storage(tracker_name)
 
