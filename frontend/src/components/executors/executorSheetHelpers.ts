@@ -569,8 +569,11 @@ export function buildExecutorTrackerImageBase(sourceConfig: Record<string, unkno
     }
 
     const registry = typeof sourceConfig?.registry === "string" ? normalizeExecutorImageRegistry(sourceConfig.registry) : ""
-    if (!registry || registry === "registry-1.docker.io" || registry === "docker.io" || executorImageHasExplicitRegistry(image)) {
+    if (!registry || executorImageHasExplicitRegistry(image)) {
         return image
+    }
+    if (registry === "registry-1.docker.io" || registry === "docker.io") {
+        return `docker.io/${image}`
     }
     return `${registry}/${image}`
 }

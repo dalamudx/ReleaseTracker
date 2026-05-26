@@ -688,20 +688,21 @@ async def test_use_tracker_image_and_tag_does_not_duplicate_existing_registry(st
 
 
 @pytest.mark.asyncio
-async def test_use_tracker_image_and_tag_keeps_docker_hub_image_without_default_registry(storage):
+@pytest.mark.parametrize("registry", ["registry-1.docker.io", "docker.io"])
+async def test_use_tracker_image_and_tag_prefixes_docker_hub_registry(storage, registry):
     runtime_id = await _create_runtime_connection(storage)
-    tracker_name = "backend-dockerhub"
+    tracker_name = f"nginx-dockerhub-{registry}"
     await save_docker_tracker_config(
         storage,
         name=tracker_name,
-        image="library/backend",
-        registry="registry-1.docker.io",
+        image="library/nginx",
+        registry=registry,
     )
-    await _create_tracker_release(storage, tracker_name, "3.0.1")
+    await _create_tracker_release(storage, tracker_name, "1.30.0-trixie")
 
     executor_id = await storage.save_executor_config(
         ExecutorConfig(
-            name="backend-dockerhub-executor",
+            name=f"nginx-dockerhub-executor-{registry}",
             runtime_type="docker",
             runtime_connection_id=runtime_id,
             tracker_name=tracker_name,
@@ -710,12 +711,12 @@ async def test_use_tracker_image_and_tag_keeps_docker_hub_image_without_default_
             enabled=True,
             image_selection_mode="use_tracker_image_and_tag",
             update_mode="manual",
-            target_ref={"mode": "container", "container_id": "container-back-dockerhub"},
+            target_ref={"mode": "container", "container_id": f"container-nginx-dockerhub-{registry}"},
         )
     )
 
     scheduler = ExecutorScheduler(storage)
-    _mock_scheduler_target(scheduler, ("3.0.1", None))
+    _mock_scheduler_target(scheduler, ("1.30.0-trixie", None))
     adapter = FakeAdapter(
         RuntimeConnectionConfig(
             name="prod-docker",
@@ -723,14 +724,14 @@ async def test_use_tracker_image_and_tag_keeps_docker_hub_image_without_default_
             config={"socket": "unix:///var/run/docker.sock"},
             secrets={},
         ),
-        current_image="ghcr.io/acme/backend:2.9.0",
+        current_image="docker.io/library/nginx:alpine",
     )
     scheduler._adapters[executor_id] = adapter
 
     outcome = await scheduler.run_executor_now(executor_id)
 
     assert outcome.status == "success"
-    assert adapter.update_calls == ["library/backend:3.0.1"]
+    assert adapter.update_calls == ["docker.io/library/nginx:1.30.0-trixie"]
 
 
 @pytest.mark.asyncio

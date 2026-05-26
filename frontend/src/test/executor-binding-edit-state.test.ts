@@ -1676,11 +1676,63 @@ describe("executor binding edit state helpers", () => {
         ])
     })
 
-    it("builds tracker image base without duplicate or default registry prefixes", () => {
+    it("builds target image changes with Docker Hub tracker registry and image", () => {
+        const t = ((key: string, options?: Record<string, unknown>) => options?.count ? `${options.count} ${key}` : key) as unknown as TFunction
+        const dockerHubRegistries = ["registry-1.docker.io", "docker.io"] as const
+
+        dockerHubRegistries.forEach((registry) => {
+            const targetDisplay = buildExecutorTargetDisplay("portainer", {
+                mode: "portainer_stack",
+                endpoint_id: 2,
+                stack_id: 11,
+                stack_name: "release-stack",
+                stack_type: "standalone",
+                services: [{ service: "web", image: "docker.io/library/nginx:alpine" }],
+                service_count: 1,
+            }, t)
+            const tracker = createTracker({
+                name: "tracker",
+                status: {
+                    last_check: null,
+                    last_version: "1.30.0-trixie",
+                    error: null,
+                    source_count: 1,
+                    enabled_source_count: 1,
+                    source_types: ["container"],
+                },
+                sources: [
+                    createTrackerSource({
+                        id: 9,
+                        source_config: { image: "library/nginx", registry },
+                        release_channels: [{ release_channel_key: "stable", name: "stable", type: "release", enabled: true }],
+                    }),
+                ],
+            })
+
+            const changes = buildExecutorReviewImageChanges({
+                targetDisplay,
+                serviceBindings: [createServiceBinding({ service: "web", tracker_source_id: "9", channel_name: "stable" })],
+                trackers: [tracker],
+                imageSelectionMode: "use_tracker_image_and_tag",
+            })
+
+            expect(changes).toEqual([
+                {
+                    service: "web",
+                    sourceImage: "docker.io/library/nginx:alpine",
+                    targetImage: "docker.io/library/nginx:1.30.0-trixie",
+                    targetVersion: "1.30.0-trixie",
+                },
+            ])
+        })
+    })
+
+    it("builds tracker image base without duplicate registry prefixes", () => {
         expect(buildExecutorTrackerImageBase({ image: "acme/api", registry: "ghcr.io" })).toBe("ghcr.io/acme/api")
         expect(buildExecutorTrackerImageBase({ image: "ghcr.io/acme/api", registry: "ghcr.io" })).toBe("ghcr.io/acme/api")
-        expect(buildExecutorTrackerImageBase({ image: "library/nginx", registry: "registry-1.docker.io" })).toBe("library/nginx")
-        expect(buildExecutorTrackerImageBase({ image: "library/nginx", registry: "docker.io" })).toBe("library/nginx")
+        expect(buildExecutorTrackerImageBase({ image: "library/nginx", registry: "registry-1.docker.io" })).toBe("docker.io/library/nginx")
+        expect(buildExecutorTrackerImageBase({ image: "library/nginx", registry: "docker.io" })).toBe("docker.io/library/nginx")
+        expect(buildExecutorTrackerImageBase({ image: "docker.io/library/nginx", registry: "registry-1.docker.io" })).toBe("docker.io/library/nginx")
     })
 
     it("keeps the current image name when replacing only the tag", () => {

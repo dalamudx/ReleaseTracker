@@ -308,10 +308,10 @@ def _build_tracker_image_base(source_config: dict[str, Any]) -> str:
         return image
 
     normalized_registry = _normalize_image_registry_value(registry)
-    if not normalized_registry or normalized_registry in {"registry-1.docker.io", "docker.io"}:
+    if not normalized_registry or _image_has_explicit_registry(image):
         return image
-    if _image_has_explicit_registry(image):
-        return image
+    if normalized_registry in {"registry-1.docker.io", "docker.io"}:
+        return f"docker.io/{image}"
     return f"{normalized_registry}/{image}"
 
 
