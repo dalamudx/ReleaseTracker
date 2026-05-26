@@ -547,6 +547,34 @@ export function buildExecutorImageTargetValue(
     return `${baseImage}:${targetVersion}`
 }
 
+function normalizeExecutorImageRegistry(registry: string): string {
+    let normalized = registry.trim().replace(/\/+$/u, "")
+    if (normalized.startsWith("https://")) {
+        normalized = normalized.slice("https://".length)
+    } else if (normalized.startsWith("http://")) {
+        normalized = normalized.slice("http://".length)
+    }
+    return normalized.replace(/\/+$/u, "")
+}
+
+function executorImageHasExplicitRegistry(image: string): boolean {
+    const [firstComponent] = image.split("/", 1)
+    return firstComponent.includes(".") || firstComponent.includes(":") || firstComponent === "localhost"
+}
+
+export function buildExecutorTrackerImageBase(sourceConfig: Record<string, unknown> | undefined): string {
+    const image = typeof sourceConfig?.image === "string" ? sourceConfig.image.trim().replace(/^\/+|\/+$/gu, "") : ""
+    if (!image) {
+        return ""
+    }
+
+    const registry = typeof sourceConfig?.registry === "string" ? normalizeExecutorImageRegistry(sourceConfig.registry) : ""
+    if (!registry || registry === "registry-1.docker.io" || registry === "docker.io" || executorImageHasExplicitRegistry(image)) {
+        return image
+    }
+    return `${registry}/${image}`
+}
+
 export function buildExecutorReviewImageChanges({
     targetDisplay,
     serviceBindings,
@@ -566,7 +594,7 @@ export function buildExecutorReviewImageChanges({
         const sourceImage = targetDisplay.groupedServices?.find((item) => normalizeExecutorServiceKey(item.service) === normalizeExecutorServiceKey(binding.service))?.image ?? "-"
         const { selectedBindableSource } = resolveExecutorServiceBinding(binding, trackers)
         const targetVersion = resolveExecutorBindingTargetVersion(binding, trackers)
-        const trackerImage = typeof selectedBindableSource?.source_config?.image === "string" ? selectedBindableSource.source_config.image.trim() : ""
+        const trackerImage = buildExecutorTrackerImageBase(selectedBindableSource?.source_config)
         const targetBaseImage = imageSelectionMode === "use_tracker_image_and_tag" ? trackerImage : sourceImage
         const targetImage = targetVersion && targetBaseImage && targetBaseImage !== "-"
             ? buildExecutorImageTargetValue(targetBaseImage, targetVersion)

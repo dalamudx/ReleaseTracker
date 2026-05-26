@@ -596,6 +596,199 @@ async def test_use_tracker_image_and_tag_overrides_repo(storage):
 
 
 @pytest.mark.asyncio
+async def test_use_tracker_image_and_tag_combines_separate_registry_and_image(storage):
+    runtime_id = await _create_runtime_connection(storage)
+    tracker_name = "backend-split-registry"
+    await save_docker_tracker_config(
+        storage,
+        name=tracker_name,
+        image="acme/backend",
+        registry="ghcr.io",
+    )
+    await _create_tracker_release(storage, tracker_name, "3.0.1")
+
+    executor_id = await storage.save_executor_config(
+        ExecutorConfig(
+            name="backend-split-registry-executor",
+            runtime_type="docker",
+            runtime_connection_id=runtime_id,
+            tracker_name=tracker_name,
+            tracker_source_id=await _get_tracker_source_id(storage, tracker_name),
+            channel_name="stable",
+            enabled=True,
+            image_selection_mode="use_tracker_image_and_tag",
+            update_mode="manual",
+            target_ref={"mode": "container", "container_id": "container-back-split"},
+        )
+    )
+
+    scheduler = ExecutorScheduler(storage)
+    _mock_scheduler_target(scheduler, ("3.0.1", None))
+    adapter = FakeAdapter(
+        RuntimeConnectionConfig(
+            name="prod-docker",
+            type="docker",
+            config={"socket": "unix:///var/run/docker.sock"},
+            secrets={},
+        ),
+        current_image="docker.io/library/backend:2.9.0",
+    )
+    scheduler._adapters[executor_id] = adapter
+
+    outcome = await scheduler.run_executor_now(executor_id)
+
+    assert outcome.status == "success"
+    assert adapter.update_calls == ["ghcr.io/acme/backend:3.0.1"]
+
+
+@pytest.mark.asyncio
+async def test_use_tracker_image_and_tag_does_not_duplicate_existing_registry(storage):
+    runtime_id = await _create_runtime_connection(storage)
+    tracker_name = "backend-existing-registry"
+    await save_docker_tracker_config(
+        storage,
+        name=tracker_name,
+        image="ghcr.io/acme/backend",
+        registry="ghcr.io",
+    )
+    await _create_tracker_release(storage, tracker_name, "3.0.1")
+
+    executor_id = await storage.save_executor_config(
+        ExecutorConfig(
+            name="backend-existing-registry-executor",
+            runtime_type="docker",
+            runtime_connection_id=runtime_id,
+            tracker_name=tracker_name,
+            tracker_source_id=await _get_tracker_source_id(storage, tracker_name),
+            channel_name="stable",
+            enabled=True,
+            image_selection_mode="use_tracker_image_and_tag",
+            update_mode="manual",
+            target_ref={"mode": "container", "container_id": "container-back-existing"},
+        )
+    )
+
+    scheduler = ExecutorScheduler(storage)
+    _mock_scheduler_target(scheduler, ("3.0.1", None))
+    adapter = FakeAdapter(
+        RuntimeConnectionConfig(
+            name="prod-docker",
+            type="docker",
+            config={"socket": "unix:///var/run/docker.sock"},
+            secrets={},
+        ),
+        current_image="docker.io/library/backend:2.9.0",
+    )
+    scheduler._adapters[executor_id] = adapter
+
+    outcome = await scheduler.run_executor_now(executor_id)
+
+    assert outcome.status == "success"
+    assert adapter.update_calls == ["ghcr.io/acme/backend:3.0.1"]
+
+
+@pytest.mark.asyncio
+async def test_use_tracker_image_and_tag_keeps_docker_hub_image_without_default_registry(storage):
+    runtime_id = await _create_runtime_connection(storage)
+    tracker_name = "backend-dockerhub"
+    await save_docker_tracker_config(
+        storage,
+        name=tracker_name,
+        image="library/backend",
+        registry="registry-1.docker.io",
+    )
+    await _create_tracker_release(storage, tracker_name, "3.0.1")
+
+    executor_id = await storage.save_executor_config(
+        ExecutorConfig(
+            name="backend-dockerhub-executor",
+            runtime_type="docker",
+            runtime_connection_id=runtime_id,
+            tracker_name=tracker_name,
+            tracker_source_id=await _get_tracker_source_id(storage, tracker_name),
+            channel_name="stable",
+            enabled=True,
+            image_selection_mode="use_tracker_image_and_tag",
+            update_mode="manual",
+            target_ref={"mode": "container", "container_id": "container-back-dockerhub"},
+        )
+    )
+
+    scheduler = ExecutorScheduler(storage)
+    _mock_scheduler_target(scheduler, ("3.0.1", None))
+    adapter = FakeAdapter(
+        RuntimeConnectionConfig(
+            name="prod-docker",
+            type="docker",
+            config={"socket": "unix:///var/run/docker.sock"},
+            secrets={},
+        ),
+        current_image="ghcr.io/acme/backend:2.9.0",
+    )
+    scheduler._adapters[executor_id] = adapter
+
+    outcome = await scheduler.run_executor_now(executor_id)
+
+    assert outcome.status == "success"
+    assert adapter.update_calls == ["library/backend:3.0.1"]
+
+
+@pytest.mark.asyncio
+async def test_use_tracker_image_and_tag_combines_registry_and_image_for_digest_reference(storage):
+    runtime_id = await _create_runtime_connection(storage)
+    tracker_name = "backend-split-registry-digest"
+    digest = "sha256:" + "c" * 64
+    await save_docker_tracker_config(
+        storage,
+        name=tracker_name,
+        image="acme/backend",
+        registry="ghcr.io",
+        channels=[config_module.Channel(name="stable", enabled=True, type="release")],
+    )
+    await _create_bound_tracker_release(
+        storage,
+        tracker_name,
+        "3.0.1",
+        commit_sha=digest,
+        published_at=datetime(2026, 3, 24, tzinfo=timezone.utc),
+    )
+
+    executor_id = await storage.save_executor_config(
+        ExecutorConfig(
+            name="backend-split-registry-digest-executor",
+            runtime_type="docker",
+            runtime_connection_id=runtime_id,
+            tracker_name=tracker_name,
+            tracker_source_id=await _get_tracker_source_id(storage, tracker_name),
+            channel_name="stable",
+            enabled=True,
+            image_selection_mode="use_tracker_image_and_tag",
+            image_reference_mode="digest",
+            update_mode="manual",
+            target_ref={"mode": "container", "container_id": "container-back-digest"},
+        )
+    )
+
+    scheduler = ExecutorScheduler(storage)
+    _mock_scheduler_target(scheduler, ("3.0.1", digest))
+    adapter = FakeAdapter(
+        RuntimeConnectionConfig(
+            name="prod-docker",
+            type="docker",
+            config={"socket": "unix:///var/run/docker.sock"},
+            secrets={},
+        ),
+        current_image="docker.io/library/backend:2.9.0",
+    )
+    scheduler._adapters[executor_id] = adapter
+
+    outcome = await scheduler.run_executor_now(executor_id)
+
+    assert outcome.status == "success"
+    assert adapter.update_calls == [f"ghcr.io/acme/backend@{digest}"]
+
+
+@pytest.mark.asyncio
 async def test_use_tracker_image_and_tag_requires_tracker_image(storage, monkeypatch):
     runtime_id = await _create_runtime_connection(storage)
     tracker_name = "missing-image"

@@ -283,6 +283,38 @@ def _build_image_target_value(
     return f"{image}:{target_version}"
 
 
+def _normalize_image_registry_value(registry: str) -> str:
+    normalized = registry.strip().rstrip("/")
+    if normalized.startswith("https://"):
+        normalized = normalized[len("https://") :]
+    elif normalized.startswith("http://"):
+        normalized = normalized[len("http://") :]
+    return normalized.rstrip("/")
+
+
+def _image_has_explicit_registry(image: str) -> bool:
+    first_component = image.split("/", 1)[0]
+    return "." in first_component or ":" in first_component or first_component == "localhost"
+
+
+def _build_tracker_image_base(source_config: dict[str, Any]) -> str:
+    base_image = source_config.get("image")
+    if not isinstance(base_image, str) or not base_image.strip():
+        raise ValueError("tracker source image is required for tracker image selection mode")
+
+    image = base_image.strip().strip("/")
+    registry = source_config.get("registry")
+    if not isinstance(registry, str) or not registry.strip():
+        return image
+
+    normalized_registry = _normalize_image_registry_value(registry)
+    if not normalized_registry or normalized_registry in {"registry-1.docker.io", "docker.io"}:
+        return image
+    if _image_has_explicit_registry(image):
+        return image
+    return f"{normalized_registry}/{image}"
+
+
 def _build_target_image_value(
     *,
     current_image: str,
@@ -300,9 +332,7 @@ def _build_target_image_value(
 
     if executor_config.image_selection_mode == "use_tracker_image_and_tag":
         source_config = getattr(tracker_source, "source_config", {}) or {}
-        base_image = source_config.get("image")
-        if not isinstance(base_image, str) or not base_image.strip():
-            raise ValueError("tracker source image is required for tracker image selection mode")
+        base_image = _build_tracker_image_base(source_config)
         return _build_image_target_value(
             base_image,
             target_version=target_version,
