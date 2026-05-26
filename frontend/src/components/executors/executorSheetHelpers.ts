@@ -514,6 +514,11 @@ function getReleaseChannelStoredVersion(channel: ReleaseChannelInput | undefined
     return typeof version === "string" && version.trim().length > 0 ? version.trim() : null
 }
 
+function getReleaseChannelStoredDigest(channel: ReleaseChannelInput | undefined): string | null {
+    const digest = channel?.digest
+    return typeof digest === "string" && digest.trim().length > 0 ? digest.trim() : null
+}
+
 export function resolveExecutorBindingTargetVersion(
     binding: ExecutorServiceBindingFormValue,
     trackers: TrackerStatus[],
@@ -529,10 +534,16 @@ export function resolveExecutorBindingTargetVersion(
     return typeof statusVersion === "string" && statusVersion.trim().length > 0 ? statusVersion.trim() : null
 }
 
-export function buildExecutorImageTargetValue(
-    image: string,
-    targetVersion: string,
-): string {
+export function resolveExecutorBindingTargetDigest(
+    binding: ExecutorServiceBindingFormValue,
+    trackers: TrackerStatus[],
+): string | null {
+    const { selectedBindableSource } = resolveExecutorServiceBinding(binding, trackers)
+    const matchedChannel = (selectedBindableSource?.release_channels ?? []).find((channel) => channel.name === binding.channel_name)
+    return getReleaseChannelStoredDigest(matchedChannel)
+}
+
+function stripExecutorImageReference(image: string): string {
     let baseImage = image.trim()
     if (baseImage.includes("@")) {
         baseImage = baseImage.split("@", 1)[0]
@@ -544,6 +555,26 @@ export function buildExecutorImageTargetValue(
         baseImage = baseImage.slice(0, lastColon)
     }
 
+    return baseImage
+}
+
+export function buildExecutorImageTargetValue(
+    image: string,
+    targetVersion: string,
+): string {
+    return `${stripExecutorImageReference(image)}:${targetVersion}`
+}
+
+function buildExecutorImageTargetPreviewValue(
+    image: string,
+    targetVersion: string,
+    targetDigest: string | null,
+    imageReferenceMode: ImageReferenceMode,
+): string {
+    const baseImage = stripExecutorImageReference(image)
+    if (imageReferenceMode === "digest" && targetDigest) {
+        return `${baseImage}@${targetDigest}`
+    }
     return `${baseImage}:${targetVersion}`
 }
 
@@ -583,11 +614,13 @@ export function buildExecutorReviewImageChanges({
     serviceBindings,
     trackers,
     imageSelectionMode,
+    imageReferenceMode,
 }: {
     targetDisplay: ExecutorTargetDisplay
     serviceBindings: ExecutorServiceBindingFormValue[]
     trackers: TrackerStatus[]
     imageSelectionMode: ImageSelectionMode
+    imageReferenceMode: ImageReferenceMode
 }): ExecutorReviewImageChange[] {
     if (!targetDisplay.groupedServices || serviceBindings.length === 0) {
         return []
@@ -597,10 +630,11 @@ export function buildExecutorReviewImageChanges({
         const sourceImage = targetDisplay.groupedServices?.find((item) => normalizeExecutorServiceKey(item.service) === normalizeExecutorServiceKey(binding.service))?.image ?? "-"
         const { selectedBindableSource } = resolveExecutorServiceBinding(binding, trackers)
         const targetVersion = resolveExecutorBindingTargetVersion(binding, trackers)
+        const targetDigest = resolveExecutorBindingTargetDigest(binding, trackers)
         const trackerImage = buildExecutorTrackerImageBase(selectedBindableSource?.source_config)
         const targetBaseImage = imageSelectionMode === "use_tracker_image_and_tag" ? trackerImage : sourceImage
         const targetImage = targetVersion && targetBaseImage && targetBaseImage !== "-"
-            ? buildExecutorImageTargetValue(targetBaseImage, targetVersion)
+            ? buildExecutorImageTargetPreviewValue(targetBaseImage, targetVersion, targetDigest, imageReferenceMode)
             : ""
 
         return {

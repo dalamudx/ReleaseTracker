@@ -345,6 +345,117 @@ def _serialize_current_summary(summary: dict[str, Any] | None) -> dict[str, Any]
     }
 
 
+def _release_current_identity_values(
+    storage: SQLiteStorage,
+    rows: list[dict[str, Any]],
+    release: Release,
+) -> dict[str, str | None]:
+    identity_key = storage.release_identity_key_for_source(
+        release,
+        source_type=release.tracker_type,
+    )
+    row = next((item for item in rows if item["identity_key"] == identity_key), None)
+    return {
+        "last_version": release.version,
+        "digest": row["digest"] if row is not None else release.commit_sha,
+    }
+
+
+def _release_channel_winner_values_by_key(
+    storage: SQLiteStorage,
+    releases: list[Release],
+    channels: list[Any],
+    sort_mode: str,
+    rows: list[dict[str, Any]],
+) -> dict[str, dict[str, str | None]]:
+    channel_winners = storage.select_best_releases_by_channel(
+        releases,
+        channels,
+        sort_mode=sort_mode,
+        use_immutable_identity=True,
+    )
+    return {
+        channel_key: _release_current_identity_values(storage, rows, release)
+        for channel_key, release in channel_winners.items()
+    }
+
+
+async def _build_tracker_release_channel_current_values(
+    storage: SQLiteStorage,
+    tracker: AggregateTracker,
+    runtime_config: TrackerConfig | None,
+) -> tuple[dict[str, dict[str, str | None]], dict[str, dict[str, dict[str, str | None]]]]:
+    current_rows = await storage.get_tracker_current_release_rows(tracker.name)
+    sort_mode = runtime_config.version_sort_mode if runtime_config is not None else "published_at"
+
+    tracker_values = _release_channel_winner_values_by_key(
+        storage,
+        [row["release"].model_copy(update={"tracker_name": tracker.name}) for row in current_rows],
+        runtime_config.channels if runtime_config is not None else [],
+        sort_mode,
+        current_rows,
+    )
+
+    contributions_by_history_id = await _load_current_source_contributions(
+        storage,
+        [row["tracker_release_history_id"] for row in current_rows],
+    )
+    source_rows_by_source_key: dict[str, list[dict[str, Any]]] = {}
+    source_releases_by_source_key: dict[str, list[Release]] = {}
+    for current_row in current_rows:
+        for contribution in contributions_by_history_id.get(current_row["tracker_release_history_id"], []):
+            source_key = contribution["source_key"]
+            release = Release(
+                tracker_name=tracker.name,
+                tracker_type=contribution["source_type"],
+                version=contribution["version"],
+                name=contribution["tag_name"] or contribution["version"],
+                tag_name=contribution["tag_name"] or contribution["version"],
+                url=contribution["url"] or "",
+                published_at=datetime.fromisoformat(contribution["published_at"]),
+                prerelease=bool(contribution["prerelease"]),
+                body=contribution["body"],
+                changelog_url=contribution["changelog_url"],
+                channel_name=contribution["channel_name"],
+                commit_sha=contribution["digest"],
+            )
+            identity_key = storage.release_identity_key_for_source(
+                release,
+                source_type=release.tracker_type,
+            )
+            source_rows_by_source_key.setdefault(source_key, []).append(
+                {**current_row, "identity_key": identity_key, "digest": contribution["digest"]}
+            )
+            source_releases_by_source_key.setdefault(source_key, []).append(release)
+
+    source_values: dict[str, dict[str, dict[str, str | None]]] = {}
+    for source in tracker.sources:
+        source_values[source.source_key] = _release_channel_winner_values_by_key(
+            storage,
+            source_releases_by_source_key.get(source.source_key, []),
+            source.release_channels,
+            sort_mode,
+            source_rows_by_source_key.get(source.source_key, []),
+        )
+
+    return tracker_values, source_values
+
+
+def _augment_release_channels_with_current_values(
+    storage: SQLiteStorage,
+    channels: list[Any],
+    values_by_key: dict[str, dict[str, str | None]],
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for channel_rank, channel in enumerate(channels):
+        payload = channel.model_dump(mode="json")
+        values = values_by_key.get(storage._channel_selection_key(channel, channel_rank))
+        if values is not None:
+            payload.update(values)
+        result.append(payload)
+    return result
+
+
 async def _build_tracker_current_view(
     storage: SQLiteStorage,
     tracker: AggregateTracker,
@@ -463,6 +574,20 @@ async def _build_tracker_response(
         tracker_status = await storage.get_tracker_current_status_derivation(tracker.name)
 
     enabled_sources = [source for source in tracker.sources if source.enabled]
+    tracker_channel_values, source_channel_values = await _build_tracker_release_channel_current_values(
+        storage,
+        tracker,
+        runtime_config,
+    )
+    sources = []
+    for source in tracker.sources:
+        source_payload = source.model_dump(mode="json")
+        source_payload["release_channels"] = _augment_release_channels_with_current_values(
+            storage,
+            source.release_channels,
+            source_channel_values.get(source.source_key, {}),
+        )
+        sources.append(source_payload)
 
     return {
         "id": tracker.id,
@@ -478,11 +603,15 @@ async def _build_tracker_response(
         "fallback_tags": runtime_config.fallback_tags if runtime_config else False,
         "github_fetch_mode": runtime_config.github_fetch_mode if runtime_config else "rest_first",
         "channels": (
-            [channel.model_dump() for channel in (runtime_config.channels or [])]
+            _augment_release_channels_with_current_values(
+                storage,
+                runtime_config.channels or [],
+                tracker_channel_values,
+            )
             if runtime_config
             else []
         ),
-        "sources": [source.model_dump(mode="json") for source in tracker.sources],
+        "sources": sources,
         "status": {
             "last_check": tracker_status["last_check"] if tracker_status else None,
             "last_version": tracker_status["latest_version"] if tracker_status else None,

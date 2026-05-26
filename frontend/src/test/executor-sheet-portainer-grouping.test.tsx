@@ -479,6 +479,7 @@ describe("ExecutorSheet Portainer grouping", () => {
           service_count: 1,
         }}
         imageSelectionMode="use_tracker_image_and_tag"
+        imageReferenceMode="tag"
         validationMessage={null}
       />,
     )

@@ -217,6 +217,8 @@ export interface ReleaseChannelInput {
     include_pattern?: string | null
     exclude_pattern?: string | null
     enabled?: boolean
+    last_version?: string | null
+    digest?: string | null
 }
 
 export interface ReleaseChannel extends ReleaseChannelInput {

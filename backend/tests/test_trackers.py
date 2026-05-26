@@ -426,7 +426,6 @@ async def test_tracker_status_last_version_uses_container_history_for_container_
             ],
         )
     )
-    image_source = aggregate_tracker.sources[0]
     image_release = Release(
         tracker_name="tracker-status-container-only",
         tracker_type="container",
@@ -447,6 +446,57 @@ async def test_tracker_status_last_version_uses_container_history_for_container_
 
     assert detail_response.status_code == 200, detail_response.text
     assert detail_response.json()["status"]["last_version"] == "4.0.0"
+
+
+@pytest.mark.asyncio
+async def test_tracker_response_exposes_source_channel_current_digest(
+    authed_client, storage
+):
+    digest = "sha256:" + "d" * 64
+    aggregate_tracker = await storage.create_aggregate_tracker(
+        AggregateTracker(
+            name="tracker-source-channel-digest",
+            primary_changelog_source_key="image",
+            sources=[
+                TrackerSource(
+                    source_key="image",
+                    source_type="container",
+                    source_rank=0,
+                    source_config={"image": "library/nginx", "registry": "registry-1.docker.io"},
+                    release_channels=[
+                        ReleaseChannel(
+                            release_channel_key="image-stable",
+                            name="stable",
+                            type="release",
+                        )
+                    ],
+                )
+            ],
+        )
+    )
+    image_release = Release(
+        tracker_name="tracker-source-channel-digest",
+        tracker_type="container",
+        version="1.30.0-trixie",
+        name="Image 1.30.0-trixie",
+        tag_name="1.30.0-trixie",
+        url="http://example.com/images/1.30.0-trixie",
+        published_at=datetime(2026, 5, 1, 12, 0, 0),
+        prerelease=False,
+        commit_sha=digest,
+    )
+    await _materialize_projection_rows(
+        storage,
+        aggregate_tracker,
+        {"image": [image_release]},
+    )
+
+    detail_response = authed_client.get("/api/trackers/tracker-source-channel-digest")
+
+    assert detail_response.status_code == 200, detail_response.text
+    source = detail_response.json()["sources"][0]
+    assert source["release_channels"][0]["last_version"] == "1.30.0-trixie"
+    assert source["release_channels"][0]["digest"] == digest
 
 
 @pytest.mark.asyncio

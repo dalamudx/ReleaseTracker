@@ -1548,6 +1548,7 @@ describe("executor binding edit state helpers", () => {
             serviceBindings: [createServiceBinding({ service: "api" })],
             trackers: [createTracker({ sources: [createTrackerSource({})] })],
             imageSelectionMode: "use_tracker_image_and_tag",
+            imageReferenceMode: "tag",
         })).toEqual([])
     })
 
@@ -1617,6 +1618,7 @@ describe("executor binding edit state helpers", () => {
             serviceBindings: [createServiceBinding({ service: "api", tracker_source_id: "9", channel_name: "stable" })],
             trackers: [tracker],
             imageSelectionMode: "use_tracker_image_and_tag",
+            imageReferenceMode: "tag",
         })
 
         expect(changes).toEqual([
@@ -1664,6 +1666,7 @@ describe("executor binding edit state helpers", () => {
             serviceBindings: [createServiceBinding({ service: "api", tracker_source_id: "9", channel_name: "stable" })],
             trackers: [tracker],
             imageSelectionMode: "use_tracker_image_and_tag",
+            imageReferenceMode: "tag",
         })
 
         expect(changes).toEqual([
@@ -1714,6 +1717,7 @@ describe("executor binding edit state helpers", () => {
                 serviceBindings: [createServiceBinding({ service: "web", tracker_source_id: "9", channel_name: "stable" })],
                 trackers: [tracker],
                 imageSelectionMode: "use_tracker_image_and_tag",
+                imageReferenceMode: "tag",
             })
 
             expect(changes).toEqual([
@@ -1725,6 +1729,47 @@ describe("executor binding edit state helpers", () => {
                 },
             ])
         })
+    })
+
+    it("builds digest target image changes for immutable tracker image references", () => {
+        const t = ((key: string, options?: Record<string, unknown>) => options?.count ? `${options.count} ${key}` : key) as unknown as TFunction
+        const digest = `sha256:${"d".repeat(64)}`
+        const targetDisplay = buildExecutorTargetDisplay("portainer", {
+            mode: "portainer_stack",
+            endpoint_id: 2,
+            stack_id: 11,
+            stack_name: "release-stack",
+            stack_type: "standalone",
+            services: [{ service: "web", image: "docker.io/library/nginx:alpine" }],
+            service_count: 1,
+        }, t)
+        const tracker = createTracker({
+            name: "tracker",
+            sources: [
+                createTrackerSource({
+                    id: 9,
+                    source_config: { image: "library/nginx", registry: "registry-1.docker.io" },
+                    release_channels: [{ release_channel_key: "stable", name: "stable", type: "release", enabled: true, last_version: "1.30.0-trixie", digest }],
+                }),
+            ],
+        })
+
+        const changes = buildExecutorReviewImageChanges({
+            targetDisplay,
+            serviceBindings: [createServiceBinding({ service: "web", tracker_source_id: "9", channel_name: "stable" })],
+            trackers: [tracker],
+            imageSelectionMode: "use_tracker_image_and_tag",
+            imageReferenceMode: "digest",
+        })
+
+        expect(changes).toEqual([
+            {
+                service: "web",
+                sourceImage: "docker.io/library/nginx:alpine",
+                targetImage: `docker.io/library/nginx@${digest}`,
+                targetVersion: "1.30.0-trixie",
+            },
+        ])
     })
 
     it("builds tracker image base without duplicate registry prefixes", () => {

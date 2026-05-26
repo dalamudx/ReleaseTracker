@@ -102,6 +102,7 @@ export function ExecutorSheet({
     const runtimeType = formValues.runtime_type
     const updateMode = formValues.update_mode
     const imageSelectionMode = formValues.image_selection_mode
+    const imageReferenceMode = formValues.image_reference_mode
     const trackerName = formValues.tracker_name
     const trackerSourceId = formValues.tracker_source_id
 
@@ -775,6 +776,7 @@ export function ExecutorSheet({
                                                 runtimeType={runtimeType}
                                                 selectedTargetRef={selectedTargetRef}
                                                 imageSelectionMode={imageSelectionMode}
+                                                imageReferenceMode={imageReferenceMode}
                                                 validationMessage={validationMessage}
                                             />
                                         ) : null}

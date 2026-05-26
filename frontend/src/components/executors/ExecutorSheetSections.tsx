@@ -325,6 +325,7 @@ interface ExecutorSheetReviewSectionProps {
     runtimeType: ExecutorFormValues["runtime_type"]
     selectedTargetRef: Record<string, unknown>
     imageSelectionMode: ExecutorFormValues["image_selection_mode"]
+    imageReferenceMode: ExecutorFormValues["image_reference_mode"]
     validationMessage: string | null
 }
 
@@ -361,6 +362,7 @@ function renderReviewImageChanges(
     serviceBindings: ExecutorServiceBindingFormValue[],
     trackers: TrackerStatus[],
     imageSelectionMode: ExecutorFormValues["image_selection_mode"],
+    imageReferenceMode: ExecutorFormValues["image_reference_mode"],
     t: ReturnType<typeof useTranslation>["t"],
 ) {
     const imageChanges = buildExecutorReviewImageChanges({
@@ -368,6 +370,7 @@ function renderReviewImageChanges(
         serviceBindings,
         trackers,
         imageSelectionMode,
+        imageReferenceMode,
     })
 
     if (imageChanges.length === 0) {
@@ -1348,6 +1351,7 @@ export function ExecutorSheetReviewSection({
     runtimeType,
     selectedTargetRef,
     imageSelectionMode,
+    imageReferenceMode,
     validationMessage,
 }: ExecutorSheetReviewSectionProps) {
     const { t } = useTranslation()
@@ -1384,7 +1388,7 @@ export function ExecutorSheetReviewSection({
                 </div>
 
                 {renderReviewServiceBindings(serviceBindings, t)}
-                {renderReviewImageChanges(targetDisplay, serviceBindings, trackers, imageSelectionMode, t)}
+                {renderReviewImageChanges(targetDisplay, serviceBindings, trackers, imageSelectionMode, imageReferenceMode, t)}
 
                 <Separator />
 
