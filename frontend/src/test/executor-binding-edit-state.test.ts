@@ -16,6 +16,7 @@ import {
     filterTrackersWithBindableSources,
     formatTargetRef,
     getGroupedBindingServiceOptions,
+    getSingleContainerCurrentImage,
     getExecutorServiceBindingValidationMessage,
     getExecutorImplicitSubmitAction,
     getExecutorBindingValidationMessage,
@@ -1768,6 +1769,99 @@ describe("executor binding edit state helpers", () => {
                 sourceImage: "docker.io/library/nginx:alpine",
                 targetImage: `docker.io/library/nginx@${digest}`,
                 targetVersion: "1.30.0-trixie",
+            },
+        ])
+    })
+
+    it("preserves full Docker Hub current image for single-container targets", () => {
+        expect(getSingleContainerCurrentImage("docker", {
+            mode: "container",
+            container_name: "nginx",
+            image: " docker.io/library/nginx:alpine ",
+        })).toBe("docker.io/library/nginx:alpine")
+    })
+
+    it("builds single-container review image changes from the current runtime image", () => {
+        const t = ((key: string) => key) as unknown as TFunction
+        const targetDisplay = buildExecutorTargetDisplay("docker", {
+            mode: "container",
+            container_name: "sample-web",
+            container_id: "abc123",
+        }, t)
+        const tracker = createTracker({
+            name: "tracker",
+            status: {
+                last_check: null,
+                last_version: "2.0.0",
+                error: null,
+                source_count: 1,
+                enabled_source_count: 1,
+                source_types: ["container"],
+            },
+            sources: [createTrackerSource({ id: 9 })],
+        })
+
+        const changes = buildExecutorReviewImageChanges({
+            targetDisplay,
+            serviceBindings: [],
+            trackers: [tracker],
+            imageSelectionMode: "replace_tag_on_current_image",
+            imageReferenceMode: "tag",
+            singleContainerCurrentImage: "registry.local:5000/acme/current-api:1.0",
+            singleContainerBinding: createServiceBinding({ service: "sample-web", tracker_source_id: "9", channel_name: "stable" }),
+        })
+
+        expect(changes).toEqual([
+            {
+                service: "sample-web",
+                sourceImage: "registry.local:5000/acme/current-api:1.0",
+                targetImage: "registry.local:5000/acme/current-api:2.0.0",
+                targetVersion: "2.0.0",
+            },
+        ])
+    })
+
+    it("builds single-container review image changes with tracker image selection", () => {
+        const t = ((key: string) => key) as unknown as TFunction
+        const targetDisplay = buildExecutorTargetDisplay("podman", {
+            mode: "container",
+            container_name: "sample-worker",
+            container_id: "def456",
+        }, t)
+        const tracker = createTracker({
+            name: "tracker",
+            status: {
+                last_check: null,
+                last_version: "2.0.0",
+                error: null,
+                source_count: 1,
+                enabled_source_count: 1,
+                source_types: ["container"],
+            },
+            sources: [
+                createTrackerSource({
+                    id: 9,
+                    source_config: { image: "acme/tracker-api", registry: "ghcr.io" },
+                }),
+            ],
+        })
+
+        const changes = buildExecutorReviewImageChanges({
+            targetDisplay,
+            serviceBindings: [],
+            trackers: [tracker],
+            imageSelectionMode: "use_tracker_image_and_tag",
+            imageReferenceMode: "tag",
+            singleContainerCurrentImage: "docker.io/acme/current-worker:1.0",
+            singleContainerBinding: createServiceBinding({ service: "sample-worker", tracker_source_id: "9", channel_name: "stable" }),
+        })
+
+        expect(changes).toEqual([
+            {
+                service: "sample-worker",
+                sourceImage: "docker.io/acme/current-worker:1.0",
+                targetImage: "ghcr.io/acme/tracker-api:2.0.0",
+                targetVersion: "2.0.0",
             },
         ])
     })

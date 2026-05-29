@@ -327,6 +327,22 @@ export function usesGroupedServiceBindings(targetRef: ExecutorTargetRef): boolea
     return isPortainerStackTarget(targetRef) || isDockerComposeTarget(targetRef) || isKubernetesWorkloadTarget(targetRef)
 }
 
+export function getSingleContainerCurrentImage(
+    runtimeType: RuntimeType,
+    targetRef: (ExecutorTargetRef & { image?: unknown }) | null | undefined,
+): string | null {
+    if (!targetRef || (runtimeType !== "docker" && runtimeType !== "podman")) {
+        return null
+    }
+
+    if (usesGroupedServiceBindings(targetRef) || isHelmReleaseTarget(targetRef) || !hasContainerRuntimeTarget(targetRef)) {
+        return null
+    }
+
+    const image = targetRef.image
+    return typeof image === "string" && image.trim().length > 0 ? image.trim() : null
+}
+
 export function normalizeExecutorServiceKey(service: string): string {
     return service.trim().toLowerCase()
 }
@@ -615,35 +631,64 @@ export function buildExecutorReviewImageChanges({
     trackers,
     imageSelectionMode,
     imageReferenceMode,
+    singleContainerBinding,
+    singleContainerCurrentImage,
 }: {
     targetDisplay: ExecutorTargetDisplay
     serviceBindings: ExecutorServiceBindingFormValue[]
     trackers: TrackerStatus[]
     imageSelectionMode: ImageSelectionMode
     imageReferenceMode: ImageReferenceMode
+    singleContainerBinding?: ExecutorServiceBindingFormValue | null
+    singleContainerCurrentImage?: string | null
 }): ExecutorReviewImageChange[] {
-    if (!targetDisplay.groupedServices || serviceBindings.length === 0) {
+    if (targetDisplay.groupedServices) {
+        if (serviceBindings.length === 0) {
+            return []
+        }
+
+        return serviceBindings.map((binding) => {
+            const sourceImage = targetDisplay.groupedServices?.find((item) => normalizeExecutorServiceKey(item.service) === normalizeExecutorServiceKey(binding.service))?.image ?? "-"
+            const { selectedBindableSource } = resolveExecutorServiceBinding(binding, trackers)
+            const targetVersion = resolveExecutorBindingTargetVersion(binding, trackers)
+            const targetDigest = resolveExecutorBindingTargetDigest(binding, trackers)
+            const trackerImage = buildExecutorTrackerImageBase(selectedBindableSource?.source_config)
+            const targetBaseImage = imageSelectionMode === "use_tracker_image_and_tag" ? trackerImage : sourceImage
+            const targetImage = targetVersion && targetBaseImage && targetBaseImage !== "-"
+                ? buildExecutorImageTargetPreviewValue(targetBaseImage, targetVersion, targetDigest, imageReferenceMode)
+                : ""
+
+            return {
+                service: binding.service,
+                sourceImage,
+                targetImage,
+                targetVersion,
+            }
+        })
+    }
+
+    const sourceImage = singleContainerCurrentImage?.trim() ?? ""
+    if (!singleContainerBinding || !sourceImage) {
         return []
     }
 
-    return serviceBindings.map((binding) => {
-        const sourceImage = targetDisplay.groupedServices?.find((item) => normalizeExecutorServiceKey(item.service) === normalizeExecutorServiceKey(binding.service))?.image ?? "-"
-        const { selectedBindableSource } = resolveExecutorServiceBinding(binding, trackers)
-        const targetVersion = resolveExecutorBindingTargetVersion(binding, trackers)
-        const targetDigest = resolveExecutorBindingTargetDigest(binding, trackers)
-        const trackerImage = buildExecutorTrackerImageBase(selectedBindableSource?.source_config)
-        const targetBaseImage = imageSelectionMode === "use_tracker_image_and_tag" ? trackerImage : sourceImage
-        const targetImage = targetVersion && targetBaseImage && targetBaseImage !== "-"
-            ? buildExecutorImageTargetPreviewValue(targetBaseImage, targetVersion, targetDigest, imageReferenceMode)
-            : ""
+    const { selectedBindableSource } = resolveExecutorServiceBinding(singleContainerBinding, trackers)
+    const targetVersion = resolveExecutorBindingTargetVersion(singleContainerBinding, trackers)
+    const targetDigest = resolveExecutorBindingTargetDigest(singleContainerBinding, trackers)
+    const trackerImage = buildExecutorTrackerImageBase(selectedBindableSource?.source_config)
+    const targetBaseImage = imageSelectionMode === "use_tracker_image_and_tag" ? trackerImage : sourceImage
+    const targetImage = targetVersion && targetBaseImage
+        ? buildExecutorImageTargetPreviewValue(targetBaseImage, targetVersion, targetDigest, imageReferenceMode)
+        : ""
 
-        return {
-            service: binding.service,
+    return [
+        {
+            service: singleContainerBinding.service,
             sourceImage,
             targetImage,
             targetVersion,
-        }
-    })
+        },
+    ]
 }
 
 function shortenContainerId(value: string): string {

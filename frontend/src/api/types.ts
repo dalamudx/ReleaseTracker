@@ -680,6 +680,7 @@ export interface ExecutorConfig {
     description?: string | null
     health_check?: HealthCheckProfile | null
     invalid_config_error?: string | null
+    current_image?: string | null
 }
 
 // -----------------------------------------------------------------

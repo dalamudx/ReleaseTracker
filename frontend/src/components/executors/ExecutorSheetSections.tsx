@@ -326,6 +326,8 @@ interface ExecutorSheetReviewSectionProps {
     selectedTargetRef: Record<string, unknown>
     imageSelectionMode: ExecutorFormValues["image_selection_mode"]
     imageReferenceMode: ExecutorFormValues["image_reference_mode"]
+    singleContainerBinding?: ExecutorServiceBindingFormValue | null
+    singleContainerCurrentImage?: string | null
     validationMessage: string | null
 }
 
@@ -363,6 +365,8 @@ function renderReviewImageChanges(
     trackers: TrackerStatus[],
     imageSelectionMode: ExecutorFormValues["image_selection_mode"],
     imageReferenceMode: ExecutorFormValues["image_reference_mode"],
+    singleContainerBinding: ExecutorServiceBindingFormValue | null | undefined,
+    singleContainerCurrentImage: string | null | undefined,
     t: ReturnType<typeof useTranslation>["t"],
 ) {
     const imageChanges = buildExecutorReviewImageChanges({
@@ -371,6 +375,8 @@ function renderReviewImageChanges(
         trackers,
         imageSelectionMode,
         imageReferenceMode,
+        singleContainerBinding,
+        singleContainerCurrentImage,
     })
 
     if (imageChanges.length === 0) {
@@ -1352,6 +1358,8 @@ export function ExecutorSheetReviewSection({
     selectedTargetRef,
     imageSelectionMode,
     imageReferenceMode,
+    singleContainerBinding,
+    singleContainerCurrentImage,
     validationMessage,
 }: ExecutorSheetReviewSectionProps) {
     const { t } = useTranslation()
@@ -1388,7 +1396,16 @@ export function ExecutorSheetReviewSection({
                 </div>
 
                 {renderReviewServiceBindings(serviceBindings, t)}
-                {renderReviewImageChanges(targetDisplay, serviceBindings, trackers, imageSelectionMode, imageReferenceMode, t)}
+                {renderReviewImageChanges(
+                    targetDisplay,
+                    serviceBindings,
+                    trackers,
+                    imageSelectionMode,
+                    imageReferenceMode,
+                    singleContainerBinding,
+                    singleContainerCurrentImage,
+                    t,
+                )}
 
                 <Separator />
 

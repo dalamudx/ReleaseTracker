@@ -42,6 +42,29 @@ def _serialize_executor_status(status: ExecutorStatus | None) -> dict[str, Any] 
     return status.model_dump() if status else None
 
 
+async def _get_executor_config_current_image(
+    storage: SQLiteStorage, executor: ExecutorConfig
+) -> str | None:
+    if executor.runtime_type not in {"docker", "podman"}:
+        return None
+
+    target_mode = executor.target_ref.get("mode")
+    if target_mode in EXECUTOR_GROUPED_BINDING_TARGET_MODES or target_mode == "helm_release":
+        return None
+
+    try:
+        runtime_connection = await storage.get_runtime_connection(executor.runtime_connection_id)
+        if not runtime_connection or runtime_connection.type not in {"docker", "podman"}:
+            return None
+        materialized_connection = await materialize_runtime_connection_credentials(
+            storage, runtime_connection
+        )
+        adapter = _get_runtime_adapter(materialized_connection)
+        return await adapter.get_current_image(executor.target_ref)
+    except Exception:
+        return None
+
+
 async def _build_executor_list_item(
     storage: SQLiteStorage, executor: ExecutorConfig
 ) -> dict[str, Any]:
@@ -540,7 +563,8 @@ async def get_executor_config_detail(
     executor = await storage.get_executor_config(executor_id)
     if not executor:
         raise HTTPException(status_code=404, detail="Executor not found")
-    return _serialize_executor_config(executor)
+    current_image = await _get_executor_config_current_image(storage, executor)
+    return {**_serialize_executor_config(executor), "current_image": current_image}
 
 
 @router.get("/{executor_id}/history", dependencies=[Depends(get_current_user)])

@@ -43,7 +43,9 @@ import {
     getExecutorTargetValidationMessage,
     getExecutorValidationMessage,
     getGroupedBindingServiceOptions,
+    getSingleContainerCurrentImage,
     getTrackerBindableSources,
+    hasContainerRuntimeTarget,
     isHelmReleaseTarget,
     isTrackerSourceCompatibleWithTarget,
     isEquivalentDockerComposeTarget,
@@ -89,6 +91,7 @@ export function ExecutorSheet({
     const [discoveredTargets, setDiscoveredTargets] = useState<RuntimeTargetDiscoveryItem[]>([])
     const [selectedDiscoveryNamespace, setSelectedDiscoveryNamespace] = useState("")
     const [selectedTargetRef, setSelectedTargetRef] = useState<Record<string, unknown>>(EMPTY_TARGET_REF)
+    const [selectedSingleContainerImage, setSelectedSingleContainerImage] = useState<string | null>(null)
     const [serviceBindings, setServiceBindings] = useState<ExecutorServiceBindingFormValue[]>([])
     const [existingHealthCheck, setExistingHealthCheck] = useState<HealthCheckProfile | null>(null)
     const stepScrollRef = useRef<HTMLDivElement | null>(null)
@@ -163,6 +166,23 @@ export function ExecutorSheet({
     const effectiveTrackerSourceId = trackerSourceId || autoSelectedTrackerSourceId
 
     const isGroupedBinding = usesGroupedServiceBindings(selectedTargetRef)
+
+    const singleContainerBinding = useMemo<ExecutorServiceBindingFormValue | null>(() => {
+        if (isGroupedBinding || (runtimeType !== "docker" && runtimeType !== "podman") || !hasContainerRuntimeTarget(selectedTargetRef)) {
+            return null
+        }
+
+        const service = typeof selectedTargetRef.container_name === "string" && selectedTargetRef.container_name.trim().length > 0
+            ? selectedTargetRef.container_name.trim()
+            : "container"
+
+        return {
+            service,
+            tracker_name: trackerName,
+            tracker_source_id: effectiveTrackerSourceId,
+            channel_name: formValues.channel_name,
+        }
+    }, [effectiveTrackerSourceId, formValues.channel_name, isGroupedBinding, runtimeType, selectedTargetRef, trackerName])
 
     const currentBindableSource = useMemo(
         () => allTrackerContainerSources.find((source) => String(source.id) === effectiveTrackerSourceId) ?? null,
@@ -322,6 +342,7 @@ export function ExecutorSheet({
             setDiscoveryMessage(null)
             setDiscoveredTargets([])
             setSelectedTargetRef(EMPTY_TARGET_REF)
+            setSelectedSingleContainerImage(null)
             setServiceBindings([])
             setExistingHealthCheck(null)
         })
@@ -343,6 +364,10 @@ export function ExecutorSheet({
                     maintenance_timezone: systemTimezone,
                 })
                 setSelectedTargetRef(config.target_ref ?? EMPTY_TARGET_REF)
+                const currentImage = typeof config.current_image === "string" && config.current_image.trim().length > 0
+                    ? config.current_image.trim()
+                    : getSingleContainerCurrentImage(config.runtime_type, config.target_ref ?? EMPTY_TARGET_REF)
+                setSelectedSingleContainerImage(currentImage)
                 setServiceBindings(buildExecutorServiceBindingValues(config, trackers))
                 setExistingHealthCheck(config.health_check ?? null)
             } catch (error) {
@@ -464,15 +489,18 @@ export function ExecutorSheet({
             const matchedComposeProject = response.items.find((item) => isEquivalentDockerComposeTarget(item.target_ref, selectedTargetRef))
             if (matchedComposeProject) {
                 setSelectedTargetRef(mergeDockerComposeTargetRef(matchedComposeProject.target_ref, selectedTargetRef))
+                setSelectedSingleContainerImage(null)
                 return
             }
 
             if (matched && JSON.stringify(matched.target_ref) === currentTarget) {
                 setSelectedTargetRef(matched.target_ref)
+                setSelectedSingleContainerImage(getSingleContainerCurrentImage(selectedRuntimeConnection.type, { ...matched.target_ref, image: matched.image }))
                 return
             }
 
             setSelectedTargetRef(EMPTY_TARGET_REF)
+            setSelectedSingleContainerImage(null)
             setServiceBindings([])
         } catch (error: unknown) {
             console.error("Failed to discover runtime targets", error)
@@ -499,6 +527,7 @@ export function ExecutorSheet({
         }
         setDiscoveredTargets([])
         setSelectedTargetRef(EMPTY_TARGET_REF)
+        setSelectedSingleContainerImage(null)
         setServiceBindings([])
         setSelectedDiscoveryNamespace("")
         setDiscoveryMessage(null)
@@ -522,6 +551,7 @@ export function ExecutorSheet({
             form.setValue("channel_name", "", { shouldDirty: true })
         }
         setSelectedTargetRef(nextTargetRef)
+        setSelectedSingleContainerImage(getSingleContainerCurrentImage(runtimeType, { ...nextTargetRef, image: target.image }))
         setServiceBindings([])
         setDiscoveryMessage(null)
         setStep("binding")
@@ -777,6 +807,8 @@ export function ExecutorSheet({
                                                 selectedTargetRef={selectedTargetRef}
                                                 imageSelectionMode={imageSelectionMode}
                                                 imageReferenceMode={imageReferenceMode}
+                                                singleContainerBinding={singleContainerBinding}
+                                                singleContainerCurrentImage={selectedSingleContainerImage}
                                                 validationMessage={validationMessage}
                                             />
                                         ) : null}
