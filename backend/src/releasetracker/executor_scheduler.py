@@ -708,9 +708,10 @@ class ExecutorScheduler:
         config = await self.storage.get_executor_config(executor_id)
         if config:
             await self._add_or_update_executor_job(config)
-            await self._enqueue_current_projection_work_for_executor(config)
+            projection_work_enqueued = await self._enqueue_current_projection_work_for_executor(config)
             await self.refresh_release_history_cleanup_schedule()
-            self._track_background_task(self.reconcile_pending_desired_states())
+            if projection_work_enqueued:
+                self._track_background_task(self.reconcile_pending_desired_states())
 
     async def _enqueue_current_projection_work_for_executor(
         self,
