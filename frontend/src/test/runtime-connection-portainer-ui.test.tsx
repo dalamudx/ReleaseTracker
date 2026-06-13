@@ -19,6 +19,7 @@ vi.mock("@/api/client", () => ({
         createRuntimeConnection: vi.fn(),
         updateRuntimeConnection: vi.fn(),
         discoverKubernetesNamespaces: vi.fn(),
+        discoverPortainerEndpoints: vi.fn(),
         getCredentials: vi.fn(),
     },
 }))
@@ -38,6 +39,7 @@ function createRuntimeConnection(overrides: Partial<RuntimeConnection> = {}): Ru
         config: overrides.config ?? {
             base_url: "https://portainer.example.com",
             endpoint_id: 12,
+            endpoint_name: "edge",
         },
         credential_id: overrides.credential_id ?? 7,
         credential_name: overrides.credential_name ?? "portainer-credential",
@@ -77,7 +79,7 @@ describe("Portainer runtime connection UI", () => {
         await waitFor(() => expect(api.getCredentials).toHaveBeenCalled())
 
         expect(screen.getByDisplayValue("https://portainer.example.com")).toBeInTheDocument()
-        expect(screen.getByDisplayValue("12")).toBeInTheDocument()
+        expect(screen.getByRole("combobox", { name: "runtimeConnections.dialog.fields.endpointName" })).toHaveTextContent("edge(#12)")
         expect(screen.getByText("runtimeConnections.dialog.fields.noCredential")).toBeInTheDocument()
         expect(screen.queryByPlaceholderText("runtimeConnections.dialog.placeholders.apiKey")).not.toBeInTheDocument()
         expect(screen.queryByPlaceholderText("unix:///var/run/docker.sock")).not.toBeInTheDocument()
@@ -96,9 +98,48 @@ describe("Portainer runtime connection UI", () => {
         )
 
         expect(screen.getByText("https://portainer.example.com")).toBeInTheDocument()
-        expect(screen.getByText("Endpoint 12")).toBeInTheDocument()
+        expect(screen.getByText("edge(#12)")).toBeInTheDocument()
         expect(screen.getByText("credential")).toBeInTheDocument()
         expect(screen.getByText("portainer-credential")).toBeInTheDocument()
+    })
+
+    it("refreshes and persists the current Portainer endpoint name when discovering in edit mode", async () => {
+        vi.mocked(api.discoverPortainerEndpoints).mockResolvedValue({
+            items: [
+                { id: 12, name: "storage" },
+                { id: 13, name: "edge" },
+            ],
+        })
+        vi.mocked(api.updateRuntimeConnection).mockResolvedValue({ message: "updated", updated_at: "2026-06-13T00:00:00" })
+
+        render(
+            <RuntimeConnectionDialog
+                open
+                onOpenChange={vi.fn()}
+                runtimeConnection={createRuntimeConnection()}
+                onSuccess={vi.fn()}
+            />,
+        )
+
+        await waitFor(() => expect(api.getCredentials).toHaveBeenCalled())
+        expect(screen.getByRole("combobox", { name: "runtimeConnections.dialog.fields.endpointName" })).toHaveTextContent("edge(#12)")
+
+        fireEvent.click(screen.getByRole("button", { name: "runtimeConnections.dialog.actions.discoverPortainerEndpoints" }))
+        await waitFor(() => expect(api.discoverPortainerEndpoints).toHaveBeenCalled())
+        expect(screen.getByRole("combobox", { name: "runtimeConnections.dialog.fields.endpointName" })).toHaveTextContent("storage(#12)")
+
+        fireEvent.click(screen.getByRole("button", { name: "common.save" }))
+        await waitFor(() => expect(api.updateRuntimeConnection).toHaveBeenCalled())
+
+        expect(vi.mocked(api.updateRuntimeConnection).mock.calls[0][1]).toMatchObject({
+            type: "portainer",
+            credential_id: 7,
+            config: {
+                base_url: "https://portainer.example.com",
+                endpoint_id: 12,
+                endpoint_name: "storage",
+            },
+        })
     })
 
     it("discovers Kubernetes namespaces using a selected runtime credential", async () => {
@@ -221,14 +262,86 @@ describe("Portainer runtime connection UI", () => {
         fireEvent.change(screen.getByPlaceholderText("runtimeConnections.dialog.placeholders.baseUrl"), {
             target: { value: "https://portainer.example.com" },
         })
-        fireEvent.change(screen.getByPlaceholderText("runtimeConnections.dialog.placeholders.endpointId"), {
-            target: { value: "1" },
-        })
 
         fireEvent.click(screen.getByRole("button", { name: "common.save" }))
 
         await waitFor(() => expect(toast.error).toHaveBeenCalledWith("runtimeConnections.dialog.errors.portainerCredentialRequired"))
         expect(api.createRuntimeConnection).not.toHaveBeenCalled()
+    })
+
+    it("discovers Portainer endpoints and saves the selected endpoint id", async () => {
+        vi.mocked(api.getCredentials).mockResolvedValue({
+            items: [
+                {
+                    id: 7,
+                    name: "portainer-credential",
+                    type: "portainer_runtime",
+                    token: "",
+                    secrets: { api_key: "********" },
+                    secret_keys: ["api_key"],
+                    description: null,
+                    created_at: "2026-05-03T00:00:00",
+                },
+            ],
+            total: 1,
+        })
+        vi.mocked(api.discoverPortainerEndpoints).mockResolvedValue({
+            items: [
+                { id: 2, name: "prod-docker", type: "docker", status: "up" },
+                { id: 4, name: "staging" },
+            ],
+        })
+        vi.mocked(api.createRuntimeConnection).mockResolvedValue({ message: "created", id: 1 })
+
+        render(
+            <RuntimeConnectionDialog
+                open
+                onOpenChange={vi.fn()}
+                runtimeConnection={null}
+                onSuccess={vi.fn()}
+            />,
+        )
+
+        fireEvent.change(screen.getByPlaceholderText("runtimeConnections.dialog.placeholders.name"), {
+            target: { value: "portainer" },
+        })
+        fireEvent.click(screen.getByRole("combobox", { name: "runtimeConnections.dialog.fields.type" }))
+        fireEvent.click(screen.getByRole("option", { name: "Portainer" }))
+        fireEvent.change(screen.getByPlaceholderText("runtimeConnections.dialog.placeholders.baseUrl"), {
+            target: { value: "https://portainer.example.com" },
+        })
+        fireEvent.click(screen.getByRole("combobox", { name: "runtimeConnections.dialog.fields.credential" }))
+        await waitFor(() => expect(screen.getByRole("option", { name: "portainer-credential" })).toBeInTheDocument())
+        fireEvent.click(screen.getByRole("option", { name: "portainer-credential" }))
+
+        fireEvent.click(screen.getByRole("button", { name: "runtimeConnections.dialog.actions.discoverPortainerEndpoints" }))
+        await waitFor(() => expect(api.discoverPortainerEndpoints).toHaveBeenCalled())
+        expect(vi.mocked(api.discoverPortainerEndpoints).mock.calls[0][0]).toMatchObject({
+            type: "portainer",
+            credential_id: 7,
+            config: {
+                base_url: "https://portainer.example.com",
+            },
+            secrets: {},
+        })
+
+        fireEvent.click(screen.getByRole("combobox", { name: "runtimeConnections.dialog.fields.endpointName" }))
+        await waitFor(() => expect(screen.getByRole("option", { name: "prod-docker(#2)" })).toBeInTheDocument())
+        fireEvent.click(screen.getByRole("option", { name: "prod-docker(#2)" }))
+
+        fireEvent.click(screen.getByRole("button", { name: "common.save" }))
+        await waitFor(() => expect(api.createRuntimeConnection).toHaveBeenCalled())
+
+        expect(vi.mocked(api.createRuntimeConnection).mock.calls[0][0]).toMatchObject({
+            type: "portainer",
+            credential_id: 7,
+            config: {
+                base_url: "https://portainer.example.com",
+                endpoint_id: 2,
+                endpoint_name: "prod-docker",
+            },
+            secrets: {},
+        })
     })
 
     it("does not automatically save all discovered Kubernetes namespaces", async () => {

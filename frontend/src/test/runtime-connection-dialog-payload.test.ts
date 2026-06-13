@@ -17,6 +17,7 @@ function createBaseValues() {
         in_cluster: false,
         base_url: "",
         endpoint_id: "",
+        endpoint_name: "",
     }
 }
 
@@ -30,6 +31,7 @@ describe("runtime connection dialog payload helpers", () => {
             credential_id: "9",
             base_url: " https://portainer.example.com ",
             endpoint_id: "12",
+            endpoint_name: " edge ",
         })
 
         expect(payload).toEqual({
@@ -40,6 +42,7 @@ describe("runtime connection dialog payload helpers", () => {
             config: {
                 base_url: "https://portainer.example.com",
                 endpoint_id: 12,
+                endpoint_name: "edge",
             },
             credential_id: 9,
             secrets: {},

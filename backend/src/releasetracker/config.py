@@ -182,7 +182,7 @@ class RuntimeConnectionConfig(BaseModel):
             self.config["namespaces"] = normalized_namespaces
 
     def _validate_portainer_runtime_connection(self) -> None:
-        allowed_config_keys = {"base_url", "endpoint_id"}
+        allowed_config_keys = {"base_url", "endpoint_id", "endpoint_name"}
 
         self._reject_unknown_keys(self.config, allowed_config_keys, "config")
 
@@ -195,6 +195,9 @@ class RuntimeConnectionConfig(BaseModel):
         endpoint_id = self.config.get("endpoint_id")
         if not isinstance(endpoint_id, int) or endpoint_id <= 0:
             raise ValueError("config.endpoint_id must be a positive integer")
+
+        if "endpoint_name" in self.config:
+            self._optional_non_empty_string(self.config["endpoint_name"], "config.endpoint_name")
 
         if self.credential_id is None:
             raise ValueError("Portainer runtime connection requires credential_id")

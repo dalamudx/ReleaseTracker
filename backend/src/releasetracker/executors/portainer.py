@@ -36,10 +36,46 @@ class PortainerStackServiceUpdateResult:
     message: str
 
 
+@dataclass(frozen=True)
+class PortainerEndpoint:
+    id: int
+    name: str
+    type: str | None = None
+    status: str | None = None
+
+
 class PortainerRuntimeAdapter(BaseRuntimeAdapter):
     def __init__(self, runtime_connection, client: Any | None = None):
         super().__init__(runtime_connection)
         self._client = client
+
+    async def discover_endpoints(self) -> list[PortainerEndpoint]:
+        payload = await self._request_payload("GET", "/api/endpoints")
+        if not isinstance(payload, list):
+            raise RuntimeError("Portainer API response payload must be an array")
+
+        endpoints: list[PortainerEndpoint] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+
+            endpoint_id = self._as_positive_int(item.get("Id") or item.get("id"))
+            endpoint_name = self._as_text(item.get("Name") or item.get("name"))
+            if endpoint_id is None or endpoint_name is None:
+                continue
+
+            endpoint_type = self._resolve_endpoint_type(item)
+            endpoint_status = self._resolve_endpoint_status(item)
+            endpoints.append(
+                PortainerEndpoint(
+                    id=endpoint_id,
+                    name=endpoint_name,
+                    type=endpoint_type,
+                    status=endpoint_status,
+                )
+            )
+
+        return sorted(endpoints, key=lambda endpoint: endpoint.name.lower())
 
     async def discover_targets(self) -> list[RuntimeTarget]:
         endpoint_id = self._runtime_endpoint_id()
@@ -690,6 +726,30 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
             if normalized:
                 return normalized
         return None
+
+    @classmethod
+    def _resolve_endpoint_type(cls, endpoint: dict[str, Any]) -> str | None:
+        raw = endpoint.get("Type")
+        if raw is None:
+            raw = endpoint.get("type")
+        if raw is None:
+            raw = endpoint.get("GroupName") or endpoint.get("groupName")
+        if raw is None:
+            return None
+        if isinstance(raw, int):
+            return str(raw)
+        return cls._as_text(raw)
+
+    @classmethod
+    def _resolve_endpoint_status(cls, endpoint: dict[str, Any]) -> str | None:
+        raw = endpoint.get("Status")
+        if raw is None:
+            raw = endpoint.get("status")
+        if raw is None:
+            return None
+        if isinstance(raw, int):
+            return str(raw)
+        return cls._as_text(raw)
 
     @staticmethod
     def _as_text(value: Any) -> str | None:

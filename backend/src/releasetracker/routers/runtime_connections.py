@@ -1,3 +1,4 @@
+from dataclasses import asdict
 from datetime import datetime
 from typing import Annotated, Any
 
@@ -6,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ..config import RuntimeConnectionConfig
 from ..dependencies import get_current_user, get_storage
 from ..executors.kubernetes import KubernetesRuntimeAdapter
+from ..executors.portainer import PortainerRuntimeAdapter
 from ..services.runtime_credentials import materialize_runtime_connection_credentials
 from ..storage.sqlite import SQLiteStorage
 
@@ -101,6 +103,33 @@ async def _build_runtime_connection_config(
         credential_id=runtime_connection_data.get("credential_id", existing.credential_id),
         secrets={},
         description=runtime_connection_data.get("description", existing.description),
+    )
+
+
+async def _build_portainer_endpoint_discovery_config(
+    storage: SQLiteStorage,
+    runtime_connection_data: dict[str, Any],
+) -> RuntimeConnectionConfig:
+    runtime_connection_id = runtime_connection_data.get("id")
+    existing = None
+    if isinstance(runtime_connection_id, int):
+        existing = await storage.get_runtime_connection(runtime_connection_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Runtime connection not found")
+
+    config = dict(runtime_connection_data.get("config", existing.config if existing else {}))
+    if "endpoint_id" not in config:
+        config["endpoint_id"] = 1
+
+    return RuntimeConnectionConfig(
+        id=runtime_connection_id if isinstance(runtime_connection_id, int) else None,
+        name=runtime_connection_data.get("name", existing.name if existing else "portainer-discovery"),
+        type=runtime_connection_data.get("type", existing.type if existing else "portainer"),
+        enabled=runtime_connection_data.get("enabled", existing.enabled if existing else True),
+        config=config,
+        credential_id=runtime_connection_data.get("credential_id", existing.credential_id if existing else None),
+        secrets={},
+        description=runtime_connection_data.get("description", existing.description if existing else None),
     )
 
 
@@ -233,3 +262,29 @@ async def discover_kubernetes_namespaces(
         raise HTTPException(status_code=400, detail=f"Namespace discovery failed: {exc}") from exc
 
     return {"items": namespaces}
+
+
+@router.post("/discover-portainer-endpoints", dependencies=[Depends(get_current_user)])
+async def discover_portainer_endpoints(
+    runtime_connection_data: dict[str, Any],
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+):
+    try:
+        runtime_connection = await _build_portainer_endpoint_discovery_config(
+            storage, runtime_connection_data
+        )
+        if runtime_connection.type != "portainer":
+            raise HTTPException(status_code=400, detail="Endpoint discovery is only supported for Portainer runtime connections")
+
+        runtime_connection = await materialize_runtime_connection_credentials(
+            storage,
+            runtime_connection,
+        )
+        adapter = PortainerRuntimeAdapter(runtime_connection)
+        endpoints = await adapter.discover_endpoints()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Endpoint discovery failed: {exc}") from exc
+
+    return {"items": [asdict(endpoint) for endpoint in endpoints]}

@@ -46,16 +46,16 @@ describe("buildConnectionLabel", () => {
         expect(buildConnectionLabel(runtimeConnection)).toBe("unix:///var/run/docker.sock / v1.41")
     })
 
-    it("shows base url and endpoint id for portainer runtimes", () => {
+    it("shows base url and endpoint name for portainer runtimes", () => {
         const runtimeConnection = buildRuntimeConnection({
             type: "portainer",
-            config: { base_url: "https://portainer.example.com", endpoint_id: 3 },
+            config: { base_url: "https://portainer.example.com", endpoint_id: 3, endpoint_name: "edge" },
         })
 
-        expect(buildConnectionLabel(runtimeConnection)).toBe("https://portainer.example.com / endpoint 3")
+        expect(buildConnectionLabel(runtimeConnection)).toBe("https://portainer.example.com / edge(#3)")
         expect(buildConnectionSummary(runtimeConnection)).toEqual({
             primary: "https://portainer.example.com",
-            secondary: "Endpoint 3",
+            secondary: "edge(#3)",
         })
     })
 })

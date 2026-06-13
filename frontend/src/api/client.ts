@@ -18,6 +18,7 @@ import type {
     UpdateSettingRequest,
     RuntimeConnection,
     RuntimeTargetDiscoveryItem,
+    PortainerEndpointDiscoveryItem,
     ExecutorListItem,
     ExecutorConfig,
     ExecutorDetail,
@@ -312,6 +313,8 @@ export const api = {
     getRuntimeConnection: (id: number) => apiClient.get<RuntimeConnection>(`/api/runtime-connections/${id}`).then(res => res.data),
     discoverKubernetesNamespaces: (data: Partial<RuntimeConnection>) =>
         apiClient.post<{ items: string[] }>('/api/runtime-connections/discover-kubernetes-namespaces', data).then(res => res.data),
+    discoverPortainerEndpoints: (data: Partial<RuntimeConnection>) =>
+        apiClient.post<{ items: PortainerEndpointDiscoveryItem[] }>('/api/runtime-connections/discover-portainer-endpoints', data).then(res => res.data),
     createRuntimeConnection: (data: CreateRuntimeConnectionRequest) => apiClient.post<{ message: string, id: number }>('/api/runtime-connections', data).then(res => res.data),
     updateRuntimeConnection: (id: number, data: UpdateRuntimeConnectionRequest) => apiClient.put<{ message: string, updated_at: string }>(`/api/runtime-connections/${id}`, data).then(res => res.data),
     deleteRuntimeConnection: (id: number) => apiClient.delete<{ message: string }>(`/api/runtime-connections/${id}`).then(res => res.data),

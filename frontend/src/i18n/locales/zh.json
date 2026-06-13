@@ -971,7 +971,9 @@
       "errors": {
         "kubeconfigRequiredForNamespaceDiscovery": "获取命名空间前请选择 Kubernetes 凭证，或启用集群内配置。",
         "kubernetesCredentialRequired": "保存前请选择 Kubernetes 凭证，或启用集群内配置。",
-        "portainerCredentialRequired": "保存前请选择 Portainer 凭证。"
+        "portainerCredentialRequired": "保存前请选择 Portainer 凭证。",
+        "portainerBaseUrlRequiredForEndpointDiscovery": "获取 endpoint 前请输入 Portainer Base URL。",
+        "portainerCredentialRequiredForEndpointDiscovery": "获取 endpoint 前请选择 Portainer 凭证。"
       },
       "currentSecrets": "当前已脱敏密钥",
       "sections": {
@@ -1006,6 +1008,7 @@
         "certificateAuthority": "CA 证书",
         "baseUrl": "Base URL",
         "endpointId": "Endpoint ID",
+        "endpointName": "Endpoint 名称",
         "apiKey": "API 密钥",
         "credential": "凭证",
         "noCredential": "不使用凭证"
@@ -1021,6 +1024,7 @@
         "secret": "留空则保持不变",
         "baseUrl": "https://portainer.example.com",
         "endpointId": "例如：1",
+        "endpointName": "获取后选择 endpoint",
         "apiKey": "输入 Portainer API Key",
         "credential": "选择凭证"
       },
@@ -1032,16 +1036,19 @@
         "kubeconfig": "未启用集群内配置且未选择 Kubernetes 凭证时必须提供。",
         "credential": "凭证用于复用鉴权材料。",
         "baseUrl": "必须以 http:// 或 https:// 开头。",
-        "endpointId": "填写 Portainer endpoint 的正整数标识。"
+        "endpointId": "填写 Portainer endpoint 的正整数标识。",
+        "endpointName": "点击获取以加载 Portainer endpoint，然后按名称选择；保存时会自动写入 endpoint ID。"
       },
       "actions": {
         "discoverNamespaces": "获取命名空间",
+        "discoverPortainerEndpoints": "获取 endpoints",
         "selectNamespaces": "选择命名空间",
         "editNamespaces": "编辑命名空间"
       },
       "empty": {
         "namespaces": "尚未获取命名空间，请先点击“获取命名空间”。",
-        "namespaceSearch": "没有匹配的命名空间。"
+        "namespaceSearch": "没有匹配的命名空间。",
+        "portainerEndpoints": "尚未获取 endpoint，请先点击“获取 endpoints”。"
       }
     }
   },

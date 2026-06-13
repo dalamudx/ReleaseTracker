@@ -24,6 +24,7 @@ export type RuntimeConnectionFormValues = {
     in_cluster: boolean
     base_url: string
     endpoint_id: string
+    endpoint_name: string
 }
 
 export function buildConnectionSummary(runtimeConnection: RuntimeConnection): ConnectionSummary {
@@ -37,6 +38,7 @@ export function buildConnectionSummary(runtimeConnection: RuntimeConnection): Co
     if (runtimeConnection.type === 'portainer') {
         const baseUrl = stringifyValue(config.base_url)
         const endpointId = stringifyNumericValue(config.endpoint_id)
+        const endpointName = stringifyValue(config.endpoint_name)
 
         if (!baseUrl && !endpointId) {
             return { primary: '—' }
@@ -44,7 +46,7 @@ export function buildConnectionSummary(runtimeConnection: RuntimeConnection): Co
 
         return {
             primary: baseUrl || '—',
-            secondary: endpointId ? `Endpoint ${endpointId}` : undefined,
+            secondary: endpointId ? formatEndpointLabel(endpointName, endpointId) : undefined,
         }
     }
 
@@ -79,7 +81,8 @@ export function buildConnectionLabel(runtimeConnection: RuntimeConnection): stri
     if (runtimeConnection.type === 'portainer') {
         const baseUrl = stringifyValue(config.base_url)
         const endpointId = stringifyNumericValue(config.endpoint_id)
-        return [baseUrl, endpointId ? `endpoint ${endpointId}` : ''].filter(Boolean).join(' / ') || '—'
+        const endpointName = stringifyValue(config.endpoint_name)
+        return [baseUrl, endpointId ? formatEndpointLabel(endpointName, endpointId) : ''].filter(Boolean).join(' / ') || '—'
     }
 
     const socket = stringifyValue(config.socket) || stringifyValue(config.host)
@@ -101,6 +104,7 @@ export function buildPayload(values: RuntimeConnectionFormValues): CreateRuntime
     } else if (values.type === 'portainer') {
         assignIfFilled(config, 'base_url', values.base_url)
         assignIfPositiveInteger(config, 'endpoint_id', values.endpoint_id)
+        assignIfFilled(config, 'endpoint_name', values.endpoint_name)
     } else {
         assignIfFilled(config, 'socket', values.socket)
         assignIfFilled(config, 'api_version', values.api_version)
@@ -145,6 +149,10 @@ function stringifyValue(value: unknown): string {
 
 function stringifyNumericValue(value: unknown): string {
     return typeof value === 'number' && Number.isFinite(value) ? String(value) : ''
+}
+
+function formatEndpointLabel(endpointName: string, endpointId: string): string {
+    return endpointName ? `${endpointName}(#${endpointId})` : `Endpoint ${endpointId}`
 }
 
 function parseOptionalPositiveInteger(value: string | undefined): number | null {

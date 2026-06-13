@@ -610,6 +610,13 @@ export interface RuntimeTargetDiscoveryItem {
     image?: string | null
 }
 
+export interface PortainerEndpointDiscoveryItem {
+    id: number
+    name: string
+    type?: string | null
+    status?: string | null
+}
+
 export interface ExecutorStatus {
     id?: number | null
     executor_id: number

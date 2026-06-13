@@ -3,6 +3,7 @@ from datetime import datetime
 import pytest
 
 from releasetracker.executors.kubernetes import KubernetesRuntimeAdapter
+from releasetracker.executors.portainer import PortainerEndpoint, PortainerRuntimeAdapter
 
 VALID_RUNTIME_CONNECTIONS = [
     {
@@ -298,4 +299,47 @@ async def test_runtime_connections_discover_kubernetes_namespaces(authed_client,
 
     assert response.status_code == 200, response.text
     assert response.json() == {"items": ["apps", "monitoring"]}
+
+
+@pytest.mark.asyncio
+async def test_runtime_connections_discover_portainer_endpoints(authed_client, monkeypatch):
+    async def fake_discover_endpoints(self):
+        assert self.runtime_connection.config["base_url"] == "https://portainer.example.com"
+        assert self.runtime_connection.config["endpoint_id"] == 1
+        assert self.runtime_connection.secrets["api_key"] == "secret-token"
+        return [
+            PortainerEndpoint(id=7, name="prod-docker", type="docker", status="up"),
+            PortainerEndpoint(id=3, name="staging"),
+        ]
+
+    monkeypatch.setattr(PortainerRuntimeAdapter, "discover_endpoints", fake_discover_endpoints)
+
+    credential_response = authed_client.post(
+        "/api/credentials",
+        json={
+            "name": "portainer-discovery-credential",
+            "type": "portainer_runtime",
+            "secrets": {"api_key": "secret-token"},
+        },
+    )
+    assert credential_response.status_code == 200, credential_response.text
+
+    payload = {
+        "name": "portainer-discovery",
+        "type": "portainer",
+        "config": {"base_url": "https://portainer.example.com", "endpoint_name": "edge"},
+        "credential_id": credential_response.json()["id"],
+    }
+
+    response = authed_client.post(
+        "/api/runtime-connections/discover-portainer-endpoints", json=payload
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "items": [
+            {"id": 7, "name": "prod-docker", "type": "docker", "status": "up"},
+            {"id": 3, "name": "staging", "type": None, "status": None},
+        ]
+    }
 

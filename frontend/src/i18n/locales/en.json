@@ -971,7 +971,9 @@
       "errors": {
         "kubeconfigRequiredForNamespaceDiscovery": "Select a Kubernetes credential, or enable in-cluster config before discovering namespaces.",
         "kubernetesCredentialRequired": "Select a Kubernetes credential, or enable in-cluster config before saving.",
-        "portainerCredentialRequired": "Select a Portainer credential before saving."
+        "portainerCredentialRequired": "Select a Portainer credential before saving.",
+        "portainerBaseUrlRequiredForEndpointDiscovery": "Enter the Portainer base URL before discovering endpoints.",
+        "portainerCredentialRequiredForEndpointDiscovery": "Select a Portainer credential before discovering endpoints."
       },
       "currentSecrets": "Current masked secrets",
       "sections": {
@@ -1006,6 +1008,7 @@
         "certificateAuthority": "Certificate Authority",
         "baseUrl": "Base URL",
         "endpointId": "Endpoint ID",
+        "endpointName": "Endpoint Name",
         "apiKey": "API Key",
         "credential": "Credential",
         "noCredential": "No credential"
@@ -1021,6 +1024,7 @@
         "secret": "Leave blank to keep unchanged",
         "baseUrl": "https://portainer.example.com",
         "endpointId": "e.g. 1",
+        "endpointName": "Discover and select an endpoint",
         "apiKey": "Enter Portainer API key",
         "credential": "Select a credential"
       },
@@ -1032,16 +1036,19 @@
         "kubeconfig": "Required unless in-cluster config is enabled or a Kubernetes credential is selected.",
         "credential": "Credentials store reusable authentication material.",
         "baseUrl": "Must start with http:// or https://.",
-        "endpointId": "Positive integer Portainer endpoint identifier."
+        "endpointId": "Positive integer Portainer endpoint identifier.",
+        "endpointName": "Click discover to load Portainer endpoints, then choose by name. The saved config stores the endpoint ID automatically."
       },
       "actions": {
         "discoverNamespaces": "Discover namespaces",
+        "discoverPortainerEndpoints": "Discover endpoints",
         "selectNamespaces": "Select namespaces",
         "editNamespaces": "Edit namespaces"
       },
       "empty": {
         "namespaces": "No namespaces loaded yet. Click discover namespaces first.",
-        "namespaceSearch": "No matching namespaces."
+        "namespaceSearch": "No matching namespaces.",
+        "portainerEndpoints": "No endpoints loaded yet. Click discover endpoints first."
       }
     }
   },

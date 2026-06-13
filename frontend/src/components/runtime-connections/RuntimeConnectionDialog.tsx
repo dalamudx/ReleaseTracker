@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react"
-import { Loader2, Save } from "lucide-react"
+import { Loader2, RefreshCw, Save } from "lucide-react"
 import { useForm, useWatch, type UseFormReturn } from "react-hook-form"
 import { useTranslation } from "react-i18next"
 
 import { api } from "@/api/client"
 import type {
     ApiCredential,
+    PortainerEndpointDiscoveryItem,
     RuntimeConnection,
     RuntimeConnectionType,
 } from "@/api/types"
@@ -79,6 +80,7 @@ const DEFAULT_VALUES: RuntimeConnectionFormValues = {
     in_cluster: false,
     base_url: "",
     endpoint_id: "",
+    endpoint_name: "",
 }
 
 export function RuntimeConnectionDialog({ open, onOpenChange, runtimeConnection, onSuccess }: RuntimeConnectionDialogProps) {
@@ -86,6 +88,8 @@ export function RuntimeConnectionDialog({ open, onOpenChange, runtimeConnection,
     const [loading, setLoading] = useState(false)
     const [discoveringNamespaces, setDiscoveringNamespaces] = useState(false)
     const [discoveredNamespaces, setDiscoveredNamespaces] = useState<string[]>([])
+    const [discoveringPortainerEndpoints, setDiscoveringPortainerEndpoints] = useState(false)
+    const [discoveredPortainerEndpoints, setDiscoveredPortainerEndpoints] = useState<PortainerEndpointDiscoveryItem[]>([])
     const [credentials, setCredentials] = useState<ApiCredential[]>([])
     const dialogContentRef = useRef<HTMLDivElement | null>(null)
 
@@ -127,11 +131,14 @@ export function RuntimeConnectionDialog({ open, onOpenChange, runtimeConnection,
             in_cluster: runtimeConnection.config.in_cluster === true,
             base_url: getStringValue(runtimeConnection.config.base_url),
             endpoint_id: stringifyInteger(runtimeConnection.config.endpoint_id),
+            endpoint_name: getStringValue(runtimeConnection.config.endpoint_name),
         })
     }, [open, runtimeConnection, form])
 
     const selectedType = useWatch({ control: form.control, name: 'type' })
     const useInClusterAuth = useWatch({ control: form.control, name: 'in_cluster' })
+    const portainerBaseUrl = useWatch({ control: form.control, name: 'base_url' })
+    const portainerCredentialId = useWatch({ control: form.control, name: 'credential_id' })
 
     useEffect(() => {
         if (selectedType === 'kubernetes' && useInClusterAuth) {
@@ -140,10 +147,16 @@ export function RuntimeConnectionDialog({ open, onOpenChange, runtimeConnection,
     }, [selectedType, useInClusterAuth, form])
 
     useEffect(() => {
+        setDiscoveredPortainerEndpoints(preserveSelectedPortainerEndpoint([], form.getValues('endpoint_id'), form.getValues('endpoint_name')))
+    }, [portainerBaseUrl, portainerCredentialId, form])
+
+    useEffect(() => {
         if (!open) {
             void Promise.resolve().then(() => {
                 setDiscoveringNamespaces(false)
                 setDiscoveredNamespaces([])
+                setDiscoveringPortainerEndpoints(false)
+                setDiscoveredPortainerEndpoints([])
             })
         }
     }, [open])
@@ -203,6 +216,45 @@ export function RuntimeConnectionDialog({ open, onOpenChange, runtimeConnection,
             toast.error(detail || t('common.unexpectedError'))
         } finally {
             setDiscoveringNamespaces(false)
+        }
+    }
+
+    const handleDiscoverPortainerEndpoints = async () => {
+        const values = form.getValues()
+        if (!values.base_url.trim()) {
+            toast.error(t('runtimeConnections.dialog.errors.portainerBaseUrlRequiredForEndpointDiscovery'))
+            return
+        }
+        if (!values.credential_id.trim()) {
+            toast.error(t('runtimeConnections.dialog.errors.portainerCredentialRequiredForEndpointDiscovery'))
+            return
+        }
+
+        setDiscoveringPortainerEndpoints(true)
+
+        try {
+            const payload = buildPayload(values)
+            const result = await api.discoverPortainerEndpoints({
+                ...(runtimeConnection ? { id: runtimeConnection.id } : {}),
+                ...payload,
+            })
+            setDiscoveredPortainerEndpoints(result.items)
+            const selectedEndpointId = parsePositiveInteger(values.endpoint_id)
+            const currentEndpoint = selectedEndpointId === null
+                ? null
+                : result.items.find((endpoint) => endpoint.id === selectedEndpointId)
+            if (currentEndpoint) {
+                form.setValue('endpoint_name', currentEndpoint.name, { shouldDirty: true })
+            } else if (result.items.length === 1) {
+                form.setValue('endpoint_id', String(result.items[0].id), { shouldDirty: true })
+                form.setValue('endpoint_name', result.items[0].name, { shouldDirty: true })
+            }
+        } catch (error: unknown) {
+            console.error('Failed to discover Portainer endpoints', error)
+            const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+            toast.error(detail || t('common.unexpectedError'))
+        } finally {
+            setDiscoveringPortainerEndpoints(false)
         }
     }
 
@@ -297,7 +349,13 @@ export function RuntimeConnectionDialog({ open, onOpenChange, runtimeConnection,
                                 dialogContentRef={dialogContentRef}
                             />
                         ) : selectedType === 'portainer' ? (
-                            <PortainerFields form={form} credentials={credentials} />
+                            <PortainerFields
+                                form={form}
+                                credentials={credentials}
+                                discoveringEndpoints={discoveringPortainerEndpoints}
+                                discoveredEndpoints={discoveredPortainerEndpoints}
+                                onDiscoverEndpoints={handleDiscoverPortainerEndpoints}
+                            />
                         ) : (
                             <ContainerRuntimeFields form={form} credentials={credentials} />
                         )}
@@ -399,17 +457,41 @@ function ContainerRuntimeFields({
 function PortainerFields({
     form,
     credentials,
+    discoveringEndpoints,
+    discoveredEndpoints,
+    onDiscoverEndpoints,
 }: {
     form: UseFormReturn<RuntimeConnectionFormValues>
     credentials: ApiCredential[]
+    discoveringEndpoints: boolean
+    discoveredEndpoints: PortainerEndpointDiscoveryItem[]
+    onDiscoverEndpoints: () => void
 }) {
     const { t } = useTranslation()
+
+    const selectedEndpointId = form.watch('endpoint_id')
+    const selectedEndpointName = form.watch('endpoint_name')
+    const endpointOptions = preserveSelectedPortainerEndpoint(discoveredEndpoints, selectedEndpointId, selectedEndpointName)
 
     return (
         <div className="space-y-5">
             <div className="rounded-lg border border-border/50 bg-card/80 p-4">
-                <div className="mb-4 space-y-1">
+                <div className="mb-4 flex items-center justify-between gap-3">
                     <h3 className="text-sm font-semibold">{t('runtimeConnections.dialog.sections.connection')}</h3>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={onDiscoverEndpoints}
+                        disabled={discoveringEndpoints}
+                    >
+                        {discoveringEndpoints ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : (
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                        )}
+                        {t('runtimeConnections.dialog.actions.discoverPortainerEndpoints')}
+                    </Button>
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-2">
@@ -433,11 +515,30 @@ function PortainerFields({
                         name="endpoint_id"
                         render={({ field }) => (
                             <FormItem>
-                                <FormLabel>{t('runtimeConnections.dialog.fields.endpointId')}</FormLabel>
-                                <FormControl>
-                                    <Input inputMode="numeric" placeholder={t('runtimeConnections.dialog.placeholders.endpointId')} {...field} />
-                                </FormControl>
-                                <FormDescription>{t('runtimeConnections.dialog.hints.endpointId')}</FormDescription>
+                                <FormLabel>{t('runtimeConnections.dialog.fields.endpointName')}</FormLabel>
+                                <Select value={field.value} onValueChange={(value) => {
+                                    field.onChange(value)
+                                    const selectedEndpoint = endpointOptions.find((endpoint) => String(endpoint.id) === value)
+                                    form.setValue('endpoint_name', selectedEndpoint?.name || '', { shouldDirty: true })
+                                }}>
+                                    <FormControl>
+                                        <SelectTrigger>
+                                            <SelectValue placeholder={t('runtimeConnections.dialog.placeholders.endpointName')} />
+                                        </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent>
+                                        {endpointOptions.length === 0 ? (
+                                            <SelectItem value="__empty" disabled>
+                                                {t('runtimeConnections.dialog.empty.portainerEndpoints')}
+                                            </SelectItem>
+                                        ) : endpointOptions.map((endpoint) => (
+                                            <SelectItem key={endpoint.id} value={String(endpoint.id)}>
+                                                {formatPortainerEndpointOption(endpoint)}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                <FormDescription>{t('runtimeConnections.dialog.hints.endpointName')}</FormDescription>
                                 <FormMessage />
                             </FormItem>
                         )}
@@ -588,6 +689,55 @@ function KubernetesFields({
             </div>
         </div>
     )
+}
+
+function preserveSelectedPortainerEndpoint(
+    items: PortainerEndpointDiscoveryItem[],
+    selectedEndpointId: string,
+    selectedEndpointName: string,
+): PortainerEndpointDiscoveryItem[] {
+    const endpointId = parsePositiveInteger(selectedEndpointId)
+    if (endpointId === null) {
+        return items
+    }
+
+    const normalizedName = selectedEndpointName.trim()
+    const fallbackName = `Endpoint ${endpointId}`
+    const selectedName = normalizedName || fallbackName
+    let hasSelectedEndpoint = false
+
+    const normalizedItems = items.map((item) => {
+        if (item.id !== endpointId) {
+            return item
+        }
+
+        hasSelectedEndpoint = true
+        if (!normalizedName || item.name === selectedName) {
+            return item
+        }
+
+        return { ...item, name: selectedName }
+    })
+
+    if (hasSelectedEndpoint) {
+        return normalizedItems
+    }
+
+    return [{ id: endpointId, name: selectedName }, ...normalizedItems]
+}
+
+function formatPortainerEndpointOption(endpoint: PortainerEndpointDiscoveryItem): string {
+    return `${endpoint.name}(#${endpoint.id})`
+}
+
+function parsePositiveInteger(value: string): number | null {
+    const normalized = value.trim()
+    if (!/^\d+$/.test(normalized)) {
+        return null
+    }
+
+    const parsed = Number(normalized)
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
 }
 
 function validateRuntimeCredentialSelection(values: RuntimeConnectionFormValues): string | null {
