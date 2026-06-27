@@ -11,7 +11,6 @@ import pytest
 from releasetracker.config import (
     ExecutorConfig,
     HealthCheckProfile,
-    RuntimeConnectionConfig,
 )
 from releasetracker.executors.health_check.helm_status_probe import HelmStatusProbe
 from releasetracker.executors.health_check.types import HealthCheckContext, ProbeAttemptResult

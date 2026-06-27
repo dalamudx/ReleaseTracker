@@ -1,12 +1,9 @@
 import sqlite3
 import importlib.util
 import sys
-import json
-from datetime import datetime
 from pathlib import Path
 
 import pytest
-import aiosqlite
 from db_helpers import initialize_storage_with_schema, dbmate_migrations_dir
 
 sqlite_path = (

@@ -1,9 +1,7 @@
-from datetime import datetime
-
 import pytest
 
 from releasetracker.config import Channel, RuntimeConnectionConfig, TrackerConfig
-from releasetracker.models import AggregateTracker, Release, ReleaseChannel, TrackerSource
+from releasetracker.models import AggregateTracker, ReleaseChannel, TrackerSource
 
 
 def test_tracker_models_round_trip_canonical_source_contract():

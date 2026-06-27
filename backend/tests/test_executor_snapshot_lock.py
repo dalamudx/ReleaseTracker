@@ -16,7 +16,6 @@ from releasetracker.config import (
 from releasetracker.models import ExecutorSnapshot
 from releasetracker.services.snapshot_service import (
     InFlightRollbackRegistry,
-    SnapshotInUseError,
     SnapshotLockedError,
     SnapshotService,
 )

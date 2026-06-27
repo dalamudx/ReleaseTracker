@@ -147,7 +147,9 @@ export function RuntimeConnectionDialog({ open, onOpenChange, runtimeConnection,
     }, [selectedType, useInClusterAuth, form])
 
     useEffect(() => {
-        setDiscoveredPortainerEndpoints(preserveSelectedPortainerEndpoint([], form.getValues('endpoint_id'), form.getValues('endpoint_name')))
+        void Promise.resolve().then(() => {
+            setDiscoveredPortainerEndpoints(preserveSelectedPortainerEndpoint([], form.getValues('endpoint_id'), form.getValues('endpoint_name')))
+        })
     }, [portainerBaseUrl, portainerCredentialId, form])
 
     useEffect(() => {
