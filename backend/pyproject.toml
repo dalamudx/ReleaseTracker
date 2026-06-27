@@ -23,7 +23,7 @@ dependencies = [
     "docker",
     "podman",
     "kubernetes",
-    "joserfc>=1.6.5",
+    "joserfc>=1.6.7",
 ]
 
 [project.optional-dependencies]
