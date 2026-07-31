@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom"
+import { Link } from "react-router"
 import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import { ThemeCustomizer } from "@/components/ThemeCustomizer"

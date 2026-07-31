@@ -1,4 +1,4 @@
-import { Link, useLocation } from "react-router-dom"
+import { Link, useLocation } from "react-router"
 import { LayoutDashboard, Boxes, Key, Package, Bell, Settings, Waypoints, Plug2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 

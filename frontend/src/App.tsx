@@ -1,9 +1,9 @@
 import { Suspense, lazy } from "react"
-import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom"
+import { BrowserRouter, Routes, Route, useLocation } from "react-router"
 import { ThemeProvider } from "@/providers/theme-provider"
 import { Toaster } from "@/components/ui/sonner"
 import AppLayout from "@/components/layout/AppLayout"
-import { Navigate, Outlet } from "react-router-dom"
+import { Navigate, Outlet } from "react-router"
 import { useAuth } from "@/context/auth-context"
 import { Spinner } from "@/components/ui/spinner"
 

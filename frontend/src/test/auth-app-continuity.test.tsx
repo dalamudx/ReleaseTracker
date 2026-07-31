@@ -15,7 +15,7 @@ vi.mock("sonner", () => ({
 }))
 
 vi.mock("@/components/layout/AppLayout", async () => {
-  const { Outlet } = await import("react-router-dom")
+  const { Outlet } = await import("react-router")
   return {
     default: function MockAppLayout() {
       return (

@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Outlet } from "react-router-dom"
+import { Outlet } from "react-router"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/layout/AppSidebar"
 import { Header } from "@/components/layout/Header"

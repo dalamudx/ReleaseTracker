@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { useLocation, useNavigate, type Location } from "react-router-dom"
+import { useLocation, useNavigate, type Location } from "react-router"
 import { useAuth } from "@/context/auth-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
