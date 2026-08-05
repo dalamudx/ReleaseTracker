@@ -16,7 +16,7 @@ dependencies = [
     "python-multipart>=0.0.32",
     "passlib>=1.7.4",
     "bcrypt==3.2.2",
-    "cryptography>=49.0.0",
+    "cryptography>=50.0.0",
     "emoji>=2.10.0",
     "authlib>=1.6.8",
     "packaging>=24.0",
