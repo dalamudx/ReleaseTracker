@@ -4,7 +4,7 @@ from typing import Annotated, Any
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
 
-from ..dependencies import get_current_user, get_storage
+from ..dependencies import get_current_admin_user, get_storage
 from ..models import Release, ReleaseStats
 from ..storage.sqlite import SQLiteStorage
 
@@ -379,12 +379,12 @@ async def _load_aggregate_tracker_or_404(storage: SQLiteStorage, tracker_name: s
     return aggregate_tracker
 
 
-@router.get("/stats", response_model=ReleaseStats, dependencies=[Depends(get_current_user)])
+@router.get("/stats", response_model=ReleaseStats, dependencies=[Depends(get_current_admin_user)])
 async def get_stats(storage: Annotated[SQLiteStorage, Depends(get_storage)]):
     return await storage.get_stats()
 
 
-@router.get("/releases", dependencies=[Depends(get_current_user)])
+@router.get("/releases", dependencies=[Depends(get_current_admin_user)])
 async def get_releases(
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
     tracker: str | None = None,
@@ -417,7 +417,7 @@ async def get_releases(
     }
 
 
-@router.get("/releases/latest", dependencies=[Depends(get_current_user)])
+@router.get("/releases/latest", dependencies=[Depends(get_current_admin_user)])
 async def get_latest_releases(
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
     tracker: str | None = None,
@@ -466,9 +466,7 @@ async def get_latest_releases(
         channel_type = None
         enabled_channels = [
             channel
-            for channel in storage.authoritative_release_channels_for_tracker(
-                aggregate_tracker
-            )
+            for channel in storage.authoritative_release_channels_for_tracker(aggregate_tracker)
             if channel.get("enabled", True)
         ]
         matched_channel = _find_channel_by_stored_name(channel_name, enabled_channels)

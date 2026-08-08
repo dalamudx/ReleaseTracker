@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 
+from .models import User
 from .services.auth import AuthService
 from .services.system_keys import SystemKeyManager
 
@@ -81,21 +82,17 @@ async def get_current_user(
 
 
 async def get_current_admin_user(
-    token: Annotated[str, Depends(oauth2_scheme)],
-    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
 ):
-    """Get the current admin user; only admin users may access this"""
+    """Authorize the current user against the stable persisted administrator id."""
     try:
-        user = await auth_service.get_current_user(token)
-        if user.username != "admin":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Admin access required",
-            )
-        return user
-    except ValueError as e:
+        admin_user_id = await storage.get_admin_user_id()
+    except (RuntimeError, ValueError):
+        admin_user_id = None
+    if current_user.id is None or current_user.id != admin_user_id:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e),
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
         )
+    return current_user

@@ -22,9 +22,10 @@ from ..storage.sqlite import (
     SYSTEM_LOG_LEVEL_SETTING_KEY,
     SYSTEM_BASE_URL_SETTING_KEY,
     ALLOWED_SYSTEM_LOG_LEVELS,
+    RESERVED_AUTH_SETTING_KEYS,
     SQLiteStorage,
 )
-from ..dependencies import get_current_admin_user, get_current_user, get_system_key_manager
+from ..dependencies import get_current_admin_user, get_system_key_manager
 from ..services.system_keys import SystemKeyManager, rotate_encryption_key, rotate_jwt_secret
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -130,13 +131,17 @@ def _normalize_setting_value(key: str, value: str) -> str:
         try:
             ZoneInfo(timezone_value)
         except Exception:
-            raise HTTPException(status_code=400, detail="System timezone must be a valid IANA timezone")
+            raise HTTPException(
+                status_code=400, detail="System timezone must be a valid IANA timezone"
+            )
         return timezone_value
 
     if key == SYSTEM_LOG_LEVEL_SETTING_KEY:
         log_level = normalized_value.upper()
         if log_level not in ALLOWED_SYSTEM_LOG_LEVELS:
-            raise HTTPException(status_code=400, detail="Log level must be DEBUG, INFO, WARNING, or ERROR")
+            raise HTTPException(
+                status_code=400, detail="Log level must be DEBUG, INFO, WARNING, or ERROR"
+            )
         return log_level
 
     if key == SYSTEM_BASE_URL_SETTING_KEY:
@@ -151,7 +156,9 @@ def _normalize_setting_value(key: str, value: str) -> str:
             or parsed.query
             or parsed.fragment
         ):
-            raise HTTPException(status_code=400, detail="BASE URL must be a valid absolute http(s) address")
+            raise HTTPException(
+                status_code=400, detail="BASE URL must be a valid absolute http(s) address"
+            )
         return base_url
 
     if key != SYSTEM_RELEASE_HISTORY_RETENTION_COUNT_SETTING_KEY:
@@ -185,7 +192,9 @@ def _normalize_setting_value(key: str, value: str) -> str:
     try:
         retention_count = int(normalized_value)
     except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="Release history retention count must be an integer")
+        raise HTTPException(
+            status_code=400, detail="Release history retention count must be an integer"
+        )
 
     if not (
         MIN_RELEASE_HISTORY_RETENTION_COUNT
@@ -266,11 +275,11 @@ async def rotate_encryption_key_endpoint(
 @router.post(
     "/actions/cleanup-release-history",
     response_model=ReleaseHistoryCleanupResponse,
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_current_admin_user)],
 )
 async def cleanup_release_history_endpoint(
     request: Request,
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_admin_user)],
 ):
     storage: SQLiteStorage = get_storage(request)
     result = await storage.cleanup_release_history()
@@ -283,11 +292,11 @@ async def cleanup_release_history_endpoint(
 @router.post(
     "/actions/cleanup-snapshot-history",
     response_model=SnapshotHistoryCleanupResponse,
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_current_admin_user)],
 )
 async def cleanup_snapshot_history_endpoint(
     request: Request,
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_admin_user)],
 ):
     storage: SQLiteStorage = get_storage(request)
     executor_scheduler = getattr(request.app.state, "executor_scheduler", None)
@@ -321,8 +330,10 @@ async def cleanup_snapshot_history_endpoint(
     )
 
 
-@router.get("", response_model=List[SettingItem], dependencies=[Depends(get_current_user)])
-async def get_settings(request: Request, current_user: Annotated[User, Depends(get_current_user)]):
+@router.get("", response_model=List[SettingItem], dependencies=[Depends(get_current_admin_user)])
+async def get_settings(
+    request: Request, current_user: Annotated[User, Depends(get_current_admin_user)]
+):
     """Get all system settings"""
     storage: SQLiteStorage = get_storage(request)
     settings_dict = await storage.get_all_settings()
@@ -331,15 +342,20 @@ async def get_settings(request: Request, current_user: Annotated[User, Depends(g
             key=k, value=v, updated_at=datetime.now().isoformat()
         )  # TODO: Fetch real updated_at from DB
         for k, v in settings_dict.items()
+        if k not in RESERVED_AUTH_SETTING_KEYS
     ]
 
 
-@router.post("", response_model=SettingItem, dependencies=[Depends(get_current_user)])
+@router.post("", response_model=SettingItem, dependencies=[Depends(get_current_admin_user)])
 async def update_setting(
-    setting: SettingItem, request: Request, current_user: Annotated[User, Depends(get_current_user)]
+    setting: SettingItem,
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_admin_user)],
 ):
     """Update system settings"""
     storage: SQLiteStorage = get_storage(request)
+    if setting.key in RESERVED_AUTH_SETTING_KEYS:
+        raise HTTPException(status_code=403, detail="Reserved authentication setting")
 
     setting.value = _normalize_setting_value(setting.key, setting.value)
     await storage.set_setting(setting.key, setting.value)
@@ -348,11 +364,13 @@ async def update_setting(
     return setting
 
 
-@router.delete("/{key}", dependencies=[Depends(get_current_user)])
+@router.delete("/{key}", dependencies=[Depends(get_current_admin_user)])
 async def delete_setting(
-    key: str, request: Request, current_user: Annotated[User, Depends(get_current_user)]
+    key: str, request: Request, current_user: Annotated[User, Depends(get_current_admin_user)]
 ):
     """Delete a system setting"""
     storage: SQLiteStorage = get_storage(request)
+    if key in RESERVED_AUTH_SETTING_KEYS:
+        raise HTTPException(status_code=403, detail="Reserved authentication setting")
     await storage.delete_setting(key)
     return {"message": "Setting deleted"}

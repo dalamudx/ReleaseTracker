@@ -9,7 +9,7 @@ from ..models import Notifier, User
 # ...
 
 from ..storage.sqlite import SQLiteStorage
-from ..dependencies import get_current_user
+from ..dependencies import get_current_admin_user
 
 router = APIRouter(prefix="/api/notifiers", tags=["notifiers"])
 
@@ -21,10 +21,10 @@ def get_storage(request):
     return storage
 
 
-@router.get("", dependencies=[Depends(get_current_user)])
+@router.get("", dependencies=[Depends(get_current_admin_user)])
 async def get_notifiers(
     request: Request,
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_admin_user)],
     skip: int = 0,
     limit: int = 20,
 ):
@@ -37,9 +37,13 @@ async def get_notifiers(
     return {"items": notifiers, "total": total, "skip": skip, "limit": limit}
 
 
-@router.get("/{notifier_id}", response_model=Notifier, dependencies=[Depends(get_current_user)])
+@router.get(
+    "/{notifier_id}", response_model=Notifier, dependencies=[Depends(get_current_admin_user)]
+)
 async def get_notifier(
-    notifier_id: int, request: Request, current_user: Annotated[User, Depends(get_current_user)]
+    notifier_id: int,
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_admin_user)],
 ):
     """Get a single notifier"""
     storage: SQLiteStorage = get_storage(request)
@@ -53,10 +57,12 @@ async def get_notifier(
     "",
     response_model=Notifier,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_current_admin_user)],
 )
 async def create_notifier(
-    notifier_data: dict, request: Request, current_user: Annotated[User, Depends(get_current_user)]
+    notifier_data: dict,
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_admin_user)],
 ):
     """Create a notifier"""
     storage: SQLiteStorage = get_storage(request)
@@ -73,12 +79,14 @@ async def create_notifier(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.put("/{notifier_id}", response_model=Notifier, dependencies=[Depends(get_current_user)])
+@router.put(
+    "/{notifier_id}", response_model=Notifier, dependencies=[Depends(get_current_admin_user)]
+)
 async def update_notifier(
     notifier_id: int,
     notifier_data: dict,
     request: Request,
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_admin_user)],
 ):
     """Update a notifier"""
     storage: SQLiteStorage = get_storage(request)
@@ -90,9 +98,11 @@ async def update_notifier(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.delete("/{notifier_id}", dependencies=[Depends(get_current_user)])
+@router.delete("/{notifier_id}", dependencies=[Depends(get_current_admin_user)])
 async def delete_notifier(
-    notifier_id: int, request: Request, current_user: Annotated[User, Depends(get_current_user)]
+    notifier_id: int,
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_admin_user)],
 ):
     """Delete a notifier"""
     storage: SQLiteStorage = get_storage(request)
@@ -103,9 +113,11 @@ async def delete_notifier(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.post("/{notifier_id}/test", dependencies=[Depends(get_current_user)])
+@router.post("/{notifier_id}/test", dependencies=[Depends(get_current_admin_user)])
 async def test_notifier(
-    notifier_id: int, request: Request, current_user: Annotated[User, Depends(get_current_user)]
+    notifier_id: int,
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_admin_user)],
 ):
     """Test a notifier"""
     storage: SQLiteStorage = get_storage(request)

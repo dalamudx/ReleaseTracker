@@ -1,6 +1,8 @@
 """OIDC authentication data models"""
 
 from datetime import datetime
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -37,12 +39,22 @@ class OIDCProvider(BaseModel):
 
 
 class OAuthState(BaseModel):
-    """Temporary OAuth state storage to prevent CSRF"""
+    """Temporary OAuth state storage for a validated login or admin binding flow."""
 
     state: str
     provider_slug: str
-    code_verifier: str  # PKCE code_verifier
+    code_verifier: str
+    nonce: str
+    flow_type: Literal["login", "bind"]
+    initiating_admin_user_id: int | None = None
     expires_at: datetime
+
+
+class OIDCIdentity(BaseModel):
+    """Cryptographically validated stable OIDC identity."""
+
+    issuer: str
+    subject: str
 
 
 class OIDCUserInfo(BaseModel):

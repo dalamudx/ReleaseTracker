@@ -1,3 +1,5 @@
+from urllib.parse import parse_qs, urlparse
+
 import pytest
 
 
@@ -139,7 +141,100 @@ async def test_public_providers_list_empty(client):
 
 
 @pytest.mark.asyncio
-async def test_public_providers_list_one_enabled(client, auth_service):
+async def test_admin_binding_requires_password_and_supports_unbind(client, auth_service, storage):
+    await auth_service.ensure_admin_user()
+    headers = _admin_headers(client)
+    payload = _provider_payload("binding", "Binding Provider")
+    payload["discovery_enabled"] = False
+    create_response = client.post("/api/oidc-providers", json=payload, headers=headers)
+    assert create_response.status_code == 201, create_response.text
+    provider_id = create_response.json()["id"]
+
+    status_response = client.get("/api/oidc-providers/admin-binding", headers=headers)
+    assert status_response.status_code == 200
+    assert status_response.json() == {
+        "bound": False,
+        "issuer": None,
+        "subject": None,
+        "provider_id": None,
+        "provider_slug": None,
+    }
+
+    bad_password = client.post(
+        f"/api/oidc-providers/{provider_id}/admin-binding/authorize",
+        json={"current_password": "wrong"},
+        headers=headers,
+    )
+    assert bad_password.status_code == 401
+
+    authorize_response = client.post(
+        f"/api/oidc-providers/{provider_id}/admin-binding/authorize",
+        json={"current_password": "admin"},
+        headers=headers,
+    )
+    assert authorize_response.status_code == 200, authorize_response.text
+    query = parse_qs(urlparse(authorize_response.json()["authorization_url"]).query)
+    assert query["nonce"][0]
+    oauth_state = await storage.get_and_delete_oauth_state(query["state"][0])
+    assert oauth_state is not None
+    assert oauth_state.flow_type == "bind"
+    assert oauth_state.initiating_admin_user_id == await storage.get_admin_user_id()
+
+    await storage.bind_admin_oidc_identity("https://issuer.example.com", "subject-1")
+    bound_status = client.get("/api/oidc-providers/admin-binding", headers=headers)
+    assert bound_status.status_code == 200
+    assert bound_status.json()["bound"] is True
+    assert bound_status.json()["provider_id"] == provider_id
+
+    bad_unbind = client.post(
+        "/api/oidc-providers/admin-binding/unbind",
+        json={"current_password": "wrong"},
+        headers=headers,
+    )
+    assert bad_unbind.status_code == 401
+    assert await storage.get_admin_oidc_binding() is not None
+
+    unbind_response = client.post(
+        "/api/oidc-providers/admin-binding/unbind",
+        json={"current_password": "admin"},
+        headers=headers,
+    )
+    assert unbind_response.status_code == 200
+    assert await storage.get_admin_oidc_binding() is None
+
+
+@pytest.mark.asyncio
+async def test_bound_provider_cannot_be_changed_or_deleted(client, auth_service, storage):
+    await auth_service.ensure_admin_user()
+    headers = _admin_headers(client)
+    create_response = client.post(
+        "/api/oidc-providers",
+        json=_provider_payload("protected", "Protected Provider"),
+        headers=headers,
+    )
+    provider_id = create_response.json()["id"]
+    await storage.bind_admin_oidc_identity("https://issuer.example.com", "subject-1")
+
+    update_response = client.put(
+        f"/api/oidc-providers/{provider_id}",
+        json={"issuer_url": "https://other-issuer.example.com"},
+        headers=headers,
+    )
+    assert update_response.status_code == 409
+
+    metadata_update_response = client.put(
+        f"/api/oidc-providers/{provider_id}",
+        json={"name": "Renamed Provider"},
+        headers=headers,
+    )
+    assert metadata_update_response.status_code == 409
+
+    delete_response = client.delete(f"/api/oidc-providers/{provider_id}", headers=headers)
+    assert delete_response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_public_providers_list_one_enabled(client, auth_service, storage):
     """Public /api/auth/oidc/providers returns a list with one entry for an enabled provider."""
     await auth_service.ensure_admin_user()
     headers = _admin_headers(client)
@@ -150,6 +245,7 @@ async def test_public_providers_list_one_enabled(client, auth_service):
         headers=headers,
     )
     assert create_resp.status_code == 201, create_resp.text
+    await storage.bind_admin_oidc_identity("https://issuer.example.com", "subject-1")
 
     resp = client.get("/api/auth/oidc/providers")
     assert resp.status_code == 200

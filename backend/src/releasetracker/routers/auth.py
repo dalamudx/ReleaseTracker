@@ -7,7 +7,12 @@ from typing import Annotated
 from ..models import LoginRequest, RegisterRequest, User, TokenPair, ChangePasswordRequest
 from ..services.auth import AuthService
 
-from ..dependencies import get_auth_service, get_current_user, oauth2_scheme
+from ..dependencies import (
+    get_auth_service,
+    get_current_admin_user,
+    get_current_user,
+    oauth2_scheme,
+)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -16,22 +21,13 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 async def register(
     req: RegisterRequest,
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
-    current_user: Annotated[User, Depends(get_current_user)],  # Authentication required
+    current_user: Annotated[User, Depends(get_current_admin_user)],
 ):
-    """
-    Create a new user. Administrators only.
-
-    This endpoint requires administrator privileges. Regular users should sign in with the built-in administrator account.
-    """
-    # Optional: check whether the user is an admin if roles are supported
-
-    #     raise HTTPException(status_code=403, detail="Only administrators can create users")
-
-    try:
-        user = await auth_service.register(req)
-        return user
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    """Reject registration in the single-administrator security model."""
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Registration is disabled in single-admin mode",
+    )
 
 
 @router.post("/login", response_model=dict)

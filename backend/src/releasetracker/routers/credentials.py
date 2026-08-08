@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from ..models import Credential, CredentialType
 from ..storage.sqlite import SQLiteStorage
-from ..dependencies import get_current_user, get_storage
+from ..dependencies import get_current_admin_user, get_storage
 
 router = APIRouter(prefix="/api/credentials", tags=["credentials"])
 
@@ -48,7 +48,7 @@ def _credential_reference_counts(references: dict[str, list[dict[str, Any]]]) ->
     return {key: len(items) for key, items in references.items()}
 
 
-@router.get("", dependencies=[Depends(get_current_user)])
+@router.get("", dependencies=[Depends(get_current_admin_user)])
 async def get_credentials(
     storage: Annotated[SQLiteStorage, Depends(get_storage)], skip: int = 0, limit: int = 20
 ):
@@ -62,7 +62,7 @@ async def get_credentials(
     return {"items": result, "total": total, "skip": skip, "limit": limit}
 
 
-@router.get("/{credential_id}", dependencies=[Depends(get_current_user)])
+@router.get("/{credential_id}", dependencies=[Depends(get_current_admin_user)])
 async def get_credential(
     credential_id: int, storage: Annotated[SQLiteStorage, Depends(get_storage)]
 ):
@@ -75,7 +75,7 @@ async def get_credential(
     return _serialize_credential(credential)
 
 
-@router.post("", dependencies=[Depends(get_current_user)])
+@router.post("", dependencies=[Depends(get_current_admin_user)])
 async def create_credential(
     credential_data: CreateCredentialRequest,
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
@@ -97,7 +97,7 @@ async def create_credential(
         raise HTTPException(status_code=400, detail=f"Create failed: {str(e)}")
 
 
-@router.get("/{credential_id}/references", dependencies=[Depends(get_current_user)])
+@router.get("/{credential_id}/references", dependencies=[Depends(get_current_admin_user)])
 async def get_credential_references(
     credential_id: int, storage: Annotated[SQLiteStorage, Depends(get_storage)]
 ):
@@ -114,7 +114,7 @@ async def get_credential_references(
     }
 
 
-@router.put("/{credential_id}", dependencies=[Depends(get_current_user)])
+@router.put("/{credential_id}", dependencies=[Depends(get_current_admin_user)])
 async def update_credential(
     credential_id: int,
     credential_data: UpdateCredentialRequest,
@@ -158,7 +158,7 @@ async def update_credential(
         raise HTTPException(status_code=400, detail=f"Update failed: {str(e)}")
 
 
-@router.delete("/{credential_id}", dependencies=[Depends(get_current_user)])
+@router.delete("/{credential_id}", dependencies=[Depends(get_current_admin_user)])
 async def delete_credential(
     credential_id: int, storage: Annotated[SQLiteStorage, Depends(get_storage)]
 ):

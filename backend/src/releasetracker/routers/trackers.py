@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..config import Channel, TrackerConfig
-from ..dependencies import get_current_user, get_scheduler, get_storage
+from ..dependencies import get_current_admin_user, get_scheduler, get_storage
 from ..models import AggregateTracker, Release, TrackerReleaseNotesConfig, TrackerSource
 from ..scheduler import ReleaseScheduler
 from ..storage.sqlite import SQLiteStorage
@@ -626,7 +626,7 @@ async def _build_tracker_response(
     }
 
 
-@router.get("", dependencies=[Depends(get_current_user)])
+@router.get("", dependencies=[Depends(get_current_admin_user)])
 async def get_trackers(
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
     skip: int = 0,
@@ -657,7 +657,7 @@ async def get_trackers(
     return {"items": items, "total": total, "skip": skip, "limit": limit}
 
 
-@router.get("/{tracker_name}", dependencies=[Depends(get_current_user)])
+@router.get("/{tracker_name}", dependencies=[Depends(get_current_admin_user)])
 async def get_tracker(tracker_name: str, storage: Annotated[SQLiteStorage, Depends(get_storage)]):
     tracker = await storage.get_aggregate_tracker(tracker_name)
     if not tracker:
@@ -665,7 +665,7 @@ async def get_tracker(tracker_name: str, storage: Annotated[SQLiteStorage, Depen
     return await _build_tracker_response(storage, tracker)
 
 
-@router.get("/{tracker_name}/config", dependencies=[Depends(get_current_user)])
+@router.get("/{tracker_name}/config", dependencies=[Depends(get_current_admin_user)])
 async def get_tracker_config_detail(
     tracker_name: str, storage: Annotated[SQLiteStorage, Depends(get_storage)]
 ):
@@ -675,7 +675,7 @@ async def get_tracker_config_detail(
     return await _build_tracker_response(storage, tracker)
 
 
-@router.get("/{tracker_name}/releases/history", dependencies=[Depends(get_current_user)])
+@router.get("/{tracker_name}/releases/history", dependencies=[Depends(get_current_admin_user)])
 async def get_tracker_release_history(
     tracker_name: str,
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
@@ -705,7 +705,7 @@ async def get_tracker_release_history(
     }
 
 
-@router.get("/{tracker_name}/current", dependencies=[Depends(get_current_user)])
+@router.get("/{tracker_name}/current", dependencies=[Depends(get_current_admin_user)])
 async def get_tracker_current_view(
     tracker_name: str,
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
@@ -723,7 +723,7 @@ async def get_tracker_current_view(
     return await _build_tracker_current_view(storage, tracker)
 
 
-@router.post("/{tracker_name}/check", dependencies=[Depends(get_current_user)])
+@router.post("/{tracker_name}/check", dependencies=[Depends(get_current_admin_user)])
 async def check_tracker(
     tracker_name: str, scheduler: Annotated[ReleaseScheduler, Depends(get_scheduler)]
 ):
@@ -735,7 +735,7 @@ async def check_tracker(
         raise HTTPException(status_code=500, detail=f"Check failed: {str(e)}")
 
 
-@router.post("", dependencies=[Depends(get_current_user)])
+@router.post("", dependencies=[Depends(get_current_admin_user)])
 async def create_tracker(
     tracker_data: AggregateTrackerPayload,
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
@@ -767,7 +767,7 @@ async def create_tracker(
         raise HTTPException(status_code=400, detail=f"Create failed: {str(e)}")
 
 
-@router.put("/{tracker_name}", dependencies=[Depends(get_current_user)])
+@router.put("/{tracker_name}", dependencies=[Depends(get_current_admin_user)])
 async def update_tracker(
     tracker_name: str,
     tracker_data: AggregateTrackerPayload,
@@ -807,7 +807,7 @@ async def update_tracker(
         raise HTTPException(status_code=400, detail=f"Update failed: {str(e)}")
 
 
-@router.delete("/{tracker_name}", dependencies=[Depends(get_current_user)])
+@router.delete("/{tracker_name}", dependencies=[Depends(get_current_admin_user)])
 async def delete_tracker(
     tracker_name: str,
     storage: Annotated[SQLiteStorage, Depends(get_storage)],

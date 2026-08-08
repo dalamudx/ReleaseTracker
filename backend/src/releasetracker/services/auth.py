@@ -19,7 +19,10 @@ from ..models import (
     TokenPair,
     ChangePasswordRequest,
 )
-from ..storage.sqlite import SQLiteStorage
+from ..storage.sqlite import (
+    BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY as STORAGE_BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY,
+    SQLiteStorage,
+)
 
 if TYPE_CHECKING:
     from .system_keys import SystemKeyManager
@@ -32,7 +35,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # JWT Configuration
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
-BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY = "system.bootstrap_admin_initialized"
+BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY = STORAGE_BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY
 
 
 class AuthService:
@@ -47,21 +50,8 @@ class AuthService:
         return self.system_key_manager.jwt_secret
 
     async def register(self, req: RegisterRequest) -> User:
-        """Register a user"""
-        # Check whether the user exists
-        existing_user = await self.storage.get_user_by_username(req.username)
-        if existing_user:
-            raise ValueError("Username already exists")
-
-        # Hash the password
-        password_hash = pwd_context.hash(req.password)
-
-        # Create the user
-        user = User(
-            username=req.username, email=req.email, password_hash=password_hash, status="active"
-        )
-
-        return await self.storage.create_user(user)
+        """Fail closed: single-admin mode never permits registration."""
+        raise ValueError("Registration is disabled in single-admin mode")
 
     async def login(
         self, req: LoginRequest, user_agent: Optional[str] = None, ip_address: Optional[str] = None
@@ -71,7 +61,7 @@ class AuthService:
         if not user:
             raise ValueError("Invalid credentials")
 
-        if not pwd_context.verify(req.password, user.password_hash):
+        if not user.password_hash or not pwd_context.verify(req.password, user.password_hash):
             raise ValueError("Invalid credentials")
 
         if user.status != "active":
@@ -109,7 +99,7 @@ class AuthService:
         user = await self.get_current_user(token)
 
         # Verify the old password
-        if not pwd_context.verify(req.old_password, user.password_hash):
+        if not self.verify_password(user, req.old_password):
             raise ValueError("Invalid old password")
 
         # Update password
@@ -123,10 +113,10 @@ class AuthService:
         """Refresh token"""
         try:
             payload = decode_jwt(refresh_token, self.secret_key)
-            username = payload.get("sub")
+            subject = payload.get("sub")
             token_type = payload.get("type")
 
-            if token_type != "refresh" or not username:
+            if token_type != "refresh" or not subject:
                 raise ValueError("Invalid token type")
 
             refresh_hash = self._hash_token(refresh_token)
@@ -135,7 +125,7 @@ class AuthService:
                 raise ValueError("Invalid refresh token")
 
             user = await self.storage.get_user_by_id(session.user_id)
-            if not user or user.username != username or user.status != "active":
+            if not user or str(user.id) != str(subject) or user.status != "active":
                 raise ValueError("Invalid refresh token")
 
             if session.id is None:
@@ -162,8 +152,8 @@ class AuthService:
         """Get the current user from a token"""
         try:
             payload = decode_jwt(token, self.secret_key)
-            username = payload.get("sub")
-            if username is None:
+            subject = payload.get("sub")
+            if subject is None:
                 raise ValueError("Invalid token")
 
             token_hash = self._hash_token(token)
@@ -176,8 +166,13 @@ class AuthService:
                 raise ValueError("Session expired")
 
             user = await self.storage.get_user_by_id(session.user_id)
-            if not user:
-                raise ValueError("User not found")
+            if (
+                not user
+                or user.status != "active"
+                or str(session.user_id) != str(subject)
+                or payload.get("type") != "access"
+            ):
+                raise ValueError("Invalid token")
 
             return user
 
@@ -186,8 +181,10 @@ class AuthService:
 
     def _create_token_pair(self, user: User) -> TokenPair:
         """Generate a token pair"""
+        if user.id is None:
+            raise ValueError("User not found")
         claims = {
-            "sub": user.username,
+            "sub": str(user.id),
         }
 
         access_token = self._create_access_token(data=claims)
@@ -223,16 +220,35 @@ class AuthService:
         encoded_jwt = encode_jwt(to_encode, self.secret_key)
         return encoded_jwt
 
+    def verify_password(self, user: User, password: str) -> bool:
+        """Verify a local password for a re-authentication flow."""
+        return bool(user.password_hash) and pwd_context.verify(password, user.password_hash)
+
     async def ensure_admin_user(self) -> None:
-        """Create the one-time bootstrap admin, or verify it has not been deleted."""
-        user = await self.storage.get_user_by_username("admin")
+        """Bootstrap or validate the one stable persisted administrator identity."""
+        try:
+            admin_user_id = await self.storage.get_admin_user_id()
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+
+        if admin_user_id is not None:
+            user = await self.storage.get_user_by_id(admin_user_id)
+            if user is None:
+                raise RuntimeError(
+                    "Configured system.admin_user_id does not reference an existing user"
+                )
+            if await self.storage.get_setting(BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY) is None:
+                await self.storage.persist_admin_identity(admin_user_id)
+            return
+
+        legacy_admin = await self.storage.get_user_by_username("admin")
         bootstrap_initialized = await self.storage.get_setting(
             BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY
         )
-
-        if user:
-            if bootstrap_initialized is None:
-                await self.storage.set_setting(BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY, "true")
+        if legacy_admin is not None:
+            if legacy_admin.id is None:
+                raise RuntimeError("Legacy admin user is not persisted")
+            await self.storage.persist_admin_identity(legacy_admin.id)
             return
 
         if bootstrap_initialized is not None:
@@ -248,8 +264,7 @@ class AuthService:
             password_hash=pwd_context.hash(bootstrap_password),
             status="active",
         )
-        await self.storage.create_user(admin_user)
-        await self.storage.set_setting(BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY, "true")
+        await self.storage.create_bootstrap_admin(admin_user)
         logger.info(
             "Bootstrap admin user created; one-time bootstrap admin password: %s",
             bootstrap_password,

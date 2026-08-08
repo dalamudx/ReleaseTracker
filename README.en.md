@@ -23,7 +23,7 @@ ReleaseTracker is a lightweight, configurable release tracking and update orches
 - **Runtime updates**: Docker / Podman single-container and Compose grouped updates recreate targets from inspected configuration; Portainer stack, Kubernetes workload, and Helm release updates use their platform control planes, declarative state, or Helm release history, and ReleaseTracker does not claim to manage full snapshots for those targets.
 - **Snapshots & manual rollback**: destructive Docker / Podman updates capture full configuration snapshots for operator-initiated rollback via the UI or API; snapshot history supports rollback and can be deleted where that action is available.
 - **Health checks**: automatic runtime-native checks and manually configured HTTP / TCP probes run with bounded timing; failures are recorded for operator action and do not trigger automatic rollback, and ReleaseTracker does not claim host-port probing is always available for Kubernetes / Portainer / Helm targets.
-- **Security**: local users + JWT + OIDC; sensitive data encrypted with Fernet; rotatable system keys.
+- **Security**: stable single administrator + JWT + explicitly bound OIDC identity; sensitive data encrypted with Fernet; rotatable system keys.
 - **System settings**: timezone, log level, history retention, BASE URL, key rotation — all from the Web UI.
 - **Notifications**: webhook with event filtering, bilingual messages, and Discord / Slack compatible fields.
 - **Modern frontend**: React 19 + TypeScript + TailwindCSS, bilingual (zh/en), dark mode, responsive layout.
@@ -139,6 +139,23 @@ OIDC callbacks resolve to:
 ```text
 {BASE URL}/auth/oidc/{provider}/callback
 ```
+
+### Single Administrator and OIDC Binding
+
+ReleaseTracker has one stable administrator identity. Existing installations backfill it from the
+current `admin` account; later username changes do not transfer administrator access. User
+registration is disabled, and all tracker, release, executor, runtime, credential, notifier, OIDC,
+and system-setting operations are administrator-only. Local password login remains the recovery
+path.
+
+Configuring an OIDC provider does not enable login by itself. While locally authenticated as the
+administrator, submit the current local password to
+`POST /api/oidc-providers/{provider_id}/admin-binding/authorize`, then open the returned
+`authorization_url` and complete the IdP flow. ReleaseTracker validates the signed ID token and
+binds its exact issuer + subject to the existing administrator; it never provisions an OIDC user.
+Use `GET /api/oidc-providers/admin-binding` to inspect the binding and
+`POST /api/oidc-providers/admin-binding/unbind` with the current local password to remove it. A
+bound provider must be unbound before it can be changed or deleted.
 
 ### Data Directory and System Keys
 

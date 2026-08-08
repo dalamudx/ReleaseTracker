@@ -12,6 +12,144 @@ if TYPE_CHECKING:
     from .sqlite import SQLiteStorage
 
 
+ADMIN_USER_ID_SETTING_KEY = "system.admin_user_id"
+BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY = "system.bootstrap_admin_initialized"
+ADMIN_OIDC_ISSUER_SETTING_KEY = "system.admin_oidc_issuer"
+ADMIN_OIDC_SUBJECT_SETTING_KEY = "system.admin_oidc_subject"
+RESERVED_AUTH_SETTING_KEYS = frozenset(
+    {
+        ADMIN_USER_ID_SETTING_KEY,
+        BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY,
+        ADMIN_OIDC_ISSUER_SETTING_KEY,
+        ADMIN_OIDC_SUBJECT_SETTING_KEY,
+    }
+)
+
+
+async def _upsert_setting(db: aiosqlite.Connection, key: str, value: str) -> None:
+    await db.execute(
+        """
+        INSERT INTO settings (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = excluded.updated_at
+        """,
+        (key, value, datetime.now().isoformat()),
+    )
+
+
+async def get_admin_user_id(storage: "SQLiteStorage") -> int | None:
+    value = await storage.get_setting(ADMIN_USER_ID_SETTING_KEY)
+    if value is None:
+        return None
+    try:
+        user_id = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("system.admin_user_id must be a positive integer") from exc
+    if user_id <= 0:
+        raise ValueError("system.admin_user_id must be a positive integer")
+    return user_id
+
+
+async def persist_admin_identity(storage: "SQLiteStorage", user_id: int) -> None:
+    if user_id <= 0:
+        raise ValueError("admin user id must be positive")
+    db = await storage._get_connection()
+    try:
+        await _upsert_setting(db, ADMIN_USER_ID_SETTING_KEY, str(user_id))
+        await _upsert_setting(db, BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY, "true")
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+
+
+async def create_bootstrap_admin(storage: "SQLiteStorage", user: User) -> User:
+    """Create the bootstrap user and both identity markers in one transaction."""
+    db = await storage._get_connection()
+    try:
+        cursor = await db.execute(
+            """
+            INSERT INTO users
+            (username, email, password_hash, oauth_provider, oauth_sub, avatar_url, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user.username,
+                user.email,
+                user.password_hash,
+                user.oauth_provider,
+                user.oauth_sub,
+                user.avatar_url,
+                user.status,
+                user.created_at.isoformat(),
+            ),
+        )
+        user_id = cursor.lastrowid
+        if user_id is None:
+            raise RuntimeError("Failed to persist bootstrap admin")
+        await _upsert_setting(db, ADMIN_USER_ID_SETTING_KEY, str(user_id))
+        await _upsert_setting(db, BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY, "true")
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+
+    created_user = user.model_copy()
+    created_user.id = user_id
+    return created_user
+
+
+async def get_admin_oidc_binding(storage: "SQLiteStorage") -> tuple[str, str] | None:
+    issuer = await storage.get_setting(ADMIN_OIDC_ISSUER_SETTING_KEY)
+    subject = await storage.get_setting(ADMIN_OIDC_SUBJECT_SETTING_KEY)
+    if issuer is None and subject is None:
+        return None
+    if issuer is None or subject is None or not issuer.strip() or not subject.strip():
+        raise RuntimeError("OIDC administrator binding is incomplete")
+    return issuer, subject
+
+
+async def bind_admin_oidc_identity(
+    storage: "SQLiteStorage", issuer: str, subject: str
+) -> tuple[str, str]:
+    normalized_issuer = issuer.strip()
+    normalized_subject = subject.strip()
+    if not normalized_issuer or not normalized_subject:
+        raise ValueError("OIDC issuer and subject must be non-empty")
+
+    existing = await get_admin_oidc_binding(storage)
+    requested = (normalized_issuer, normalized_subject)
+    if existing is not None and existing != requested:
+        raise ValueError("An OIDC administrator identity is already bound")
+    if existing == requested:
+        return requested
+
+    db = await storage._get_connection()
+    try:
+        await _upsert_setting(db, ADMIN_OIDC_ISSUER_SETTING_KEY, normalized_issuer)
+        await _upsert_setting(db, ADMIN_OIDC_SUBJECT_SETTING_KEY, normalized_subject)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    return requested
+
+
+async def unbind_admin_oidc_identity(storage: "SQLiteStorage") -> None:
+    db = await storage._get_connection()
+    try:
+        await db.execute(
+            "DELETE FROM settings WHERE key IN (?, ?)",
+            (ADMIN_OIDC_ISSUER_SETTING_KEY, ADMIN_OIDC_SUBJECT_SETTING_KEY),
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+
+
 async def create_user(storage: "SQLiteStorage", user: User) -> User:
     db = await storage._get_connection()
     cursor = await db.execute(
@@ -364,13 +502,39 @@ def _row_to_oidc_provider(
 
 
 async def save_oauth_state(
-    storage: "SQLiteStorage", state: str, provider_slug: str, code_verifier: str
+    storage: "SQLiteStorage",
+    state: str,
+    provider_slug: str,
+    code_verifier: str,
+    nonce: str,
+    flow_type: str,
+    initiating_admin_user_id: int | None = None,
 ) -> None:
+    if flow_type not in {"login", "bind"}:
+        raise ValueError("OAuth flow type must be login or bind")
+    if flow_type == "bind" and initiating_admin_user_id is None:
+        raise ValueError("Binding flow requires an initiating administrator")
+    if flow_type == "login" and initiating_admin_user_id is not None:
+        raise ValueError("Login flow cannot have an initiating administrator")
+
     expires_at = (datetime.now() + timedelta(minutes=10)).isoformat()
     db = await storage._get_connection()
     await db.execute(
-        "INSERT OR REPLACE INTO oauth_states (state, provider_slug, code_verifier, expires_at) VALUES (?, ?, ?, ?)",
-        (state, provider_slug, code_verifier, expires_at),
+        """
+        INSERT OR REPLACE INTO oauth_states
+        (state, provider_slug, code_verifier, nonce, flow_type,
+         initiating_admin_user_id, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            state,
+            provider_slug,
+            code_verifier,
+            nonce,
+            flow_type,
+            initiating_admin_user_id,
+            expires_at,
+        ),
     )
     await db.commit()
 
@@ -388,6 +552,9 @@ async def get_and_delete_oauth_state(storage: "SQLiteStorage", state: str) -> OA
         state=row["state"],
         provider_slug=row["provider_slug"],
         code_verifier=row["code_verifier"],
+        nonce=row["nonce"],
+        flow_type=row["flow_type"],
+        initiating_admin_user_id=row["initiating_admin_user_id"],
         expires_at=datetime.fromisoformat(row["expires_at"]),
     )
 
@@ -434,20 +601,26 @@ async def update_user_oidc_info(
 ) -> None:
     db = await storage._get_connection()
     db.row_factory = aiosqlite.Row
-    cursor = await db.execute("SELECT username, email, avatar_url FROM users WHERE id = ?", (user_id,))
+    cursor = await db.execute(
+        "SELECT username, email, avatar_url FROM users WHERE id = ?", (user_id,)
+    )
     row = await cursor.fetchone()
     if not row:
         return
 
     next_username = row["username"]
     if username and username != row["username"]:
-        cursor = await db.execute("SELECT id FROM users WHERE username = ? AND id != ?", (username, user_id))
+        cursor = await db.execute(
+            "SELECT id FROM users WHERE username = ? AND id != ?", (username, user_id)
+        )
         if not await cursor.fetchone():
             next_username = username
 
     next_email = row["email"]
     if email and email != row["email"]:
-        cursor = await db.execute("SELECT id FROM users WHERE email = ? AND id != ?", (email, user_id))
+        cursor = await db.execute(
+            "SELECT id FROM users WHERE email = ? AND id != ?", (email, user_id)
+        )
         if not await cursor.fetchone():
             next_email = email
 

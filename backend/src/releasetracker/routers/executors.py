@@ -11,7 +11,7 @@ from ..config import (
     ExecutorServiceBinding,
     normalize_executor_target_ref,
 )
-from ..dependencies import get_current_user, get_executor_scheduler, get_storage
+from ..dependencies import get_current_admin_user, get_executor_scheduler, get_storage
 from ..executor_scheduler import ExecutorScheduler
 from ..executors import (
     DockerRuntimeAdapter,
@@ -464,7 +464,7 @@ async def _validate_executor_payload(
     return executor
 
 
-@router.get("", dependencies=[Depends(get_current_user)])
+@router.get("", dependencies=[Depends(get_current_admin_user)])
 async def get_executors(
     storage: Annotated[SQLiteStorage, Depends(get_storage)], skip: int = 0, limit: int = 20
 ):
@@ -475,7 +475,8 @@ async def get_executors(
 
 
 @router.get(
-    "/runtime-connections/{runtime_connection_id}/targets", dependencies=[Depends(get_current_user)]
+    "/runtime-connections/{runtime_connection_id}/targets",
+    dependencies=[Depends(get_current_admin_user)],
 )
 async def discover_runtime_targets(
     runtime_connection_id: int,
@@ -521,7 +522,7 @@ async def discover_runtime_targets(
     }
 
 
-@router.get("/{executor_id}", dependencies=[Depends(get_current_user)])
+@router.get("/{executor_id}", dependencies=[Depends(get_current_admin_user)])
 async def get_executor_status_detail(
     executor_id: int, storage: Annotated[SQLiteStorage, Depends(get_storage)]
 ):
@@ -556,7 +557,7 @@ async def get_executor_status_detail(
     }
 
 
-@router.get("/{executor_id}/config", dependencies=[Depends(get_current_user)])
+@router.get("/{executor_id}/config", dependencies=[Depends(get_current_admin_user)])
 async def get_executor_config_detail(
     executor_id: int, storage: Annotated[SQLiteStorage, Depends(get_storage)]
 ):
@@ -567,7 +568,7 @@ async def get_executor_config_detail(
     return {**_serialize_executor_config(executor), "current_image": current_image}
 
 
-@router.get("/{executor_id}/history", dependencies=[Depends(get_current_user)])
+@router.get("/{executor_id}/history", dependencies=[Depends(get_current_admin_user)])
 async def get_executor_history(
     executor_id: int,
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
@@ -599,7 +600,7 @@ async def get_executor_history(
     }
 
 
-@router.delete("/{executor_id}/history", dependencies=[Depends(get_current_user)])
+@router.delete("/{executor_id}/history", dependencies=[Depends(get_current_admin_user)])
 async def clear_executor_history(
     executor_id: int,
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
@@ -612,7 +613,7 @@ async def clear_executor_history(
     return {"message": "Execution history cleared", "deleted": deleted}
 
 
-@router.post("", dependencies=[Depends(get_current_user)])
+@router.post("", dependencies=[Depends(get_current_admin_user)])
 async def create_executor(
     executor_data: dict[str, Any],
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
@@ -643,7 +644,7 @@ async def create_executor(
         raise HTTPException(status_code=400, detail=f"Create failed: {exc}") from exc
 
 
-@router.put("/{executor_id}", dependencies=[Depends(get_current_user)])
+@router.put("/{executor_id}", dependencies=[Depends(get_current_admin_user)])
 async def update_executor(
     executor_id: int,
     executor_data: dict[str, Any],
@@ -675,7 +676,7 @@ async def update_executor(
         raise HTTPException(status_code=400, detail=f"Update failed: {exc}") from exc
 
 
-@router.delete("/{executor_id}", dependencies=[Depends(get_current_user)])
+@router.delete("/{executor_id}", dependencies=[Depends(get_current_admin_user)])
 async def delete_executor(
     executor_id: int,
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
@@ -692,7 +693,7 @@ async def delete_executor(
     return {"message": f"Executor {executor.name} deleted"}
 
 
-@router.post("/{executor_id}/run", dependencies=[Depends(get_current_user)])
+@router.post("/{executor_id}/run", dependencies=[Depends(get_current_admin_user)])
 async def run_executor(
     executor_id: int,
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
@@ -746,7 +747,7 @@ def _serialize_run_history(run) -> dict[str, Any]:
 
 @router.get(
     "/{executor_id}/snapshots",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_current_admin_user)],
 )
 async def list_executor_snapshots(
     executor_id: int,
@@ -774,7 +775,7 @@ async def list_executor_snapshots(
 
 @router.get(
     "/{executor_id}/snapshots/{snapshot_id}",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_current_admin_user)],
 )
 async def get_executor_snapshot_detail(
     executor_id: int,
@@ -798,7 +799,7 @@ async def get_executor_snapshot_detail(
 
 @router.delete(
     "/{executor_id}/snapshots/{snapshot_id}",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_current_admin_user)],
 )
 async def delete_executor_snapshot(
     executor_id: int,
@@ -829,7 +830,7 @@ async def delete_executor_snapshot(
 
 @router.post(
     "/{executor_id}/snapshots/{snapshot_id}/lock",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_current_admin_user)],
 )
 async def lock_executor_snapshot(
     executor_id: int,
@@ -852,7 +853,7 @@ async def lock_executor_snapshot(
 
 @router.post(
     "/{executor_id}/snapshots/{snapshot_id}/unlock",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_current_admin_user)],
 )
 async def unlock_executor_snapshot(
     executor_id: int,
@@ -875,13 +876,13 @@ async def unlock_executor_snapshot(
 
 @router.post(
     "/{executor_id}/rollback",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_current_admin_user)],
 )
 async def rollback_executor(
     executor_id: int,
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
     scheduler: Annotated[ExecutorScheduler, Depends(get_executor_scheduler)],
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_admin_user)],
     payload: RollbackRequest | None = None,
 ):
     executor = await storage.get_executor_config(executor_id)

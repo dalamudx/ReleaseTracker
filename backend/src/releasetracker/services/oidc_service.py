@@ -1,27 +1,40 @@
-"""OIDC Authentication service"""
+"""OIDC authentication for the explicitly bound single administrator."""
 
+import base64
+import hashlib
 import logging
 import secrets
-import hashlib
-import base64
-import json
-import httpx
 from datetime import datetime
+from urllib.parse import urlencode
 
-from ..storage.sqlite import SQLiteStorage
+import httpx
+from authlib.jose import JoseError, JsonWebToken
+
+from ..models import Session, TokenPair, User
+from ..oidc_models import OIDCIdentity, OIDCProvider, OAuthState
 from ..services.auth import AuthService
 from ..services.jwt_tokens import decode_jwt
-from ..oidc_models import OIDCProvider, OIDCUserInfo
-from ..models import User, Session, TokenPair
+from ..storage.sqlite import SQLiteStorage
 
 logger = logging.getLogger(__name__)
 
+_ALLOWED_ID_TOKEN_ALGORITHMS = [
+    "RS256",
+    "RS384",
+    "RS512",
+    "PS256",
+    "PS384",
+    "PS512",
+    "ES256",
+    "ES384",
+    "ES512",
+]
+_ID_TOKEN_JWT = JsonWebToken(_ALLOWED_ID_TOKEN_ALGORITHMS)
+
 
 def generate_pkce_pair() -> tuple[str, str]:
-    """Generate PKCE code_verifier and code_challenge"""
-    # code_verifier: 43-128 character random URL-safe string
+    """Generate a PKCE verifier and SHA-256 challenge."""
     code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
-    # code_challenge: SHA256(code_verifier) then Base64URL encode
     code_challenge = (
         base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode()).digest())
         .decode()
@@ -32,136 +45,108 @@ def generate_pkce_pair() -> tuple[str, str]:
 
 def _require_user_id(user: User) -> int:
     if user.id is None:
-        raise ValueError("OIDC user must have a persisted id")
+        raise ValueError("OIDC administrator must have a persisted id")
     return user.id
 
 
 class OIDCService:
-    """OIDC Authentication service"""
+    """Validate an OIDC identity and resolve it only to the existing administrator."""
 
     def __init__(self, storage: SQLiteStorage, auth_service: AuthService):
         self.storage = storage
         self.auth_service = auth_service
 
     async def _get_provider_endpoints(self, provider: OIDCProvider) -> OIDCProvider:
-        """Automatically fill endpoint URLs through OIDC Discovery"""
-        if provider.discovery_enabled and provider.issuer_url:
+        """Resolve provider metadata and fail closed on issuer or JWKS drift."""
+        if not provider.issuer_url:
+            raise ValueError("OIDC provider issuer URL is required")
+
+        if provider.discovery_enabled:
             discovery_url = f"{provider.issuer_url.rstrip('/')}/.well-known/openid-configuration"
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
-                    resp = await client.get(discovery_url)
-                    resp.raise_for_status()
-                    config = resp.json()
-                provider.authorization_url = config["authorization_endpoint"]
-                provider.token_url = config["token_endpoint"]
-                provider.userinfo_url = config.get("userinfo_endpoint") or provider.userinfo_url
-                provider.jwks_uri = config.get("jwks_uri") or provider.jwks_uri
-                logger.info(f"OIDC Discovery succeeded: {provider.name}")
-            except Exception as e:
-                logger.warning(f"OIDC Discovery failed ({provider.name}): {e}")
-                if not (provider.authorization_url and provider.token_url):
-                    raise ValueError("OIDC Discovery failed and no manual endpoints configured")
+                    response = await client.get(discovery_url)
+                    response.raise_for_status()
+                    config = response.json()
+            except (httpx.HTTPError, ValueError, KeyError) as exc:
+                logger.warning("OIDC discovery failed for provider=%s", provider.slug)
+                raise ValueError("OIDC discovery failed") from exc
+
+            if config.get("issuer") != provider.issuer_url:
+                raise ValueError("OIDC discovery issuer does not match configured issuer")
+            provider.authorization_url = config.get("authorization_endpoint")
+            provider.token_url = config.get("token_endpoint")
+            provider.jwks_uri = config.get("jwks_uri")
+            logger.info("OIDC discovery succeeded for provider=%s", provider.slug)
+
+        if not provider.authorization_url or not provider.token_url or not provider.jwks_uri:
+            raise ValueError("OIDC authorization, token, and JWKS endpoints are required")
         return provider
 
     async def get_authorization_url(
-        self, provider_slug: str, redirect_uri: str, state: str, code_challenge: str
+        self,
+        provider_slug: str,
+        redirect_uri: str,
+        state: str,
+        code_challenge: str,
+        nonce: str,
     ) -> str:
-        """Generate an OAuth2 authorization URL and store state/PKCE"""
+        """Build a nonce- and PKCE-protected OIDC authorization URL."""
         provider = await self.storage.get_oauth_provider(provider_slug)
         if not provider or not provider.enabled:
             raise ValueError(f"Provider {provider_slug} does not exist or is disabled")
-
         provider = await self._get_provider_endpoints(provider)
-
-        # Get the PKCE verifier from the caller-provided code_verifier
-        # The provided code_challenge was generated by the router layer and stored in the database
-        auth_url = (
-            f"{provider.authorization_url}"
-            f"?response_type=code"
-            f"&client_id={provider.client_id}"
-            f"&redirect_uri={redirect_uri}"
-            f"&scope={provider.scopes}"
-            f"&state={state}"
-            f"&code_challenge={code_challenge}"
-            f"&code_challenge_method=S256"
-        )
-        return auth_url
+        return f"{provider.authorization_url}?{urlencode({'response_type': 'code', 'client_id': provider.client_id, 'redirect_uri': redirect_uri, 'scope': provider.scopes, 'state': state, 'nonce': nonce, 'code_challenge': code_challenge, 'code_challenge_method': 'S256'})}"
 
     async def handle_callback(
         self,
         provider_slug: str,
         code: str,
         redirect_uri: str,
-        code_verifier: str,
+        oauth_state: OAuthState,
         user_agent: str | None = None,
         ip_address: str | None = None,
     ) -> tuple[User, TokenPair]:
-        """Handle OIDC callback: exchange token, fetch user info, create or link user"""
-        provider = await self.storage.get_oauth_provider(provider_slug)
-        if not provider:
-            raise ValueError(f"Provider {provider_slug} does not exist")
+        """Exchange a code, validate its ID token, and issue a local admin session."""
+        if oauth_state.provider_slug != provider_slug:
+            raise ValueError("OIDC state provider does not match callback provider")
 
+        provider = await self.storage.get_oauth_provider(provider_slug)
+        if not provider or not provider.enabled:
+            raise ValueError(f"Provider {provider_slug} does not exist or is disabled")
         provider = await self._get_provider_endpoints(provider)
 
-        # 1. Exchange code for access_token
-        # Most standard OIDC IdPs, such as Authentik and Keycloak, require Basic Auth (client_secret_basic) by default
         token_data = {
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": redirect_uri,
             "client_id": provider.client_id,
-            "code_verifier": code_verifier,
+            "code_verifier": oauth_state.code_verifier,
         }
-        async with httpx.AsyncClient(timeout=15) as http:
-            try:
+        try:
+            async with httpx.AsyncClient(timeout=15) as http:
+                kwargs = {
+                    "data": token_data,
+                    "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+                }
                 if provider.client_secret:
-                    token_resp = await http.post(
-                        str(provider.token_url),
-                        data=token_data,
-                        headers={"Content-Type": "application/x-www-form-urlencoded"},
-                        auth=(provider.client_id, provider.client_secret),
-                    )
-                else:
-                    token_resp = await http.post(
-                        str(provider.token_url),
-                        data=token_data,
-                        headers={"Content-Type": "application/x-www-form-urlencoded"},
-                    )
-                token_resp.raise_for_status()
-                token = token_resp.json()
-            except httpx.HTTPStatusError as e:
-                logger.error(f"Token exchange failed: {e.response.status_code} {e.response.text}")
-                raise ValueError(f"Token exchange failed: {e.response.status_code}")
+                    kwargs["auth"] = (provider.client_id, provider.client_secret)
+                token_response = await http.post(str(provider.token_url), **kwargs)
+                token_response.raise_for_status()
+                token = token_response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("OIDC token exchange failed for provider=%s", provider.slug)
+            raise ValueError("OIDC token exchange failed") from exc
 
-        # 2. Fetch user information
-        userinfo = (
-            self._parse_id_token(token["id_token"], provider_slug)
-            if token.get("id_token")
-            else None
-        )
-        if provider.userinfo_url and token.get("access_token"):
-            async with httpx.AsyncClient(timeout=10) as http:
-                ui_resp = await http.get(
-                    str(provider.userinfo_url),
-                    headers={"Authorization": f"Bearer {token['access_token']}"},
-                )
-                ui_resp.raise_for_status()
-                userinfo_from_endpoint = self._normalize_userinfo(ui_resp.json(), provider_slug)
-                userinfo = self._merge_userinfo(userinfo, userinfo_from_endpoint)
-        if userinfo is None:
-            raise ValueError("OIDC user info missing")
+        id_token = token.get("id_token")
+        if not isinstance(id_token, str) or not id_token:
+            raise ValueError("OIDC ID token is required")
 
-        # 3. Create or link user
-        user = await self._get_or_create_user(userinfo)
-
-        # 4. Generate JWT
+        identity = await self._validate_id_token(id_token, provider, oauth_state.nonce)
+        user = await self._resolve_admin_identity(identity, oauth_state)
         token_pair = self.auth_service._create_token_pair(user)
-
-        # 5. Create a session
-        user_id = _require_user_id(user)
-
         session = Session(
-            user_id=user_id,
+            user_id=_require_user_id(user),
             token_hash=self.auth_service._hash_token(token_pair.access_token),
             refresh_token_hash=self.auth_service._hash_token(token_pair.refresh_token),
             user_agent=user_agent,
@@ -171,94 +156,72 @@ class OIDCService:
             ),
         )
         await self.storage.create_session(session)
-
         return user, token_pair
 
-    def _parse_id_token(self, id_token: str, provider_slug: str) -> OIDCUserInfo:
-        """Parse JWT ID Token without signature verification, only to read claims"""
-        parts = id_token.split(".")
-        if len(parts) != 3:
-            raise ValueError("Invalid ID Token format")
-        payload = parts[1]
-        # Add Base64 padding
-        payload += "=" * (4 - len(payload) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(payload))
-        return OIDCUserInfo(
-            sub=claims["sub"],
-            email=claims.get("email", f"{claims['sub']}@{provider_slug}.local"),
-            email_verified=claims.get("email_verified", False),
-            name=claims.get("name"),
-            preferred_username=claims.get("preferred_username"),
-            picture=claims.get("picture"),
-            provider_slug=provider_slug,
-        )
+    async def _fetch_jwks(self, jwks_uri: str) -> dict:
+        try:
+            async with httpx.AsyncClient(timeout=10) as http:
+                response = await http.get(jwks_uri)
+                response.raise_for_status()
+                jwks = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise ValueError("Unable to retrieve OIDC signing keys") from exc
+        if not isinstance(jwks, dict) or not isinstance(jwks.get("keys"), list):
+            raise ValueError("OIDC JWKS is invalid")
+        return jwks
 
-    def _normalize_userinfo(self, data: dict, provider_slug: str) -> OIDCUserInfo:
-        """Normalize data returned by the userinfo endpoint"""
-        return OIDCUserInfo(
-            sub=data["sub"],
-            email=data.get("email", f"{data['sub']}@{provider_slug}.local"),
-            email_verified=data.get("email_verified", False),
-            name=data.get("name"),
-            preferred_username=data.get("preferred_username"),
-            picture=data.get("picture"),
-            provider_slug=provider_slug,
-        )
-
-    def _merge_userinfo(
-        self,
-        primary: OIDCUserInfo | None,
-        fallback: OIDCUserInfo,
-    ) -> OIDCUserInfo:
-        if primary is None:
-            return fallback
-        return OIDCUserInfo(
-            sub=primary.sub,
-            email=fallback.email or primary.email,
-            email_verified=fallback.email_verified or primary.email_verified,
-            name=fallback.name or primary.name,
-            preferred_username=fallback.preferred_username or primary.preferred_username,
-            picture=fallback.picture or primary.picture,
-            provider_slug=primary.provider_slug,
-        )
-
-    async def _get_or_create_user(self, userinfo: OIDCUserInfo) -> User:
-        """Get or create an OIDC user with three-step matching"""
-        username = userinfo.preferred_username or userinfo.name or userinfo.email.split("@")[0]
-
-        # 1. Match by OIDC sub
-        existing = await self.storage.get_user_by_oauth(userinfo.provider_slug, userinfo.sub)
-        if existing:
-            await self.storage.update_user_oidc_info(
-                _require_user_id(existing),
-                username=username,
-                email=userinfo.email,
-                avatar_url=userinfo.picture,
+    async def _validate_id_token(
+        self, id_token: str, provider: OIDCProvider, expected_nonce: str
+    ) -> OIDCIdentity:
+        """Validate signature and all identity-bearing OIDC claims before reading them."""
+        if not provider.issuer_url or not provider.jwks_uri:
+            raise ValueError("OIDC issuer and JWKS endpoint are required")
+        jwks = await self._fetch_jwks(str(provider.jwks_uri))
+        claims_options = {
+            "iss": {"essential": True, "value": provider.issuer_url},
+            "sub": {"essential": True},
+            "aud": {"essential": True, "value": provider.client_id},
+            "exp": {"essential": True},
+            "iat": {"essential": True},
+            "nonce": {"essential": True, "value": expected_nonce},
+        }
+        try:
+            claims = _ID_TOKEN_JWT.decode(
+                id_token,
+                jwks,
+                claims_options=claims_options,
             )
-            return (
-                await self.storage.get_user_by_oauth(userinfo.provider_slug, userinfo.sub)
-                or existing
-            )
+            claims.validate()
+        except (JoseError, KeyError, TypeError, ValueError) as exc:
+            raise ValueError("OIDC ID token validation failed") from exc
 
-        # 2. Match by username and link automatically
-        by_username = await self.storage.get_user_by_username(username)
-        if by_username:
-            await self.storage.link_oauth_to_user(
-                _require_user_id(by_username),
-                userinfo.provider_slug,
-                userinfo.sub,
-                userinfo.picture,
-            )
-            return by_username
+        subject = claims.get("sub")
+        if not isinstance(subject, str) or not subject.strip():
+            raise ValueError("OIDC subject must be non-empty")
+        return OIDCIdentity(issuer=provider.issuer_url, subject=subject.strip())
 
-        # 3. Create a new user
-        user = User(
-            username=username,
-            email=userinfo.email,
-            password_hash=None,  # OIDC users have no password
-            oauth_provider=userinfo.provider_slug,
-            oauth_sub=userinfo.sub,
-            avatar_url=userinfo.picture,
-            status="active",
-        )
-        return await self.storage.create_user(user)
+    async def _resolve_admin_identity(
+        self, identity: OIDCIdentity, oauth_state: OAuthState
+    ) -> User:
+        """Bind or compare the validated identity, then load the existing admin user."""
+        try:
+            admin_user_id = await self.storage.get_admin_user_id()
+        except ValueError as exc:
+            raise ValueError("Administrator identity is not configured") from exc
+        if admin_user_id is None:
+            raise ValueError("Administrator identity is not configured")
+
+        user = await self.storage.get_user_by_id(admin_user_id)
+        if user is None or user.status != "active":
+            raise ValueError("Administrator account is unavailable")
+
+        requested = (identity.issuer, identity.subject)
+        if oauth_state.flow_type == "bind":
+            if oauth_state.initiating_admin_user_id != admin_user_id:
+                raise ValueError("OIDC binding administrator no longer matches")
+            await self.storage.bind_admin_oidc_identity(*requested)
+        else:
+            binding = await self.storage.get_admin_oidc_binding()
+            if binding is None or binding != requested:
+                raise ValueError("OIDC identity is not bound to the administrator")
+        return user

@@ -1,20 +1,42 @@
 """OIDC provider admin routes; admin only"""
 
 import logging
+import secrets
 from typing import Annotated
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Depends, status
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Depends, Request, status
+from pydantic import BaseModel, ConfigDict
 
 from ..storage.sqlite import SQLiteStorage
 from ..oidc_models import OIDCProvider
 from ..models import User
-from ..dependencies import get_storage, get_current_admin_user
+from ..dependencies import get_auth_service, get_storage, get_current_admin_user
+from ..services.auth import AuthService
+from ..services.oidc_service import OIDCService, generate_pkce_pair
+from .oidc import _build_public_url, get_oidc_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/oidc-providers", tags=["OIDC Management"])
+
+
+class AdminBindingPasswordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: str
+
+
+class AdminBindingStatus(BaseModel):
+    bound: bool
+    issuer: str | None = None
+    subject: str | None = None
+    provider_id: int | None = None
+    provider_slug: str | None = None
+
+
+class AdminBindingAuthorizeResponse(BaseModel):
+    authorization_url: str
 
 
 class CreateOIDCProviderRequest(BaseModel):
@@ -127,6 +149,106 @@ async def list_oidc_providers_admin(
     return [_provider_to_response(p) for p in providers]
 
 
+@router.get("/admin-binding", response_model=AdminBindingStatus)
+async def get_admin_binding_status(
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    _: Annotated[User, Depends(get_current_admin_user)],
+):
+    """Return the singleton administrator OIDC binding status."""
+    binding = await storage.get_admin_oidc_binding()
+    if binding is None:
+        return AdminBindingStatus(bound=False)
+
+    issuer, subject = binding
+    provider = next(
+        (
+            item
+            for item in await storage.list_oauth_providers(enabled_only=False)
+            if item.issuer_url == issuer
+        ),
+        None,
+    )
+    return AdminBindingStatus(
+        bound=True,
+        issuer=issuer,
+        subject=subject,
+        provider_id=provider.id if provider else None,
+        provider_slug=provider.slug if provider else None,
+    )
+
+
+@router.post(
+    "/{provider_id}/admin-binding/authorize",
+    response_model=AdminBindingAuthorizeResponse,
+)
+async def authorize_admin_binding(
+    provider_id: int,
+    req: AdminBindingPasswordRequest,
+    request: Request,
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    oidc_service: Annotated[OIDCService, Depends(get_oidc_service)],
+    current_user: Annotated[User, Depends(get_current_admin_user)],
+):
+    """Re-authenticate the admin and start a nonce-protected OIDC binding flow."""
+    if current_user.id is None or not auth_service.verify_password(
+        current_user, req.current_password
+    ):
+        raise HTTPException(status_code=401, detail="Current password is invalid")
+
+    provider = await storage.get_oauth_provider_by_id(provider_id)
+    if not provider or not provider.enabled:
+        raise HTTPException(status_code=404, detail="OIDC provider not found or disabled")
+    if not provider.issuer_url:
+        raise HTTPException(status_code=400, detail="OIDC provider issuer URL is required")
+
+    existing_binding = await storage.get_admin_oidc_binding()
+    if existing_binding is not None and existing_binding[0] != provider.issuer_url:
+        raise HTTPException(
+            status_code=409,
+            detail="Unbind the current OIDC administrator identity before binding another issuer",
+        )
+
+    state = secrets.token_urlsafe(32)
+    nonce = secrets.token_urlsafe(32)
+    code_verifier, code_challenge = generate_pkce_pair()
+    await storage.save_oauth_state(
+        state,
+        provider.slug,
+        code_verifier,
+        nonce,
+        "bind",
+        current_user.id,
+    )
+    callback_path = request.app.url_path_for("oidc_callback", provider_slug=provider.slug)
+    redirect_uri = await _build_public_url(storage, request, callback_path)
+    try:
+        authorization_url = await oidc_service.get_authorization_url(
+            provider.slug,
+            redirect_uri,
+            state,
+            code_challenge,
+            nonce,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return AdminBindingAuthorizeResponse(authorization_url=authorization_url)
+
+
+@router.post("/admin-binding/unbind")
+async def unbind_admin_binding(
+    req: AdminBindingPasswordRequest,
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    current_user: Annotated[User, Depends(get_current_admin_user)],
+):
+    """Remove the singleton binding after local-password re-authentication."""
+    if not auth_service.verify_password(current_user, req.current_password):
+        raise HTTPException(status_code=401, detail="Current password is invalid")
+    await storage.unbind_admin_oidc_identity()
+    return {"message": "OIDC administrator identity unbound"}
+
+
 @router.get("/{provider_id}")
 async def get_oidc_provider(
     provider_id: int,
@@ -151,6 +273,13 @@ async def update_oidc_provider(
     existing = await storage.get_oauth_provider_by_id(provider_id)
     if not existing:
         raise HTTPException(status_code=404, detail="OIDC provider not found")
+
+    binding = await storage.get_admin_oidc_binding()
+    if binding is not None and binding[0] == existing.issuer_url:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Unbind the OIDC administrator identity before changing its provider",
+        )
 
     # Merge updated fields
     updated = OIDCProvider(
@@ -194,5 +323,11 @@ async def delete_oidc_provider(
     existing = await storage.get_oauth_provider_by_id(provider_id)
     if not existing:
         raise HTTPException(status_code=404, detail="OIDC provider not found")
+    binding = await storage.get_admin_oidc_binding()
+    if binding is not None and binding[0] == existing.issuer_url:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Unbind the OIDC administrator identity before deleting its provider",
+        )
     await storage.delete_oauth_provider(provider_id)
     return {"message": "OIDC provider deleted"}

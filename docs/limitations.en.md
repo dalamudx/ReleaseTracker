@@ -38,10 +38,10 @@ Rollback calls for these targets return 404 when no snapshot is available. Recov
 
 ## 4. Authentication and accounts
 
-- **Key rotation is restricted to accounts whose username equals `admin`.** This is a hard-coded check in `get_current_admin_user`, not a configurable role.
-  - Deleting or renaming the default `admin` account takes away the ability to rotate keys via the UI; recovery means hand-editing the database.
-- **There are no roles or fine-grained permissions.** Every authenticated user sees the same data and can perform the same actions (except key rotation).
+- **Single administrator, not RBAC.** `system.admin_user_id` identifies one stable administrator. All business resources and system-management operations are restricted to that user; existing non-administrator rows can use only self-service authentication endpoints. Registration is disabled.
+- **No roles or tenants.** The stable administrator ID is intentionally not a configurable role system. Renaming the administrator does not transfer access; a malformed or dangling reference fails startup closed.
 - **Bootstrap administrator password.** Fresh installations generate a random one-time password and record it once at INFO level; existing installations keep their current credentials. Deleting the bootstrap administrator causes subsequent startup to fail instead of generating a new password. Restrict log access and change the password immediately after first login.
+- **Explicit OIDC binding.** OIDC accepts one validated issuer + subject bound to the existing administrator and never creates users. Bind and unbind require the current local password, which must be retained as the recovery path.
 
 ## 5. Supply-chain checks
 
@@ -89,7 +89,7 @@ These checks run in CI / release workflows and do not require deployers to edit 
 - There is no public API versioning strategy. `/api` is implicit v1. Breaking changes are infrequent, but surface through the README roadmap and release notes.
 - There is no built-in audit log. Run histories (`ExecutorRunHistory`, `SourceFetchRun`) provide most of the traceability.
 - Only zh and en are available in the UI.
-- OIDC is used for user sign-in only; the API itself does not accept OIDC-issued tokens (it expects local JWTs).
+- OIDC is used only to obtain a local JWT session for the bound administrator; the API does not accept IdP-issued tokens directly.
 - The password policy is minimal (length ≥ 6). For stronger policies, integrate via an OIDC IdP that enforces them.
 
 ---

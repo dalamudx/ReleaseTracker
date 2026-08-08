@@ -13,7 +13,12 @@ from releasetracker.services.auth import (
     BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY,
     pwd_context,
 )
-from releasetracker.storage.sqlite import SYSTEM_BASE_URL_SETTING_KEY
+from releasetracker.storage.sqlite import (
+    ADMIN_OIDC_ISSUER_SETTING_KEY,
+    ADMIN_OIDC_SUBJECT_SETTING_KEY,
+    ADMIN_USER_ID_SETTING_KEY,
+    SYSTEM_BASE_URL_SETTING_KEY,
+)
 
 BOOTSTRAP_LOG_PREFIX = "Bootstrap admin user created; one-time bootstrap admin password:"
 
@@ -26,7 +31,13 @@ async def _remove_admin_user(storage) -> None:
 
 async def _reset_bootstrap_state(storage) -> None:
     await _remove_admin_user(storage)
-    await storage.delete_setting(BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY)
+    for key in (
+        ADMIN_USER_ID_SETTING_KEY,
+        BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY,
+        ADMIN_OIDC_ISSUER_SETTING_KEY,
+        ADMIN_OIDC_SUBJECT_SETTING_KEY,
+    ):
+        await storage.delete_setting(key)
 
 
 @pytest.mark.asyncio
@@ -52,6 +63,7 @@ async def test_ensure_admin_user_fresh_database_creates_random_password_once(
     assert not pwd_context.verify("admin", admin.password_hash)
     assert token_urlsafe_calls == [32]
     assert await storage.get_setting(BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY) == "true"
+    assert await storage.get_admin_user_id() == admin.id
     assert [
         record.getMessage()
         for record in caplog.records
@@ -98,6 +110,7 @@ async def test_ensure_admin_user_existing_admin_is_unchanged(
     existing_admin = await storage.get_user_by_username("admin")
     assert existing_admin is not None
     await storage.delete_setting(BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY)
+    await storage.delete_setting(ADMIN_USER_ID_SETTING_KEY)
 
     def fail_if_password_generated(_nbytes):
         pytest.fail("existing admin must not generate a bootstrap password")
@@ -122,6 +135,75 @@ async def test_ensure_admin_user_existing_admin_is_unchanged(
 
 
 @pytest.mark.asyncio
+async def test_stable_admin_id_survives_rename_and_username_reuse(client, auth_service, storage):
+    admin_id = await storage.get_admin_user_id()
+    assert admin_id is not None
+    db = await storage._get_connection()
+    await db.execute("UPDATE users SET username = ? WHERE id = ?", ("renamed-admin", admin_id))
+    await db.commit()
+    impostor = await storage.create_user(
+        User(
+            username="admin",
+            email="impostor@example.com",
+            password_hash=pwd_context.hash("impostor-password"),
+        )
+    )
+
+    stable_login = client.post(
+        "/api/auth/token",
+        data={"username": "renamed-admin", "password": "admin"},
+    )
+    assert stable_login.status_code == 200
+    stable_response = client.get(
+        "/api/settings",
+        headers={"Authorization": f"Bearer {stable_login.json()['access_token']}"},
+    )
+    assert stable_response.status_code == 200
+
+    impostor_login = client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "impostor-password"},
+    )
+    assert impostor_login.status_code == 200
+    impostor_response = client.get(
+        "/api/settings",
+        headers={"Authorization": f"Bearer {impostor_login.json()['access_token']}"},
+    )
+    assert impostor_response.status_code == 403
+    assert impostor.id != admin_id
+
+
+@pytest.mark.asyncio
+async def test_admin_identity_settings_are_hidden_and_immutable_through_api(authed_client, storage):
+    admin_user_id = await storage.get_admin_user_id()
+    assert admin_user_id is not None
+
+    list_response = authed_client.get("/api/settings")
+    assert list_response.status_code == 200
+    assert ADMIN_USER_ID_SETTING_KEY not in {item["key"] for item in list_response.json()}
+
+    update_response = authed_client.post(
+        "/api/settings",
+        json={"key": ADMIN_USER_ID_SETTING_KEY, "value": "999999"},
+    )
+    delete_response = authed_client.delete(f"/api/settings/{ADMIN_USER_ID_SETTING_KEY}")
+
+    assert update_response.status_code == 403
+    assert delete_response.status_code == 403
+    assert await storage.get_admin_user_id() == admin_user_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored_value", ["not-an-id", "0", "999999"])
+async def test_ensure_admin_user_invalid_reference_fails_closed(
+    auth_service, storage, stored_value
+):
+    await storage.set_setting(ADMIN_USER_ID_SETTING_KEY, stored_value)
+    with pytest.raises(RuntimeError):
+        await auth_service.ensure_admin_user()
+
+
+@pytest.mark.asyncio
 async def test_ensure_admin_user_deleted_bootstrap_admin_fails_closed(
     auth_service, storage, monkeypatch, caplog
 ):
@@ -143,7 +225,7 @@ async def test_ensure_admin_user_deleted_bootstrap_admin_fails_closed(
         "releasetracker.services.auth.secrets.token_urlsafe", fail_if_password_generated
     )
 
-    with pytest.raises(RuntimeError, match="admin user is missing"):
+    with pytest.raises(RuntimeError, match="does not reference an existing user"):
         await auth_service.ensure_admin_user()
 
     assert await storage.get_user_by_username("admin") is None
@@ -152,51 +234,44 @@ async def test_ensure_admin_user_deleted_bootstrap_admin_fails_closed(
 
 
 @pytest.mark.asyncio
-async def test_admin_can_register_user(client, auth_service):
-    """管理员可以创建新用户"""
-    # 1. 确保管理员用户存在
-    await auth_service.ensure_admin_user()
+@pytest.mark.parametrize("authenticated_as", ["anonymous", "nonadmin", "admin"])
+async def test_register_is_disabled_for_every_caller(
+    client, auth_service, storage, authenticated_as
+):
+    headers = {}
+    if authenticated_as != "anonymous":
+        username = "admin" if authenticated_as == "admin" else "authtester"
+        password = "admin" if authenticated_as == "admin" else "password123"
+        login = client.post("/api/auth/token", data={"username": username, "password": password})
+        assert login.status_code == 200
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
 
-    # 2. 管理员登录
-    response = client.post("/api/auth/token", data={"username": "admin", "password": "admin"})
-    assert response.status_code == 200
-    admin_token = response.json()["access_token"]
-
-    # 3. 管理员创建新用户
     response = client.post(
         "/api/auth/register",
-        json={"username": "tester", "email": "tester@example.com", "password": "password123"},
-        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"username": "blocked", "email": "blocked@example.com", "password": "password123"},
+        headers=headers,
     )
-    assert response.status_code == 201
-    data = response.json()
-    assert data["username"] == "tester"
-    assert "id" in data
+    expected_status = 401 if authenticated_as == "anonymous" else 403
+    assert response.status_code == expected_status
+    assert await storage.get_user_by_username("blocked") is None
 
-    # 4. 新用户可以登录
-    response = client.post(
-        "/api/auth/token", data={"username": "tester", "password": "password123"}
-    )
-    assert response.status_code == 200
-    token_data = response.json()
-    assert "access_token" in token_data
-    token = token_data["access_token"]
+    with pytest.raises(ValueError, match="Registration is disabled"):
+        from releasetracker.models import RegisterRequest
 
-    # 5. 新用户获取信息
-    response = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
-    assert response.status_code == 200
-    user_data = response.json()
-    assert user_data["username"] == "tester"
+        await auth_service.register(
+            RegisterRequest(
+                username="blocked-service",
+                email="blocked-service@example.com",
+                password="password123",
+            )
+        )
 
 
 @pytest.mark.asyncio
-async def test_register_requires_auth(client):
-    """未认证用户不能注册"""
-    response = client.post(
-        "/api/auth/register",
-        json={"username": "unauthorized", "email": "unauth@example.com", "password": "password123"},
-    )
-    assert response.status_code == 401
+async def test_local_password_login_remains_available_after_oidc_binding(client, storage):
+    await storage.bind_admin_oidc_identity("https://issuer.example.com", "subject-1")
+    response = client.post("/api/auth/token", data={"username": "admin", "password": "admin"})
+    assert response.status_code == 200
 
 
 @pytest.mark.asyncio
@@ -342,15 +417,17 @@ async def test_oidc_authorize_uses_configured_base_url(client, storage):
             slug="mock",
             client_id="client-id",
             client_secret="secret",
+            issuer_url="https://idp.example.com",
             authorization_url="https://idp.example.com/authorize",
             token_url="https://idp.example.com/token",
-            userinfo_url="https://idp.example.com/userinfo",
+            jwks_uri="https://idp.example.com/jwks",
             discovery_enabled=False,
             enabled=True,
         )
     )
     assert provider.slug == "mock"
     await storage.set_setting(SYSTEM_BASE_URL_SETTING_KEY, "https://example.com/releasetracker")
+    await storage.bind_admin_oidc_identity("https://idp.example.com", "admin-subject")
 
     response = client.get("/api/auth/oidc/mock/authorize", follow_redirects=False)
 
@@ -358,40 +435,7 @@ async def test_oidc_authorize_uses_configured_base_url(client, storage):
     redirect = urlparse(response.headers["location"])
     params = parse_qs(redirect.query)
     assert params["redirect_uri"] == ["https://example.com/releasetracker/auth/oidc/mock/callback"]
-
-
-@pytest.mark.asyncio
-async def test_existing_oidc_user_display_fields_are_synchronized(storage):
-    from releasetracker.services.oidc_service import OIDCService
-
-    existing_user = await storage.create_user(
-        User(
-            username="old-subject-name",
-            email="old@example.com",
-            password_hash="oidc",
-            oauth_provider="authentik",
-            oauth_sub="subject-1",
-            avatar_url="https://example.com/old.png",
-        )
-    )
-    oidc_service = OIDCService(storage, auth_service=None)  # type: ignore[arg-type]
-    userinfo = oidc_service._normalize_userinfo(
-        {
-            "sub": "subject-1",
-            "email": "new@example.com",
-            "email_verified": True,
-            "name": "Display Name",
-            "picture": "https://example.com/new.png",
-        },
-        "authentik",
-    )
-
-    user = await oidc_service._get_or_create_user(userinfo)
-
-    assert user.id == existing_user.id
-    assert user.username == "Display Name"
-    assert user.email == "new@example.com"
-    assert user.avatar_url == "https://example.com/new.png"
+    assert params["nonce"][0]
 
 
 @pytest.mark.asyncio
@@ -401,7 +445,13 @@ async def test_oidc_callback_redirect_includes_refresh_token_payload(client, aut
     assert user is not None
 
     await storage.set_setting(SYSTEM_BASE_URL_SETTING_KEY, "https://example.com/releasetracker")
-    await storage.save_oauth_state("test-state", "mock", "verifier")
+    await storage.save_oauth_state(
+        "test-state",
+        "mock",
+        "verifier",
+        "test-nonce",
+        "login",
+    )
 
     class MockOIDCService:
         async def handle_callback(self, **kwargs):

@@ -42,7 +42,7 @@ ReleaseTracker 是一款轻量级、可配置的版本追踪与更新编排工�
 - **聚合追踪器**：单个追踪器可绑定多个版本源，按发布渠道规则筛选、归并与展示。
 - **执行器编排**：为容器、Compose Project、Portainer Stack、Kubernetes Workload、Helm Release 提供目标发现、绑定、手动 / 定时执行、维护窗口与执行历史。
 - **快照与回滚（部分执行器）**：完整运行时配置快照 / 恢复用于 Docker / Podman 的破坏性重建目标：单容器与 Compose 分组更新。Portainer Stack、Kubernetes Workload、Helm Release 以声明式更新、版本历史或运行历史为主，不作为 ReleaseTracker 管理的完整运行时配置快照。
-- **安全**：本地用户 + JWT + OIDC；敏感数据使用 Fernet 加密；系统密钥可轮换。
+- **安全**：稳定的单一管理员 + JWT + 显式绑定的 OIDC 身份；敏感数据使用 Fernet 加密；系统密钥可轮换。
 - **Web UI 配置**：时区、日志级别、版本历史保留、BASE URL、密钥轮换等运行参数均可在浏览器中完成，无需环境变量。
 
 ## 下一步

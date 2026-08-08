@@ -5,7 +5,7 @@ from typing import Annotated, Any
 import yaml
 from fastapi import APIRouter, Depends, HTTPException
 from ..config import RuntimeConnectionConfig
-from ..dependencies import get_current_user, get_storage
+from ..dependencies import get_current_admin_user, get_storage
 from ..executors.kubernetes import KubernetesRuntimeAdapter
 from ..executors.portainer import PortainerRuntimeAdapter
 from ..services.runtime_credentials import materialize_runtime_connection_credentials
@@ -123,17 +123,23 @@ async def _build_portainer_endpoint_discovery_config(
 
     return RuntimeConnectionConfig(
         id=runtime_connection_id if isinstance(runtime_connection_id, int) else None,
-        name=runtime_connection_data.get("name", existing.name if existing else "portainer-discovery"),
+        name=runtime_connection_data.get(
+            "name", existing.name if existing else "portainer-discovery"
+        ),
         type=runtime_connection_data.get("type", existing.type if existing else "portainer"),
         enabled=runtime_connection_data.get("enabled", existing.enabled if existing else True),
         config=config,
-        credential_id=runtime_connection_data.get("credential_id", existing.credential_id if existing else None),
+        credential_id=runtime_connection_data.get(
+            "credential_id", existing.credential_id if existing else None
+        ),
         secrets={},
-        description=runtime_connection_data.get("description", existing.description if existing else None),
+        description=runtime_connection_data.get(
+            "description", existing.description if existing else None
+        ),
     )
 
 
-@router.get("", dependencies=[Depends(get_current_user)])
+@router.get("", dependencies=[Depends(get_current_admin_user)])
 async def get_runtime_connections(
     storage: Annotated[SQLiteStorage, Depends(get_storage)], skip: int = 0, limit: int = 20
 ):
@@ -149,7 +155,7 @@ async def get_runtime_connections(
     }
 
 
-@router.get("/{runtime_connection_id}", dependencies=[Depends(get_current_user)])
+@router.get("/{runtime_connection_id}", dependencies=[Depends(get_current_admin_user)])
 async def get_runtime_connection(
     runtime_connection_id: int, storage: Annotated[SQLiteStorage, Depends(get_storage)]
 ):
@@ -159,7 +165,7 @@ async def get_runtime_connection(
     return await _serialize_runtime_connection(storage, runtime_connection)
 
 
-@router.post("", dependencies=[Depends(get_current_user)])
+@router.post("", dependencies=[Depends(get_current_admin_user)])
 async def create_runtime_connection(
     runtime_connection_data: dict[str, Any],
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
@@ -167,7 +173,9 @@ async def create_runtime_connection(
     try:
         name = runtime_connection_data.get("name")
         if not isinstance(name, str) or not name.strip():
-            raise HTTPException(status_code=400, detail="Create failed: name must be a non-empty string")
+            raise HTTPException(
+                status_code=400, detail="Create failed: name must be a non-empty string"
+            )
 
         existing = await storage.get_runtime_connection_by_name(name)
         if existing:
@@ -187,7 +195,7 @@ async def create_runtime_connection(
         raise HTTPException(status_code=400, detail=f"Create failed: {str(e)}")
 
 
-@router.put("/{runtime_connection_id}", dependencies=[Depends(get_current_user)])
+@router.put("/{runtime_connection_id}", dependencies=[Depends(get_current_admin_user)])
 async def update_runtime_connection(
     runtime_connection_id: int,
     runtime_connection_data: dict[str, Any],
@@ -202,7 +210,9 @@ async def update_runtime_connection(
         if new_name != existing.name:
             same_name = await storage.get_runtime_connection_by_name(new_name)
             if same_name and same_name.id != runtime_connection_id:
-                raise HTTPException(status_code=400, detail="Runtime connection name already exists")
+                raise HTTPException(
+                    status_code=400, detail="Runtime connection name already exists"
+                )
 
         runtime_connection = RuntimeConnectionConfig(
             id=runtime_connection_id,
@@ -226,7 +236,7 @@ async def update_runtime_connection(
         raise HTTPException(status_code=400, detail=f"Update failed: {str(e)}")
 
 
-@router.delete("/{runtime_connection_id}", dependencies=[Depends(get_current_user)])
+@router.delete("/{runtime_connection_id}", dependencies=[Depends(get_current_admin_user)])
 async def delete_runtime_connection(
     runtime_connection_id: int, storage: Annotated[SQLiteStorage, Depends(get_storage)]
 ):
@@ -238,7 +248,7 @@ async def delete_runtime_connection(
     return {"message": f"Runtime connection {runtime_connection.name} deleted"}
 
 
-@router.post("/discover-kubernetes-namespaces", dependencies=[Depends(get_current_user)])
+@router.post("/discover-kubernetes-namespaces", dependencies=[Depends(get_current_admin_user)])
 async def discover_kubernetes_namespaces(
     runtime_connection_data: dict[str, Any],
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
@@ -248,7 +258,10 @@ async def discover_kubernetes_namespaces(
             storage, runtime_connection_data
         )
         if runtime_connection.type != "kubernetes":
-            raise HTTPException(status_code=400, detail="Namespace discovery is only supported for Kubernetes runtime connections")
+            raise HTTPException(
+                status_code=400,
+                detail="Namespace discovery is only supported for Kubernetes runtime connections",
+            )
 
         runtime_connection = await materialize_runtime_connection_credentials(
             storage,
@@ -264,7 +277,7 @@ async def discover_kubernetes_namespaces(
     return {"items": namespaces}
 
 
-@router.post("/discover-portainer-endpoints", dependencies=[Depends(get_current_user)])
+@router.post("/discover-portainer-endpoints", dependencies=[Depends(get_current_admin_user)])
 async def discover_portainer_endpoints(
     runtime_connection_data: dict[str, Any],
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
@@ -274,7 +287,10 @@ async def discover_portainer_endpoints(
             storage, runtime_connection_data
         )
         if runtime_connection.type != "portainer":
-            raise HTTPException(status_code=400, detail="Endpoint discovery is only supported for Portainer runtime connections")
+            raise HTTPException(
+                status_code=400,
+                detail="Endpoint discovery is only supported for Portainer runtime connections",
+            )
 
         runtime_connection = await materialize_runtime_connection_credentials(
             storage,

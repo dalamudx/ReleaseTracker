@@ -37,7 +37,14 @@ async def list_oidc_providers(
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
 ):
     """List enabled OIDC providers for login page buttons"""
-    providers = await storage.list_oauth_providers(enabled_only=True)
+    binding = await storage.get_admin_oidc_binding()
+    if binding is None:
+        return []
+    providers = [
+        provider
+        for provider in await storage.list_oauth_providers(enabled_only=True)
+        if provider.issuer_url == binding[0]
+    ]
     # Do not return sensitive configuration fields
     return [
         {
@@ -62,13 +69,23 @@ async def oidc_authorize(
     provider = await storage.get_oauth_provider(provider_slug)
     if not provider or not provider.enabled:
         raise HTTPException(status_code=404, detail="OIDC provider does not exist or is disabled")
+    binding = await storage.get_admin_oidc_binding()
+    if binding is None or provider.issuer_url != binding[0]:
+        raise HTTPException(
+            status_code=403, detail="OIDC provider is not bound to the administrator"
+        )
 
-    # Generate state for CSRF protection and a PKCE pair
+    # Generate state, nonce, and a PKCE pair.
     state = secrets.token_urlsafe(32)
+    nonce = secrets.token_urlsafe(32)
     code_verifier, code_challenge = generate_pkce_pair()
-
-    # Store state and PKCE verifier in the database with a 10-minute TTL
-    await storage.save_oauth_state(state, provider_slug, code_verifier)
+    await storage.save_oauth_state(
+        state,
+        provider_slug,
+        code_verifier,
+        nonce,
+        "login",
+    )
 
     callback_path = request.app.url_path_for("oidc_callback", provider_slug=provider_slug)
     redirect_uri = await _build_public_url(storage, request, callback_path)
@@ -76,7 +93,7 @@ async def oidc_authorize(
 
     # Generate the authorization URL
     auth_url = await oidc_service.get_authorization_url(
-        provider_slug, redirect_uri, state, code_challenge
+        provider_slug, redirect_uri, state, code_challenge, nonce
     )
 
     return RedirectResponse(url=auth_url)
@@ -102,7 +119,9 @@ async def oidc_callback(
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
 
     if oauth_state.provider_slug != provider_slug:
-        logger.warning(f"OIDC state provider mismatch: {oauth_state.provider_slug} != {provider_slug}")
+        logger.warning(
+            f"OIDC state provider mismatch: {oauth_state.provider_slug} != {provider_slug}"
+        )
         raise HTTPException(status_code=400, detail="Provider mismatch")
 
     # Check whether state is expired
@@ -115,13 +134,13 @@ async def oidc_callback(
     callback_path = request.app.url_path_for("oidc_callback", provider_slug=provider_slug)
     redirect_uri = await _build_public_url(storage, request, callback_path)
 
-    # 4. Exchange the code for tokens, fetch user info, and create or link the user
+    # 4. Exchange the code, validate the ID token, and resolve the stable administrator.
     try:
         user, token_pair = await oidc_service.handle_callback(
             provider_slug=provider_slug,
             code=code,
             redirect_uri=redirect_uri,
-            code_verifier=oauth_state.code_verifier,
+            oauth_state=oauth_state,
             user_agent=request.headers.get("user-agent"),
             ip_address=request.client.host if request.client else None,
         )

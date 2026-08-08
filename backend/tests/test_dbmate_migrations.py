@@ -5,6 +5,7 @@ import sqlite3
 from db_helpers import (
     apply_dbmate_migrations,
     dbmate_migrations_dir,
+    iter_dbmate_up_sql,
     rollback_dbmate_migrations,
 )
 
@@ -45,6 +46,23 @@ def test_apply_dbmate_migrations_builds_full_schema(tmp_path):
         assert "executor_desired_state" in tables
         assert "schema_migrations" in tables
 
+        oauth_state_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(oauth_states)").fetchall()
+        }
+        assert oauth_state_columns == {
+            "state",
+            "provider_slug",
+            "code_verifier",
+            "nonce",
+            "flow_type",
+            "initiating_admin_user_id",
+            "expires_at",
+        }
+        assert (
+            conn.execute("SELECT value FROM settings WHERE key = 'system.admin_user_id'").fetchone()
+            is None
+        )
+
         executor_run_history_columns = {
             row[1] for row in conn.execute("PRAGMA table_info(executor_run_history)").fetchall()
         }
@@ -82,6 +100,46 @@ def test_apply_dbmate_migrations_builds_full_schema(tmp_path):
             matching_rows = [row for row in index_rows if row[1] == index_name]
             assert matching_rows, f"Missing {index_name}"
             assert matching_rows[0][2] == 1, f"{index_name} must be unique"
+    finally:
+        conn.close()
+
+
+def test_single_admin_migration_backfills_existing_admin_and_discards_old_states(tmp_path):
+    db_path = tmp_path / "upgrade.db"
+    migrations = iter_dbmate_up_sql(dbmate_migrations_dir())
+    conn = sqlite3.connect(db_path)
+    try:
+        for _, up_sql in migrations[:-1]:
+            conn.executescript(up_sql)
+        conn.execute("""
+            INSERT INTO users (
+                username, email, password_hash, status, created_at, oauth_provider, oauth_sub
+            )
+            VALUES (
+                'admin', 'admin@example.com', 'preserved-hash', 'active', '2026-08-08',
+                'legacy-provider', 'legacy-subject'
+            )
+            """)
+        admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()[0]
+        conn.execute("""
+            INSERT INTO oauth_states (state, provider_slug, code_verifier, expires_at)
+            VALUES ('old-state', 'provider', 'verifier', '2099-01-01')
+            """)
+        conn.commit()
+
+        conn.executescript(migrations[-1][1])
+
+        assert conn.execute(
+            "SELECT value FROM settings WHERE key = 'system.admin_user_id'"
+        ).fetchone() == (str(admin_id),)
+        assert conn.execute(
+            "SELECT password_hash FROM users WHERE id = ?", (admin_id,)
+        ).fetchone() == ("preserved-hash",)
+        assert conn.execute(
+            "SELECT COUNT(*) FROM settings WHERE key IN (?, ?)",
+            ("system.admin_oidc_issuer", "system.admin_oidc_subject"),
+        ).fetchone() == (0,)
+        assert conn.execute("SELECT COUNT(*) FROM oauth_states").fetchone() == (0,)
     finally:
         conn.close()
 

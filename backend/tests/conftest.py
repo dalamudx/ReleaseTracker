@@ -12,11 +12,42 @@ from releasetracker.storage.sqlite import SQLiteStorage
 from releasetracker.dependencies import get_executor_scheduler, get_scheduler
 from releasetracker.executor_scheduler import ExecutorScheduler
 from releasetracker.scheduler_host import SchedulerHost
-from releasetracker.models import RegisterRequest, Session
-from releasetracker.services.auth import AuthService
+from releasetracker.models import Session, User
+from releasetracker.services.auth import AuthService, pwd_context
 from releasetracker.services.jwt_tokens import decode_jwt
 from releasetracker.services.system_keys import SystemKeyManager
 from unittest.mock import AsyncMock
+
+
+async def _create_test_user(storage, username: str, email: str, password: str) -> User:
+    """Persist a local test user without exercising disabled production registration."""
+    existing = await storage.get_user_by_username(username)
+    if existing is not None:
+        return existing
+    return await storage.create_user(
+        User(
+            username=username,
+            email=email,
+            password_hash=pwd_context.hash(password),
+            status="active",
+        )
+    )
+
+
+async def _authenticate_test_client(client, auth_service: AuthService, user: User) -> None:
+    assert user.id is not None
+    token_pair = auth_service._create_token_pair(user)
+    access_token = token_pair.access_token
+    expires_at = datetime.fromtimestamp(decode_jwt(access_token, auth_service.secret_key)["exp"])
+    await auth_service.storage.create_session(
+        Session(
+            user_id=user.id,
+            token_hash=auth_service._hash_token(access_token),
+            refresh_token_hash=auth_service._hash_token(token_pair.refresh_token),
+            expires_at=expires_at,
+        )
+    )
+    client.headers["Authorization"] = f"Bearer {access_token}"
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -50,22 +81,14 @@ async def migrated_db_template(tmp_path_factory):
     await initialize_storage_with_schema(storage)
 
     auth_service = AuthService(storage, manager)
-    await auth_service.register(
-        RegisterRequest(
-            username="admin",
-            email="admin@example.com",
-            password="admin",
-        )
-    )
+    await _create_test_user(storage, "admin", "admin@example.com", "admin")
     await auth_service.ensure_admin_user()
-    if await storage.get_user_by_username("authtester") is None:
-        await auth_service.register(
-            RegisterRequest(
-                username="authtester",
-                email="authtester@example.com",
-                password="password123",
-            )
-        )
+    await _create_test_user(
+        storage,
+        "authtester",
+        "authtester@example.com",
+        "password123",
+    )
 
     await storage.close()
     return template_db_path
@@ -123,36 +146,25 @@ def client(storage, system_key_manager):
 
 @pytest.fixture(scope="function")
 async def authed_client(client, auth_service):
-    """Returns a client authenticated as a test user."""
-    user = await auth_service.storage.get_user_by_username("authtester")
-    if user is None:
-        await auth_service.register(
-            RegisterRequest(
-                username="authtester",
-                email="authtester@example.com",
-                password="password123",
-            )
-        )
-        user = await auth_service.storage.get_user_by_username("authtester")
+    """Return a client authenticated as the stable administrator."""
+    user_id = await auth_service.storage.get_admin_user_id()
+    assert user_id is not None
+    user = await auth_service.storage.get_user_by_id(user_id)
+    assert user is not None
+    await _authenticate_test_client(client, auth_service, user)
+    return client
 
-    assert user is not None and user.id is not None
 
-    token_pair = auth_service._create_token_pair(user)
-    access_token = token_pair.access_token
-    token_hash = auth_service._hash_token(access_token)
-    refresh_token_hash = auth_service._hash_token(token_pair.refresh_token)
-    expires_at = datetime.fromtimestamp(decode_jwt(access_token, auth_service.secret_key)["exp"])
-    await auth_service.storage.create_session(
-        Session(
-            user_id=user.id,
-            token_hash=token_hash,
-            refresh_token_hash=refresh_token_hash,
-            expires_at=expires_at,
-        )
+@pytest.fixture(scope="function")
+async def non_admin_client(client, auth_service):
+    """Return a client authenticated as a persisted non-administrator."""
+    user = await _create_test_user(
+        auth_service.storage,
+        "nonadmin",
+        "nonadmin@example.com",
+        "password123",
     )
-
-    token = access_token
-    client.headers["Authorization"] = f"Bearer {token}"
+    await _authenticate_test_client(client, auth_service, user)
     return client
 
 

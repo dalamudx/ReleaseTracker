@@ -54,6 +54,11 @@ SYSTEM_EXECUTOR_SNAPSHOT_RETENTION_COUNT_SETTING_KEY = "system.executor_snapshot
 SYSTEM_TIMEZONE_SETTING_KEY = "system.timezone"
 SYSTEM_LOG_LEVEL_SETTING_KEY = "system.log_level"
 SYSTEM_BASE_URL_SETTING_KEY = "system.base_url"
+ADMIN_USER_ID_SETTING_KEY = sqlite_auth_oidc.ADMIN_USER_ID_SETTING_KEY
+BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY = sqlite_auth_oidc.BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY
+ADMIN_OIDC_ISSUER_SETTING_KEY = sqlite_auth_oidc.ADMIN_OIDC_ISSUER_SETTING_KEY
+ADMIN_OIDC_SUBJECT_SETTING_KEY = sqlite_auth_oidc.ADMIN_OIDC_SUBJECT_SETTING_KEY
+RESERVED_AUTH_SETTING_KEYS = sqlite_auth_oidc.RESERVED_AUTH_SETTING_KEYS
 DEFAULT_RELEASE_HISTORY_RETENTION_COUNT = 20
 DEFAULT_EXECUTOR_SNAPSHOT_RETENTION_COUNT = 10
 DEFAULT_SYSTEM_TIMEZONE = "UTC"
@@ -2250,9 +2255,7 @@ class SQLiteStorage:
                 tracker_source_id=row["tracker_source_id"],
                 source_key=raw_payload.get("source_key") or row["source_key"],
             )
-            channel_identity = self._channel_identity_for_retention(
-                raw_payload.get("channel_name")
-            )
+            channel_identity = self._channel_identity_for_retention(raw_payload.get("channel_name"))
             groups[int(row["tracker_release_history_id"])] = (source_identity, channel_identity)
 
         return groups
@@ -4171,6 +4174,24 @@ class SQLiteStorage:
 
     # ==================== Auth Methods ====================
 
+    async def get_admin_user_id(self) -> int | None:
+        return await sqlite_auth_oidc.get_admin_user_id(self)
+
+    async def persist_admin_identity(self, user_id: int) -> None:
+        await sqlite_auth_oidc.persist_admin_identity(self, user_id)
+
+    async def create_bootstrap_admin(self, user: User) -> User:
+        return await sqlite_auth_oidc.create_bootstrap_admin(self, user)
+
+    async def get_admin_oidc_binding(self) -> tuple[str, str] | None:
+        return await sqlite_auth_oidc.get_admin_oidc_binding(self)
+
+    async def bind_admin_oidc_identity(self, issuer: str, subject: str) -> tuple[str, str]:
+        return await sqlite_auth_oidc.bind_admin_oidc_identity(self, issuer, subject)
+
+    async def unbind_admin_oidc_identity(self) -> None:
+        await sqlite_auth_oidc.unbind_admin_oidc_identity(self)
+
     async def create_user(self, user: User) -> User:
         return await sqlite_auth_oidc.create_user(self, user)
 
@@ -4531,8 +4552,24 @@ class SQLiteStorage:
 
     # ==================== OAuth State Operations ====================
 
-    async def save_oauth_state(self, state: str, provider_slug: str, code_verifier: str) -> None:
-        await sqlite_auth_oidc.save_oauth_state(self, state, provider_slug, code_verifier)
+    async def save_oauth_state(
+        self,
+        state: str,
+        provider_slug: str,
+        code_verifier: str,
+        nonce: str,
+        flow_type: str,
+        initiating_admin_user_id: int | None = None,
+    ) -> None:
+        await sqlite_auth_oidc.save_oauth_state(
+            self,
+            state,
+            provider_slug,
+            code_verifier,
+            nonce,
+            flow_type,
+            initiating_admin_user_id,
+        )
 
     async def get_and_delete_oauth_state(self, state: str):
         return await sqlite_auth_oidc.get_and_delete_oauth_state(self, state)

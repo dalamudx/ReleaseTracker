@@ -640,8 +640,8 @@ class User(BaseModel):
     id: int | None = None
     username: str
     email: str
-    password_hash: str | None = None  # OIDC users have no password
-    oauth_provider: str | None = None  # OIDC provider slug
+    password_hash: str | None = None  # Nullable for legacy OIDC-only rows
+    oauth_provider: str | None = None  # Legacy OIDC provider slug
     oauth_sub: str | None = None  # OIDC Subject（unique identifier）
     avatar_url: str | None = None
     status: str = "active"  # active, inactive

@@ -23,7 +23,7 @@ ReleaseTracker 是一款轻量级、可配置的版本追踪与更新编排工�
 - **运行时更新**：Docker / Podman 单容器与 Compose 分组更新会基于已检查到的配置重建目标；Portainer Stack、Kubernetes Workload、Helm Release 通过对应平台的控制面、声明式状态或 Helm release 历史更新，ReleaseTracker 不声明为这些目标管理完整快照。
 - **快照与手动回滚**：具备破坏性重建路径的 Docker / Podman 更新会捕获完整配置快照，操作员可通过 UI 或 API 手动回滚；快照历史支持回滚，并可在功能可用处删除。
 - **健康检查**：自动运行时原生检查与手动配置的 HTTP / TCP 探针均有时间边界；失败会记录给操作员处理，不会触发自动回滚，也不声明 Kubernetes / Portainer / Helm 一定具备主机端口探测能力。
-- **安全**：本地用户 + JWT + OIDC；敏感数据 Fernet 加密；系统密钥可轮换。
+- **安全**：稳定的单一管理员 + JWT + 显式绑定的 OIDC 身份；敏感数据 Fernet 加密；系统密钥可轮换。
 - **系统设置**：时区、日志级别、版本历史保留、BASE URL、密钥轮换等均可在 Web UI 配置。
 - **通知**：Webhook 通知，可按事件过滤，提供中英文消息与 Discord / Slack 兼容字段。
 - **现代前端**：React 19 + TypeScript + TailwindCSS，中英文、深色模式、响应式。
@@ -141,6 +141,12 @@ OIDC callback 将使用：
 ```text
 {BASE URL}/auth/oidc/{provider}/callback
 ```
+
+### 单一管理员与 OIDC 绑定
+
+ReleaseTracker 仅维护一个稳定的管理员身份。升级现有安装时会从当前 `admin` 账户回填该身份；之后修改用户名不会转移管理员权限。用户注册已禁用，Tracker、版本、执行器、运行时、凭证、通知、OIDC 与系统设置操作均仅限管理员。本地密码登录始终保留为恢复路径。
+
+仅配置 OIDC 提供商不会启用登录。请先以本地管理员身份登录，将当前本地密码提交到 `POST /api/oidc-providers/{provider_id}/admin-binding/authorize`，然后打开返回的 `authorization_url` 并完成 IdP 流程。ReleaseTracker 会验证已签名的 ID Token，并将其精确的 issuer + subject 绑定到现有管理员，绝不会自动创建 OIDC 用户。可通过 `GET /api/oidc-providers/admin-binding` 查看绑定状态；通过 `POST /api/oidc-providers/admin-binding/unbind` 提交当前本地密码解除绑定。已绑定的提供商必须先解除绑定，才能修改或删除。
 
 ### 数据目录与系统密钥
 

@@ -16,7 +16,7 @@ title: 使用配置说明
 docker logs releasetracker 2>&1 | grep "one-time bootstrap admin password"
 ```
 
-该密码仅在首次成功初始化时以 INFO 级别记录一次，且不会通过 API 返回。现有安装保留当前管理员凭证；删除引导管理员后，ReleaseTracker 将拒绝启动而不会重新生成密码。
+该密码仅在首次成功初始化时以 INFO 级别记录一次，且不会通过 API 返回。现有安装会保留当前管理员凭证，并将该账户的稳定用户 ID 持久化为唯一管理员身份；修改用户名不会转移权限。删除管理员后，ReleaseTracker 将拒绝启动而不会重新生成密码。用户注册已禁用。
 
 !!! danger "请立即修改引导密码"
     使用启动日志中的密码登录后，打开**左下角用户菜单 → 用户设置 → 修改密码**。请限制启动日志的访问权限。
@@ -53,7 +53,11 @@ docker logs releasetracker 2>&1 | grep "one-time bootstrap admin password"
 
 ![Settings](../images/settings-oidc.png)
 
-用于与企业或个人 SSO 提供商进行集成，方便统一身份认证登录。目前最多支持配置一个 OIDC 提供商。
+用于将企业或个人 SSO 提供商连接到现有管理员。ReleaseTracker 最多配置一个 OIDC 提供商，并仅保存一个精确的 issuer + subject 绑定，绝不会自动创建 OIDC 用户。
+
+仅配置提供商不会启用登录。请先以本地管理员身份登录，将当前本地密码提交到 `POST /api/oidc-providers/{provider_id}/admin-binding/authorize`，打开返回的 `authorization_url` 并完成 IdP 流程。可通过 `GET /api/oidc-providers/admin-binding` 查看结果；通过 `POST /api/oidc-providers/admin-binding/unbind` 提交当前本地密码解除绑定。已绑定的提供商必须先解除绑定，才能修改或删除。
+
+回调仅接受通过 JWKS 签名、非对称算法、issuer、audience、过期时间、签发时间、nonce 与非空 subject 验证的 ID Token。只有 issuer + subject 与绑定精确一致时，才会签发现有管理员的本地会话。本地密码登录始终保留为恢复路径。
 
 **基础字段**
 
@@ -75,11 +79,11 @@ docker logs releasetracker 2>&1 | grep "one-time bootstrap admin password"
 
 `Token URL` : 关闭 Discovery 时手动填写令牌端点地址
 
-`Userinfo URL` : 关闭 Discovery 时手动填写用户信息端点地址
+`Userinfo URL` : 保留的提供商元数据。管理员身份仅来自已验证的 ID Token，不会通过 UserInfo 资料匹配
 
 **其他字段**
 
-`Scopes` : 请求的权限范围，默认为 `openid email profile`。如果提供商支持头像字段（如 `picture`），可在此追加对应 scope 以在登录时同步用户头像
+`Scopes` : 请求的权限范围，默认为 `openid email profile`；经过验证的 ID Token 流程必须包含 `openid`
 
 `图标 URL` : 登录页面按钮上显示的提供商图标地址，留空则显示首字母缩写
 

@@ -1,16 +1,4 @@
-CREATE TABLE schema_migrations (version TEXT PRIMARY KEY);
-CREATE TABLE releases (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tracker_name TEXT NOT NULL,
-    name TEXT NOT NULL,
-    tag_name TEXT NOT NULL,
-    version TEXT NOT NULL,
-    published_at TEXT NOT NULL,
-    url TEXT NOT NULL,
-    prerelease INTEGER DEFAULT 0,
-    created_at TEXT NOT NULL, body TEXT, commit_sha TEXT, republish_count INTEGER DEFAULT 0, channel_name TEXT,
-    UNIQUE(tracker_name, tag_name)
-);
+CREATE TABLE IF NOT EXISTS "schema_migrations" (version varchar(128) primary key);
 CREATE TABLE settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -59,15 +47,6 @@ CREATE TABLE trackers (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 , image TEXT, registry TEXT, version_sort_mode TEXT DEFAULT 'published_at', fetch_limit INTEGER DEFAULT 10, fallback_tags INTEGER DEFAULT 0, fetch_timeout INTEGER DEFAULT 15, github_fetch_mode TEXT DEFAULT 'rest_first');
-CREATE TABLE release_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    release_id INTEGER NOT NULL,
-    commit_sha TEXT NOT NULL,
-    published_at TEXT NOT NULL,
-    body TEXT,
-    recorded_at TEXT NOT NULL, name TEXT, channel_name TEXT,
-    FOREIGN KEY (release_id) REFERENCES releases(id) ON DELETE CASCADE
-);
 CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE,
@@ -106,12 +85,6 @@ CREATE TABLE oauth_providers (
     description TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
-);
-CREATE TABLE oauth_states (
-    state TEXT PRIMARY KEY,
-    provider_slug TEXT NOT NULL,
-    code_verifier TEXT NOT NULL,
-    expires_at TEXT NOT NULL
 );
 CREATE TABLE runtime_connections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -161,10 +134,6 @@ CREATE TABLE executor_run_history (
     created_at TEXT NOT NULL, diagnostics TEXT,
     FOREIGN KEY (executor_id) REFERENCES executors(id) ON DELETE CASCADE
 );
-CREATE INDEX idx_executors_runtime_connection_id ON executors(runtime_connection_id);
-CREATE INDEX idx_executors_tracker_name ON executors(tracker_name);
-CREATE INDEX idx_executor_status_executor_id ON executor_status(executor_id);
-CREATE INDEX idx_executor_run_history_executor_id ON executor_run_history(executor_id);
 CREATE TABLE aggregate_trackers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
@@ -238,23 +207,6 @@ CREATE TABLE canonical_release_observations (
     FOREIGN KEY (canonical_release_id) REFERENCES canonical_releases(id) ON DELETE CASCADE,
     FOREIGN KEY (source_release_observation_id) REFERENCES source_release_observations(id) ON DELETE CASCADE
 );
-CREATE INDEX idx_aggregate_trackers_primary_changelog_source_id
-    ON aggregate_trackers(primary_changelog_source_id);
-CREATE INDEX idx_aggregate_tracker_sources_tracker_id
-    ON aggregate_tracker_sources(aggregate_tracker_id);
-CREATE INDEX idx_aggregate_tracker_sources_type
-    ON aggregate_tracker_sources(source_type);
-CREATE INDEX idx_source_release_observations_source_id
-    ON source_release_observations(tracker_source_id);
-CREATE INDEX idx_source_release_observations_version
-    ON source_release_observations(version);
-CREATE INDEX idx_canonical_releases_tracker_id
-    ON canonical_releases(aggregate_tracker_id);
-CREATE INDEX idx_canonical_releases_primary_observation_id
-    ON canonical_releases(primary_observation_id);
-CREATE INDEX idx_canonical_release_observations_source_observation_id
-    ON canonical_release_observations(source_release_observation_id);
-CREATE INDEX idx_executors_tracker_source_id ON executors(tracker_source_id);
 CREATE TABLE source_fetch_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tracker_source_id INTEGER NOT NULL,
@@ -352,6 +304,55 @@ CREATE TABLE tracker_current_releases (
     FOREIGN KEY (tracker_release_history_id) REFERENCES tracker_release_history(id) ON DELETE CASCADE,
     UNIQUE(aggregate_tracker_id, identity_key)
 );
+CREATE TABLE executor_service_bindings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    executor_id INTEGER NOT NULL,
+    service TEXT NOT NULL,
+    tracker_source_id INTEGER NOT NULL,
+    channel_name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (executor_id) REFERENCES executors(id) ON DELETE CASCADE,
+    FOREIGN KEY (tracker_source_id) REFERENCES aggregate_tracker_sources(id) ON DELETE RESTRICT,
+    UNIQUE(executor_id, service)
+);
+CREATE TABLE executor_desired_state (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    executor_id INTEGER NOT NULL UNIQUE,
+    desired_state_revision TEXT NOT NULL,
+    desired_target TEXT NOT NULL DEFAULT '{}',
+    desired_target_fingerprint TEXT NOT NULL,
+    pending INTEGER NOT NULL DEFAULT 1,
+    next_eligible_at TEXT,
+    claimed_by TEXT,
+    claimed_at TEXT,
+    claim_until TEXT,
+    last_completed_revision TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (executor_id) REFERENCES executors(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_executors_runtime_connection_id ON executors(runtime_connection_id);
+CREATE INDEX idx_executors_tracker_name ON executors(tracker_name);
+CREATE INDEX idx_executor_status_executor_id ON executor_status(executor_id);
+CREATE INDEX idx_executor_run_history_executor_id ON executor_run_history(executor_id);
+CREATE INDEX idx_aggregate_trackers_primary_changelog_source_id
+    ON aggregate_trackers(primary_changelog_source_id);
+CREATE INDEX idx_aggregate_tracker_sources_tracker_id
+    ON aggregate_tracker_sources(aggregate_tracker_id);
+CREATE INDEX idx_aggregate_tracker_sources_type
+    ON aggregate_tracker_sources(source_type);
+CREATE INDEX idx_source_release_observations_source_id
+    ON source_release_observations(tracker_source_id);
+CREATE INDEX idx_source_release_observations_version
+    ON source_release_observations(version);
+CREATE INDEX idx_canonical_releases_tracker_id
+    ON canonical_releases(aggregate_tracker_id);
+CREATE INDEX idx_canonical_releases_primary_observation_id
+    ON canonical_releases(primary_observation_id);
+CREATE INDEX idx_canonical_release_observations_source_observation_id
+    ON canonical_release_observations(source_release_observation_id);
+CREATE INDEX idx_executors_tracker_source_id ON executors(tracker_source_id);
 CREATE INDEX idx_source_fetch_runs_tracker_source_id
     ON source_fetch_runs(tracker_source_id);
 CREATE INDEX idx_source_fetch_runs_tracker_source_started_at
@@ -370,38 +371,10 @@ CREATE INDEX idx_tracker_release_history_sources_source_release_history_id
     ON tracker_release_history_sources(source_release_history_id);
 CREATE INDEX idx_tracker_current_releases_tracker_published_at
     ON tracker_current_releases(aggregate_tracker_id, published_at DESC);
-CREATE TABLE executor_service_bindings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    executor_id INTEGER NOT NULL,
-    service TEXT NOT NULL,
-    tracker_source_id INTEGER NOT NULL,
-    channel_name TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY (executor_id) REFERENCES executors(id) ON DELETE CASCADE,
-    FOREIGN KEY (tracker_source_id) REFERENCES aggregate_tracker_sources(id) ON DELETE RESTRICT,
-    UNIQUE(executor_id, service)
-);
 CREATE INDEX idx_executor_service_bindings_executor_id
     ON executor_service_bindings(executor_id);
 CREATE INDEX idx_executor_service_bindings_tracker_source_id
     ON executor_service_bindings(tracker_source_id);
-CREATE TABLE executor_desired_state (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    executor_id INTEGER NOT NULL UNIQUE,
-    desired_state_revision TEXT NOT NULL,
-    desired_target TEXT NOT NULL DEFAULT '{}',
-    desired_target_fingerprint TEXT NOT NULL,
-    pending INTEGER NOT NULL DEFAULT 1,
-    next_eligible_at TEXT,
-    claimed_by TEXT,
-    claimed_at TEXT,
-    claim_until TEXT,
-    last_completed_revision TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY (executor_id) REFERENCES executors(id) ON DELETE CASCADE
-);
 CREATE INDEX idx_executor_desired_state_pending_claim
     ON executor_desired_state(pending, claim_until, next_eligible_at);
 CREATE INDEX idx_executor_desired_state_revision
@@ -432,10 +405,22 @@ CREATE INDEX idx_executor_snapshots_executor_created
     ON executor_snapshots(executor_id, created_at DESC);
 CREATE INDEX idx_executor_snapshots_executor_run_id
     ON executor_snapshots(executor_run_id);
+CREATE TABLE oauth_states (
+    state TEXT PRIMARY KEY,
+    provider_slug TEXT NOT NULL,
+    code_verifier TEXT NOT NULL,
+    nonce TEXT NOT NULL,
+    flow_type TEXT NOT NULL CHECK (flow_type IN ('login', 'bind')),
+    initiating_admin_user_id INTEGER,
+    expires_at TEXT NOT NULL,
+    FOREIGN KEY (initiating_admin_user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_oauth_states_expires_at ON oauth_states(expires_at);
 -- Dbmate schema migrations
 INSERT INTO "schema_migrations" (version) VALUES
   ('20000101000001'),
   ('20260508152003'),
   ('20260508153215'),
   ('20260513000001'),
-  ('20260517000001');
+  ('20260517000001'),
+  ('20260808000001');

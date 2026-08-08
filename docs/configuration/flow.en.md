@@ -16,7 +16,7 @@ On a fresh installation, the first launch creates the `admin` user with a crypto
 docker logs releasetracker 2>&1 | grep "one-time bootstrap admin password"
 ```
 
-The password is logged at INFO only during the successful initial bootstrap and is never returned by the API. Existing installations keep their current administrator credentials; if the bootstrap administrator is later deleted, ReleaseTracker refuses to start instead of generating another password.
+The password is logged at INFO only during the successful initial bootstrap and is never returned by the API. Existing installations keep their current administrator credentials and persist that account's stable user ID as the sole administrator identity. Renaming it does not transfer access. If the administrator is later deleted, ReleaseTracker refuses to start instead of generating another password. Registration is disabled.
 
 !!! danger "Change the bootstrap password immediately"
     Sign in with the password from the startup log, then open the **bottom-left user menu → User Settings → Change Password**. Restrict access to startup logs.
@@ -53,7 +53,11 @@ These keys are used for data encryption and user session encryption.
 
 ![Settings](../images/settings-oidc.png)
 
-Integrates with enterprise or personal SSO providers for unified identity authentication. Currently supports configuring one OIDC provider at a time.
+Integrates with an enterprise or personal SSO provider for the existing administrator. ReleaseTracker supports one configured provider and one exact issuer + subject binding. It never provisions OIDC users.
+
+Configuring the provider does not enable login. While signed in locally as the administrator, submit the current local password to `POST /api/oidc-providers/{provider_id}/admin-binding/authorize`, open the returned `authorization_url`, and complete the IdP flow. Inspect the result with `GET /api/oidc-providers/admin-binding`. To remove it, submit the current local password to `POST /api/oidc-providers/admin-binding/unbind`. A bound provider must be unbound before it can be changed or deleted.
+
+The callback accepts only a signed ID token whose JWKS signature, asymmetric algorithm, issuer, audience, expiry, issued-at time, nonce, and non-empty subject all validate. The issuer + subject must exactly match the binding before a local administrator session is issued. Local password login remains the recovery path.
 
 **Basic Fields**
 
@@ -75,11 +79,11 @@ Integrates with enterprise or personal SSO providers for unified identity authen
 
 `Token URL` : Manually specify the token endpoint when Discovery is disabled.
 
-`Userinfo URL` : Manually specify the userinfo endpoint when Discovery is disabled.
+`Userinfo URL` : Retained provider metadata. Administrator identity is taken only from the validated ID token, never from UserInfo profile matching.
 
 **Other Fields**
 
-`Scopes` : Requested permission scopes. Defaults to `openid email profile`. If the provider supports an avatar field (e.g. `picture`), add the corresponding scope here to sync the user avatar at login.
+`Scopes` : Requested permission scopes. Defaults to `openid email profile`; `openid` is required for the validated ID token flow.
 
 `Icon URL` : The provider icon displayed on the login page button. Leave blank to show the initials instead.
 
