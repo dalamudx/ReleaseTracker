@@ -41,7 +41,7 @@ Rollback calls for these targets return 404 when no snapshot is available. Recov
 - **Key rotation is restricted to accounts whose username equals `admin`.** This is a hard-coded check in `get_current_admin_user`, not a configurable role.
   - Deleting or renaming the default `admin` account takes away the ability to rotate keys via the UI; recovery means hand-editing the database.
 - **There are no roles or fine-grained permissions.** Every authenticated user sees the same data and can perform the same actions (except key rotation).
-- **Default account `admin` / `admin`.** Change the password immediately after the first login. A stock instance on the internet is equivalent to a compromised machine.
+- **Bootstrap administrator password.** Fresh installations generate a random one-time password and record it once at INFO level; existing installations keep their current credentials. Deleting the bootstrap administrator causes subsequent startup to fail instead of generating a new password. Restrict log access and change the password immediately after first login.
 
 ## 5. Supply-chain checks
 

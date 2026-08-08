@@ -77,20 +77,22 @@ INFO:     Uvicorn running on http://0.0.0.0:8000
 
 ## 3. First login
 
-Open <http://localhost:8000> (or the address exposed by the reverse proxy). A default administrator account is created on first launch:
+Open <http://localhost:8000> (or the address exposed by the reverse proxy). On a fresh installation, the first launch creates the `admin` administrator with a cryptographically random, one-time bootstrap password. Read it from the startup log:
 
-| Username | Password |
-| -------- | -------- |
-| `admin` | `admin` |
+```bash
+docker logs releasetracker 2>&1 | grep "one-time bootstrap admin password"
+```
 
-!!! danger "Change the default password immediately"
-    After signing in, open the **user menu at the bottom-left of the sidebar → User Settings → Change Password** and set a strong password. An instance exposed to the internet with default credentials can be taken over by anyone.
+The password is logged at INFO only during the successful initial bootstrap and is never returned by the API. Existing installations keep their current administrator credentials. If the bootstrap administrator is later deleted, ReleaseTracker refuses to start instead of generating another password; restore the administrator or database from a trusted backup.
+
+!!! danger "Change the bootstrap password immediately"
+    Sign in with the password from the startup log, then open the **user menu at the bottom-left of the sidebar → User Settings → Change Password** and set a strong password. Restrict access to startup logs.
 
 ## 4. Quick start
 
 After the service is installed and reachable, use this workflow for the first setup:
 
-1. **Open the web UI and sign in**: Visit the deployed address and sign in with the default administrator account. Change the default password immediately after the first login.
+1. **Open the web UI and sign in**: Visit the deployed address and sign in as `admin` with the one-time password from the startup log. Change the password immediately after the first login.
 2. **Review System Settings**: Open **System Settings** and confirm that BASE URL, language, log level, retention, and other basic settings match the deployment. When using a reverse proxy or OIDC, BASE URL must match the externally reachable address.
 3. **Add notification channels**: Open **Notifications** and configure and test Webhook or other notification channels. Notifications are optional, but recommended before enabling Immediate or Maintenance window execution so failures, skips, and successes are visible.
 4. **Add credentials only when needed**: Add credentials under **Credentials** only for private repositories, protected GitHub / GitLab / Gitea projects, private image registries, Kubernetes, Portainer, or similar protected services. Public sources can be tracked without credentials.

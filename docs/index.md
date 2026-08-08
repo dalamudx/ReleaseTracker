@@ -48,4 +48,4 @@ ReleaseTracker 是一款轻量级、可配置的版本追踪与更新编排工�
 ## 下一步
 
 - 按照 [安装部署](getting-started/installation.md) 完成部署。
-- 登录后修改默认管理员密码。
+- 从启动日志获取一次性引导密码登录 `admin`，然后立即修改密码。

@@ -10,10 +10,16 @@ This page explains the configuration process and key considerations for ReleaseT
 
 ![Login](../images/login.png)
 
-Log in with the default username `admin` and password `admin`.
+On a fresh installation, the first launch creates the `admin` user with a cryptographically random, one-time bootstrap password. Read it from the startup log:
 
-!!! danger "Change the default password immediately"
-    After logging in, change your password right away: open the **bottom-left user menu → User Settings → Change Password**. Leaving the default credentials on a publicly accessible instance allows anyone to take over.
+```bash
+docker logs releasetracker 2>&1 | grep "one-time bootstrap admin password"
+```
+
+The password is logged at INFO only during the successful initial bootstrap and is never returned by the API. Existing installations keep their current administrator credentials; if the bootstrap administrator is later deleted, ReleaseTracker refuses to start instead of generating another password.
+
+!!! danger "Change the bootstrap password immediately"
+    Sign in with the password from the startup log, then open the **bottom-left user menu → User Settings → Change Password**. Restrict access to startup logs.
 
 ## 2. System Settings
 
