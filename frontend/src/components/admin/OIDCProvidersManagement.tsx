@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
-import { Plus, Pencil, Trash2, RefreshCw, Shield, Check, X } from "lucide-react"
+import { Plus, Pencil, Trash2, RefreshCw, Shield, Check, X, Link2, Unlink } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -29,6 +29,10 @@ import {
     createOIDCProvider,
     updateOIDCProvider,
     deleteOIDCProvider,
+    getAdminOIDCBinding,
+    authorizeAdminOIDCBinding,
+    unbindAdminOIDC,
+    type AdminOIDCBindingStatus,
     type OIDCProviderConfig,
     type CreateOIDCProviderRequest,
     type UpdateOIDCProviderRequest,
@@ -59,13 +63,21 @@ export function OIDCProvidersManagement() {
     const [deleteTarget, setDeleteTarget] = useState<OIDCProviderConfig | null>(null)
     const [form, setForm] = useState<CreateOIDCProviderRequest>(EMPTY_FORM)
     const [isSubmitting, setIsSubmitting] = useState(false)
+    const [bindingStatus, setBindingStatus] = useState<AdminOIDCBindingStatus | null>(null)
+    const [bindingDialog, setBindingDialog] = useState<"bind" | "unbind" | null>(null)
+    const [bindingPassword, setBindingPassword] = useState("")
+    const [isBinding, setIsBinding] = useState(false)
 
     const loadProviders = useCallback(async () => {
         await Promise.resolve()
         setIsLoading(true)
         try {
-            const data = await getOIDCProvidersAdmin()
+            const [data, binding] = await Promise.all([
+                getOIDCProvidersAdmin(),
+                getAdminOIDCBinding(),
+            ])
             setProviders(data)
+            setBindingStatus(binding)
         } catch {
             toast.error(t('systemSettings.oidc.loadFailed'))
         } finally {
@@ -157,6 +169,34 @@ export function OIDCProvidersManagement() {
         setForm(prev => ({ ...prev, [key]: value }))
     }
 
+    const openBindingDialog = (mode: "bind" | "unbind") => {
+        setBindingPassword("")
+        setBindingDialog(mode)
+    }
+
+    const handleBindingSubmit = async () => {
+        if (!bindingPassword) return
+        setIsBinding(true)
+        try {
+            if (bindingDialog === "bind") {
+                const provider = providers[0]
+                if (!provider?.id) throw new Error(t('systemSettings.oidc.noProviderForBinding'))
+                const result = await authorizeAdminOIDCBinding(provider.id, bindingPassword)
+                toast.info(t('systemSettings.oidc.bindingStarted'))
+                window.location.assign(result.authorization_url)
+                return
+            }
+            await unbindAdminOIDC(bindingPassword)
+            setBindingStatus(await getAdminOIDCBinding())
+            toast.success(t('systemSettings.oidc.unbound'))
+            setBindingDialog(null)
+        } catch (e: unknown) {
+            toast.error(e instanceof Error ? e.message : t('systemSettings.oidc.bindingFailed'))
+        } finally {
+            setIsBinding(false)
+        }
+    }
+
     const canCreateProvider = providers.length === 0
 
     return (
@@ -182,6 +222,40 @@ export function OIDCProvidersManagement() {
                     )}
                 </div>
             </div>
+
+            {providers.length > 0 && bindingStatus && (
+                <div className="rounded-lg border border-border/50 bg-card p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-4">
+                        <div>
+                            <h4 className="font-medium text-sm">{t('systemSettings.oidc.bindingTitle')}</h4>
+                            <p className="text-xs text-muted-foreground mt-1">{t('systemSettings.oidc.bindingDescription')}</p>
+                        </div>
+                        <span className="text-xs font-medium flex items-center gap-1">
+                            {bindingStatus.bound ? <Check className="h-3.5 w-3.5 text-success" /> : <X className="h-3.5 w-3.5 text-muted-foreground" />}
+                            {bindingStatus.bound ? t('systemSettings.oidc.bindingBound') : t('systemSettings.oidc.bindingUnbound')}
+                        </span>
+                    </div>
+                    {bindingStatus.bound && bindingStatus.subject && (
+                        <p className="text-xs text-muted-foreground font-mono">
+                            {t('systemSettings.oidc.bindingSubject', { subject: bindingStatus.subject })}
+                        </p>
+                    )}
+                    <div className="flex gap-2">
+                        {!bindingStatus.bound && (
+                            <Button size="sm" onClick={() => openBindingDialog("bind")}>
+                                <Link2 className="h-4 w-4 mr-1" />
+                                {t('systemSettings.oidc.bind')}
+                            </Button>
+                        )}
+                        {bindingStatus.bound && (
+                            <Button variant="outline" size="sm" onClick={() => openBindingDialog("unbind")}>
+                                <Unlink className="h-4 w-4 mr-1" />
+                                {t('systemSettings.oidc.unbind')}
+                            </Button>
+                        )}
+                    </div>
+                </div>
+            )}
 
             {/* Provider List */}
              {providers.length === 0 ? (
@@ -342,6 +416,33 @@ export function OIDCProvidersManagement() {
                         </Button>
                         <Button onClick={handleSubmit} disabled={isSubmitting}>
                             {isSubmitting ? t('common.saving') : t('common.save')}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={!!bindingDialog} onOpenChange={open => !open && setBindingDialog(null)}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>{t('systemSettings.oidc.bindingPasswordTitle')}</DialogTitle>
+                        <DialogDescription>{t('systemSettings.oidc.bindingPasswordDescription')}</DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-1.5 py-2">
+                        <Label htmlFor="oidc-binding-password">{t('systemSettings.oidc.currentPassword')}</Label>
+                        <Input
+                            id="oidc-binding-password"
+                            type="password"
+                            value={bindingPassword}
+                            onChange={e => setBindingPassword(e.target.value)}
+                            autoComplete="current-password"
+                        />
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setBindingDialog(null)}>
+                            {t('common.cancel')}
+                        </Button>
+                        <Button onClick={handleBindingSubmit} disabled={!bindingPassword || isBinding}>
+                            {isBinding ? t('common.saving') : bindingDialog === "bind" ? t('systemSettings.oidc.bind') : t('systemSettings.oidc.unbind')}
                         </Button>
                     </DialogFooter>
                 </DialogContent>

@@ -257,7 +257,22 @@
         "iconUrl": "图标 URL",
         "description": "描述",
         "enabled": "启用该提供商"
-      }
+      },
+      "bindingTitle": "管理员 OIDC 绑定",
+      "bindingDescription": "只有明确绑定的 OIDC 身份可以作为管理员登录。",
+      "bindingBound": "已绑定",
+      "bindingUnbound": "未绑定",
+      "bindingSubject": "Subject：{{subject}}",
+      "bind": "绑定 OIDC 身份",
+      "unbind": "解绑 OIDC 身份",
+      "bindingPasswordTitle": "确认管理员密码",
+      "bindingPasswordDescription": "修改 OIDC 绑定前，请重新输入本地管理员密码。",
+      "currentPassword": "当前密码",
+      "bindingStarted": "正在跳转到身份提供商……",
+      "bound": "管理员 OIDC 身份绑定成功",
+      "unbound": "管理员 OIDC 身份已解绑",
+      "bindingFailed": "OIDC 绑定操作失败",
+      "noProviderForBinding": "尚未配置 OIDC 提供商"
     }
   },
   "sidebar": {

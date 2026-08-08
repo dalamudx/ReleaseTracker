@@ -257,7 +257,22 @@
         "iconUrl": "Icon URL",
         "description": "Description",
         "enabled": "Enable this provider"
-      }
+      },
+      "bindingTitle": "Administrator OIDC binding",
+      "bindingDescription": "Only the explicitly bound OIDC identity can sign in as the administrator.",
+      "bindingBound": "Bound",
+      "bindingUnbound": "Not bound",
+      "bindingSubject": "Subject: {{subject}}",
+      "bind": "Bind OIDC identity",
+      "unbind": "Unbind OIDC identity",
+      "bindingPasswordTitle": "Confirm administrator password",
+      "bindingPasswordDescription": "Re-enter the local administrator password before changing the OIDC binding.",
+      "currentPassword": "Current password",
+      "bindingStarted": "Redirecting to the identity provider...",
+      "bound": "OIDC administrator identity bound",
+      "unbound": "OIDC administrator identity unbound",
+      "bindingFailed": "OIDC binding operation failed",
+      "noProviderForBinding": "No OIDC provider is configured"
     }
   },
   "sidebar": {
