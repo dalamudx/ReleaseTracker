@@ -50,6 +50,13 @@ async def migrated_db_template(tmp_path_factory):
     await initialize_storage_with_schema(storage)
 
     auth_service = AuthService(storage, manager)
+    await auth_service.register(
+        RegisterRequest(
+            username="admin",
+            email="admin@example.com",
+            password="admin",
+        )
+    )
     await auth_service.ensure_admin_user()
     if await storage.get_user_by_username("authtester") is None:
         await auth_service.register(

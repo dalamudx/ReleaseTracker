@@ -1,10 +1,11 @@
 """Authentication service module"""
 
+import hashlib
 import logging
+import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Optional
-import hashlib
-import uuid
 
 from passlib.context import CryptContext
 
@@ -31,6 +32,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # JWT Configuration
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
+BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY = "system.bootstrap_admin_initialized"
 
 
 class AuthService:
@@ -221,19 +223,37 @@ class AuthService:
         encoded_jwt = encode_jwt(to_encode, self.secret_key)
         return encoded_jwt
 
-    async def ensure_admin_user(self):
-        """Ensure an admin user exists"""
+    async def ensure_admin_user(self) -> None:
+        """Create the one-time bootstrap admin, or verify it has not been deleted."""
         user = await self.storage.get_user_by_username("admin")
-        if not user:
-            logger.info("Creating default admin user")
-            password_hash = pwd_context.hash("admin")
-            admin_user = User(
-                username="admin",
-                email="admin@example.com",
-                password_hash=password_hash,
-                status="active",
+        bootstrap_initialized = await self.storage.get_setting(
+            BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY
+        )
+
+        if user:
+            if bootstrap_initialized is None:
+                await self.storage.set_setting(BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY, "true")
+            return
+
+        if bootstrap_initialized is not None:
+            raise RuntimeError(
+                "Bootstrap admin initialization has already completed, but the admin user is "
+                "missing; refusing to create a new credential"
             )
-            await self.storage.create_user(admin_user)
+
+        bootstrap_password = secrets.token_urlsafe(32)
+        admin_user = User(
+            username="admin",
+            email="admin@example.com",
+            password_hash=pwd_context.hash(bootstrap_password),
+            status="active",
+        )
+        await self.storage.create_user(admin_user)
+        await self.storage.set_setting(BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY, "true")
+        logger.info(
+            "Bootstrap admin user created; one-time bootstrap admin password: %s",
+            bootstrap_password,
+        )
 
     def _hash_token(self, token: str) -> str:
         """Calculate token hash"""

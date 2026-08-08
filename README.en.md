@@ -97,7 +97,13 @@ docker run -d \
   ghcr.io/dalamudx/releasetracker:latest migrate-and-serve
 ```
 
-Open http://localhost:8000. The first launch creates the default administrator `admin` / `admin` — **change the password immediately** after logging in.
+Open http://localhost:8000. On a fresh installation, the first launch creates the `admin` user with a cryptographically random, one-time bootstrap password. Read it from the startup log:
+
+```bash
+docker logs releasetracker 2>&1 | grep "one-time bootstrap admin password"
+```
+
+The password is logged at INFO only during the successful initial bootstrap and is never returned by the API. Log in as `admin` and **change the password immediately**. Existing installations keep their current admin credentials. If the bootstrapped admin is later deleted, ReleaseTracker fails startup rather than generating another credential; restore the admin or database from a trusted backup.
 
 ### Docker Compose
 

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 from httpx import ASGITransport, AsyncClient
 import pytest
@@ -8,7 +9,146 @@ from releasetracker.main import app
 from releasetracker.models import LoginRequest, User
 from releasetracker.oidc_models import OIDCProvider
 from releasetracker.routers.oidc import get_oidc_service
+from releasetracker.services.auth import (
+    BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY,
+    pwd_context,
+)
 from releasetracker.storage.sqlite import SYSTEM_BASE_URL_SETTING_KEY
+
+BOOTSTRAP_LOG_PREFIX = "Bootstrap admin user created; one-time bootstrap admin password:"
+
+
+async def _remove_admin_user(storage) -> None:
+    db = await storage._get_connection()
+    await db.execute("DELETE FROM users WHERE username = ?", ("admin",))
+    await db.commit()
+
+
+async def _reset_bootstrap_state(storage) -> None:
+    await _remove_admin_user(storage)
+    await storage.delete_setting(BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY)
+
+
+@pytest.mark.asyncio
+async def test_ensure_admin_user_fresh_database_creates_random_password_once(
+    auth_service, storage, monkeypatch, caplog
+):
+    await _reset_bootstrap_state(storage)
+    bootstrap_password = "generated-bootstrap-password"
+    token_urlsafe_calls = []
+
+    def fake_token_urlsafe(nbytes):
+        token_urlsafe_calls.append(nbytes)
+        return bootstrap_password
+
+    monkeypatch.setattr("releasetracker.services.auth.secrets.token_urlsafe", fake_token_urlsafe)
+    caplog.set_level(logging.INFO, logger="releasetracker.services.auth")
+
+    await auth_service.ensure_admin_user()
+
+    admin = await storage.get_user_by_username("admin")
+    assert admin is not None
+    assert pwd_context.verify(bootstrap_password, admin.password_hash)
+    assert not pwd_context.verify("admin", admin.password_hash)
+    assert token_urlsafe_calls == [32]
+    assert await storage.get_setting(BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY) == "true"
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "releasetracker.services.auth"
+        and record.getMessage().startswith(BOOTSTRAP_LOG_PREFIX)
+    ] == [f"{BOOTSTRAP_LOG_PREFIX} {bootstrap_password}"]
+
+
+@pytest.mark.asyncio
+async def test_ensure_admin_user_repeated_call_is_idempotent(
+    auth_service, storage, monkeypatch, caplog
+):
+    await _reset_bootstrap_state(storage)
+    bootstrap_password = "generated-bootstrap-password"
+    monkeypatch.setattr(
+        "releasetracker.services.auth.secrets.token_urlsafe",
+        lambda _nbytes: bootstrap_password,
+    )
+    caplog.set_level(logging.INFO, logger="releasetracker.services.auth")
+
+    await auth_service.ensure_admin_user()
+    original_admin = await storage.get_user_by_username("admin")
+    await auth_service.ensure_admin_user()
+    current_admin = await storage.get_user_by_username("admin")
+
+    assert original_admin is not None
+    assert current_admin is not None
+    assert current_admin.id == original_admin.id
+    assert current_admin.password_hash == original_admin.password_hash
+    assert (
+        sum(
+            record.name == "releasetracker.services.auth"
+            and record.getMessage().startswith(BOOTSTRAP_LOG_PREFIX)
+            for record in caplog.records
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_ensure_admin_user_existing_admin_is_unchanged(
+    auth_service, storage, monkeypatch, caplog
+):
+    existing_admin = await storage.get_user_by_username("admin")
+    assert existing_admin is not None
+    await storage.delete_setting(BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY)
+
+    def fail_if_password_generated(_nbytes):
+        pytest.fail("existing admin must not generate a bootstrap password")
+
+    monkeypatch.setattr(
+        "releasetracker.services.auth.secrets.token_urlsafe", fail_if_password_generated
+    )
+    caplog.set_level(logging.INFO, logger="releasetracker.services.auth")
+
+    await auth_service.ensure_admin_user()
+
+    current_admin = await storage.get_user_by_username("admin")
+    assert current_admin is not None
+    assert current_admin.id == existing_admin.id
+    assert current_admin.password_hash == existing_admin.password_hash
+    assert await storage.get_setting(BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY) == "true"
+    assert not any(
+        record.name == "releasetracker.services.auth"
+        and record.getMessage().startswith(BOOTSTRAP_LOG_PREFIX)
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_ensure_admin_user_deleted_bootstrap_admin_fails_closed(
+    auth_service, storage, monkeypatch, caplog
+):
+    await _reset_bootstrap_state(storage)
+    bootstrap_password = "generated-bootstrap-password"
+    monkeypatch.setattr(
+        "releasetracker.services.auth.secrets.token_urlsafe",
+        lambda _nbytes: bootstrap_password,
+    )
+    caplog.set_level(logging.INFO, logger="releasetracker.services.auth")
+    await auth_service.ensure_admin_user()
+    await _remove_admin_user(storage)
+    caplog.clear()
+
+    def fail_if_password_generated(_nbytes):
+        pytest.fail("deleted bootstrap admin must not generate a new password")
+
+    monkeypatch.setattr(
+        "releasetracker.services.auth.secrets.token_urlsafe", fail_if_password_generated
+    )
+
+    with pytest.raises(RuntimeError, match="admin user is missing"):
+        await auth_service.ensure_admin_user()
+
+    assert await storage.get_user_by_username("admin") is None
+    assert await storage.get_setting(BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY) == "true"
+    assert not any(BOOTSTRAP_LOG_PREFIX in record.getMessage() for record in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -217,9 +357,7 @@ async def test_oidc_authorize_uses_configured_base_url(client, storage):
     assert response.status_code == 307
     redirect = urlparse(response.headers["location"])
     params = parse_qs(redirect.query)
-    assert params["redirect_uri"] == [
-        "https://example.com/releasetracker/auth/oidc/mock/callback"
-    ]
+    assert params["redirect_uri"] == ["https://example.com/releasetracker/auth/oidc/mock/callback"]
 
 
 @pytest.mark.asyncio

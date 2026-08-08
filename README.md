@@ -97,7 +97,13 @@ docker run -d \
   ghcr.io/dalamudx/releasetracker:latest migrate-and-serve
 ```
 
-访问 http://localhost:8000 即可使用。首次启动会自动创建默认管理员 `admin` / `admin`，**请立即修改密码**。
+访问 http://localhost:8000 即可使用。全新安装首次启动时会创建 `admin` 用户，并生成一个加密安全的随机一次性引导密码。请从启动日志中查看：
+
+```bash
+docker logs releasetracker 2>&1 | grep "one-time bootstrap admin password"
+```
+
+该密码仅在首次成功初始化时以 INFO 级别记录一次，且不会通过 API 返回。请使用 `admin` 登录并**立即修改密码**。现有安装的管理员凭证不会改变。若之后删除了引导管理员，ReleaseTracker 将拒绝启动，而不会重新生成凭证；请从可信备份恢复管理员或数据库。
 
 ### Docker Compose
 
