@@ -250,15 +250,21 @@ class SnapshotService:
         if not prune_ids:
             return []
 
-        deleted = await self._storage.delete_executor_snapshots(executor_id, prune_ids)
-        if deleted:
-            for snapshot_id in prune_ids:
-                logger.info(
-                    "pruned executor snapshot id=%s executor_id=%s",
-                    snapshot_id,
-                    executor_id,
-                )
-        return prune_ids
+        deleted_count = await self._storage.delete_executor_snapshots(executor_id, prune_ids)
+        if not deleted_count:
+            return []
+        deleted_ids = [
+            snapshot_id
+            for snapshot_id in prune_ids
+            if await self._storage.get_executor_snapshot_by_id(executor_id, snapshot_id) is None
+        ]
+        for snapshot_id in deleted_ids:
+            logger.info(
+                "pruned executor snapshot id=%s executor_id=%s",
+                snapshot_id,
+                executor_id,
+            )
+        return deleted_ids
 
     async def list_snapshots(
         self,
@@ -322,7 +328,13 @@ class SnapshotService:
             raise SnapshotInUseError("Snapshot is currently in use by a rollback")
 
         deleted = await self._storage.delete_executor_snapshots(executor_id, [snapshot_id])
-        return deleted > 0
+        if deleted:
+            return True
+
+        current = await self._storage.get_executor_snapshot_by_id(executor_id, snapshot_id)
+        if current is not None and current.locked:
+            raise SnapshotLockedError("Snapshot became locked before it could be deleted")
+        return False
 
     async def set_snapshot_locked(
         self, executor_id: int, snapshot_id: int, *, locked: bool

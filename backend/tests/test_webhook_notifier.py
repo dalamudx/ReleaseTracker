@@ -1,4 +1,9 @@
-from releasetracker.notifiers.webhook import _build_webhook_payload
+import logging
+
+import pytest
+
+from releasetracker.notifiers.webhook import WebhookNotifier, _build_webhook_payload
+from releasetracker.services.outbound_http import OutboundResponse, OutboundURLRejected
 
 
 def test_executor_webhook_uses_version_labels_for_helm_release():
@@ -97,3 +102,60 @@ def test_generic_webhook_payload_uses_chinese_message_when_language_is_zh():
     assert payload["message"] == "[test] 收到通知"
     assert payload["content"] == "[test] 收到通知"
     assert payload["text"] == "[test] 收到通知"
+
+
+@pytest.mark.asyncio
+async def test_webhook_delivery_uses_shared_outbound_client(monkeypatch):
+    requests = []
+
+    class _FakeClient:
+        async def request(self, method, url, **kwargs):
+            requests.append((method, url, kwargs))
+            return OutboundResponse(status_code=204, headers={}, body=b"")
+
+    monkeypatch.setattr(
+        "releasetracker.notifiers.webhook.OutboundHTTPClient",
+        _FakeClient,
+    )
+    notifier = WebhookNotifier("public-hook", "https://hooks.example/events")
+
+    delivered = await notifier.notify("new_release", {"ok": True})
+
+    assert delivered is True
+    assert requests == [
+        (
+            "POST",
+            "https://hooks.example/events",
+            {
+                "json_body": {
+                    "event": "new_release",
+                    "message": "[new_release] Notification received",
+                    "content": "[new_release] Notification received",
+                    "text": "[new_release] Notification received",
+                    "data": {"ok": True},
+                }
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_blocked_webhook_does_not_log_sensitive_url(monkeypatch, caplog):
+    sensitive_url = "https://hooks.example/events?token=must-not-appear"
+
+    class _RejectingClient:
+        async def request(self, method, url, **kwargs):
+            del method, url, kwargs
+            raise OutboundURLRejected("outbound destination resolves to a prohibited address")
+
+    monkeypatch.setattr(
+        "releasetracker.notifiers.webhook.OutboundHTTPClient",
+        _RejectingClient,
+    )
+    caplog.set_level(logging.ERROR, logger="releasetracker.notifiers.webhook")
+
+    delivered = await WebhookNotifier("blocked-hook", sensitive_url).send_payload({"ok": True})
+
+    assert delivered is False
+    assert sensitive_url not in caplog.text
+    assert "must-not-appear" not in caplog.text

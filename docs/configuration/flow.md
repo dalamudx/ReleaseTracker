@@ -101,7 +101,7 @@ docker logs releasetracker 2>&1 | grep "one-time bootstrap admin password"
 
 `名称` : 通知器的显示名称，便于区分多个通知目标
 
-`Webhook URL` : 接收通知的目标地址，系统会向该地址发送 HTTP POST 请求，请求体为 JSON 格式
+`Webhook URL` : 接收通知的公网目标地址，系统会向该地址发送 JSON 格式的 HTTP POST 请求。仅允许 `http`/`https`，端口限于 `80`、`8080`、`443`、`8443`、`9443`。私有、回环、链路本地、容器网络和云元数据目标会被拦截，且不会跟随重定向。
 
 `描述` : 可选的备注说明
 
@@ -351,9 +351,9 @@ docker logs releasetracker 2>&1 | grep "one-time bootstrap admin password"
 
 **HTTP 探针字段**（仅手动 HTTP 探针时显示）
 
-`主机` : 探针请求的目标主机，例如 `127.0.0.1`
+`主机` : 探针请求的公网目标主机，例如 `health.example.com`。DNS 解析后的私有、回环、链路本地、容器网络和云元数据地址会被拒绝。
 
-`端口` : 目标端口，例如 `8080`
+`端口` : 允许的目标端口：HTTP 使用 `80`/`8080`，HTTPS 使用 `443`/`8443`/`9443`。
 
 `路径` : HTTP 请求路径，必须以 `/` 开头，例如 `/health`
 
@@ -361,7 +361,9 @@ docker logs releasetracker 2>&1 | grep "one-time bootstrap admin password"
 
 `方法` : 选择 `GET` 或 `HEAD`
 
-`期望状态码` : 用英文逗号分隔的期望 HTTP 状态码，例如 `200,204`；留空则接受任意 2xx/3xx 响应
+`期望状态码` : 用英文逗号分隔的期望 HTTP 状态码，例如 `200,204`；留空则接受任意 2xx/3xx 响应。
+
+HTTP 重定向会被拒绝；响应大小受限，正文正则匹配的输入长度和执行时间也有上限。
 
 **TCP 探针字段**（仅手动 TCP 探针时显示）
 

@@ -1141,6 +1141,7 @@ async def test_executor_desired_state_claim_defer_and_complete_semantics(storage
 
     wrong_complete = await storage.complete_executor_desired_state(
         executor_id,
+        expected_revision="claim:rev-1",
         claimed_by="executor-worker-b",
     )
     assert wrong_complete is False
@@ -1168,6 +1169,7 @@ async def test_executor_desired_state_claim_defer_and_complete_semantics(storage
 
     completed = await storage.complete_executor_desired_state(
         executor_id,
+        expected_revision="claim:rev-1",
         claimed_by="executor-worker-b",
     )
     assert completed is True
@@ -1184,6 +1186,53 @@ async def test_executor_desired_state_claim_defer_and_complete_semantics(storage
         desired_target={"identity_key": "3.1.0@sha256:" + "d" * 64},
     )
     assert deduped_after_completion is False
+
+
+@pytest.mark.asyncio
+async def test_stale_desired_state_completion_cannot_complete_new_revision(storage):
+    runtime_id = await _create_runtime_connection(storage, name="desired-state-revision-runtime")
+    tracker_source_id = await _create_tracker_source_id(
+        storage,
+        name="desired-state-revision-tracker",
+    )
+    executor_id = await storage.save_executor_config(
+        ExecutorConfig(
+            name="desired-state-revision-executor",
+            runtime_type="docker",
+            runtime_connection_id=runtime_id,
+            tracker_name="desired-state-revision-tracker",
+            tracker_source_id=tracker_source_id,
+            channel_name="stable",
+            enabled=True,
+            update_mode="immediate",
+            target_ref={"mode": "container", "container_id": "desired-revision-container"},
+        )
+    )
+    await storage.upsert_executor_desired_state(
+        executor_id=executor_id,
+        desired_state_revision="revision-1",
+        desired_target={"identity_key": "1"},
+    )
+    claimed = await storage.claim_pending_executor_desired_states(claimed_by="worker-old")
+    assert len(claimed) == 1
+
+    await storage.upsert_executor_desired_state(
+        executor_id=executor_id,
+        desired_state_revision="revision-2",
+        desired_target={"identity_key": "2"},
+    )
+    completed = await storage.complete_executor_desired_state(
+        executor_id,
+        expected_revision="revision-1",
+        claimed_by="worker-old",
+    )
+
+    assert completed is False
+    current = await storage.get_executor_desired_state(executor_id)
+    assert current is not None
+    assert current.pending is True
+    assert current.desired_state_revision == "revision-2"
+    assert current.last_completed_revision is None
 
 
 @pytest.mark.asyncio

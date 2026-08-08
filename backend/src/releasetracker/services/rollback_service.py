@@ -59,8 +59,6 @@ class RollbackService:
 
         snapshot = await self._resolve_snapshot(executor_id, snapshot_id)
 
-        await self._reject_when_active(executor_id)
-
         run = ExecutorRunHistory(
             executor_id=executor_id,
             started_at=datetime.now(),
@@ -74,7 +72,13 @@ class RollbackService:
                 "actor": actor,
             },
         )
-        run_id = await self._storage.create_executor_run(run)
+        run_id = await self._storage.create_executor_run_if_no_active(
+            run,
+            active_statuses=_ROLLBACK_ACTIVE_STATES,
+        )
+        if run_id is None:
+            await self._reject_when_active(executor_id)
+            raise HTTPException(status_code=409, detail="Executor has an active run")
         run.id = run_id
 
         await self._storage.set_executor_run_status(run_id, "running")
@@ -95,9 +99,7 @@ class RollbackService:
             if not pre_rollback_captured:
                 recovery_outcome = "failed"
                 capture_error = diagnostics.get("pre_rollback_capture_error")
-                capture_detail = (
-                    capture_error if isinstance(capture_error, str) else None
-                )
+                capture_detail = capture_error if isinstance(capture_error, str) else None
                 base_message = "pre-rollback snapshot capture failed"
                 if capture_detail:
                     base_message = f"{base_message}: {capture_detail}"
@@ -162,9 +164,7 @@ class RollbackService:
                 )
             return snapshot
 
-        snapshot = await self._storage.get_executor_snapshot_by_id(
-            executor_id, snapshot_id
-        )
+        snapshot = await self._storage.get_executor_snapshot_by_id(executor_id, snapshot_id)
         if snapshot is None:
             raise HTTPException(
                 status_code=404,

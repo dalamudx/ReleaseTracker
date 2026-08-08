@@ -69,8 +69,9 @@ These checks run in CI / release workflows and do not require deployers to edit 
 
 - Webhook is the only supported channel.
 - Webhook URLs are stored in SQLite **without encryption**. Anyone with database access can read them in plaintext.
-- Webhook delivery **does not retry** on failure; failures are logged but not queued for replay.
-- Webhooks with custom HTTP headers are not supported — authentication relies on the secret embedded in the URL.
+- Webhook delivery performs a small bounded retry for rate limits and transport failures, but failed events are not queued for later replay.
+- Webhooks with custom HTTP headers are not supported. Provider credentials may therefore be part of the stored URL; full webhook URLs are intentionally omitted from application logs.
+- Webhook and HTTP health-check destinations must resolve entirely to public addresses and use approved HTTP(S) ports. Private/container-network targets and redirects are not supported.
 
 ## 9. Trackers
 

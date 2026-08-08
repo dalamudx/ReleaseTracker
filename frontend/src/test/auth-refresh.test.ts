@@ -13,6 +13,7 @@ type MockState = {
   calls: Record<string, number>
   nextAccessToken: string
   nextRefreshToken: string
+  refreshRequestConfig: InternalAxiosRequestConfig | null
 }
 
 function createMockLocation(url: string): Location {
@@ -82,6 +83,7 @@ function createMockAdapter(state: MockState): AxiosAdapter {
     recordCall(state, path)
 
     if (path === REFRESH_ENDPOINT) {
+      state.refreshRequestConfig = config
       if (!state.refreshTokenValid) {
         throw createError(config, 401, { detail: "refresh invalid" })
       }
@@ -134,6 +136,7 @@ describe("auth refresh-on-401 contract", () => {
       calls: {},
       nextAccessToken: "access-next",
       nextRefreshToken: "refresh-next",
+      refreshRequestConfig: null,
     }
     apiClient.defaults.adapter = createMockAdapter(state)
   })
@@ -154,6 +157,11 @@ describe("auth refresh-on-401 contract", () => {
     expect(response.data).toEqual({ ok: true })
     expect(state.calls["/api/auth/refresh"]).toBe(1)
     expect(state.calls["/api/protected"]).toBe(2)
+    expect(state.refreshRequestConfig?.url).toBe(REFRESH_ENDPOINT)
+    expect(state.refreshRequestConfig?.params).toBeUndefined()
+    expect(JSON.parse(String(state.refreshRequestConfig?.data))).toEqual({
+      refresh_token: "refresh-old",
+    })
     expect(localStorage.getItem("token")).toBe("access-next")
     expect(localStorage.getItem("refresh_token")).toBe("refresh-next")
   })

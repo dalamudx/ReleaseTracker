@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 from typing import Literal
 
@@ -18,7 +19,6 @@ from releasetracker.executors.base import BaseRuntimeAdapter, RuntimeUpdateResul
 from releasetracker.models import ExecutorRunHistory, ExecutorSnapshot
 from releasetracker.services.rollback_service import RollbackService
 from releasetracker.services.snapshot_service import SnapshotService
-
 
 # ---- Helpers --------------------------------------------------------------
 
@@ -170,13 +170,9 @@ async def _seed_run(
 async def test_rollback_with_default_snapshot_uses_most_recent(storage):
     executor = await _create_executor(storage, name="rb-default")
     await _seed_snapshot(storage, executor.id, image="acme/api:1.0.0", offset_minutes=0)
-    newest_id = await _seed_snapshot(
-        storage, executor.id, image="acme/api:2.0.0", offset_minutes=5
-    )
+    newest_id = await _seed_snapshot(storage, executor.id, image="acme/api:2.0.0", offset_minutes=5)
 
-    adapter = _RollbackAdapter(
-        await storage.get_runtime_connection(executor.runtime_connection_id)
-    )
+    adapter = _RollbackAdapter(await storage.get_runtime_connection(executor.runtime_connection_id))
     service = RollbackService(storage, SnapshotService(storage))
 
     outcome = await service.rollback(
@@ -196,9 +192,7 @@ async def test_rollback_with_default_snapshot_uses_most_recent(storage):
     # Pre-rollback snapshot captured.
     assert adapter.capture_calls == 1
     assert adapter.recover_calls == 1
-    stored_snapshots = await storage.list_executor_snapshots(
-        executor.id, limit=10, offset=0
-    )
+    stored_snapshots = await storage.list_executor_snapshots(executor.id, limit=10, offset=0)
     triggers = [snap.trigger for snap in stored_snapshots]
     assert "pre_rollback" in triggers
 
@@ -206,16 +200,10 @@ async def test_rollback_with_default_snapshot_uses_most_recent(storage):
 @pytest.mark.asyncio
 async def test_rollback_with_explicit_snapshot_id_restores_that_row(storage):
     executor = await _create_executor(storage, name="rb-explicit")
-    oldest_id = await _seed_snapshot(
-        storage, executor.id, image="acme/api:1.0.0", offset_minutes=0
-    )
-    await _seed_snapshot(
-        storage, executor.id, image="acme/api:2.0.0", offset_minutes=5
-    )
+    oldest_id = await _seed_snapshot(storage, executor.id, image="acme/api:1.0.0", offset_minutes=0)
+    await _seed_snapshot(storage, executor.id, image="acme/api:2.0.0", offset_minutes=5)
 
-    adapter = _RollbackAdapter(
-        await storage.get_runtime_connection(executor.runtime_connection_id)
-    )
+    adapter = _RollbackAdapter(await storage.get_runtime_connection(executor.runtime_connection_id))
     service = RollbackService(storage, SnapshotService(storage))
     outcome = await service.rollback(
         executor_config=executor,
@@ -276,9 +264,7 @@ async def test_rollback_rejects_foreign_snapshot_id(storage):
 @pytest.mark.asyncio
 async def test_rollback_404_when_no_snapshot_available(storage):
     executor = await _create_executor(storage, name="rb-empty")
-    adapter = _RollbackAdapter(
-        await storage.get_runtime_connection(executor.runtime_connection_id)
-    )
+    adapter = _RollbackAdapter(await storage.get_runtime_connection(executor.runtime_connection_id))
     service = RollbackService(storage, SnapshotService(storage))
     with pytest.raises(HTTPException) as excinfo:
         await service.rollback(
@@ -296,9 +282,7 @@ async def test_rollback_409_when_executor_has_active_run(storage):
     await _seed_snapshot(storage, executor.id)
     await _seed_run(storage, executor.id, status="running")
 
-    adapter = _RollbackAdapter(
-        await storage.get_runtime_connection(executor.runtime_connection_id)
-    )
+    adapter = _RollbackAdapter(await storage.get_runtime_connection(executor.runtime_connection_id))
     service = RollbackService(storage, SnapshotService(storage))
     with pytest.raises(HTTPException) as excinfo:
         await service.rollback(
@@ -309,6 +293,41 @@ async def test_rollback_409_when_executor_has_active_run(storage):
         )
     assert excinfo.value.status_code == 409
     assert excinfo.value.detail["active_run_status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_rollbacks_create_only_one_active_claim(storage):
+    executor = await _create_executor(storage, name="rb-concurrent")
+    await _seed_snapshot(storage, executor.id)
+    runtime_connection = await storage.get_runtime_connection(executor.runtime_connection_id)
+    adapters = [_RollbackAdapter(runtime_connection), _RollbackAdapter(runtime_connection)]
+    services = [
+        RollbackService(storage, SnapshotService(storage)),
+        RollbackService(storage, SnapshotService(storage)),
+    ]
+
+    results = await asyncio.gather(
+        services[0].rollback(
+            executor_config=executor,
+            adapter=adapters[0],
+            snapshot_id=None,
+            actor="first",
+        ),
+        services[1].rollback(
+            executor_config=executor,
+            adapter=adapters[1],
+            snapshot_id=None,
+            actor="second",
+        ),
+        return_exceptions=True,
+    )
+
+    outcomes = [result for result in results if not isinstance(result, BaseException)]
+    failures = [result for result in results if isinstance(result, HTTPException)]
+    assert len(outcomes) == 1
+    assert len(failures) == 1
+    assert failures[0].status_code == 409
+    assert sum(adapter.recover_calls for adapter in adapters) == 1
 
 
 @pytest.mark.asyncio
@@ -360,9 +379,7 @@ async def test_rollback_does_not_run_health_check_phase(storage):
     executor = await _create_executor(storage, name="rb-no-hc")
     await _seed_snapshot(storage, executor.id, image="acme/api:1.0.0")
 
-    adapter = _RollbackAdapter(
-        await storage.get_runtime_connection(executor.runtime_connection_id)
-    )
+    adapter = _RollbackAdapter(await storage.get_runtime_connection(executor.runtime_connection_id))
     service = RollbackService(storage, SnapshotService(storage))
     outcome = await service.rollback(
         executor_config=executor,
@@ -382,7 +399,7 @@ async def test_rollback_propagates_recovery_error_to_run(storage):
     adapter = _RollbackAdapter(
         await storage.get_runtime_connection(executor.runtime_connection_id),
         recover_raises=RuntimeError(
-            '500 Server Error: Internal Server Error (creating container '
+            "500 Server Error: Internal Server Error (creating container "
             'storage: the container name "cool_carson" is already in use)'
         ),
     )
@@ -433,13 +450,9 @@ async def test_rollback_passes_target_snapshot_to_adapter_not_prerollback(storag
         storage, executor.id, image="acme/api:1.0.0", offset_minutes=0
     )
     # Newer row that would otherwise be picked up by "most recent" semantics.
-    await _seed_snapshot(
-        storage, executor.id, image="acme/api:2.0.0", offset_minutes=5
-    )
+    await _seed_snapshot(storage, executor.id, image="acme/api:2.0.0", offset_minutes=5)
 
-    adapter = _RollbackAdapter(
-        await storage.get_runtime_connection(executor.runtime_connection_id)
-    )
+    adapter = _RollbackAdapter(await storage.get_runtime_connection(executor.runtime_connection_id))
     service = RollbackService(storage, SnapshotService(storage))
     outcome = await service.rollback(
         executor_config=executor,
@@ -451,6 +464,6 @@ async def test_rollback_passes_target_snapshot_to_adapter_not_prerollback(storag
     # Exactly one call: the rollback recovery itself.
     assert adapter.recover_calls == 1
     recovered = adapter.recover_snapshot_args[0]
-    assert recovered["image"] == "acme/api:1.0.0", (
-        "adapter must receive the target snapshot data, not the pre_rollback row"
-    )
+    assert (
+        recovered["image"] == "acme/api:1.0.0"
+    ), "adapter must receive the target snapshot data, not the pre_rollback row"

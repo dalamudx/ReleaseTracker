@@ -3962,6 +3962,18 @@ class SQLiteStorage:
     async def create_executor_run(self, run: ExecutorRunHistory) -> int:
         return await sqlite_runtime_executors.create_executor_run(self, run)
 
+    async def create_executor_run_if_no_active(
+        self,
+        run: ExecutorRunHistory,
+        *,
+        active_statuses: frozenset[str],
+    ) -> int | None:
+        return await sqlite_runtime_executors.create_executor_run_if_no_active(
+            self,
+            run,
+            active_statuses=active_statuses,
+        )
+
     async def enqueue_executor_projection_trigger_work(
         self,
         *,
@@ -4164,11 +4176,13 @@ class SQLiteStorage:
         self,
         executor_id: int,
         *,
+        expected_revision: str,
         claimed_by: str | None = None,
     ) -> bool:
         return await sqlite_runtime_executors.complete_executor_desired_state(
             self,
             executor_id,
+            expected_revision=expected_revision,
             claimed_by=claimed_by,
         )
 

@@ -7,11 +7,23 @@ attempt independently passes status + body checks.
 
 from __future__ import annotations
 
-import re
+import asyncio
+import errno
+import json
+import sys
 from typing import TYPE_CHECKING, Any
 
-import httpx
-
+from ...services.outbound_http import (
+    OutboundConnectError,
+    OutboundDNSFailure,
+    OutboundHTTPClient,
+    OutboundHTTPError,
+    OutboundRedirectRejected,
+    OutboundTLSFailure,
+    OutboundTimeout,
+    OutboundTimeouts,
+    OutboundURLRejected,
+)
 from .host_resolver import ProbeHost, resolve_probe_hosts
 from .probe import HealthCheckProbe
 from .types import ProbeAttemptResult, ProbeErrorCategory
@@ -24,6 +36,16 @@ if TYPE_CHECKING:
 # regex still runs against the truncated bytes but the attempt result
 # carries ``body_truncated=True`` so operators know.
 _BODY_READ_CAP_BYTES = 65_536
+_REGEX_INPUT_CAP_CHARS = 8_192
+_REGEX_TIMEOUT_SECONDS = 0.2
+_REGEX_WORKER_CODE = """
+import json
+import re
+import sys
+
+pattern, body = json.loads(sys.stdin.buffer.read())
+sys.stdout.buffer.write(b"1" if re.search(pattern, body) is not None else b"0")
+"""
 
 
 class HTTPProbe(HealthCheckProbe):
@@ -81,11 +103,7 @@ class HTTPProbe(HealthCheckProbe):
         aggregate_last_error: str | None = None
         aggregate_category: ProbeErrorCategory = "ok"
         expected_status_codes = http_cfg.expected_status_codes
-        expected_body_regex = (
-            re.compile(http_cfg.expected_body_regex)
-            if http_cfg.expected_body_regex
-            else None
-        )
+        expected_body_regex = http_cfg.expected_body_regex
 
         per_attempt_timeout = max(1, int(profile.attempt_timeout_seconds))
 
@@ -99,9 +117,7 @@ class HTTPProbe(HealthCheckProbe):
             )
             if host.service is not None:
                 per_service[host.service] = svc_result
-            aggregate_detail["http"].append(
-                {"service": host.service, **svc_result.detail}
-            )
+            aggregate_detail["http"].append({"service": host.service, **svc_result.detail})
             if not svc_result.healthy:
                 overall_healthy = False
                 if aggregate_last_error is None:
@@ -131,7 +147,7 @@ class HTTPProbe(HealthCheckProbe):
         http_cfg,
         timeout_seconds: int,
         expected_status_codes: list[int] | None,
-        expected_body_regex: re.Pattern | None,
+        expected_body_regex: str | None,
     ) -> ProbeAttemptResult:
         port = host.port if host.port is not None else http_cfg.port
         if port is None:
@@ -145,51 +161,95 @@ class HTTPProbe(HealthCheckProbe):
         url = f"{http_cfg.scheme}://{_bracket_ipv6(host.host)}:{port}{http_cfg.path}"
         headers = dict(http_cfg.headers or {})
         verify = not http_cfg.tls_skip_verify
+        client = OutboundHTTPClient(
+            timeouts=OutboundTimeouts(
+                connect=min(5.0, timeout_seconds),
+                read=min(5.0, timeout_seconds),
+                write=min(5.0, timeout_seconds),
+                total=float(timeout_seconds),
+            ),
+            max_response_bytes=_BODY_READ_CAP_BYTES,
+        )
 
         try:
-            async with httpx.AsyncClient(verify=verify, timeout=timeout_seconds) as client:
-                response = await client.request(
-                    http_cfg.method,
-                    url,
-                    headers=headers,
-                )
-                body_bytes, truncated = await _collect_body(response)
-        except httpx.TimeoutException:
+            response = await client.request(
+                http_cfg.method,
+                url,
+                headers=headers,
+                verify_tls=verify,
+            )
+        except OutboundTimeout:
             return ProbeAttemptResult(
                 healthy=False,
                 error_category="timeout",
-                detail={"host": host.host, "port": port, "url": url},
+                detail={"host": host.host, "port": port},
                 last_error=f"attempt exceeded {timeout_seconds}s timeout",
             )
-        except httpx.ConnectError as exc:
+        except OutboundDNSFailure:
+            return ProbeAttemptResult(
+                healthy=False,
+                error_category="dns_failure",
+                detail={"host": host.host, "port": port},
+                last_error="destination DNS resolution failed",
+            )
+        except OutboundTLSFailure:
+            return ProbeAttemptResult(
+                healthy=False,
+                error_category="tls_error",
+                detail={"host": host.host, "port": port},
+                last_error="TLS connection failed",
+            )
+        except OutboundURLRejected as exc:
+            return ProbeAttemptResult(
+                healthy=False,
+                error_category="host_unresolvable",
+                detail={"host": host.host, "port": port, "outbound_policy_blocked": True},
+                last_error=str(exc),
+            )
+        except OutboundRedirectRejected as exc:
+            return ProbeAttemptResult(
+                healthy=False,
+                error_category="other",
+                detail={"host": host.host, "port": port, "redirect_blocked": True},
+                last_error=str(exc),
+            )
+        except OutboundConnectError as exc:
             category = _classify_connect_error(exc)
             return ProbeAttemptResult(
                 healthy=False,
                 error_category=category,
-                detail={"host": host.host, "port": port, "url": url},
-                last_error=f"connect error: {exc}",
+                detail={"host": host.host, "port": port},
+                last_error="connection to validated destination failed",
             )
-        except Exception as exc:
+        except OutboundHTTPError as exc:
             return ProbeAttemptResult(
                 healthy=False,
                 error_category="other",
-                detail={"host": host.host, "port": port, "url": url},
-                last_error=f"request failed: {exc}",
+                detail={"host": host.host, "port": port},
+                last_error=str(exc),
             )
 
         status_ok = _status_matches(response.status_code, expected_status_codes)
-        body_text = body_bytes.decode("utf-8", errors="replace")
+        body_text = response.body.decode("utf-8", errors="replace")
+        regex_input = body_text[:_REGEX_INPUT_CAP_CHARS]
+        regex_input_truncated = len(body_text) > _REGEX_INPUT_CAP_CHARS
         body_ok = True
+        regex_timed_out = False
         if expected_body_regex is not None:
-            body_ok = expected_body_regex.search(body_text) is not None
+            try:
+                body_ok = await _safe_regex_search(expected_body_regex, regex_input)
+            except TimeoutError:
+                body_ok = False
+                regex_timed_out = True
 
         detail: dict[str, Any] = {
             "host": host.host,
             "port": port,
-            "url": url,
             "http_last_status": response.status_code,
             "matched": status_ok and body_ok,
-            "body_truncated": truncated,
+            "body_truncated": response.body_truncated,
+            "body_regex_input_truncated": regex_input_truncated,
+            "body_regex_timed_out": regex_timed_out,
         }
         if status_ok and body_ok:
             return ProbeAttemptResult(healthy=True, detail=detail)
@@ -208,7 +268,11 @@ class HTTPProbe(HealthCheckProbe):
             healthy=False,
             error_category="body_mismatch",
             detail=detail,
-            last_error=f"body did not match {expected_body_regex.pattern!r}",
+            last_error=(
+                "body regex exceeded its execution limit"
+                if regex_timed_out
+                else f"body did not match {expected_body_regex!r}"
+            ),
         )
 
 
@@ -222,45 +286,40 @@ def _status_matches(status_code: int, expected: list[int] | None) -> bool:
     return status_code in expected
 
 
-def _classify_connect_error(exc: httpx.ConnectError) -> ProbeErrorCategory:
-    """Best-effort classification of ``httpx.ConnectError`` causes.
-
-    The library does not expose a typed error taxonomy so we inspect the
-    cause chain. Anything we cannot classify falls through to
-    ``network_unreachable`` which is the least specific transport bucket.
-    """
-    cause = exc.__cause__ or exc.__context__
-    message = f"{exc} {cause}" if cause else str(exc)
-    lowered = message.lower()
-    if "name or service not known" in lowered or "nodename nor servname" in lowered:
-        return "dns_failure"
-    if "gaierror" in lowered:
-        return "dns_failure"
-    if "connection refused" in lowered:
-        return "connection_refused"
-    if "ssl" in lowered or "tls" in lowered or "certificate" in lowered:
-        return "tls_error"
-    if "network is unreachable" in lowered or "no route to host" in lowered:
-        return "network_unreachable"
+def _classify_connect_error(exc: OutboundConnectError) -> ProbeErrorCategory:
+    cause = exc.__cause__
+    while cause is not None:
+        if isinstance(cause, ConnectionRefusedError):
+            return "connection_refused"
+        if isinstance(cause, OSError) and cause.errno == errno.ECONNREFUSED:
+            return "connection_refused"
+        cause = cause.__cause__ or cause.__context__
     return "network_unreachable"
 
 
-async def _collect_body(response: httpx.Response) -> tuple[bytes, bool]:
-    """Read the response body up to the cap; return (body, truncated)."""
-    chunks: list[bytes] = []
-    total = 0
-    truncated = False
-    async for chunk in response.aiter_bytes():
-        if total + len(chunk) >= _BODY_READ_CAP_BYTES:
-            remaining = _BODY_READ_CAP_BYTES - total
-            if remaining > 0:
-                chunks.append(chunk[:remaining])
-                total += remaining
-            truncated = True
-            break
-        chunks.append(chunk)
-        total += len(chunk)
-    return b"".join(chunks), truncated
+async def _safe_regex_search(pattern: str, body: str) -> bool:
+    """Run matching in a disposable subprocess that can be killed on timeout."""
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-I",
+        "-c",
+        _REGEX_WORKER_CODE,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    payload = json.dumps([pattern, body], ensure_ascii=False).encode("utf-8")
+    try:
+        stdout, _stderr = await asyncio.wait_for(
+            process.communicate(payload),
+            timeout=_REGEX_TIMEOUT_SECONDS,
+        )
+    except BaseException:
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
+        raise
+    return process.returncode == 0 and stdout == b"1"
 
 
 def _pick_aggregate_category(

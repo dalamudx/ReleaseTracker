@@ -4,8 +4,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 import emoji
-import httpx
 
+from ..services.outbound_http import (
+    OutboundHTTPClient,
+    OutboundHTTPError,
+    OutboundRedirectRejected,
+    OutboundURLRejected,
+)
 from .base import BaseNotifier
 
 logger = logging.getLogger(__name__)
@@ -86,73 +91,85 @@ class WebhookNotifier(BaseNotifier):
         self.events = events or ["new_release"]
         self.language = language if language in WEBHOOK_TRANSLATIONS else "en"
 
-    async def notify(self, event: str, payload: Any):
+    async def notify(self, event: str, payload: Any) -> bool:
         if event not in self.events:
-            return
+            return False
 
         webhook_payload = _build_webhook_payload(event, payload, language=self.language)
+        return await self.send_payload(webhook_payload)
 
-        async with httpx.AsyncClient() as client:
-            for attempt in range(4):
-                try:
-                    response = await client.post(
-                        self.url,
-                        json=webhook_payload,
-                        timeout=10.0,
-                    )
+    async def send_payload(self, webhook_payload: dict[str, Any]) -> bool:
+        """Deliver a prepared payload through the protected outbound policy."""
+        client = OutboundHTTPClient()
+        for attempt in range(4):
+            try:
+                response = await client.request("POST", self.url, json_body=webhook_payload)
 
-                    if response.status_code == 429:
-                        if attempt >= 3:
-                            logger.warning(
-                                f"Webhook 429 Too Many Requests after {attempt + 1} attempts, giving up"
-                            )
-                            return
-
-                        wait_time = 1.0
-                        retry_after = response.headers.get("Retry-After")
-                        if retry_after:
-                            try:
-                                wait_time = float(retry_after)
-                            except ValueError:
-                                pass
-                        else:
-                            try:
-                                data = response.json()
-                                if isinstance(data, dict) and "retry_after" in data:
-                                    raw = float(data["retry_after"])
-                                    wait_time = raw / 1000.0 if raw > 60 else raw
-                            except Exception:
-                                pass
-
-                        wait_time = min(wait_time + 0.5, 30.0)
+                if response.status_code == 429:
+                    if attempt >= 3:
                         logger.warning(
-                            f"Webhook 429 Too Many Requests (attempt {attempt + 1}/4). "
-                            f"Waiting {wait_time:.1f}s before retry..."
+                            "Webhook 429 Too Many Requests after %s attempts, giving up",
+                            attempt + 1,
                         )
-                        await asyncio.sleep(wait_time)
-                        continue
+                        return False
 
-                    response.raise_for_status()
-                    logger.debug(
-                        f"Webhook notification sent successfully: {self.name} (attempt {attempt + 1})"
+                    wait_time = 1.0
+                    retry_after = response.headers.get("retry-after")
+                    if retry_after:
+                        try:
+                            wait_time = float(retry_after)
+                        except ValueError:
+                            pass
+                    else:
+                        try:
+                            data = response.json()
+                            if isinstance(data, dict) and "retry_after" in data:
+                                raw = float(data["retry_after"])
+                                wait_time = raw / 1000.0 if raw > 60 else raw
+                        except Exception:
+                            pass
+
+                    wait_time = min(wait_time + 0.5, 30.0)
+                    logger.warning(
+                        "Webhook 429 Too Many Requests (attempt %s/4). "
+                        "Waiting %.1fs before retry...",
+                        attempt + 1,
+                        wait_time,
                     )
-                    return
+                    await asyncio.sleep(wait_time)
+                    continue
 
-                except httpx.HTTPStatusError as e:
+                if response.status_code < 200 or response.status_code >= 300:
                     logger.error(
-                        f"Webhook notification failed with HTTP {e.response.status_code}: {self.name}"
+                        "Webhook notification failed with HTTP %s: %s",
+                        response.status_code,
+                        self.name,
                     )
-                    return
-                except Exception as e:
-                    if attempt < 3:
-                        wait = 2.0**attempt
-                        logger.warning(
-                            f"Webhook notification error (attempt {attempt + 1}/4), retrying in {wait}s: {e}"
-                        )
-                        await asyncio.sleep(wait)
-                        continue
-                    logger.error(f"Webhook notification failed after 4 attempts: {e}")
-                    return
+                    return False
+
+                logger.debug(
+                    "Webhook notification sent successfully: %s (attempt %s)",
+                    self.name,
+                    attempt + 1,
+                )
+                return True
+            except (OutboundURLRejected, OutboundRedirectRejected) as exc:
+                logger.error("Webhook notification blocked by outbound policy: %s", exc)
+                return False
+            except OutboundHTTPError as exc:
+                if attempt < 3:
+                    wait = 2.0**attempt
+                    logger.warning(
+                        "Webhook notification error (attempt %s/4), retrying in %ss: %s",
+                        attempt + 1,
+                        wait,
+                        exc,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                logger.error("Webhook notification failed after 4 attempts: %s", exc)
+                return False
+        return False
 
 
 def _build_webhook_payload(

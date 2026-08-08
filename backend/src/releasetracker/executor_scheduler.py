@@ -708,7 +708,9 @@ class ExecutorScheduler:
         config = await self.storage.get_executor_config(executor_id)
         if config:
             await self._add_or_update_executor_job(config)
-            projection_work_enqueued = await self._enqueue_current_projection_work_for_executor(config)
+            projection_work_enqueued = await self._enqueue_current_projection_work_for_executor(
+                config
+            )
             await self.refresh_release_history_cleanup_schedule()
             if projection_work_enqueued:
                 self._track_background_task(self.reconcile_pending_desired_states())
@@ -773,12 +775,18 @@ class ExecutorScheduler:
         config = await self.storage.get_executor_config(executor_id)
         if not config:
             raise ValueError(f"Executor {executor_id} not found")
-        return await self._run_executor_with_overlap_guard(config, manual=True)
+        expected_revision = await self._pending_desired_state_revision(executor_id)
+        return await self._run_executor_with_overlap_guard(
+            config,
+            manual=True,
+            desired_state_revision=expected_revision,
+        )
 
     async def run_executor_now_async(self, executor_id: int) -> int:
         config = await self.storage.get_executor_config(executor_id)
         if not config:
             raise ValueError(f"Executor {executor_id} not found")
+        expected_revision = await self._pending_desired_state_revision(executor_id)
         if not config.enabled:
             raise ValueError(f"Executor {executor_id} is disabled")
         if not await self._try_acquire_executor_run(executor_id):
@@ -795,7 +803,11 @@ class ExecutorScheduler:
             try:
                 await self.storage.set_executor_run_status(run_id, "running")
                 outcome = await self._execute_executor(config, manual=True, _run_id=run_id)
-                await self._complete_pending_desired_state_after_manual_run(executor_id, outcome)
+                await self._complete_pending_desired_state_after_manual_run(
+                    executor_id,
+                    outcome,
+                    expected_revision=expected_revision,
+                )
             finally:
                 await self._release_executor_run(executor_id)
 
@@ -819,6 +831,7 @@ class ExecutorScheduler:
         *,
         manual: bool,
         run_id: int | None = None,
+        desired_state_revision: str | None = None,
     ) -> ExecutorRunOutcome:
         if executor_config.id is None:
             raise ValueError("Executor config must have id")
@@ -828,22 +841,34 @@ class ExecutorScheduler:
         try:
             outcome = await self._execute_executor(executor_config, manual=manual, _run_id=run_id)
             if manual:
-                await self._complete_pending_desired_state_after_manual_run(executor_id, outcome)
+                await self._complete_pending_desired_state_after_manual_run(
+                    executor_id,
+                    outcome,
+                    expected_revision=desired_state_revision,
+                )
             return outcome
         finally:
             await self._release_executor_run(executor_id)
+
+    async def _pending_desired_state_revision(self, executor_id: int) -> str | None:
+        desired_state = await self.storage.get_executor_desired_state(executor_id)
+        if desired_state is None or not desired_state.pending:
+            return None
+        return desired_state.desired_state_revision
 
     async def _complete_pending_desired_state_after_manual_run(
         self,
         executor_id: int,
         outcome: ExecutorRunOutcome,
+        *,
+        expected_revision: str | None,
     ) -> None:
-        if outcome.status not in {"success", "skipped"}:
+        if outcome.status not in {"success", "skipped"} or expected_revision is None:
             return
-        desired_state = await self.storage.get_executor_desired_state(executor_id)
-        if desired_state is None or not desired_state.pending:
-            return
-        await self.storage.complete_executor_desired_state(executor_id)
+        await self.storage.complete_executor_desired_state(
+            executor_id,
+            expected_revision=expected_revision,
+        )
 
     async def _reconcile_pending_desired_states_tick(self) -> None:
         if self._desired_state_consume_lock.locked():
@@ -935,6 +960,7 @@ class ExecutorScheduler:
         if executor_config is None:
             await self.storage.complete_executor_desired_state(
                 executor_id,
+                expected_revision=desired_state.desired_state_revision,
                 claimed_by=claimed_by,
             )
             return
@@ -988,6 +1014,7 @@ class ExecutorScheduler:
 
             await self.storage.complete_executor_desired_state(
                 executor_id,
+                expected_revision=desired_state.desired_state_revision,
                 claimed_by=claimed_by,
             )
         except Exception:

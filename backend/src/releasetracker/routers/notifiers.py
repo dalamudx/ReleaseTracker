@@ -5,6 +5,7 @@ from typing import Annotated
 from datetime import datetime
 
 from ..models import Notifier, User
+from ..notifiers.webhook import WebhookNotifier
 
 # ...
 
@@ -125,11 +126,6 @@ async def test_notifier(
     if not notifier:
         raise HTTPException(status_code=404, detail="Notifier not found")
 
-    import httpx
-    import logging
-
-    logger = logging.getLogger(__name__)
-
     message = (
         "这是一条来自 ReleaseTracker 的测试通知"
         if notifier.language == "zh"
@@ -143,14 +139,15 @@ async def test_notifier(
         "timestamp": datetime.now().isoformat(),
     }
 
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(notifier.url, json=payload, timeout=10.0)
-            response.raise_for_status()
-            logger.info(f"Webhook test sent to {notifier.url}, status: {response.status_code}")
-            return {
-                "message": f"Test notification sent to {notifier.url}. Status: {response.status_code}"
-            }
-    except Exception as e:
-        logger.error(f"Webhook test failed for {notifier.url}: {e}")
-        raise HTTPException(status_code=400, detail=f"Webhook test failed: {str(e)}")
+    if not notifier.url:
+        raise HTTPException(status_code=400, detail="Webhook URL is missing")
+
+    delivered = await WebhookNotifier(
+        notifier.name,
+        notifier.url,
+        events=["test"],
+        language=notifier.language,
+    ).send_payload(payload)
+    if not delivered:
+        raise HTTPException(status_code=400, detail="Webhook test failed")
+    return {"message": "Test notification sent successfully"}

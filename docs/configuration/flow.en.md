@@ -101,7 +101,7 @@ Currently only Webhook type is supported, compatible with Discord, Slack, and an
 
 `Name` : Display name for the notifier, useful for distinguishing multiple notification targets.
 
-`Webhook URL` : The destination address for notifications. The system sends an HTTP POST request with a JSON body to this URL.
+`Webhook URL` : The public destination address for notifications. The system sends an HTTP POST request with a JSON body to this URL. Only `http`/`https` on ports `80`, `8080`, `443`, `8443`, or `9443` is allowed. Private, loopback, link-local, container-network, and cloud metadata destinations are blocked; redirects are not followed.
 
 `Description` : Optional notes.
 
@@ -351,9 +351,9 @@ After an update, the executor can perform a health check on the target service t
 
 **HTTP Probe Fields** (shown only for Manual HTTP probe)
 
-`Host` : Target host for the probe request, e.g. `127.0.0.1`.
+`Host` : Public target host for the probe request, e.g. `health.example.com`. Private, loopback, link-local, container-network, and cloud metadata addresses are rejected after DNS resolution.
 
-`Port` : Target port, e.g. `8080`.
+`Port` : Approved target port: `80`/`8080` for HTTP or `443`/`8443`/`9443` for HTTPS.
 
 `Path` : HTTP request path. Must start with `/`, e.g. `/health`.
 
@@ -362,6 +362,8 @@ After an update, the executor can perform a health check on the target service t
 `Method` : Select `GET` or `HEAD`.
 
 `Expected Status Codes` : Comma-separated expected HTTP status codes, e.g. `200,204`. Leave blank to accept any 2xx/3xx response.
+
+HTTP redirects are rejected. Responses are size-limited, and expected-body regex matching uses bounded input and execution time.
 
 **TCP Probe Fields** (shown only for Manual TCP probe)
 

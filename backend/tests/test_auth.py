@@ -295,7 +295,7 @@ async def test_refresh_returns_token_pair_and_allows_me(client, auth_service):
     original_refresh_token = token_pair["refresh_token"]
 
     refresh_response = client.post(
-        "/api/auth/refresh", params={"refresh_token": original_refresh_token}
+        "/api/auth/refresh", json={"refresh_token": original_refresh_token}
     )
     assert refresh_response.status_code == 200
     refreshed = refresh_response.json()
@@ -315,8 +315,45 @@ async def test_refresh_returns_token_pair_and_allows_me(client, auth_service):
 
 @pytest.mark.asyncio
 async def test_refresh_rejects_invalid_token(client):
-    response = client.post("/api/auth/refresh", params={"refresh_token": "invalid-token"})
+    response = client.post("/api/auth/refresh", json={"refresh_token": "invalid-token"})
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_refresh_rejects_query_only_transport(client):
+    response = client.post(
+        "/api/auth/refresh",
+        params={"refresh_token": "query-token-must-not-be-read"},
+    )
+    assert response.status_code in {400, 422}
+
+
+@pytest.mark.asyncio
+async def test_refresh_rejects_mixed_query_and_body_without_consuming_body_token(
+    client,
+    auth_service,
+    caplog,
+):
+    await auth_service.ensure_admin_user()
+    login_response = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+    refresh_token = login_response.json()["token"]["refresh_token"]
+
+    caplog.clear()
+    mixed_response = client.post(
+        "/api/auth/refresh",
+        params={"refresh_token": "query-secret"},
+        json={"refresh_token": refresh_token},
+    )
+    assert mixed_response.status_code == 400
+    assert "query-secret" not in caplog.text
+    assert refresh_token not in caplog.text
+
+    body_response = client.post(
+        "/api/auth/refresh",
+        json={"refresh_token": refresh_token},
+    )
+    assert body_response.status_code == 200
+    assert "refresh_token=" not in str(body_response.request.url)
 
 
 @pytest.mark.asyncio
@@ -328,12 +365,12 @@ async def test_old_refresh_token_reuse_fails_after_rotation(client, auth_service
     original_refresh_token = login_response.json()["token"]["refresh_token"]
 
     first_refresh_response = client.post(
-        "/api/auth/refresh", params={"refresh_token": original_refresh_token}
+        "/api/auth/refresh", json={"refresh_token": original_refresh_token}
     )
     assert first_refresh_response.status_code == 200
 
     reused_refresh_response = client.post(
-        "/api/auth/refresh", params={"refresh_token": original_refresh_token}
+        "/api/auth/refresh", json={"refresh_token": original_refresh_token}
     )
     assert reused_refresh_response.status_code == 401
 
@@ -353,7 +390,7 @@ async def test_refresh_fails_after_logout(client, auth_service):
     assert logout_response.status_code == 200
 
     refresh_response = client.post(
-        "/api/auth/refresh", params={"refresh_token": token_pair["refresh_token"]}
+        "/api/auth/refresh", json={"refresh_token": token_pair["refresh_token"]}
     )
     assert refresh_response.status_code == 401
 
@@ -376,11 +413,11 @@ async def test_concurrent_refresh_reuse_allows_only_one_success(auth_service, st
             responses = await asyncio.gather(
                 async_client.post(
                     "/api/auth/refresh",
-                    params={"refresh_token": token_pair.refresh_token},
+                    json={"refresh_token": token_pair.refresh_token},
                 ),
                 async_client.post(
                     "/api/auth/refresh",
-                    params={"refresh_token": token_pair.refresh_token},
+                    json={"refresh_token": token_pair.refresh_token},
                 ),
             )
 
@@ -395,7 +432,7 @@ async def test_concurrent_refresh_reuse_allows_only_one_success(auth_service, st
 
             retry_response = await async_client.post(
                 "/api/auth/refresh",
-                params={"refresh_token": token_pair.refresh_token},
+                json={"refresh_token": token_pair.refresh_token},
             )
             assert retry_response.status_code == 401
         finally:

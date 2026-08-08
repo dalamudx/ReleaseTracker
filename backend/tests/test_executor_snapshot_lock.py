@@ -156,8 +156,7 @@ async def test_prune_skips_locked_snapshots(storage):
     # ids[1] is the only unlocked overflow candidate; ids[0] is locked and must survive.
     assert deleted == [ids[1]]
     remaining_ids = {
-        snap.id
-        for snap in await storage.list_executor_snapshots(executor_id, limit=10, offset=0)
+        snap.id for snap in await storage.list_executor_snapshots(executor_id, limit=10, offset=0)
     }
     assert ids[0] in remaining_ids
     assert ids[1] not in remaining_ids
@@ -210,6 +209,36 @@ async def test_delete_unlocked_snapshot_succeeds(storage):
     deleted = await service.delete_snapshot(executor_id, snapshot_id)
     assert deleted is True
     assert await storage.get_executor_snapshot_by_id(executor_id, snapshot_id) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_is_conditioned_on_unlocked_state_in_same_statement(storage, monkeypatch):
+    executor_id = await _create_executor(storage, name="lock-delete-race")
+    snapshot_id = (await _seed_snapshots(storage, executor_id, count=1))[0]
+    original_get = storage.get_executor_snapshot_by_id
+    first_read = True
+
+    async def get_then_lock(read_executor_id: int, read_snapshot_id: int):
+        nonlocal first_read
+        snapshot = await original_get(read_executor_id, read_snapshot_id)
+        if first_read and snapshot is not None:
+            first_read = False
+            await storage.set_executor_snapshot_locked(
+                read_executor_id,
+                read_snapshot_id,
+                locked=True,
+            )
+        return snapshot
+
+    monkeypatch.setattr(storage, "get_executor_snapshot_by_id", get_then_lock)
+    service = SnapshotService(storage)
+
+    with pytest.raises(SnapshotLockedError):
+        await service.delete_snapshot(executor_id, snapshot_id)
+
+    snapshot = await original_get(executor_id, snapshot_id)
+    assert snapshot is not None
+    assert snapshot.locked is True
 
 
 @pytest.mark.asyncio

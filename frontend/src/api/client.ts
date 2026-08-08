@@ -166,9 +166,8 @@ async function refreshAccessToken(): Promise<void> {
             try {
                 const refreshResponse = await apiClient.post<TokenPair>(
                     AUTH_REFRESH_ENDPOINT,
-                    null,
+                    { refresh_token: storedRefreshToken },
                     {
-                        params: { refresh_token: storedRefreshToken },
                         headers: { [AUTH_REDIRECT_HEADER]: 'true' },
                     }
                 )

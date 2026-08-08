@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import errno
 from datetime import datetime
 from typing import Any
 
@@ -19,6 +21,12 @@ from releasetracker.executors.base import BaseRuntimeAdapter
 from releasetracker.executors.health_check.host_resolver import ProbeHost
 from releasetracker.executors.health_check.http_probe import HTTPProbe
 from releasetracker.executors.health_check.types import HealthCheckContext
+from releasetracker.services.outbound_http import (
+    OutboundConnectError,
+    OutboundDNSFailure,
+    OutboundResponse,
+    OutboundTimeout,
+)
 
 
 class _FakeHostResolverAdapter(BaseRuntimeAdapter):
@@ -49,23 +57,35 @@ class _FakeHostResolverAdapter(BaseRuntimeAdapter):
 
 
 def _patched_client_factory(handler):
-    """Return an httpx.AsyncClient factory that injects a MockTransport.
+    """Return a protected-client fake while preserving HTTP response semantics."""
 
-    The factory swallows ``verify`` / ``timeout`` passed by the probe and
-    forwards everything else to the ORIGINAL ``httpx.AsyncClient`` backed
-    by a ``MockTransport``. We must capture the original class here,
-    before monkeypatch replaces it with this factory, otherwise the
-    inner call recurses into this factory forever.
-    """
-    original_client_cls = httpx.AsyncClient
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
 
-    def _factory(*args, **kwargs):
-        kwargs.pop("verify", None)
-        kwargs.pop("timeout", None)
-        kwargs["transport"] = httpx.MockTransport(handler)
-        return original_client_cls(*args, **kwargs)
+        async def request(self, method, url, **kwargs):
+            request = httpx.Request(method, url, headers=kwargs.get("headers"))
+            try:
+                response = handler(request)
+            except httpx.TimeoutException as exc:
+                raise OutboundTimeout("outbound request exceeded its deadline") from exc
+            except httpx.ConnectError as exc:
+                if "name or service not known" in str(exc):
+                    raise OutboundDNSFailure("outbound destination DNS resolution failed") from exc
+                cause = (
+                    ConnectionRefusedError(errno.ECONNREFUSED, "connection refused")
+                    if "refused" in str(exc)
+                    else OSError("network unreachable")
+                )
+                raise OutboundConnectError("connection to validated destination failed") from cause
+            return OutboundResponse(
+                status_code=response.status_code,
+                headers={key.lower(): value for key, value in response.headers.items()},
+                body=response.content[:65_536],
+                body_truncated=len(response.content) > 65_536,
+            )
 
-    return _factory
+    return _FakeClient
 
 
 def _make_profile(**overrides) -> HealthCheckProfile:
@@ -156,18 +176,20 @@ async def test_manual_http_probe_uses_configured_host_without_runtime_resolution
         return httpx.Response(204, text="ok")
 
     monkeypatch.setattr(
-        "releasetracker.executors.health_check.http_probe.httpx.AsyncClient",
+        "releasetracker.executors.health_check.http_probe.OutboundHTTPClient",
         _patched_client_factory(handler),
     )
 
-    profile = _make_manual_profile(http={"host": "manual.internal", "path": "/ready", "port": 9443, "scheme": "https"})
-    ctx = _make_context(profile, [ProbeHost(service=None, host="runtime.internal", port=80)])
+    profile = _make_manual_profile(
+        http={"host": "manual.example", "path": "/ready", "port": 9443, "scheme": "https"}
+    )
+    ctx = _make_context(profile, [ProbeHost(service=None, host="runtime.example", port=80)])
 
     result = await HTTPProbe(manual=True).attempt(ctx)
 
     assert result.healthy is True
-    assert requested_urls == ["https://manual.internal:9443/ready"]
-    assert result.detail["http"][0]["host"] == "manual.internal"
+    assert requested_urls == ["https://manual.example:9443/ready"]
+    assert result.detail["http"][0]["host"] == "manual.example"
 
 
 @pytest.mark.asyncio
@@ -176,12 +198,12 @@ async def test_http_probe_healthy_200(monkeypatch):
         return httpx.Response(200, text="ok")
 
     monkeypatch.setattr(
-        "releasetracker.executors.health_check.http_probe.httpx.AsyncClient",
+        "releasetracker.executors.health_check.http_probe.OutboundHTTPClient",
         _patched_client_factory(handler),
     )
 
     profile = _make_profile(http={"path": "/healthz", "port": 8080})
-    ctx = _make_context(profile, [ProbeHost(service=None, host="10.0.0.5")])
+    ctx = _make_context(profile, [ProbeHost(service=None, host="93.184.216.34")])
 
     result = await HTTPProbe().attempt(ctx)
 
@@ -196,12 +218,12 @@ async def test_http_probe_rejects_unexpected_status(monkeypatch):
         return httpx.Response(503, text="nope")
 
     monkeypatch.setattr(
-        "releasetracker.executors.health_check.http_probe.httpx.AsyncClient",
+        "releasetracker.executors.health_check.http_probe.OutboundHTTPClient",
         _patched_client_factory(handler),
     )
 
     profile = _make_profile(http={"path": "/healthz", "port": 8080})
-    ctx = _make_context(profile, [ProbeHost(service=None, host="10.0.0.5")])
+    ctx = _make_context(profile, [ProbeHost(service=None, host="93.184.216.34")])
 
     result = await HTTPProbe().attempt(ctx)
 
@@ -216,14 +238,12 @@ async def test_http_probe_expected_status_codes_pass(monkeypatch):
         return httpx.Response(418, text="teapot")
 
     monkeypatch.setattr(
-        "releasetracker.executors.health_check.http_probe.httpx.AsyncClient",
+        "releasetracker.executors.health_check.http_probe.OutboundHTTPClient",
         _patched_client_factory(handler),
     )
 
-    profile = _make_profile(
-        http={"path": "/healthz", "port": 8080, "expected_status_codes": [418]}
-    )
-    ctx = _make_context(profile, [ProbeHost(service=None, host="10.0.0.5")])
+    profile = _make_profile(http={"path": "/healthz", "port": 8080, "expected_status_codes": [418]})
+    ctx = _make_context(profile, [ProbeHost(service=None, host="93.184.216.34")])
 
     result = await HTTPProbe().attempt(ctx)
     assert result.healthy is True
@@ -235,14 +255,14 @@ async def test_http_probe_expected_body_regex(monkeypatch):
         return httpx.Response(200, text="service-version=9.9.9\n")
 
     monkeypatch.setattr(
-        "releasetracker.executors.health_check.http_probe.httpx.AsyncClient",
+        "releasetracker.executors.health_check.http_probe.OutboundHTTPClient",
         _patched_client_factory(handler),
     )
 
     profile = _make_profile(
         http={"path": "/version", "port": 8080, "expected_body_regex": r"9\.9\.\d+"}
     )
-    ctx = _make_context(profile, [ProbeHost(service=None, host="10.0.0.5")])
+    ctx = _make_context(profile, [ProbeHost(service=None, host="93.184.216.34")])
 
     result = await HTTPProbe().attempt(ctx)
     assert result.healthy is True
@@ -254,14 +274,14 @@ async def test_http_probe_body_regex_mismatch(monkeypatch):
         return httpx.Response(200, text="different")
 
     monkeypatch.setattr(
-        "releasetracker.executors.health_check.http_probe.httpx.AsyncClient",
+        "releasetracker.executors.health_check.http_probe.OutboundHTTPClient",
         _patched_client_factory(handler),
     )
 
     profile = _make_profile(
         http={"path": "/version", "port": 8080, "expected_body_regex": r"\d+\.\d+\.\d+"}
     )
-    ctx = _make_context(profile, [ProbeHost(service=None, host="10.0.0.5")])
+    ctx = _make_context(profile, [ProbeHost(service=None, host="93.184.216.34")])
 
     result = await HTTPProbe().attempt(ctx)
     assert result.healthy is False
@@ -274,12 +294,12 @@ async def test_http_probe_classifies_connection_refused(monkeypatch):
         raise httpx.ConnectError("connection refused")
 
     monkeypatch.setattr(
-        "releasetracker.executors.health_check.http_probe.httpx.AsyncClient",
+        "releasetracker.executors.health_check.http_probe.OutboundHTTPClient",
         _patched_client_factory(handler),
     )
 
     profile = _make_profile(http={"path": "/", "port": 8080})
-    ctx = _make_context(profile, [ProbeHost(service=None, host="10.0.0.5")])
+    ctx = _make_context(profile, [ProbeHost(service=None, host="93.184.216.34")])
 
     result = await HTTPProbe().attempt(ctx)
     assert result.healthy is False
@@ -292,7 +312,7 @@ async def test_http_probe_classifies_dns_failure(monkeypatch):
         raise httpx.ConnectError("name or service not known")
 
     monkeypatch.setattr(
-        "releasetracker.executors.health_check.http_probe.httpx.AsyncClient",
+        "releasetracker.executors.health_check.http_probe.OutboundHTTPClient",
         _patched_client_factory(handler),
     )
 
@@ -309,14 +329,12 @@ async def test_http_probe_timeout(monkeypatch):
         raise httpx.TimeoutException("too slow", request=request)
 
     monkeypatch.setattr(
-        "releasetracker.executors.health_check.http_probe.httpx.AsyncClient",
+        "releasetracker.executors.health_check.http_probe.OutboundHTTPClient",
         _patched_client_factory(handler),
     )
 
-    profile = _make_profile(
-        http={"path": "/slow", "port": 8080}, attempt_timeout_seconds=1
-    )
-    ctx = _make_context(profile, [ProbeHost(service=None, host="10.0.0.5")])
+    profile = _make_profile(http={"path": "/slow", "port": 8080}, attempt_timeout_seconds=1)
+    ctx = _make_context(profile, [ProbeHost(service=None, host="93.184.216.34")])
 
     result = await HTTPProbe().attempt(ctx)
     assert result.healthy is False
@@ -331,7 +349,7 @@ async def test_http_probe_body_truncation_flag(monkeypatch):
         return httpx.Response(200, content=large_body)
 
     monkeypatch.setattr(
-        "releasetracker.executors.health_check.http_probe.httpx.AsyncClient",
+        "releasetracker.executors.health_check.http_probe.OutboundHTTPClient",
         _patched_client_factory(handler),
     )
 
@@ -344,10 +362,57 @@ async def test_http_probe_body_truncation_flag(monkeypatch):
             "expected_body_regex": r"zzz",
         }
     )
-    ctx = _make_context(profile, [ProbeHost(service=None, host="10.0.0.5")])
+    ctx = _make_context(profile, [ProbeHost(service=None, host="93.184.216.34")])
 
     result = await HTTPProbe().attempt(ctx)
     assert result.detail["http"][0]["body_truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_http_probe_rejects_private_destination_before_connect():
+    profile = _make_profile(http={"path": "/", "port": 8080})
+    ctx = _make_context(profile, [ProbeHost(service=None, host="10.0.0.5")])
+
+    result = await HTTPProbe().attempt(ctx)
+
+    assert result.healthy is False
+    assert result.error_category == "host_unresolvable"
+    assert result.detail["http"][0]["outbound_policy_blocked"] is True
+
+
+@pytest.mark.asyncio
+async def test_http_probe_catastrophic_regex_is_bounded_and_does_not_block_event_loop(monkeypatch):
+    def handler(request: httpx.Request):
+        return httpx.Response(200, text="a" * 20_000)
+
+    monkeypatch.setattr(
+        "releasetracker.executors.health_check.http_probe.OutboundHTTPClient",
+        _patched_client_factory(handler),
+    )
+    profile = _make_profile(
+        http={
+            "path": "/",
+            "port": 8080,
+            "expected_body_regex": r"(a+)+b",
+        }
+    )
+    ctx = _make_context(profile, [ProbeHost(service=None, host="93.184.216.34")])
+    heartbeat_ran = False
+
+    async def heartbeat():
+        nonlocal heartbeat_ran
+        await asyncio.sleep(0.01)
+        heartbeat_ran = True
+
+    result, _ = await asyncio.wait_for(
+        asyncio.gather(HTTPProbe().attempt(ctx), heartbeat()),
+        timeout=1.0,
+    )
+
+    assert heartbeat_ran is True
+    assert result.healthy is False
+    assert result.detail["http"][0]["body_regex_timed_out"] is True
+    assert result.detail["http"][0]["body_regex_input_truncated"] is True
 
 
 @pytest.mark.asyncio
@@ -401,7 +466,7 @@ async def test_http_probe_grouped_mode_all_services_must_pass(monkeypatch):
         return httpx.Response(200)
 
     monkeypatch.setattr(
-        "releasetracker.executors.health_check.http_probe.httpx.AsyncClient",
+        "releasetracker.executors.health_check.http_probe.OutboundHTTPClient",
         _patched_client_factory(handler),
     )
 
@@ -413,8 +478,8 @@ async def test_http_probe_grouped_mode_all_services_must_pass(monkeypatch):
     ctx = _make_context(
         profile,
         [
-            ProbeHost(service="api", host="10.0.0.5"),
-            ProbeHost(service="worker", host="worker.internal"),
+            ProbeHost(service="api", host="93.184.216.34"),
+            ProbeHost(service="worker", host="worker.example"),
         ],
         target_ref={
             "mode": "docker_compose",

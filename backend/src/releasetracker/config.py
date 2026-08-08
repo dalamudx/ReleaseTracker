@@ -2,10 +2,10 @@
 
 from typing import Any, Literal
 
-
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .models import ReleaseChannel
+from .services.outbound_http import ALLOWED_OUTBOUND_PORTS
 
 EXECUTOR_BINDABLE_SOURCE_TYPES = frozenset({"container", "helm"})
 EXECUTOR_GROUPED_BINDING_TARGET_MODES = frozenset(
@@ -637,8 +637,7 @@ class HealthCheckHttpConfig(BaseModel):
             raise ValueError(
                 "health_check.http.expected_body_regex must be at most 1024 characters"
             )
-        # Validate the regex compiles so operators see the error at save
-        # time instead of at probe time.
+        # Validate syntax at save time; execution is isolated by the probe.
         import re
 
         try:
@@ -656,6 +655,13 @@ class HealthCheckHttpConfig(BaseModel):
             return {}
         if not isinstance(value, dict) or len(value) > 50:
             raise ValueError("health_check.http.headers must be a map with at most 50 entries")
+        protected_headers = {
+            "host",
+            "content-length",
+            "transfer-encoding",
+            "connection",
+            "accept-encoding",
+        }
         for key, entry in value.items():
             if not isinstance(key, str) or not isinstance(entry, str):
                 raise ValueError("health_check.http.headers keys and values must be strings")
@@ -663,7 +669,19 @@ class HealthCheckHttpConfig(BaseModel):
                 raise ValueError(
                     "health_check.http.headers keys and values must be at most 1024 characters"
                 )
+            if key.lower() in protected_headers or "\r" in entry or "\n" in entry:
+                raise ValueError("health_check.http.headers contains a prohibited header")
         return value
+
+    @model_validator(mode="after")
+    def _validate_outbound_port(self):
+        effective_port = self.port or (443 if self.scheme == "https" else 80)
+        if effective_port not in ALLOWED_OUTBOUND_PORTS[self.scheme]:
+            allowed = ", ".join(str(port) for port in sorted(ALLOWED_OUTBOUND_PORTS[self.scheme]))
+            raise ValueError(
+                f"health_check.http.port must be an allowed {self.scheme} port: {allowed}"
+            )
+        return self
 
 
 def _validate_health_check_host(value: Any, label: str) -> str | None:

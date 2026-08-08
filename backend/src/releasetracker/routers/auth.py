@@ -1,7 +1,8 @@
 """Authentication routes"""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Annotated
 
 from ..models import LoginRequest, RegisterRequest, User, TokenPair, ChangePasswordRequest
@@ -15,6 +16,12 @@ from ..dependencies import (
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(min_length=1)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 @router.post("/register", response_model=User, status_code=status.HTTP_201_CREATED)
@@ -91,9 +98,17 @@ async def get_me(current_user: Annotated[User, Depends(get_current_user)]):
 
 @router.post("/refresh", response_model=TokenPair)
 async def refresh_token(
-    refresh_token: str, auth_service: Annotated[AuthService, Depends(get_auth_service)]
+    req: RefreshTokenRequest,
+    request: Request,
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ):
+    """Rotate a refresh token supplied only in a JSON request body."""
+    if "refresh_token" in request.query_params:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Refresh tokens are not accepted in query strings",
+        )
     try:
-        return await auth_service.refresh_token(refresh_token)
+        return await auth_service.refresh_token(req.refresh_token)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))

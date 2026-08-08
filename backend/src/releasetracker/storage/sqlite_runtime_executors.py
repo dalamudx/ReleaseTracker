@@ -764,6 +764,52 @@ async def create_executor_run(storage: "SQLiteStorage", run: ExecutorRunHistory)
     return run_id
 
 
+async def create_executor_run_if_no_active(
+    storage: "SQLiteStorage",
+    run: ExecutorRunHistory,
+    *,
+    active_statuses: frozenset[str],
+) -> int | None:
+    """Atomically insert a run only when the executor has no active run."""
+    if not active_statuses:
+        raise ValueError("active_statuses must not be empty")
+    db = await storage._get_connection()
+    placeholders = ", ".join("?" for _ in active_statuses)
+    cursor = await db.execute(
+        f"""
+        INSERT INTO executor_run_history
+        (executor_id, started_at, finished_at, status, from_version, to_version, message, diagnostics, created_at)
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM executor_run_history
+            WHERE executor_id = ?
+              AND status IN ({placeholders})
+        )
+        """,
+        (
+            run.executor_id,
+            run.started_at.isoformat(),
+            run.finished_at.isoformat() if run.finished_at else None,
+            run.status,
+            run.from_version,
+            run.to_version,
+            run.message,
+            storage._dump_json(run.diagnostics),
+            run.created_at.isoformat(),
+            run.executor_id,
+            *sorted(active_statuses),
+        ),
+    )
+    await db.commit()
+    if not cursor.rowcount:
+        return None
+    run_id = cursor.lastrowid
+    if run_id is None:
+        raise ValueError("Failed to create executor run history")
+    return run_id
+
+
 async def enqueue_executor_projection_trigger_work(
     storage: "SQLiteStorage",
     *,
@@ -1085,7 +1131,12 @@ async def delete_executor_snapshots(
     db = await storage._get_connection()
     placeholders = ",".join("?" for _ in ids)
     result = await db.execute(
-        f"DELETE FROM executor_snapshots WHERE executor_id = ? AND id IN ({placeholders})",
+        f"""
+        DELETE FROM executor_snapshots
+        WHERE executor_id = ?
+          AND id IN ({placeholders})
+          AND locked = 0
+        """,
         (executor_id, *ids),
     )
     await db.commit()
@@ -1387,27 +1438,32 @@ async def complete_executor_desired_state(
     storage: "SQLiteStorage",
     executor_id: int,
     *,
+    expected_revision: str,
     claimed_by: str | None = None,
 ) -> bool:
+    normalized_revision = _normalize_non_empty_text(
+        expected_revision,
+        field="expected_revision",
+    )
     db = await storage._get_connection()
-    db.row_factory = aiosqlite.Row
-    row = await (
-        await db.execute(
-            "SELECT desired_state_revision, claimed_by FROM executor_desired_state WHERE executor_id = ?",
-            (executor_id,),
-        )
-    ).fetchone()
-    if row is None:
-        return False
-
-    if claimed_by is not None:
-        normalized_claimed_by = _normalize_non_empty_text(claimed_by, field="claimed_by")
-        if row["claimed_by"] != normalized_claimed_by:
-            return False
-
     now = datetime.now().isoformat()
+    parameters: tuple[Any, ...]
+    claim_predicate = ""
+    if claimed_by is None:
+        parameters = (normalized_revision, now, executor_id, normalized_revision)
+    else:
+        normalized_claimed_by = _normalize_non_empty_text(claimed_by, field="claimed_by")
+        claim_predicate = " AND claimed_by = ?"
+        parameters = (
+            normalized_revision,
+            now,
+            executor_id,
+            normalized_revision,
+            normalized_claimed_by,
+        )
+
     result = await db.execute(
-        """
+        f"""
         UPDATE executor_desired_state
         SET pending = 0,
             next_eligible_at = NULL,
@@ -1417,8 +1473,10 @@ async def complete_executor_desired_state(
             last_completed_revision = ?,
             updated_at = ?
         WHERE executor_id = ?
+          AND desired_state_revision = ?
+          {claim_predicate}
         """,
-        (row["desired_state_revision"], now, executor_id),
+        parameters,
     )
     await db.commit()
     return bool(result.rowcount)
