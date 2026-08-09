@@ -12,6 +12,7 @@ from typing import Literal
 import httpx
 
 from ..models import Release
+from ..services.secure_urls import require_https_url, same_origin_https
 from .base import BaseTracker
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,42 @@ class DockerTracker(BaseTracker):
     def _registry_url(self) -> str:
         return f"https://{self.registry}"
 
+    def _validate_registry_request_url(self, url: str) -> str:
+        """Accept only HTTPS requests to the configured registry origin.
+
+        Registry-provided pagination links and redirects are attacker-controlled.
+        A configured registry credential or a bearer token must never be sent to
+        another origin.
+        """
+        validated = require_https_url(url, field="Container registry URL")
+        if not same_origin_https(self._registry_url(), validated):
+            raise ValueError("Container registry request refused a cross-origin URL")
+        return validated
+
+    @staticmethod
+    def _reject_redirect(response: httpx.Response) -> None:
+        if 300 <= response.status_code < 400:
+            raise ValueError("Container registry redirect is not allowed")
+
+    async def _registry_request(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        **kwargs,
+    ) -> httpx.Response:
+        """Send an authenticated request only to the configured HTTPS origin."""
+        response = await client.request(
+            method,
+            self._validate_registry_request_url(url),
+            headers=headers,
+            **kwargs,
+        )
+        self._reject_redirect(response)
+        return response
+
     def _should_fetch_config_blob(self) -> bool:
         """Decide whether config-blob reading is worth attempting for this registry.
 
@@ -143,7 +180,7 @@ class DockerTracker(BaseTracker):
             # For unknown registries, send a probe request first and read auth parameters from the 401 response headers
             probe_url = f"{self._registry_url()}/v2/"
             try:
-                resp = await client.get(probe_url, timeout=self.timeout)
+                resp = await self._registry_request(client, "GET", probe_url, timeout=self.timeout)
                 if resp.status_code == 401:
                     www_auth = resp.headers.get("www-authenticate", "")
                     auth_info = _parse_www_authenticate(www_auth)
@@ -159,19 +196,23 @@ class DockerTracker(BaseTracker):
         service = auth_info.get("service", "")
 
         params = {"scope": scope, "service": service}
-        headers = {}
-
-        if self.token:
-            if ":" in self.token:
-                # username:password format → Basic Auth
-                encoded = base64.b64encode(self.token.encode()).decode()
-                headers["Authorization"] = f"Basic {encoded}"
-            else:
-                # Raw token, such as a GitHub PAT, -> Bearer
-                headers["Authorization"] = f"Bearer {self.token}"
+        realm = require_https_url(realm, field="Container registry authorization realm")
+        # A registry can advertise a separate bearer-token service. Never
+        # disclose the configured registry credential to that service unless
+        # it is the exact same HTTPS origin as the registry itself.
+        headers = (
+            self._get_auth_header(None) if same_origin_https(self._registry_url(), realm) else {}
+        )
 
         try:
-            resp = await client.get(realm, params=params, headers=headers, timeout=self.timeout)
+            resp = await client.get(
+                realm,
+                params=params,
+                headers=headers,
+                timeout=self.timeout,
+                follow_redirects=False,
+            )
+            self._reject_redirect(resp)
             resp.raise_for_status()
             return resp.json().get("token") or resp.json().get("access_token")
         except Exception as e:
@@ -197,7 +238,9 @@ class DockerTracker(BaseTracker):
 
         while url:
             try:
-                resp = await client.get(url, headers=headers, timeout=self.timeout)
+                resp = await self._registry_request(
+                    client, "GET", url, headers=headers, timeout=self.timeout
+                )
                 resp.raise_for_status()
             except httpx.TimeoutException:
                 logger.error(f"DockerTracker: Registry request timed out. URL={url}")
@@ -206,13 +249,16 @@ class DockerTracker(BaseTracker):
             try:
                 data = resp.json()
             except ValueError:
-                logger.error(f"DockerTracker: Failed to parse tags, response is not valid JSON. URL={url}")
+                logger.error(
+                    f"DockerTracker: Failed to parse tags, response is not valid JSON. URL={url}"
+                )
                 break
 
             tags.extend(data.get("tags") or [])
             # Pagination: Link header
             link = resp.headers.get("link", "")
-            url = _parse_link_header(link, self._registry_url())
+            next_url = _parse_link_header(link, self._registry_url())
+            url = self._validate_registry_request_url(next_url) if next_url else None
 
         return tags
 
@@ -228,7 +274,9 @@ class DockerTracker(BaseTracker):
             "Accept": _MANIFEST_ACCEPT,
             **self._get_auth_header(bearer_token),
         }
-        response = await client.request(method, url, headers=headers, timeout=self.timeout)
+        response = await self._registry_request(
+            client, method, url, headers=headers, timeout=self.timeout
+        )
         if response.status_code != 401:
             return response, bearer_token
 
@@ -240,8 +288,8 @@ class DockerTracker(BaseTracker):
             "Accept": _MANIFEST_ACCEPT,
             **self._get_auth_header(refreshed_token),
         }
-        retry_response = await client.request(
-            method, url, headers=retry_headers, timeout=self.timeout
+        retry_response = await self._registry_request(
+            client, method, url, headers=retry_headers, timeout=self.timeout
         )
         return retry_response, refreshed_token
 
@@ -371,9 +419,7 @@ class DockerTracker(BaseTracker):
         except ValueError:
             return None, current_token
 
-        media_type = response.headers.get("Content-Type", "") or manifest_json.get(
-            "mediaType", ""
-        )
+        media_type = response.headers.get("Content-Type", "") or manifest_json.get("mediaType", "")
 
         # Step 2: if we got an index / manifest list, pick one platform and
         # GET that sub-manifest. Otherwise the body already contains config.
@@ -409,7 +455,9 @@ class DockerTracker(BaseTracker):
         # Step 3: fetch the config blob and read `created`.
         blob_url = f"{self._registry_url()}/v2/{self.image}/blobs/{config_digest}"
         try:
-            blob_resp = await client.get(
+            blob_resp = await self._registry_request(
+                client,
+                "GET",
                 blob_url,
                 headers=self._get_auth_header(current_token),
                 timeout=self.timeout,
@@ -481,9 +529,11 @@ class DockerTracker(BaseTracker):
         """
         scope = f"repository:{self.image}:pull"
 
-        logger.info(f"DockerTracker: Fetching tags from {self.registry}/{self.image} (limit={limit})")
+        logger.info(
+            f"DockerTracker: Fetching tags from {self.registry}/{self.image} (limit={limit})"
+        )
 
-        async with httpx.AsyncClient(follow_redirects=True) as client:
+        async with httpx.AsyncClient(follow_redirects=False) as client:
             # 1. Fetch Bearer token
             bearer_token = await self._get_bearer_token(client, scope)
 
@@ -494,10 +544,14 @@ class DockerTracker(BaseTracker):
                 logger.error(
                     f"DockerTracker: Fetch tag list failed {e.response.status_code}: {e.response.text}"
                 )
-                raise ValueError(f"Failed to fetch image tags: {e.response.status_code} {e.response.text}")
+                raise ValueError(
+                    f"Failed to fetch image tags: {e.response.status_code} {e.response.text}"
+                )
             except httpx.TimeoutException:
                 logger.error(f"DockerTracker: Fetch tag list timed out (Repository {self.image})")
-                raise ValueError("Container registry connection timed out; check the network or increase the timeout setting")
+                raise ValueError(
+                    "Container registry connection timed out; check the network or increase the timeout setting"
+                )
 
             if not all_tags:
                 return []
