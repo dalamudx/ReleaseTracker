@@ -56,6 +56,9 @@ SYSTEM_LOG_LEVEL_SETTING_KEY = "system.log_level"
 SYSTEM_BASE_URL_SETTING_KEY = "system.base_url"
 ADMIN_USER_ID_SETTING_KEY = sqlite_auth_oidc.ADMIN_USER_ID_SETTING_KEY
 BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY = sqlite_auth_oidc.BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY
+ADMIN_PASSWORD_RESET_REQUIRED_SETTING_KEY = (
+    sqlite_auth_oidc.ADMIN_PASSWORD_RESET_REQUIRED_SETTING_KEY
+)
 ADMIN_OIDC_ISSUER_SETTING_KEY = sqlite_auth_oidc.ADMIN_OIDC_ISSUER_SETTING_KEY
 ADMIN_OIDC_SUBJECT_SETTING_KEY = sqlite_auth_oidc.ADMIN_OIDC_SUBJECT_SETTING_KEY
 RESERVED_AUTH_SETTING_KEYS = sqlite_auth_oidc.RESERVED_AUTH_SETTING_KEYS
@@ -82,6 +85,7 @@ class SQLiteStorage:
 
         # Persistent database connection, lazily created via _get_connection()
         self._db: aiosqlite.Connection | None = None
+        self._transaction_lock = asyncio.Lock()
 
         # Notifier in-memory cache, invalidated after CRUD operations
         self._notifiers_cache: list | None = None
@@ -4092,6 +4096,37 @@ class SQLiteStorage:
     async def delete_executor_snapshots(self, executor_id: int, ids: list[int]) -> int:
         return await sqlite_runtime_executors.delete_executor_snapshots(self, executor_id, ids)
 
+    async def claim_executor_snapshot_for_rollback(
+        self,
+        *,
+        executor_id: int,
+        snapshot_id: int | None,
+        run: ExecutorRunHistory,
+        active_statuses: frozenset[str],
+    ) -> tuple[ExecutorSnapshot, int] | None:
+        return await sqlite_runtime_executors.claim_executor_snapshot_for_rollback(
+            self,
+            executor_id=executor_id,
+            snapshot_id=snapshot_id,
+            run=run,
+            active_statuses=active_statuses,
+        )
+
+    async def release_executor_snapshot_claim(self, *, snapshot_id: int, run_id: int) -> bool:
+        return await sqlite_runtime_executors.release_executor_snapshot_claim(
+            self, snapshot_id=snapshot_id, run_id=run_id
+        )
+
+    async def is_executor_snapshot_claimed(self, *, executor_id: int, snapshot_id: int) -> bool:
+        return await sqlite_runtime_executors.is_executor_snapshot_claimed(
+            self, executor_id=executor_id, snapshot_id=snapshot_id
+        )
+
+    async def reconcile_stale_executor_snapshot_claims(self, *, stale_before: datetime) -> int:
+        return await sqlite_runtime_executors.reconcile_stale_executor_snapshot_claims(
+            self, stale_before=stale_before
+        )
+
     async def set_executor_snapshot_locked(
         self, executor_id: int, snapshot_id: int, *, locked: bool
     ) -> bool:
@@ -4196,6 +4231,15 @@ class SQLiteStorage:
 
     async def create_bootstrap_admin(self, user: User) -> User:
         return await sqlite_auth_oidc.create_bootstrap_admin(self, user)
+
+    async def is_admin_password_reset_required(self) -> bool:
+        return await sqlite_auth_oidc.is_admin_password_reset_required(self)
+
+    async def mark_admin_password_reset_required(self, user_id: int) -> int:
+        return await sqlite_auth_oidc.mark_admin_password_reset_required(self, user_id)
+
+    async def reset_admin_password(self, password_hash: str) -> int:
+        return await sqlite_auth_oidc.reset_admin_password(self, password_hash)
 
     async def get_admin_oidc_binding(self) -> tuple[str, str] | None:
         return await sqlite_auth_oidc.get_admin_oidc_binding(self)
@@ -4573,6 +4617,7 @@ class SQLiteStorage:
         code_verifier: str,
         nonce: str,
         flow_type: str,
+        browser_binding_hash: str,
         initiating_admin_user_id: int | None = None,
     ) -> None:
         await sqlite_auth_oidc.save_oauth_state(
@@ -4582,11 +4627,14 @@ class SQLiteStorage:
             code_verifier,
             nonce,
             flow_type,
+            browser_binding_hash,
             initiating_admin_user_id,
         )
 
-    async def get_and_delete_oauth_state(self, state: str):
-        return await sqlite_auth_oidc.get_and_delete_oauth_state(self, state)
+    async def consume_oauth_state(self, state: str, provider_slug: str, browser_binding_hash: str):
+        return await sqlite_auth_oidc.consume_oauth_state(
+            self, state, provider_slug, browser_binding_hash
+        )
 
     async def cleanup_expired_oauth_states(self) -> None:
         await sqlite_auth_oidc.cleanup_expired_oauth_states(self)

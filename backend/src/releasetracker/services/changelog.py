@@ -9,6 +9,8 @@ from urllib.parse import quote
 import httpx
 
 from ..models import Release, TrackerReleaseNotesConfig, TrackerSource
+from .credentialed_http import credentialed_request
+from .secure_urls import require_https_url
 
 SUPPORTED_CHANGELOG_SOURCE_TYPES = {"github", "gitlab", "gitea"}
 _VERSION_RE = re.compile(
@@ -194,6 +196,26 @@ class RepositoryChangelogFetcher:
             headers["Authorization"] = f"token {self.token}"
         return headers
 
+    async def _request(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        headers: dict[str, str],
+        params: dict[str, str] | None,
+    ) -> httpx.Response:
+        if self.token:
+            require_https_url(url, field="Credentialed changelog endpoint")
+            return await credentialed_request(
+                client,
+                "GET",
+                url,
+                headers=headers,
+                params=params,
+                timeout=self.timeout,
+            )
+        return await client.get(url, headers=headers, params=params, timeout=self.timeout)
+
     async def _fetch_github(self, source: TrackerSource, path: str, ref: str | None) -> str:
         repo = str(source.source_config.get("repo") or "").strip()
         if not repo:
@@ -201,11 +223,11 @@ class RepositoryChangelogFetcher:
         url = f"https://api.github.com/repos/{repo}/contents/{quote(path, safe='/')}"
         params = {"ref": ref} if ref else None
         async with httpx.AsyncClient() as client:
-            response = await client.get(
+            response = await self._request(
+                client,
                 url,
                 headers=self._github_headers(),
                 params=params,
-                timeout=self.timeout,
             )
             response.raise_for_status()
             return response.text
@@ -220,11 +242,11 @@ class RepositoryChangelogFetcher:
         url = f"{instance}/api/v4/projects/{project_id}/repository/files/{encoded_path}/raw"
         params = {"ref": ref or "HEAD"}
         async with httpx.AsyncClient() as client:
-            response = await client.get(
+            response = await self._request(
+                client,
                 url,
                 headers=self._gitlab_headers(),
                 params=params,
-                timeout=self.timeout,
             )
             response.raise_for_status()
             return response.text
@@ -237,11 +259,11 @@ class RepositoryChangelogFetcher:
         url = f"{instance}/api/v1/repos/{repo}/raw/{quote(path, safe='/')}"
         params = {"ref": ref} if ref else None
         async with httpx.AsyncClient() as client:
-            response = await client.get(
+            response = await self._request(
+                client,
                 url,
                 headers=self._gitea_headers(),
                 params=params,
-                timeout=self.timeout,
             )
             response.raise_for_status()
             return response.text

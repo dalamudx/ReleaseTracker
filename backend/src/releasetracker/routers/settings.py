@@ -3,7 +3,6 @@
 import logging
 from datetime import datetime
 from typing import Literal, List, Optional
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -26,6 +25,7 @@ from ..storage.sqlite import (
     SQLiteStorage,
 )
 from ..dependencies import get_current_admin_user, get_system_key_manager
+from ..services.secure_urls import require_canonical_https_base_url
 from ..services.system_keys import SystemKeyManager, rotate_encryption_key, rotate_jwt_secret
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -145,21 +145,12 @@ def _normalize_setting_value(key: str, value: str) -> str:
         return log_level
 
     if key == SYSTEM_BASE_URL_SETTING_KEY:
-        base_url = normalized_value.rstrip("/")
-        if not base_url:
+        if not normalized_value:
             return ""
-        parsed = urlparse(base_url)
-        if (
-            parsed.scheme not in {"http", "https"}
-            or not parsed.netloc
-            or parsed.params
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise HTTPException(
-                status_code=400, detail="BASE URL must be a valid absolute http(s) address"
-            )
-        return base_url
+        try:
+            return require_canonical_https_base_url(normalized_value)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if key != SYSTEM_RELEASE_HISTORY_RETENTION_COUNT_SETTING_KEY:
         if key == SYSTEM_EXECUTOR_SNAPSHOT_RETENTION_COUNT_SETTING_KEY:

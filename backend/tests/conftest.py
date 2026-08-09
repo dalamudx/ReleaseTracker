@@ -81,7 +81,12 @@ async def migrated_db_template(tmp_path_factory):
     await initialize_storage_with_schema(storage)
 
     auth_service = AuthService(storage, manager)
-    await _create_test_user(storage, "admin", "admin@example.com", "admin")
+    await _create_test_user(
+        storage,
+        "admin",
+        "admin@example.com",
+        "test-admin-password",
+    )
     await auth_service.ensure_admin_user()
     await _create_test_user(
         storage,

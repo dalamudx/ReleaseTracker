@@ -682,9 +682,18 @@ async def update_executor_config(
 
 async def delete_executor_config(storage: "SQLiteStorage", executor_id: int) -> bool:
     db = await storage._get_connection()
-    await db.execute("DELETE FROM executors WHERE id = ?", (executor_id,))
+    result = await db.execute(
+        """
+        DELETE FROM executors
+        WHERE id = ?
+          AND NOT EXISTS (
+              SELECT 1 FROM executor_snapshot_claims WHERE executor_id = ?
+          )
+        """,
+        (executor_id, executor_id),
+    )
     await db.commit()
-    return True
+    return result.rowcount == 1
 
 
 async def update_executor_status(storage: "SQLiteStorage", status: ExecutorStatus) -> None:
@@ -885,9 +894,12 @@ async def finalize_executor_run(
 
 
 async def set_executor_run_status(storage: "SQLiteStorage", run_id: int, status: str) -> None:
-    db = await storage._get_connection()
-    await db.execute("UPDATE executor_run_history SET status = ? WHERE id = ?", (status, run_id))
-    await db.commit()
+    async with storage._transaction_lock:
+        db = await storage._get_connection()
+        await db.execute(
+            "UPDATE executor_run_history SET status = ? WHERE id = ?", (status, run_id)
+        )
+        await db.commit()
 
 
 async def update_executor_target_ref(
@@ -976,7 +988,15 @@ async def get_latest_executor_run(
 async def delete_executor_run_history(storage: "SQLiteStorage", executor_id: int) -> int:
     db = await storage._get_connection()
     result = await db.execute(
-        "DELETE FROM executor_run_history WHERE executor_id = ?", (executor_id,)
+        """
+        DELETE FROM executor_run_history
+        WHERE executor_id = ?
+          AND NOT EXISTS (
+              SELECT 1 FROM executor_snapshot_claims c
+              WHERE c.executor_run_id = executor_run_history.id
+          )
+        """,
+        (executor_id,),
     )
     await db.commit()
     return result.rowcount or 0
@@ -986,7 +1006,15 @@ async def prune_old_executor_runs(storage: "SQLiteStorage", days: int = 90) -> i
     db = await storage._get_connection()
     cutoff = (datetime.now() - timedelta(days=days)).isoformat()
     result = await db.execute(
-        "DELETE FROM executor_run_history WHERE started_at < ? AND status IN ('success', 'skipped', 'failed')",
+        """
+        DELETE FROM executor_run_history
+        WHERE started_at < ?
+          AND status IN ('success', 'skipped', 'failed')
+          AND NOT EXISTS (
+              SELECT 1 FROM executor_snapshot_claims c
+              WHERE c.executor_run_id = executor_run_history.id
+          )
+        """,
         (cutoff,),
     )
     await db.commit()
@@ -1136,11 +1164,185 @@ async def delete_executor_snapshots(
         WHERE executor_id = ?
           AND id IN ({placeholders})
           AND locked = 0
+          AND NOT EXISTS (
+              SELECT 1 FROM executor_snapshot_claims c
+              WHERE c.snapshot_id = executor_snapshots.id
+          )
         """,
         (executor_id, *ids),
     )
     await db.commit()
     return result.rowcount or 0
+
+
+async def claim_executor_snapshot_for_rollback(
+    storage: "SQLiteStorage",
+    *,
+    executor_id: int,
+    snapshot_id: int | None,
+    run: ExecutorRunHistory,
+    active_statuses: frozenset[str],
+) -> tuple[ExecutorSnapshot, int] | None:
+    """Atomically validate a snapshot, claim the executor, and create its queued run."""
+    if not active_statuses:
+        raise ValueError("active_statuses must not be empty")
+
+    async with storage._transaction_lock:
+        db = await storage._get_connection()
+        db.row_factory = aiosqlite.Row
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            if snapshot_id is None:
+                row = await (
+                    await db.execute(
+                        """
+                        SELECT * FROM executor_snapshots
+                        WHERE executor_id = ?
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT 1
+                        """,
+                        (executor_id,),
+                    )
+                ).fetchone()
+            else:
+                row = await (
+                    await db.execute(
+                        "SELECT * FROM executor_snapshots WHERE id = ? AND executor_id = ?",
+                        (snapshot_id, executor_id),
+                    )
+                ).fetchone()
+            if row is None:
+                raise ValueError("Snapshot not found for this executor")
+            snapshot = _row_to_executor_snapshot(storage, row)
+            if snapshot.id is None:
+                raise ValueError("Snapshot is not persisted")
+
+            placeholders = ", ".join("?" for _ in active_statuses)
+            active = await (
+                await db.execute(
+                    f"""
+                    SELECT id FROM executor_run_history
+                    WHERE executor_id = ? AND status IN ({placeholders})
+                    LIMIT 1
+                    """,
+                    (executor_id, *sorted(active_statuses)),
+                )
+            ).fetchone()
+            if active is not None:
+                await db.rollback()
+                return None
+
+            diagnostics = dict(run.diagnostics or {})
+            diagnostics["snapshot_id"] = snapshot.id
+            cursor = await db.execute(
+                """
+                INSERT INTO executor_run_history
+                (executor_id, started_at, finished_at, status, from_version, to_version,
+                 message, diagnostics, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    executor_id,
+                    run.started_at.isoformat(),
+                    run.finished_at.isoformat() if run.finished_at else None,
+                    run.status,
+                    run.from_version,
+                    snapshot.image_at_capture,
+                    f"manual rollback to snapshot {snapshot.id}",
+                    storage._dump_json(diagnostics),
+                    run.created_at.isoformat(),
+                ),
+            )
+            run_id = cursor.lastrowid
+            if run_id is None:
+                raise ValueError("Failed to create executor run history")
+            await db.execute(
+                """
+                INSERT INTO executor_snapshot_claims
+                (snapshot_id, executor_id, executor_run_id, claimed_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (snapshot.id, executor_id, run_id, datetime.now().isoformat()),
+            )
+            await db.commit()
+            return snapshot, run_id
+        except Exception:
+            await db.rollback()
+            raise
+
+
+async def release_executor_snapshot_claim(
+    storage: "SQLiteStorage", *, snapshot_id: int, run_id: int
+) -> bool:
+    """Release the durable claim owned by one rollback run."""
+    db = await storage._get_connection()
+    result = await db.execute(
+        """
+        DELETE FROM executor_snapshot_claims
+        WHERE snapshot_id = ? AND executor_run_id = ?
+        """,
+        (snapshot_id, run_id),
+    )
+    await db.commit()
+    return result.rowcount == 1
+
+
+async def is_executor_snapshot_claimed(
+    storage: "SQLiteStorage", *, executor_id: int, snapshot_id: int
+) -> bool:
+    db = await storage._get_connection()
+    row = await (
+        await db.execute(
+            """
+            SELECT 1 FROM executor_snapshot_claims
+            WHERE executor_id = ? AND snapshot_id = ?
+            """,
+            (executor_id, snapshot_id),
+        )
+    ).fetchone()
+    return row is not None
+
+
+async def reconcile_stale_executor_snapshot_claims(
+    storage: "SQLiteStorage", *, stale_before: datetime
+) -> int:
+    """Release terminal or stale claims and fail stale active rollback runs."""
+    async with storage._transaction_lock:
+        db = await storage._get_connection()
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            stale_before_iso = stale_before.isoformat()
+            await db.execute(
+                """
+                UPDATE executor_run_history
+                SET status = 'failed', finished_at = ?,
+                    message = 'rollback interrupted before completion'
+                WHERE id IN (
+                    SELECT c.executor_run_id
+                    FROM executor_snapshot_claims c
+                    JOIN executor_run_history r ON r.id = c.executor_run_id
+                    WHERE c.claimed_at < ?
+                      AND r.status IN ('queued', 'running', 'health_checking')
+                )
+                """,
+                (datetime.now().isoformat(), stale_before_iso),
+            )
+            result = await db.execute(
+                """
+                DELETE FROM executor_snapshot_claims
+                WHERE claimed_at < ?
+                   OR executor_run_id IN (
+                       SELECT id FROM executor_run_history
+                       WHERE status NOT IN ('queued', 'running', 'health_checking')
+                   )
+                """,
+                (stale_before_iso,),
+            )
+            await db.commit()
+            return result.rowcount or 0
+        except Exception:
+            await db.rollback()
+            raise
 
 
 async def set_executor_snapshot_locked(

@@ -6,6 +6,8 @@ import httpx
 import logging
 
 from ..models import Release
+from ..services.credentialed_http import credentialed_request
+from ..services.secure_urls import require_https_url
 from .base import BaseTracker
 
 logger = logging.getLogger(__name__)
@@ -27,6 +29,8 @@ class GiteaTracker(BaseTracker):
         self.repo = repo
         self.instance = instance.rstrip("/")
         self.token = token
+        if self.token:
+            require_https_url(self.instance, field="Credentialed Gitea endpoint")
 
     def _get_headers(self) -> dict:
         """Get request headers"""
@@ -36,6 +40,25 @@ class GiteaTracker(BaseTracker):
         if self.token:
             headers["Authorization"] = f"token {self.token}"
         return headers
+
+    async def _request(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        params: dict | None = None,
+    ) -> httpx.Response:
+        headers = self._get_headers()
+        if self.token:
+            return await credentialed_request(
+                client,
+                "GET",
+                url,
+                headers=headers,
+                params=params,
+                timeout=15.0,
+            )
+        return await client.get(url, headers=headers, params=params, timeout=15.0)
 
     async def fetch_latest(self, fallback_tags: bool = False) -> Release | None:
         """Fetch latest release"""
@@ -52,9 +75,7 @@ class GiteaTracker(BaseTracker):
 
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.get(
-                    url, headers=self._get_headers(), params=params, timeout=15.0
-                )
+                response = await self._request(client, url, params=params)
                 response.raise_for_status()
                 data = response.json()
             except Exception as e:
@@ -84,9 +105,7 @@ class GiteaTracker(BaseTracker):
                     "limit": min(limit, 50),
                     "page": 1,
                 }
-                tags_resp = await client.get(
-                    tags_url, headers=self._get_headers(), params=tags_params, timeout=15.0
-                )
+                tags_resp = await self._request(client, tags_url, params=tags_params)
                 tags_resp.raise_for_status()
                 tags_data = tags_resp.json()
             except Exception as e:

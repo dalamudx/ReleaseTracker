@@ -8,7 +8,11 @@ from urllib.parse import parse_qs, urlparse
 from releasetracker.main import app
 from releasetracker.models import LoginRequest, User
 from releasetracker.oidc_models import OIDCProvider
-from releasetracker.routers.oidc import get_oidc_service
+from releasetracker.routers.oidc import (
+    OIDC_BROWSER_COOKIE_NAME,
+    _hash_browser_binding,
+    get_oidc_service,
+)
 from releasetracker.services.auth import (
     BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY,
     pwd_context,
@@ -16,8 +20,10 @@ from releasetracker.services.auth import (
 from releasetracker.storage.sqlite import (
     ADMIN_OIDC_ISSUER_SETTING_KEY,
     ADMIN_OIDC_SUBJECT_SETTING_KEY,
+    ADMIN_PASSWORD_RESET_REQUIRED_SETTING_KEY,
     ADMIN_USER_ID_SETTING_KEY,
     SYSTEM_BASE_URL_SETTING_KEY,
+    SQLiteStorage,
 )
 
 BOOTSTRAP_LOG_PREFIX = "Bootstrap admin user created; one-time bootstrap admin password:"
@@ -34,6 +40,7 @@ async def _reset_bootstrap_state(storage) -> None:
     for key in (
         ADMIN_USER_ID_SETTING_KEY,
         BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY,
+        ADMIN_PASSWORD_RESET_REQUIRED_SETTING_KEY,
         ADMIN_OIDC_ISSUER_SETTING_KEY,
         ADMIN_OIDC_SUBJECT_SETTING_KEY,
     ):
@@ -135,6 +142,51 @@ async def test_ensure_admin_user_existing_admin_is_unchanged(
 
 
 @pytest.mark.asyncio
+async def test_legacy_stable_admin_is_marked_revoked_and_blocked(auth_service, storage):
+    admin_id = await storage.get_admin_user_id()
+    assert admin_id is not None
+    admin = await storage.get_user_by_id(admin_id)
+    assert admin is not None
+    _, token_pair = await auth_service.login(
+        LoginRequest(username=admin.username, password="test-admin-password")
+    )
+    await storage.update_user_password(admin_id, pwd_context.hash("admin"))
+
+    await auth_service.ensure_admin_user()
+
+    assert await storage.get_setting(ADMIN_PASSWORD_RESET_REQUIRED_SETTING_KEY) == "true"
+    assert await storage.count_active_sessions() == 0
+    with pytest.raises(ValueError, match="reset is required"):
+        await auth_service.login(LoginRequest(username=admin.username, password="admin"))
+    with pytest.raises(ValueError, match="reset is required"):
+        await auth_service.get_current_user(token_pair.access_token)
+    with pytest.raises(ValueError, match="reset is required"):
+        await auth_service.refresh_token(token_pair.refresh_token)
+
+
+@pytest.mark.asyncio
+async def test_operator_reset_clears_marker_preserves_identity_and_rejects_admin(
+    auth_service, storage
+):
+    admin_id = await storage.get_admin_user_id()
+    assert admin_id is not None
+    await storage.update_user_password(admin_id, pwd_context.hash("admin"))
+    await auth_service.ensure_admin_user()
+
+    with pytest.raises(ValueError, match="legacy password"):
+        await auth_service.reset_admin_password("admin")
+    assert await storage.is_admin_password_reset_required()
+
+    reset_user_id = await auth_service.reset_admin_password("replacement-password")
+    assert reset_user_id == admin_id
+    assert not await storage.is_admin_password_reset_required()
+    user, _ = await auth_service.login(
+        LoginRequest(username="admin", password="replacement-password")
+    )
+    assert user.id == admin_id
+
+
+@pytest.mark.asyncio
 async def test_stable_admin_id_survives_rename_and_username_reuse(client, auth_service, storage):
     admin_id = await storage.get_admin_user_id()
     assert admin_id is not None
@@ -151,7 +203,7 @@ async def test_stable_admin_id_survives_rename_and_username_reuse(client, auth_s
 
     stable_login = client.post(
         "/api/auth/token",
-        data={"username": "renamed-admin", "password": "admin"},
+        data={"username": "renamed-admin", "password": "test-admin-password"},
     )
     assert stable_login.status_code == 200
     stable_response = client.get(
@@ -241,7 +293,7 @@ async def test_register_is_disabled_for_every_caller(
     headers = {}
     if authenticated_as != "anonymous":
         username = "admin" if authenticated_as == "admin" else "authtester"
-        password = "admin" if authenticated_as == "admin" else "password123"
+        password = "test-admin-password" if authenticated_as == "admin" else "password123"
         login = client.post("/api/auth/token", data={"username": username, "password": password})
         assert login.status_code == 200
         headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
@@ -270,7 +322,9 @@ async def test_register_is_disabled_for_every_caller(
 @pytest.mark.asyncio
 async def test_local_password_login_remains_available_after_oidc_binding(client, storage):
     await storage.bind_admin_oidc_identity("https://issuer.example.com", "subject-1")
-    response = client.post("/api/auth/token", data={"username": "admin", "password": "admin"})
+    response = client.post(
+        "/api/auth/token", data={"username": "admin", "password": "test-admin-password"}
+    )
     assert response.status_code == 200
 
 
@@ -287,7 +341,9 @@ async def test_login_failure(client):
 async def test_refresh_returns_token_pair_and_allows_me(client, auth_service):
     await auth_service.ensure_admin_user()
 
-    login_response = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+    login_response = client.post(
+        "/api/auth/login", json={"username": "admin", "password": "test-admin-password"}
+    )
     assert login_response.status_code == 200
     token_pair = login_response.json()["token"]
 
@@ -335,7 +391,9 @@ async def test_refresh_rejects_mixed_query_and_body_without_consuming_body_token
     caplog,
 ):
     await auth_service.ensure_admin_user()
-    login_response = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+    login_response = client.post(
+        "/api/auth/login", json={"username": "admin", "password": "test-admin-password"}
+    )
     refresh_token = login_response.json()["token"]["refresh_token"]
 
     caplog.clear()
@@ -360,7 +418,9 @@ async def test_refresh_rejects_mixed_query_and_body_without_consuming_body_token
 async def test_old_refresh_token_reuse_fails_after_rotation(client, auth_service):
     await auth_service.ensure_admin_user()
 
-    login_response = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+    login_response = client.post(
+        "/api/auth/login", json={"username": "admin", "password": "test-admin-password"}
+    )
     assert login_response.status_code == 200
     original_refresh_token = login_response.json()["token"]["refresh_token"]
 
@@ -379,7 +439,9 @@ async def test_old_refresh_token_reuse_fails_after_rotation(client, auth_service
 async def test_refresh_fails_after_logout(client, auth_service):
     await auth_service.ensure_admin_user()
 
-    login_response = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+    login_response = client.post(
+        "/api/auth/login", json={"username": "admin", "password": "test-admin-password"}
+    )
     assert login_response.status_code == 200
     token_pair = login_response.json()["token"]
 
@@ -398,7 +460,9 @@ async def test_refresh_fails_after_logout(client, auth_service):
 @pytest.mark.asyncio
 async def test_concurrent_refresh_reuse_allows_only_one_success(auth_service, storage):
     await auth_service.ensure_admin_user()
-    _, token_pair = await auth_service.login(LoginRequest(username="admin", password="admin"))
+    _, token_pair = await auth_service.login(
+        LoginRequest(username="admin", password="test-admin-password")
+    )
 
     previous_storage = getattr(app.state, "storage", None)
     previous_system_key_manager = getattr(app.state, "system_key_manager", None)
@@ -473,6 +537,101 @@ async def test_oidc_authorize_uses_configured_base_url(client, storage):
     params = parse_qs(redirect.query)
     assert params["redirect_uri"] == ["https://example.com/releasetracker/auth/oidc/mock/callback"]
     assert params["nonce"][0]
+    set_cookie = response.headers["set-cookie"]
+    assert OIDC_BROWSER_COOKIE_NAME in set_cookie
+    assert "Secure" in set_cookie
+    assert "HttpOnly" in set_cookie
+    assert "SameSite=lax" in set_cookie
+    assert "Max-Age=600" in set_cookie
+
+
+@pytest.mark.asyncio
+async def test_oidc_authorize_rejects_missing_base_url_without_host_fallback(client, storage):
+    await storage.save_oauth_provider(
+        OIDCProvider(
+            name="Mock",
+            slug="mock",
+            client_id="client-id",
+            client_secret="secret",
+            issuer_url="https://idp.example.com",
+            authorization_url="https://idp.example.com/authorize",
+            token_url="https://idp.example.com/token",
+            jwks_uri="https://idp.example.com/jwks",
+            discovery_enabled=False,
+            enabled=True,
+        )
+    )
+    await storage.bind_admin_oidc_identity("https://idp.example.com", "admin-subject")
+
+    response = client.get(
+        "/api/auth/oidc/mock/authorize",
+        headers={"Host": "attacker.example"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert "BASE URL" in response.json()["detail"]
+    db = await storage._get_connection()
+    assert (await (await db.execute("SELECT COUNT(*) FROM oauth_states")).fetchone())[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_oidc_callback_browser_mismatch_does_not_consume_state(client, storage):
+    await storage.set_setting(SYSTEM_BASE_URL_SETTING_KEY, "https://example.com")
+    await storage.save_oauth_state(
+        "bound-state",
+        "mock",
+        "verifier",
+        "nonce",
+        "login",
+        _hash_browser_binding("correct-browser"),
+    )
+
+    response = client.get(
+        "/auth/oidc/mock/callback?code=test-code&state=bound-state",
+        headers={"Cookie": f"{OIDC_BROWSER_COOKIE_NAME}=wrong-browser"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    db = await storage._get_connection()
+    row = await (
+        await db.execute("SELECT state FROM oauth_states WHERE state = ?", ("bound-state",))
+    ).fetchone()
+    assert row is not None
+
+
+@pytest.mark.asyncio
+async def test_oauth_state_is_consumed_atomically_across_storage_instances(storage):
+    await storage.save_oauth_state(
+        "single-use-state",
+        "mock",
+        "verifier",
+        "nonce",
+        "login",
+        _hash_browser_binding("browser-token"),
+    )
+    second_storage = SQLiteStorage(
+        storage.db_path,
+        system_key_manager=storage.system_key_manager,
+    )
+    try:
+        results = await asyncio.gather(
+            storage.consume_oauth_state(
+                "single-use-state",
+                "mock",
+                _hash_browser_binding("browser-token"),
+            ),
+            second_storage.consume_oauth_state(
+                "single-use-state",
+                "mock",
+                _hash_browser_binding("browser-token"),
+            ),
+        )
+    finally:
+        await second_storage.close()
+
+    assert sum(result is not None for result in results) == 1
 
 
 @pytest.mark.asyncio
@@ -488,6 +647,7 @@ async def test_oidc_callback_redirect_includes_refresh_token_payload(client, aut
         "verifier",
         "test-nonce",
         "login",
+        _hash_browser_binding("browser-token"),
     )
 
     class MockOIDCService:
@@ -502,6 +662,7 @@ async def test_oidc_callback_redirect_includes_refresh_token_payload(client, aut
     try:
         response = client.get(
             "/auth/oidc/mock/callback?code=test-code&state=test-state",
+            headers={"Cookie": f"{OIDC_BROWSER_COOKIE_NAME}=browser-token"},
             follow_redirects=False,
         )
     finally:
@@ -518,3 +679,4 @@ async def test_oidc_callback_redirect_includes_refresh_token_payload(client, aut
     assert fragment["refresh_token"][0]
     assert fragment["token_type"] == ["Bearer"]
     assert int(fragment["expires_in"][0]) > 0
+    assert f'{OIDC_BROWSER_COOKIE_NAME}=""' in response.headers["set-cookie"]

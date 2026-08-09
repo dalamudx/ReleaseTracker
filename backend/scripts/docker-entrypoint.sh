@@ -27,6 +27,9 @@ case "$cmd" in
   serve)
     run_serve
     ;;
+  reset-admin-password)
+    exec python -m releasetracker.cli reset-admin-password "$@"
+    ;;
   *)
     exec "$cmd" "$@"
     ;;

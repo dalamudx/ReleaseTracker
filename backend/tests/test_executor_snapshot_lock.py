@@ -13,9 +13,9 @@ from releasetracker.config import (
     ExecutorConfig,
     RuntimeConnectionConfig,
 )
-from releasetracker.models import ExecutorSnapshot
+from releasetracker.models import ExecutorRunHistory, ExecutorSnapshot
 from releasetracker.services.snapshot_service import (
-    InFlightRollbackRegistry,
+    SnapshotInUseError,
     SnapshotLockedError,
     SnapshotService,
 )
@@ -242,6 +242,57 @@ async def test_delete_is_conditioned_on_unlocked_state_in_same_statement(storage
 
 
 @pytest.mark.asyncio
+async def test_durable_claim_blocks_snapshot_delete(storage):
+    executor_id = await _create_executor(storage, name="claim-delete")
+    snapshot_id = (await _seed_snapshots(storage, executor_id, count=1))[0]
+    claim = await storage.claim_executor_snapshot_for_rollback(
+        executor_id=executor_id,
+        snapshot_id=snapshot_id,
+        run=ExecutorRunHistory(executor_id=executor_id, started_at=datetime.now(), status="queued"),
+        active_statuses=frozenset({"queued", "running", "health_checking"}),
+    )
+    assert claim is not None
+
+    with pytest.raises(SnapshotInUseError):
+        await SnapshotService(storage).delete_snapshot(executor_id, snapshot_id)
+    assert await storage.get_executor_snapshot_by_id(executor_id, snapshot_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_durable_claim_blocks_executor_delete(storage):
+    executor_id = await _create_executor(storage, name="claim-executor-delete")
+    snapshot_id = (await _seed_snapshots(storage, executor_id, count=1))[0]
+    claim = await storage.claim_executor_snapshot_for_rollback(
+        executor_id=executor_id,
+        snapshot_id=snapshot_id,
+        run=ExecutorRunHistory(executor_id=executor_id, started_at=datetime.now(), status="queued"),
+        active_statuses=frozenset({"queued", "running", "health_checking"}),
+    )
+    assert claim is not None
+
+    assert not await storage.delete_executor_config(executor_id)
+    assert await storage.get_executor_config(executor_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_deleted_snapshot_cannot_create_rollback_claim(storage):
+    executor_id = await _create_executor(storage, name="delete-claim")
+    snapshot_id = (await _seed_snapshots(storage, executor_id, count=1))[0]
+    assert await SnapshotService(storage).delete_snapshot(executor_id, snapshot_id)
+
+    with pytest.raises(ValueError, match="Snapshot not found"):
+        await storage.claim_executor_snapshot_for_rollback(
+            executor_id=executor_id,
+            snapshot_id=snapshot_id,
+            run=ExecutorRunHistory(
+                executor_id=executor_id, started_at=datetime.now(), status="queued"
+            ),
+            active_statuses=frozenset({"queued", "running", "health_checking"}),
+        )
+    assert await storage.get_latest_executor_run(executor_id) is None
+
+
+@pytest.mark.asyncio
 async def test_delete_locked_snapshot_takes_priority_over_in_flight(storage):
     """SnapshotLockedError is raised before SnapshotInUseError."""
     executor_id = await _create_executor(storage, name="lock-priority")
@@ -250,10 +301,15 @@ async def test_delete_locked_snapshot_takes_priority_over_in_flight(storage):
 
     await storage.set_executor_snapshot_locked(executor_id, snapshot_id, locked=True)
 
-    registry = InFlightRollbackRegistry()
-    await registry.register(snapshot_id)
+    claim = await storage.claim_executor_snapshot_for_rollback(
+        executor_id=executor_id,
+        snapshot_id=snapshot_id,
+        run=ExecutorRunHistory(executor_id=executor_id, started_at=datetime.now(), status="queued"),
+        active_statuses=frozenset({"queued", "running", "health_checking"}),
+    )
+    assert claim is not None
 
-    service = SnapshotService(storage, registry=registry)
+    service = SnapshotService(storage)
     with pytest.raises(SnapshotLockedError):
         await service.delete_snapshot(executor_id, snapshot_id)
 

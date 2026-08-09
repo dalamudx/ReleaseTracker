@@ -32,8 +32,23 @@ class _FakeAsyncClient:
         return False
 
     async def get(self, url, headers=None, params=None, timeout=None):
-        self.calls.append({"url": url, "headers": headers or {}, "params": params or {}, "timeout": timeout})
+        self.calls.append(
+            {"url": url, "headers": headers or {}, "params": params or {}, "timeout": timeout}
+        )
         return _FakeResponse("# changelog", self.response_status)
+
+    async def request(
+        self,
+        method,
+        url,
+        headers=None,
+        params=None,
+        timeout=None,
+        follow_redirects=None,
+    ):
+        assert method == "GET"
+        assert follow_redirects is False
+        return await self.get(url, headers=headers, params=params, timeout=timeout)
 
 
 def _release():
@@ -51,15 +66,22 @@ def _release():
 @pytest.mark.asyncio
 async def test_github_raw_fetch_reuses_bearer_token(monkeypatch):
     _FakeAsyncClient.calls = []
-    monkeypatch.setattr("releasetracker.services.changelog.httpx.AsyncClient", lambda **kwargs: _FakeAsyncClient())
-    source = TrackerSource(source_key="repo", source_type="github", source_config={"repo": "owner/repo"})
+    monkeypatch.setattr(
+        "releasetracker.services.changelog.httpx.AsyncClient", lambda **kwargs: _FakeAsyncClient()
+    )
+    source = TrackerSource(
+        source_key="repo", source_type="github", source_config={"repo": "owner/repo"}
+    )
 
     content = await RepositoryChangelogFetcher(token="ghp_token").fetch_file(
         source, "CHANGELOG.md", "release_tag", _release(), None
     )
 
     assert content == "# changelog"
-    assert _FakeAsyncClient.calls[0]["url"] == "https://api.github.com/repos/owner/repo/contents/CHANGELOG.md"
+    assert (
+        _FakeAsyncClient.calls[0]["url"]
+        == "https://api.github.com/repos/owner/repo/contents/CHANGELOG.md"
+    )
     assert _FakeAsyncClient.calls[0]["headers"]["Authorization"] == "Bearer ghp_token"
     assert _FakeAsyncClient.calls[0]["params"] == {"ref": "v1.2.3"}
 
@@ -67,7 +89,9 @@ async def test_github_raw_fetch_reuses_bearer_token(monkeypatch):
 @pytest.mark.asyncio
 async def test_gitlab_raw_fetch_reuses_private_token(monkeypatch):
     _FakeAsyncClient.calls = []
-    monkeypatch.setattr("releasetracker.services.changelog.httpx.AsyncClient", lambda **kwargs: _FakeAsyncClient())
+    monkeypatch.setattr(
+        "releasetracker.services.changelog.httpx.AsyncClient", lambda **kwargs: _FakeAsyncClient()
+    )
     source = TrackerSource(
         source_key="repo",
         source_type="gitlab",
@@ -78,7 +102,10 @@ async def test_gitlab_raw_fetch_reuses_private_token(monkeypatch):
         source, "docs/releases/1.2.3.md", "default_branch", _release(), None
     )
 
-    assert _FakeAsyncClient.calls[0]["url"] == "https://gitlab.example.com/api/v4/projects/group%2Fproject/repository/files/docs%2Freleases%2F1.2.3.md/raw"
+    assert (
+        _FakeAsyncClient.calls[0]["url"]
+        == "https://gitlab.example.com/api/v4/projects/group%2Fproject/repository/files/docs%2Freleases%2F1.2.3.md/raw"
+    )
     assert _FakeAsyncClient.calls[0]["headers"] == {"PRIVATE-TOKEN": "gl_token"}
     assert _FakeAsyncClient.calls[0]["params"] == {"ref": "HEAD"}
 
@@ -86,7 +113,9 @@ async def test_gitlab_raw_fetch_reuses_private_token(monkeypatch):
 @pytest.mark.asyncio
 async def test_gitea_raw_fetch_reuses_token_header(monkeypatch):
     _FakeAsyncClient.calls = []
-    monkeypatch.setattr("releasetracker.services.changelog.httpx.AsyncClient", lambda **kwargs: _FakeAsyncClient())
+    monkeypatch.setattr(
+        "releasetracker.services.changelog.httpx.AsyncClient", lambda **kwargs: _FakeAsyncClient()
+    )
     source = TrackerSource(
         source_key="repo",
         source_type="gitea",
@@ -97,22 +126,32 @@ async def test_gitea_raw_fetch_reuses_token_header(monkeypatch):
         source, "CHANGELOG.md", "configured_ref", _release(), "main"
     )
 
-    assert _FakeAsyncClient.calls[0]["url"] == "https://gitea.example.com/api/v1/repos/owner/repo/raw/CHANGELOG.md"
+    assert (
+        _FakeAsyncClient.calls[0]["url"]
+        == "https://gitea.example.com/api/v1/repos/owner/repo/raw/CHANGELOG.md"
+    )
     assert _FakeAsyncClient.calls[0]["headers"]["Authorization"] == "token gitea_token"
     assert _FakeAsyncClient.calls[0]["params"] == {"ref": "main"}
 
 
 class _FakeAsyncClient404(_FakeAsyncClient):
     async def get(self, url, headers=None, params=None, timeout=None):
-        self.calls.append({"url": url, "headers": headers or {}, "params": params or {}, "timeout": timeout})
+        self.calls.append(
+            {"url": url, "headers": headers or {}, "params": params or {}, "timeout": timeout}
+        )
         return _FakeResponse("", 404)
 
 
 @pytest.mark.asyncio
 async def test_missing_changelog_file_raises_http_error(monkeypatch):
     _FakeAsyncClient404.calls = []
-    monkeypatch.setattr("releasetracker.services.changelog.httpx.AsyncClient", lambda **kwargs: _FakeAsyncClient404())
-    source = TrackerSource(source_key="repo", source_type="github", source_config={"repo": "owner/repo"})
+    monkeypatch.setattr(
+        "releasetracker.services.changelog.httpx.AsyncClient",
+        lambda **kwargs: _FakeAsyncClient404(),
+    )
+    source = TrackerSource(
+        source_key="repo", source_type="github", source_config={"repo": "owner/repo"}
+    )
 
     with pytest.raises(httpx.HTTPStatusError):
         await RepositoryChangelogFetcher(token=None).fetch_file(

@@ -82,6 +82,7 @@ def _state(flow_type: str, admin_user_id: int | None = None) -> OAuthState:
         nonce=NONCE,
         flow_type=flow_type,
         initiating_admin_user_id=admin_user_id,
+        browser_binding_hash="browser-hash",
         expires_at=datetime.now() + timedelta(minutes=5),
     )
 
@@ -90,6 +91,55 @@ async def _user_count(storage) -> int:
     db = await storage._get_connection()
     row = await (await db.execute("SELECT COUNT(*) FROM users")).fetchone()
     return row[0]
+
+
+class _DiscoveryResponse:
+    def __init__(self, payload: dict):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
+@pytest.mark.asyncio
+async def test_discovery_rejects_http_endpoints_and_disables_redirects(
+    storage, auth_service, monkeypatch
+):
+    client_options = []
+    get_options = []
+
+    class DiscoveryClient:
+        def __init__(self, **kwargs):
+            client_options.append(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, _url, **kwargs):
+            get_options.append(kwargs)
+            return _DiscoveryResponse(
+                {
+                    "issuer": ISSUER,
+                    "authorization_endpoint": f"{ISSUER}/authorize",
+                    "token_endpoint": "http://issuer.example.com/token",
+                    "jwks_uri": f"{ISSUER}/jwks",
+                }
+            )
+
+    monkeypatch.setattr("releasetracker.services.oidc_service.httpx.AsyncClient", DiscoveryClient)
+    provider = _provider().model_copy(update={"discovery_enabled": True})
+
+    with pytest.raises(ValueError, match="insecure or invalid"):
+        await OIDCService(storage, auth_service)._get_provider_endpoints(provider)
+
+    assert client_options[0]["follow_redirects"] is False
+    assert get_options[0]["follow_redirects"] is False
 
 
 @pytest.mark.asyncio
@@ -157,6 +207,19 @@ async def test_validate_id_token_rejects_bad_signature(storage, auth_service, mo
     monkeypatch.setattr(service, "_fetch_jwks", fetch_jwks)
     with pytest.raises(ValueError, match="validation failed"):
         await service._validate_id_token(_id_token(signing_key), _provider(), NONCE)
+
+
+@pytest.mark.asyncio
+async def test_oidc_resolution_blocked_while_admin_reset_required(storage, auth_service):
+    admin_user_id = await storage.get_admin_user_id()
+    assert admin_user_id is not None
+    await storage.mark_admin_password_reset_required(admin_user_id)
+
+    with pytest.raises(ValueError, match="reset is required"):
+        await OIDCService(storage, auth_service)._resolve_admin_identity(
+            OIDCIdentity(issuer=ISSUER, subject="admin-subject"),
+            _state("bind", admin_user_id),
+        )
 
 
 @pytest.mark.asyncio

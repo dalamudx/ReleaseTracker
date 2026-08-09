@@ -57,39 +57,43 @@ class RollbackService:
 
         executor_id = executor_config.id
 
-        snapshot = await self._resolve_snapshot(executor_id, snapshot_id)
-
         run = ExecutorRunHistory(
             executor_id=executor_id,
             started_at=datetime.now(),
             status="queued",
             from_version=None,
-            to_version=snapshot.image_at_capture,
-            message=f"manual rollback to snapshot {snapshot.id}",
+            to_version=None,
+            message="manual rollback queued",
             diagnostics={
                 "run_trigger": "manual_rollback",
-                "snapshot_id": snapshot.id,
                 "actor": actor,
             },
         )
-        run_id = await self._storage.create_executor_run_if_no_active(
-            run,
-            active_statuses=_ROLLBACK_ACTIVE_STATES,
-        )
-        if run_id is None:
+        try:
+            claim = await self._storage.claim_executor_snapshot_for_rollback(
+                executor_id=executor_id,
+                snapshot_id=snapshot_id,
+                run=run,
+                active_statuses=_ROLLBACK_ACTIVE_STATES,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if claim is None:
             await self._reject_when_active(executor_id)
             raise HTTPException(status_code=409, detail="Executor has an active run")
+
+        snapshot, run_id = claim
+        assert snapshot.id is not None
         run.id = run_id
-
-        await self._storage.set_executor_run_status(run_id, "running")
-
-        registry = self._snapshot_service.registry
-        if snapshot.id is not None:
-            await registry.register(snapshot.id)
+        run.to_version = snapshot.image_at_capture
+        run.message = f"manual rollback to snapshot {snapshot.id}"
+        run.diagnostics = {**(run.diagnostics or {}), "snapshot_id": snapshot.id}
 
         diagnostics: dict = dict(run.diagnostics or {})
         recovery_outcome: RecoveryOutcome = "failed"
+        from_version: str | None = None
         try:
+            await self._storage.set_executor_run_status(run_id, "running")
             pre_rollback_captured, from_version = await self._capture_pre_rollback_snapshot(
                 executor_config=executor_config,
                 adapter=adapter,
@@ -146,31 +150,40 @@ class RollbackService:
                 recovery_outcome=recovery_outcome,
                 recovery_error=recovery_error,
             )
+        except Exception as exc:
+            diagnostics["rollback_error"] = str(exc)
+            try:
+                await self._finalize_run(
+                    run_id=run_id,
+                    status="failed",
+                    diagnostics=diagnostics,
+                    message=f"rollback to snapshot {snapshot.id} failed: {exc}",
+                    from_version=from_version,
+                    to_version=snapshot.image_at_capture,
+                )
+            except Exception:
+                logger.exception("failed to finalize rollback run_id=%s after error", run_id)
+            raise
         finally:
-            if snapshot.id is not None:
-                await registry.unregister(snapshot.id)
+            try:
+                released = await self._storage.release_executor_snapshot_claim(
+                    snapshot_id=snapshot.id,
+                    run_id=run_id,
+                )
+                if not released:
+                    logger.warning(
+                        "rollback snapshot claim was already absent for run_id=%s snapshot_id=%s",
+                        run_id,
+                        snapshot.id,
+                    )
+            except Exception:
+                logger.exception(
+                    "failed to release rollback snapshot claim for run_id=%s snapshot_id=%s",
+                    run_id,
+                    snapshot.id,
+                )
 
     # ---- Helpers ---------------------------------------------------------
-
-    async def _resolve_snapshot(
-        self, executor_id: int, snapshot_id: int | None
-    ) -> ExecutorSnapshot:
-        if snapshot_id is None:
-            snapshot = await self._storage.get_executor_snapshot(executor_id)
-            if snapshot is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail="No snapshot available for this executor",
-                )
-            return snapshot
-
-        snapshot = await self._storage.get_executor_snapshot_by_id(executor_id, snapshot_id)
-        if snapshot is None:
-            raise HTTPException(
-                status_code=404,
-                detail="Snapshot not found for this executor",
-            )
-        return snapshot
 
     async def _reject_when_active(self, executor_id: int) -> None:
         latest = await self._storage.get_latest_executor_run(executor_id)
@@ -231,10 +244,7 @@ class RollbackService:
 
         try:
             retention = await self._storage.get_executor_snapshot_retention_count()
-            exclude = await self._snapshot_service.registry.snapshot_ids()
-            await self._snapshot_service.prune_after_insert(
-                executor_config.id, retention, exclude_ids=exclude
-            )
+            await self._snapshot_service.prune_after_insert(executor_config.id, retention)
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(
                 "pre-rollback prune failed for executor_id=%s: %s",

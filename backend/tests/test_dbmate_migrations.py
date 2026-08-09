@@ -46,9 +46,8 @@ def test_apply_dbmate_migrations_builds_full_schema(tmp_path):
         assert "executor_desired_state" in tables
         assert "schema_migrations" in tables
 
-        oauth_state_columns = {
-            row[1] for row in conn.execute("PRAGMA table_info(oauth_states)").fetchall()
-        }
+        oauth_state_info = conn.execute("PRAGMA table_info(oauth_states)").fetchall()
+        oauth_state_columns = {row[1] for row in oauth_state_info}
         assert oauth_state_columns == {
             "state",
             "provider_slug",
@@ -56,8 +55,13 @@ def test_apply_dbmate_migrations_builds_full_schema(tmp_path):
             "nonce",
             "flow_type",
             "initiating_admin_user_id",
+            "browser_binding_hash",
             "expires_at",
         }
+        browser_binding_column = next(
+            row for row in oauth_state_info if row[1] == "browser_binding_hash"
+        )
+        assert browser_binding_column[3] == 1, "browser binding must be NOT NULL"
         assert (
             conn.execute("SELECT value FROM settings WHERE key = 'system.admin_user_id'").fetchone()
             is None
@@ -67,6 +71,16 @@ def test_apply_dbmate_migrations_builds_full_schema(tmp_path):
             row[1] for row in conn.execute("PRAGMA table_info(executor_run_history)").fetchall()
         }
         assert "diagnostics" in executor_run_history_columns
+        assert "executor_snapshot_claims" in tables
+        claim_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(executor_snapshot_claims)").fetchall()
+        }
+        assert claim_columns == {
+            "snapshot_id",
+            "executor_id",
+            "executor_run_id",
+            "claimed_at",
+        }
 
         tracker_columns = {row[1] for row in conn.execute("PRAGMA table_info(trackers)").fetchall()}
         assert "github_fetch_mode" in tracker_columns
@@ -107,9 +121,14 @@ def test_apply_dbmate_migrations_builds_full_schema(tmp_path):
 def test_single_admin_migration_backfills_existing_admin_and_discards_old_states(tmp_path):
     db_path = tmp_path / "upgrade.db"
     migrations = iter_dbmate_up_sql(dbmate_migrations_dir())
+    single_admin_index = next(
+        index
+        for index, (path, _) in enumerate(migrations)
+        if path.name.startswith("20260808000001_")
+    )
     conn = sqlite3.connect(db_path)
     try:
-        for _, up_sql in migrations[:-1]:
+        for _, up_sql in migrations[:single_admin_index]:
             conn.executescript(up_sql)
         conn.execute("""
             INSERT INTO users (
@@ -127,7 +146,7 @@ def test_single_admin_migration_backfills_existing_admin_and_discards_old_states
             """)
         conn.commit()
 
-        conn.executescript(migrations[-1][1])
+        conn.executescript(migrations[single_admin_index][1])
 
         assert conn.execute(
             "SELECT value FROM settings WHERE key = 'system.admin_user_id'"
@@ -140,6 +159,39 @@ def test_single_admin_migration_backfills_existing_admin_and_discards_old_states
             ("system.admin_oidc_issuer", "system.admin_oidc_subject"),
         ).fetchone() == (0,)
         assert conn.execute("SELECT COUNT(*) FROM oauth_states").fetchone() == (0,)
+    finally:
+        conn.close()
+
+
+def test_browser_binding_migration_discards_unbound_oauth_states(tmp_path):
+    db_path = tmp_path / "oauth-binding-upgrade.db"
+    migrations = iter_dbmate_up_sql(dbmate_migrations_dir())
+    migration_index = next(
+        index
+        for index, (path, _) in enumerate(migrations)
+        if path.name.startswith("20260809000001_")
+    )
+    conn = sqlite3.connect(db_path)
+    try:
+        for _, up_sql in migrations[:migration_index]:
+            conn.executescript(up_sql)
+        conn.execute("""
+            INSERT INTO oauth_states (
+                state, provider_slug, code_verifier, nonce, flow_type, expires_at
+            )
+            VALUES ('unbound-state', 'provider', 'verifier', 'nonce', 'login', '2099-01-01')
+            """)
+        conn.commit()
+
+        conn.executescript(migrations[migration_index][1])
+
+        assert conn.execute("SELECT COUNT(*) FROM oauth_states").fetchone() == (0,)
+        browser_binding_column = next(
+            row
+            for row in conn.execute("PRAGMA table_info(oauth_states)").fetchall()
+            if row[1] == "browser_binding_hash"
+        )
+        assert browser_binding_column[3] == 1
     finally:
         conn.close()
 

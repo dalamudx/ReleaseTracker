@@ -142,9 +142,7 @@ async def test_executor_snapshot_retention_setting_accepts_valid_integer(authed_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("value", ["abc", "0", "-1", "1001", "1.5"])
-async def test_executor_snapshot_retention_setting_rejects_invalid_values(
-    authed_client, value
-):
+async def test_executor_snapshot_retention_setting_rejects_invalid_values(authed_client, value):
     response = authed_client.post(
         "/api/settings",
         json={"key": SYSTEM_EXECUTOR_SNAPSHOT_RETENTION_COUNT_SETTING_KEY, "value": value},
@@ -169,9 +167,7 @@ async def test_executor_snapshot_retention_storage_falls_back_to_default(storage
 
 
 @pytest.mark.asyncio
-async def test_cleanup_release_history_endpoint_uses_saved_retention(
-    authed_client, storage
-):
+async def test_cleanup_release_history_endpoint_uses_saved_retention(authed_client, storage):
     await save_docker_tracker_config(
         storage,
         name="settings-clean-release",
@@ -230,9 +226,7 @@ async def test_cleanup_release_history_endpoint_uses_saved_retention(
 
 
 @pytest.mark.asyncio
-async def test_cleanup_snapshot_history_endpoint_uses_saved_retention(
-    authed_client, storage
-):
+async def test_cleanup_snapshot_history_endpoint_uses_saved_retention(authed_client, storage):
     executor_id = await _create_executor_for_cleanup(storage, name="settings-clean-snapshot")
     ids = await _seed_snapshots_for_cleanup(storage, executor_id, count=4)
     await storage.set_setting(SYSTEM_EXECUTOR_SNAPSHOT_RETENTION_COUNT_SETTING_KEY, "2")
@@ -303,9 +297,7 @@ async def test_log_level_setting_rejects_invalid_level(authed_client):
         ("", ""),
     ],
 )
-async def test_base_url_setting_accepts_and_normalizes_valid_values(
-    authed_client, value, expected
-):
+async def test_base_url_setting_accepts_and_normalizes_valid_values(authed_client, value, expected):
     response = authed_client.post(
         "/api/settings",
         json={"key": SYSTEM_BASE_URL_SETTING_KEY, "value": value},
@@ -322,6 +314,7 @@ async def test_base_url_setting_accepts_and_normalizes_valid_values(
         "example.com/releasetracker",
         "/releasetracker",
         "ftp://example.com/releasetracker",
+        "http://example.com/releasetracker",
         "https://example.com/releasetracker?x=1",
         "https://example.com/releasetracker#callback",
     ],

@@ -103,7 +103,14 @@ docker run -d \
 docker logs releasetracker 2>&1 | grep "one-time bootstrap admin password"
 ```
 
-该密码仅在首次成功初始化时以 INFO 级别记录一次，且不会通过 API 返回。请使用 `admin` 登录并**立即修改密码**。现有安装的管理员凭证不会改变。若之后删除了引导管理员，ReleaseTracker 将拒绝启动，而不会重新生成凭证；请从可信备份恢复管理员或数据库。
+该密码仅在首次成功初始化时以 INFO 级别记录一次，且不会通过 API 返回。请使用 `admin` 登录并**立即修改密码**。升级时会保留现有的非默认管理员凭证；若稳定管理员仍使用已知的旧版 `admin/admin` 凭证，启动后会撤销其会话并阻止本地与 OIDC 登录，直到操作员在容器内显式重置密码：
+
+```bash
+docker exec -it releasetracker python -m releasetracker.cli reset-admin-password
+# Docker Compose：docker compose exec releasetracker python -m releasetracker.cli reset-admin-password
+```
+
+重置命令直接使用挂载的数据目录，不通过 HTTP API，并会再次撤销现有管理员会话。若之后删除了引导管理员，ReleaseTracker 将拒绝启动，而不会重新生成凭证；请从可信备份恢复管理员或数据库。
 
 ### Docker Compose
 
@@ -134,7 +141,7 @@ docker compose up -d
 
 ### BASE URL / 反向代理
 
-BASE URL 是浏览器访问 ReleaseTracker 的公开地址，用于反向代理部署以及 OIDC callback 生成。在「系统设置 → 全局配置 → BASE URL」配置，例如 `https://releases.example.com` 或带子路径的 `https://example.com/releasetracker`。子路径部署时 BASE URL 必须包含完整子路径。
+BASE URL 是浏览器访问 ReleaseTracker 的公开地址，用于反向代理部署以及 OIDC callback 生成。在「系统设置 → 全局配置 → BASE URL」配置，例如 `https://releases.example.com` 或带子路径的 `https://example.com/releasetracker`。子路径部署时 BASE URL 必须包含完整子路径。启用 OIDC 时该值必须是规范的绝对 HTTPS URL；服务不会从请求的 `Host` 头推导 callback 或前端跳转地址，缺失或不安全的配置会直接阻止 OIDC 流程。
 
 OIDC callback 将使用：
 
@@ -146,7 +153,9 @@ OIDC callback 将使用：
 
 ReleaseTracker 仅维护一个稳定的管理员身份。升级现有安装时会从当前 `admin` 账户回填该身份；之后修改用户名不会转移管理员权限。用户注册已禁用，Tracker、版本、执行器、运行时、凭证、通知、OIDC 与系统设置操作均仅限管理员。本地密码登录始终保留为恢复路径。
 
-仅配置 OIDC 提供商不会启用登录。请先以本地管理员身份登录，将当前本地密码提交到 `POST /api/oidc-providers/{provider_id}/admin-binding/authorize`，然后打开返回的 `authorization_url` 并完成 IdP 流程。ReleaseTracker 会验证已签名的 ID Token，并将其精确的 issuer + subject 绑定到现有管理员，绝不会自动创建 OIDC 用户。可通过 `GET /api/oidc-providers/admin-binding` 查看绑定状态；通过 `POST /api/oidc-providers/admin-binding/unbind` 提交当前本地密码解除绑定。已绑定的提供商必须先解除绑定，才能修改或删除。
+仅配置 OIDC 提供商不会启用登录。请先以本地管理员身份登录，将当前本地密码提交到 `POST /api/oidc-providers/{provider_id}/admin-binding/authorize`，然后打开返回的 `authorization_url` 并完成 IdP 流程。ReleaseTracker 会验证已签名的 ID Token，并将其精确的 issuer + subject 绑定到现有管理员，绝不会自动创建 OIDC 用户。OIDC issuer、发现文档中的授权 / token / JWKS / UserInfo 端点以及手工配置的对应端点都必须使用 HTTPS；授权事务还通过 Secure、HttpOnly、SameSite 浏览器 Cookie 与一次性数据库 state 绑定。可通过 `GET /api/oidc-providers/admin-binding` 查看绑定状态；通过 `POST /api/oidc-providers/admin-binding/unbind` 提交当前本地密码解除绑定。已绑定的提供商必须先解除绑定，才能修改或删除。
+
+带凭证的 GitLab、Gitea、Helm 与自定义 changelog 请求只接受 HTTPS 端点，并且只会在同源 HTTPS 跳转中继续携带凭证；跨源跳转或 HTTPS 降级会被拒绝。匿名的旧版 HTTP Tracker 配置仍可用于不携带凭证的兼容场景。
 
 ### 数据目录与系统密钥
 

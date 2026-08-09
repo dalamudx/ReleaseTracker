@@ -15,6 +15,11 @@ class FakeStorage:
     async def get_system_log_level(self):
         return "INFO"
 
+    async def reconcile_stale_executor_snapshot_claims(self, *, stale_before):
+        del stale_before
+        self.events.append("storage.reconcile_snapshot_claims")
+        return 0
+
     async def close(self):
         self.closed = True
 
@@ -151,6 +156,7 @@ async def test_lifespan_starts_without_identity_drift_repair(monkeypatch):
         assert storage.events == [
             "storage.initialize",
             "auth.ensure_admin_user",
+            "storage.reconcile_snapshot_claims",
             "scheduler.initialize",
             "executor.initialize",
             "scheduler_host.start",

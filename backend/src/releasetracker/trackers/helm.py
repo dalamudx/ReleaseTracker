@@ -6,6 +6,8 @@ import httpx
 import yaml
 
 from ..models import Release
+from ..services.credentialed_http import credentialed_request
+from ..services.secure_urls import require_https_url
 from .base import BaseTracker
 
 
@@ -17,6 +19,8 @@ class HelmTracker(BaseTracker):
         self.repo = repo.rstrip("/")
         self.chart = chart
         self.token = token
+        if self.token:
+            require_https_url(self.repo, field="Credentialed Helm endpoint")
 
     async def fetch_latest(self, fallback_tags: bool = False) -> Release | None:
         """Fetch latest release"""
@@ -36,7 +40,16 @@ class HelmTracker(BaseTracker):
             headers["Authorization"] = f"Bearer {self.token}"
 
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=headers, timeout=10.0)
+            if self.token:
+                response = await credentialed_request(
+                    client,
+                    "GET",
+                    url,
+                    headers=headers,
+                    timeout=10.0,
+                )
+            else:
+                response = await client.get(url, headers=headers, timeout=10.0)
             response.raise_for_status()
             data = yaml.safe_load(response.text)
 

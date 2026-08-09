@@ -686,7 +686,12 @@ async def delete_executor(
     if not executor:
         raise HTTPException(status_code=404, detail="Executor not found")
 
-    await storage.delete_executor_config(executor_id)
+    deleted = await storage.delete_executor_config(executor_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=409,
+            detail="Executor is in use by an active snapshot rollback",
+        )
     await storage.delete_executor_status(executor_id)
     await storage.delete_executor_run_history(executor_id)
     await scheduler.remove_executor(executor_id)

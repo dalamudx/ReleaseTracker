@@ -2,9 +2,14 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from releasetracker.routers.oidc import OIDC_BROWSER_COOKIE_NAME, _hash_browser_binding
+from releasetracker.storage.sqlite import SYSTEM_BASE_URL_SETTING_KEY
+
 
 def _admin_headers(client) -> dict[str, str]:
-    response = client.post("/api/auth/token", data={"username": "admin", "password": "admin"})
+    response = client.post(
+        "/api/auth/token", data={"username": "admin", "password": "test-admin-password"}
+    )
     token = response.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
 
@@ -51,6 +56,22 @@ async def test_create_oidc_provider_enforces_single_provider_limit(client, auth_
 
     assert second_response.status_code == 409
     assert second_response.json()["detail"] == "Only one OIDC provider is allowed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field",
+    ["issuer_url", "authorization_url", "token_url", "userinfo_url", "jwks_uri"],
+)
+async def test_create_oidc_provider_rejects_http_security_endpoints(client, auth_service, field):
+    await auth_service.ensure_admin_user()
+    headers = _admin_headers(client)
+    payload = _provider_payload("insecure", "Insecure Provider")
+    payload[field] = "http://issuer.example.com/endpoint"
+
+    response = client.post("/api/oidc-providers", json=payload, headers=headers)
+
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -149,6 +170,7 @@ async def test_admin_binding_requires_password_and_supports_unbind(client, auth_
     create_response = client.post("/api/oidc-providers", json=payload, headers=headers)
     assert create_response.status_code == 201, create_response.text
     provider_id = create_response.json()["id"]
+    await storage.set_setting(SYSTEM_BASE_URL_SETTING_KEY, "https://releases.example.com")
 
     status_response = client.get("/api/oidc-providers/admin-binding", headers=headers)
     assert status_response.status_code == 200
@@ -169,13 +191,21 @@ async def test_admin_binding_requires_password_and_supports_unbind(client, auth_
 
     authorize_response = client.post(
         f"/api/oidc-providers/{provider_id}/admin-binding/authorize",
-        json={"current_password": "admin"},
+        json={"current_password": "test-admin-password"},
         headers=headers,
     )
     assert authorize_response.status_code == 200, authorize_response.text
+    assert "Secure" in authorize_response.headers["set-cookie"]
+    assert "HttpOnly" in authorize_response.headers["set-cookie"]
     query = parse_qs(urlparse(authorize_response.json()["authorization_url"]).query)
     assert query["nonce"][0]
-    oauth_state = await storage.get_and_delete_oauth_state(query["state"][0])
+    browser_token = authorize_response.cookies.get(OIDC_BROWSER_COOKIE_NAME)
+    assert browser_token
+    oauth_state = await storage.consume_oauth_state(
+        query["state"][0],
+        "binding",
+        _hash_browser_binding(browser_token),
+    )
     assert oauth_state is not None
     assert oauth_state.flow_type == "bind"
     assert oauth_state.initiating_admin_user_id == await storage.get_admin_user_id()
@@ -196,7 +226,7 @@ async def test_admin_binding_requires_password_and_supports_unbind(client, auth_
 
     unbind_response = client.post(
         "/api/oidc-providers/admin-binding/unbind",
-        json={"current_password": "admin"},
+        json={"current_password": "test-admin-password"},
         headers=headers,
     )
     assert unbind_response.status_code == 200

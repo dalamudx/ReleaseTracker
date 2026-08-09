@@ -21,7 +21,7 @@ from releasetracker.config import (
     ExecutorConfig,
     RuntimeConnectionConfig,
 )
-from releasetracker.models import ExecutorSnapshot
+from releasetracker.models import ExecutorRunHistory, ExecutorSnapshot
 
 
 async def _create_runtime_connection(
@@ -379,7 +379,13 @@ async def test_snapshot_service_delete_snapshot_rejects_in_flight_snapshot(stora
         )
     )
     service = SnapshotService(storage)
-    await service.registry.register(snapshot_id)
+    claim = await storage.claim_executor_snapshot_for_rollback(
+        executor_id=executor_id,
+        snapshot_id=snapshot_id,
+        run=ExecutorRunHistory(executor_id=executor_id, started_at=datetime.now(), status="queued"),
+        active_statuses=frozenset({"queued", "running", "health_checking"}),
+    )
+    assert claim is not None
 
     with pytest.raises(SnapshotInUseError):
         await service.delete_snapshot(executor_id, snapshot_id)

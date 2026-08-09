@@ -14,12 +14,14 @@ if TYPE_CHECKING:
 
 ADMIN_USER_ID_SETTING_KEY = "system.admin_user_id"
 BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY = "system.bootstrap_admin_initialized"
+ADMIN_PASSWORD_RESET_REQUIRED_SETTING_KEY = "system.admin_password_reset_required"
 ADMIN_OIDC_ISSUER_SETTING_KEY = "system.admin_oidc_issuer"
 ADMIN_OIDC_SUBJECT_SETTING_KEY = "system.admin_oidc_subject"
 RESERVED_AUTH_SETTING_KEYS = frozenset(
     {
         ADMIN_USER_ID_SETTING_KEY,
         BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY,
+        ADMIN_PASSWORD_RESET_REQUIRED_SETTING_KEY,
         ADMIN_OIDC_ISSUER_SETTING_KEY,
         ADMIN_OIDC_SUBJECT_SETTING_KEY,
     }
@@ -63,6 +65,78 @@ async def persist_admin_identity(storage: "SQLiteStorage", user_id: int) -> None
     except Exception:
         await db.rollback()
         raise
+
+
+async def is_admin_password_reset_required(storage: "SQLiteStorage") -> bool:
+    """Return whether the reserved legacy-password reset marker exists."""
+    return await storage.get_setting(ADMIN_PASSWORD_RESET_REQUIRED_SETTING_KEY) is not None
+
+
+async def mark_admin_password_reset_required(storage: "SQLiteStorage", user_id: int) -> int:
+    """Atomically set the reset marker and revoke the stable administrator's sessions."""
+    if user_id <= 0:
+        raise ValueError("admin user id must be positive")
+
+    async with storage._transaction_lock:
+        db = await storage._get_connection()
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            row = await (
+                await db.execute(
+                    "SELECT value FROM settings WHERE key = ?",
+                    (ADMIN_USER_ID_SETTING_KEY,),
+                )
+            ).fetchone()
+            if row is None or row[0] != str(user_id):
+                raise ValueError("Stable administrator identity changed during reset enforcement")
+            await _upsert_setting(db, ADMIN_PASSWORD_RESET_REQUIRED_SETTING_KEY, "true")
+            result = await db.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+            await db.commit()
+            return result.rowcount or 0
+        except Exception:
+            await db.rollback()
+            raise
+
+
+async def reset_admin_password(storage: "SQLiteStorage", password_hash: str) -> int:
+    """Atomically replace the stable admin password, clear the marker, and revoke sessions."""
+    if not password_hash:
+        raise ValueError("Password hash is required")
+
+    async with storage._transaction_lock:
+        db = await storage._get_connection()
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            row = await (
+                await db.execute(
+                    """
+                    SELECT u.id
+                    FROM settings s
+                    JOIN users u ON u.id = CAST(s.value AS INTEGER)
+                    WHERE s.key = ? AND CAST(s.value AS INTEGER) > 0
+                    """,
+                    (ADMIN_USER_ID_SETTING_KEY,),
+                )
+            ).fetchone()
+            if row is None:
+                raise ValueError("Stable administrator identity is not configured")
+            user_id = int(row[0])
+            updated = await db.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (password_hash, user_id),
+            )
+            if updated.rowcount != 1:
+                raise ValueError("Stable administrator account is unavailable")
+            await db.execute(
+                "DELETE FROM settings WHERE key = ?",
+                (ADMIN_PASSWORD_RESET_REQUIRED_SETTING_KEY,),
+            )
+            await db.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+            await db.commit()
+            return user_id
+        except Exception:
+            await db.rollback()
+            raise
 
 
 async def create_bootstrap_admin(storage: "SQLiteStorage", user: User) -> User:
@@ -508,6 +582,7 @@ async def save_oauth_state(
     code_verifier: str,
     nonce: str,
     flow_type: str,
+    browser_binding_hash: str,
     initiating_admin_user_id: int | None = None,
 ) -> None:
     if flow_type not in {"login", "bind"}:
@@ -516,6 +591,8 @@ async def save_oauth_state(
         raise ValueError("Binding flow requires an initiating administrator")
     if flow_type == "login" and initiating_admin_user_id is not None:
         raise ValueError("Login flow cannot have an initiating administrator")
+    if not browser_binding_hash:
+        raise ValueError("OAuth browser binding hash is required")
 
     expires_at = (datetime.now() + timedelta(minutes=10)).isoformat()
     db = await storage._get_connection()
@@ -523,8 +600,8 @@ async def save_oauth_state(
         """
         INSERT OR REPLACE INTO oauth_states
         (state, provider_slug, code_verifier, nonce, flow_type,
-         initiating_admin_user_id, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+         initiating_admin_user_id, browser_binding_hash, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             state,
@@ -533,21 +610,37 @@ async def save_oauth_state(
             nonce,
             flow_type,
             initiating_admin_user_id,
+            browser_binding_hash,
             expires_at,
         ),
     )
     await db.commit()
 
 
-async def get_and_delete_oauth_state(storage: "SQLiteStorage", state: str) -> OAuthState | None:
+async def consume_oauth_state(
+    storage: "SQLiteStorage",
+    state: str,
+    provider_slug: str,
+    browser_binding_hash: str,
+) -> OAuthState | None:
+    """Atomically consume a live state only for its initiating browser and provider."""
     db = await storage._get_connection()
     db.row_factory = aiosqlite.Row
-    cursor = await db.execute("SELECT * FROM oauth_states WHERE state = ?", (state,))
+    cursor = await db.execute(
+        """
+        DELETE FROM oauth_states
+        WHERE state = ?
+          AND provider_slug = ?
+          AND browser_binding_hash = ?
+          AND expires_at >= ?
+        RETURNING *
+        """,
+        (state, provider_slug, browser_binding_hash, datetime.now().isoformat()),
+    )
     row = await cursor.fetchone()
+    await db.commit()
     if not row:
         return None
-    await db.execute("DELETE FROM oauth_states WHERE state = ?", (state,))
-    await db.commit()
     return OAuthState(
         state=row["state"],
         provider_slug=row["provider_slug"],
@@ -555,6 +648,7 @@ async def get_and_delete_oauth_state(storage: "SQLiteStorage", state: str) -> OA
         nonce=row["nonce"],
         flow_type=row["flow_type"],
         initiating_admin_user_id=row["initiating_admin_user_id"],
+        browser_binding_hash=row["browser_binding_hash"],
         expires_at=datetime.fromisoformat(row["expires_at"]),
     )
 

@@ -11,7 +11,9 @@ from releasetracker.storage.sqlite import SQLiteStorage
 
 
 async def authenticate_admin(client, auth_service):
-    _, token_pair = await auth_service.login(LoginRequest(username="admin", password="admin"))
+    _, token_pair = await auth_service.login(
+        LoginRequest(username="admin", password="test-admin-password")
+    )
     client.headers["Authorization"] = f"Bearer {token_pair.access_token}"
     return client
 
@@ -99,7 +101,9 @@ async def test_jwt_secret_rotation_invalidates_sessions(client, auth_service):
 
 
 @pytest.mark.asyncio
-async def test_encryption_key_rotation_preserves_encrypted_data(storage: SQLiteStorage, system_key_manager):
+async def test_encryption_key_rotation_preserves_encrypted_data(
+    storage: SQLiteStorage, system_key_manager
+):
     credential = Credential(
         name="registry-secret",
         type="docker_runtime",
@@ -127,7 +131,10 @@ async def test_encryption_key_rotation_preserves_encrypted_data(storage: SQLiteS
     db = await storage._get_connection()
     await db.execute(
         "UPDATE runtime_connections SET secrets = ? WHERE id = ?",
-        (storage._dump_json(storage._encrypt_nested_strings({"token": "runtime-token"})), runtime_connection_id),
+        (
+            storage._dump_json(storage._encrypt_nested_strings({"token": "runtime-token"})),
+            runtime_connection_id,
+        ),
     )
     await db.commit()
     credential_before = await (
@@ -137,7 +144,9 @@ async def test_encryption_key_rotation_preserves_encrypted_data(storage: SQLiteS
         await db.execute("SELECT client_secret FROM oauth_providers WHERE id = ?", (provider.id,))
     ).fetchone()
     runtime_before = await (
-        await db.execute("SELECT secrets FROM runtime_connections WHERE id = ?", (runtime_connection_id,))
+        await db.execute(
+            "SELECT secrets FROM runtime_connections WHERE id = ?", (runtime_connection_id,)
+        )
     ).fetchone()
 
     response_stats = await rotate_encryption_key(storage, system_key_manager, generate=True)
@@ -166,7 +175,9 @@ async def test_encryption_key_rotation_preserves_encrypted_data(storage: SQLiteS
         await db.execute("SELECT client_secret FROM oauth_providers WHERE id = ?", (provider.id,))
     ).fetchone()
     runtime_after = await (
-        await db.execute("SELECT secrets FROM runtime_connections WHERE id = ?", (runtime_connection_id,))
+        await db.execute(
+            "SELECT secrets FROM runtime_connections WHERE id = ?", (runtime_connection_id,)
+        )
     ).fetchone()
 
     assert credential_after["token"] != credential_before["token"]
@@ -200,7 +211,9 @@ async def test_undecryptable_fernet_value_blocks_rotation(storage: SQLiteStorage
     with pytest.raises(ValueError):
         await storage.rotate_encrypted_data(Fernet.generate_key().decode("utf-8"))
 
-    row = await (await db.execute("SELECT token FROM credentials WHERE name = ?", ("bad",))).fetchone()
+    row = await (
+        await db.execute("SELECT token FROM credentials WHERE name = ?", ("bad",))
+    ).fetchone()
     assert row["token"] == bad_token
     inventory = await storage.get_encryption_key_inventory()
     assert inventory["undecryptable_count"] == 1

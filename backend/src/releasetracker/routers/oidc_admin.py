@@ -5,8 +5,8 @@ import secrets
 from typing import Annotated
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Depends, Request, status
-from pydantic import BaseModel, ConfigDict
+from fastapi import APIRouter, HTTPException, Depends, Request, Response, status
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from ..storage.sqlite import SQLiteStorage
 from ..oidc_models import OIDCProvider
@@ -14,7 +14,13 @@ from ..models import User
 from ..dependencies import get_auth_service, get_storage, get_current_admin_user
 from ..services.auth import AuthService
 from ..services.oidc_service import OIDCService, generate_pkce_pair
-from .oidc import _build_public_url, get_oidc_service
+from ..services.secure_urls import require_https_url
+from .oidc import (
+    _build_public_url,
+    _hash_browser_binding,
+    _set_browser_binding_cookie,
+    get_oidc_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +63,13 @@ class CreateOIDCProviderRequest(BaseModel):
     icon_url: str | None = None
     description: str | None = None
 
+    @field_validator("issuer_url", "authorization_url", "token_url", "userinfo_url", "jwks_uri")
+    @classmethod
+    def validate_oidc_url(cls, value: str | None, info):
+        if value is None:
+            return None
+        return require_https_url(value, field=f"OIDC {info.field_name}")
+
 
 class UpdateOIDCProviderRequest(BaseModel):
     """Update OIDC provider request; all fields are optional"""
@@ -74,6 +87,13 @@ class UpdateOIDCProviderRequest(BaseModel):
     enabled: bool | None = None
     icon_url: str | None = None
     description: str | None = None
+
+    @field_validator("issuer_url", "authorization_url", "token_url", "userinfo_url", "jwks_uri")
+    @classmethod
+    def validate_oidc_url(cls, value: str | None, info):
+        if value is None:
+            return None
+        return require_https_url(value, field=f"OIDC {info.field_name}")
 
 
 def _provider_to_response(p: OIDCProvider) -> dict:
@@ -185,15 +205,20 @@ async def authorize_admin_binding(
     provider_id: int,
     req: AdminBindingPasswordRequest,
     request: Request,
+    response: Response,
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
     oidc_service: Annotated[OIDCService, Depends(get_oidc_service)],
     current_user: Annotated[User, Depends(get_current_admin_user)],
 ):
     """Re-authenticate the admin and start a nonce-protected OIDC binding flow."""
-    if current_user.id is None or not auth_service.verify_password(
-        current_user, req.current_password
-    ):
+    try:
+        password_valid = await auth_service.verify_password_for_reauth(
+            current_user, req.current_password
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    if current_user.id is None or not password_valid:
         raise HTTPException(status_code=401, detail="Current password is invalid")
 
     provider = await storage.get_oauth_provider_by_id(provider_id)
@@ -209,19 +234,16 @@ async def authorize_admin_binding(
             detail="Unbind the current OIDC administrator identity before binding another issuer",
         )
 
+    try:
+        callback_path = request.app.url_path_for("oidc_callback", provider_slug=provider.slug)
+        redirect_uri = await _build_public_url(storage, callback_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(32)
+    browser_token = secrets.token_urlsafe(32)
     code_verifier, code_challenge = generate_pkce_pair()
-    await storage.save_oauth_state(
-        state,
-        provider.slug,
-        code_verifier,
-        nonce,
-        "bind",
-        current_user.id,
-    )
-    callback_path = request.app.url_path_for("oidc_callback", provider_slug=provider.slug)
-    redirect_uri = await _build_public_url(storage, request, callback_path)
     try:
         authorization_url = await oidc_service.get_authorization_url(
             provider.slug,
@@ -232,6 +254,16 @@ async def authorize_admin_binding(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await storage.save_oauth_state(
+        state,
+        provider.slug,
+        code_verifier,
+        nonce,
+        "bind",
+        _hash_browser_binding(browser_token),
+        current_user.id,
+    )
+    _set_browser_binding_cookie(response, browser_token)
     return AdminBindingAuthorizeResponse(authorization_url=authorization_url)
 
 
@@ -243,7 +275,13 @@ async def unbind_admin_binding(
     current_user: Annotated[User, Depends(get_current_admin_user)],
 ):
     """Remove the singleton binding after local-password re-authentication."""
-    if not auth_service.verify_password(current_user, req.current_password):
+    try:
+        password_valid = await auth_service.verify_password_for_reauth(
+            current_user, req.current_password
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    if not password_valid:
         raise HTTPException(status_code=401, detail="Current password is invalid")
     await storage.unbind_admin_oidc_identity()
     return {"message": "OIDC administrator identity unbound"}

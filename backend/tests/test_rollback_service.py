@@ -195,6 +195,9 @@ async def test_rollback_with_default_snapshot_uses_most_recent(storage):
     stored_snapshots = await storage.list_executor_snapshots(executor.id, limit=10, offset=0)
     triggers = [snap.trigger for snap in stored_snapshots]
     assert "pre_rollback" in triggers
+    assert not await storage.is_executor_snapshot_claimed(
+        executor_id=executor.id, snapshot_id=newest_id
+    )
 
 
 @pytest.mark.asyncio
@@ -331,6 +334,39 @@ async def test_concurrent_rollbacks_create_only_one_active_claim(storage):
 
 
 @pytest.mark.asyncio
+async def test_reconcile_stale_claim_fails_run_and_releases_snapshot(storage):
+    executor = await _create_executor(storage, name="rb-stale")
+    snapshot_id = await _seed_snapshot(storage, executor.id)
+    claim = await storage.claim_executor_snapshot_for_rollback(
+        executor_id=executor.id,
+        snapshot_id=snapshot_id,
+        run=ExecutorRunHistory(executor_id=executor.id, started_at=datetime.now(), status="queued"),
+        active_statuses=frozenset({"queued", "running", "health_checking"}),
+    )
+    assert claim is not None
+    _, run_id = claim
+    db = await storage._get_connection()
+    await db.execute(
+        "UPDATE executor_snapshot_claims SET claimed_at = ? WHERE snapshot_id = ?",
+        ((datetime.now() - timedelta(hours=2)).isoformat(), snapshot_id),
+    )
+    await db.commit()
+
+    reconciled = await storage.reconcile_stale_executor_snapshot_claims(
+        stale_before=datetime.now() - timedelta(minutes=30)
+    )
+
+    assert reconciled == 1
+    assert not await storage.is_executor_snapshot_claimed(
+        executor_id=executor.id, snapshot_id=snapshot_id
+    )
+    run = await storage.get_executor_run(run_id)
+    assert run is not None
+    assert run.status == "failed"
+    assert run.message == "rollback interrupted before completion"
+
+
+@pytest.mark.asyncio
 async def test_rollback_pre_rollback_capture_failure_skips_recover(storage):
     executor = await _create_executor(storage, name="rb-cap-fail")
     await _seed_snapshot(storage, executor.id, image="acme/api:1.0.0")
@@ -351,6 +387,35 @@ async def test_rollback_pre_rollback_capture_failure_skips_recover(storage):
     assert "pre_rollback_capture_error" in outcome.run.diagnostics
     # recover_from_snapshot must NOT have been called.
     assert adapter.recover_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_rollback_unexpected_failure_finalizes_run_and_releases_claim(storage, monkeypatch):
+    executor = await _create_executor(storage, name="rb-persist-fail")
+    snapshot_id = await _seed_snapshot(storage, executor.id, image="acme/api:1.0.0")
+    adapter = _RollbackAdapter(await storage.get_runtime_connection(executor.runtime_connection_id))
+
+    async def fail_snapshot_persist(_snapshot):
+        raise RuntimeError("snapshot persistence unavailable")
+
+    monkeypatch.setattr(storage, "create_executor_snapshot", fail_snapshot_persist)
+    service = RollbackService(storage, SnapshotService(storage))
+
+    with pytest.raises(RuntimeError, match="snapshot persistence unavailable"):
+        await service.rollback(
+            executor_config=executor,
+            adapter=adapter,
+            snapshot_id=snapshot_id,
+            actor=None,
+        )
+
+    run = await storage.get_latest_executor_run(executor.id)
+    assert run is not None
+    assert run.status == "failed"
+    assert run.diagnostics["rollback_error"] == "snapshot persistence unavailable"
+    assert not await storage.is_executor_snapshot_claimed(
+        executor_id=executor.id, snapshot_id=snapshot_id
+    )
 
 
 @pytest.mark.asyncio

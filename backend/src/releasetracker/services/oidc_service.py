@@ -14,6 +14,7 @@ from ..models import Session, TokenPair, User
 from ..oidc_models import OIDCIdentity, OIDCProvider, OAuthState
 from ..services.auth import AuthService
 from ..services.jwt_tokens import decode_jwt
+from ..services.secure_urls import require_https_url
 from ..storage.sqlite import SQLiteStorage
 
 logger = logging.getLogger(__name__)
@@ -60,27 +61,45 @@ class OIDCService:
         """Resolve provider metadata and fail closed on issuer or JWKS drift."""
         if not provider.issuer_url:
             raise ValueError("OIDC provider issuer URL is required")
+        issuer_url = require_https_url(provider.issuer_url, field="OIDC issuer URL")
 
         if provider.discovery_enabled:
-            discovery_url = f"{provider.issuer_url.rstrip('/')}/.well-known/openid-configuration"
+            discovery_url = f"{issuer_url.rstrip('/')}/.well-known/openid-configuration"
             try:
-                async with httpx.AsyncClient(timeout=10) as client:
-                    response = await client.get(discovery_url)
+                async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+                    response = await client.get(discovery_url, follow_redirects=False)
                     response.raise_for_status()
                     config = response.json()
             except (httpx.HTTPError, ValueError, KeyError) as exc:
                 logger.warning("OIDC discovery failed for provider=%s", provider.slug)
                 raise ValueError("OIDC discovery failed") from exc
 
-            if config.get("issuer") != provider.issuer_url:
+            if config.get("issuer") != issuer_url:
                 raise ValueError("OIDC discovery issuer does not match configured issuer")
-            provider.authorization_url = config.get("authorization_endpoint")
-            provider.token_url = config.get("token_endpoint")
-            provider.jwks_uri = config.get("jwks_uri")
+            discovered = {
+                "authorization_url": config.get("authorization_endpoint"),
+                "token_url": config.get("token_endpoint"),
+                "jwks_uri": config.get("jwks_uri"),
+                "userinfo_url": config.get("userinfo_endpoint"),
+            }
+            try:
+                provider = OIDCProvider(
+                    **{
+                        **provider.model_dump(),
+                        **discovered,
+                    }
+                )
+            except ValueError as exc:
+                raise ValueError("OIDC discovery returned an insecure or invalid endpoint") from exc
             logger.info("OIDC discovery succeeded for provider=%s", provider.slug)
 
         if not provider.authorization_url or not provider.token_url or not provider.jwks_uri:
             raise ValueError("OIDC authorization, token, and JWKS endpoints are required")
+        require_https_url(provider.authorization_url, field="OIDC authorization URL")
+        require_https_url(provider.token_url, field="OIDC token URL")
+        require_https_url(provider.jwks_uri, field="OIDC JWKS URL")
+        if provider.userinfo_url:
+            require_https_url(provider.userinfo_url, field="OIDC UserInfo URL")
         return provider
 
     async def get_authorization_url(
@@ -108,6 +127,7 @@ class OIDCService:
         ip_address: str | None = None,
     ) -> tuple[User, TokenPair]:
         """Exchange a code, validate its ID token, and issue a local admin session."""
+        await self.auth_service.ensure_password_reset_not_required()
         if oauth_state.provider_slug != provider_slug:
             raise ValueError("OIDC state provider does not match callback provider")
 
@@ -124,14 +144,16 @@ class OIDCService:
             "code_verifier": oauth_state.code_verifier,
         }
         try:
-            async with httpx.AsyncClient(timeout=15) as http:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=False) as http:
                 kwargs = {
                     "data": token_data,
                     "headers": {"Content-Type": "application/x-www-form-urlencoded"},
                 }
                 if provider.client_secret:
                     kwargs["auth"] = (provider.client_id, provider.client_secret)
-                token_response = await http.post(str(provider.token_url), **kwargs)
+                token_response = await http.post(
+                    str(provider.token_url), follow_redirects=False, **kwargs
+                )
                 token_response.raise_for_status()
                 token = token_response.json()
         except (httpx.HTTPError, ValueError) as exc:
@@ -159,9 +181,10 @@ class OIDCService:
         return user, token_pair
 
     async def _fetch_jwks(self, jwks_uri: str) -> dict:
+        secure_jwks_uri = require_https_url(jwks_uri, field="OIDC JWKS URL")
         try:
-            async with httpx.AsyncClient(timeout=10) as http:
-                response = await http.get(jwks_uri)
+            async with httpx.AsyncClient(timeout=10, follow_redirects=False) as http:
+                response = await http.get(secure_jwks_uri, follow_redirects=False)
                 response.raise_for_status()
                 jwks = response.json()
         except (httpx.HTTPError, ValueError) as exc:
@@ -211,6 +234,7 @@ class OIDCService:
         if admin_user_id is None:
             raise ValueError("Administrator identity is not configured")
 
+        await self.auth_service.ensure_password_reset_not_required()
         user = await self.storage.get_user_by_id(admin_user_id)
         if user is None or user.status != "active":
             raise ValueError("Administrator account is unavailable")

@@ -3,11 +3,15 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, field_validator
+
+from .services.secure_urls import require_https_url
 
 
 class OIDCProvider(BaseModel):
     """OIDC provider configuration"""
+
+    model_config = ConfigDict(extra="forbid")
 
     id: int | None = None
     name: str  # Display name
@@ -37,6 +41,19 @@ class OIDCProvider(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
+    @field_validator(
+        "issuer_url",
+        "authorization_url",
+        "token_url",
+        "userinfo_url",
+        "jwks_uri",
+    )
+    @classmethod
+    def validate_security_sensitive_url(cls, value: str | None, info):
+        if value is None:
+            return None
+        return require_https_url(value, field=f"OIDC {info.field_name}")
+
 
 class OAuthState(BaseModel):
     """Temporary OAuth state storage for a validated login or admin binding flow."""
@@ -47,6 +64,7 @@ class OAuthState(BaseModel):
     nonce: str
     flow_type: Literal["login", "bind"]
     initiating_admin_user_id: int | None = None
+    browser_binding_hash: str
     expires_at: datetime
 
 

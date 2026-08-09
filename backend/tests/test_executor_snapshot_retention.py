@@ -13,11 +13,9 @@ from releasetracker.config import (
     ExecutorConfig,
     RuntimeConnectionConfig,
 )
-from releasetracker.models import ExecutorSnapshot
-from releasetracker.services.snapshot_service import (
-    InFlightRollbackRegistry,
-    SnapshotService,
-)
+from releasetracker.models import ExecutorRunHistory, ExecutorSnapshot
+from releasetracker.services.snapshot_service import SnapshotService
+from releasetracker.storage.sqlite import SQLiteStorage
 
 
 async def _create_runtime_connection(
@@ -117,18 +115,21 @@ async def test_prune_excludes_in_flight_rollback_ids(storage):
     executor_id = await _create_executor(storage, name="retention-in-flight")
     ids = await _seed_snapshots(storage, executor_id, count=5)
 
-    registry = InFlightRollbackRegistry()
-    # Pin the oldest snapshot as if a rollback is consuming it.
-    await registry.register(ids[0])
+    claim = await storage.claim_executor_snapshot_for_rollback(
+        executor_id=executor_id,
+        snapshot_id=ids[0],
+        run=ExecutorRunHistory(executor_id=executor_id, started_at=datetime.now(), status="queued"),
+        active_statuses=frozenset({"queued", "running", "health_checking"}),
+    )
+    assert claim is not None
 
-    service = SnapshotService(storage, registry=registry)
+    service = SnapshotService(storage)
     deleted = await service.prune_after_insert(executor_id, retention=3)
 
     # Only the other overflow candidate (ids[1]) may be deleted.
     assert deleted == [ids[1]]
     remaining_ids = {
-        snap.id
-        for snap in await storage.list_executor_snapshots(executor_id, limit=10, offset=0)
+        snap.id for snap in await storage.list_executor_snapshots(executor_id, limit=10, offset=0)
     }
     assert ids[0] in remaining_ids
     assert ids[1] not in remaining_ids
@@ -147,16 +148,25 @@ async def test_prune_skips_when_retention_is_invalid(storage):
 
 
 @pytest.mark.asyncio
-async def test_in_flight_rollback_registry_round_trip(storage):
-    registry = InFlightRollbackRegistry()
-    assert await registry.snapshot_ids() == set()
+async def test_snapshot_claim_is_visible_from_another_storage_instance(storage):
+    executor_id = await _create_executor(storage, name="retention-persistent-claim")
+    snapshot_id = (await _seed_snapshots(storage, executor_id, count=1))[0]
+    claim = await storage.claim_executor_snapshot_for_rollback(
+        executor_id=executor_id,
+        snapshot_id=snapshot_id,
+        run=ExecutorRunHistory(executor_id=executor_id, started_at=datetime.now(), status="queued"),
+        active_statuses=frozenset({"queued", "running", "health_checking"}),
+    )
+    assert claim is not None
 
-    await registry.register(101)
-    await registry.register(202)
-    assert await registry.snapshot_ids() == {101, 202}
-
-    await registry.unregister(101)
-    assert await registry.snapshot_ids() == {202}
-    # Unregistering a missing id is a no-op.
-    await registry.unregister(999)
-    assert await registry.snapshot_ids() == {202}
+    second_storage = SQLiteStorage(
+        storage.db_path,
+        system_key_manager=storage.system_key_manager,
+    )
+    try:
+        assert await second_storage.is_executor_snapshot_claimed(
+            executor_id=executor_id,
+            snapshot_id=snapshot_id,
+        )
+    finally:
+        await second_storage.close()

@@ -412,10 +412,24 @@ CREATE TABLE oauth_states (
     nonce TEXT NOT NULL,
     flow_type TEXT NOT NULL CHECK (flow_type IN ('login', 'bind')),
     initiating_admin_user_id INTEGER,
+    browser_binding_hash TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     FOREIGN KEY (initiating_admin_user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 CREATE INDEX idx_oauth_states_expires_at ON oauth_states(expires_at);
+CREATE TABLE executor_snapshot_claims (
+    snapshot_id INTEGER PRIMARY KEY,
+    executor_id INTEGER NOT NULL,
+    executor_run_id INTEGER NOT NULL UNIQUE,
+    claimed_at TEXT NOT NULL,
+    FOREIGN KEY (snapshot_id) REFERENCES executor_snapshots(id) ON DELETE RESTRICT,
+    FOREIGN KEY (executor_id) REFERENCES executors(id) ON DELETE RESTRICT,
+    FOREIGN KEY (executor_run_id) REFERENCES executor_run_history(id) ON DELETE RESTRICT
+);
+CREATE INDEX idx_executor_snapshot_claims_executor_id
+    ON executor_snapshot_claims(executor_id);
+CREATE INDEX idx_executor_snapshot_claims_claimed_at
+    ON executor_snapshot_claims(claimed_at);
 -- Dbmate schema migrations
 INSERT INTO "schema_migrations" (version) VALUES
   ('20000101000001'),
@@ -423,4 +437,5 @@ INSERT INTO "schema_migrations" (version) VALUES
   ('20260508153215'),
   ('20260513000001'),
   ('20260517000001'),
-  ('20260808000001');
+  ('20260808000001'),
+  ('20260809000001');

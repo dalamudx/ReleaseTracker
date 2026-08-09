@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import copy
 import logging
 import re
@@ -45,26 +44,6 @@ _SENSITIVE_SUFFIX_PATTERN = re.compile(
     r".*(?:_password|_token|_secret|_key|_api_key|_auth)$",
     re.IGNORECASE,
 )
-
-
-@dataclass
-class InFlightRollbackRegistry:
-    """Registry of snapshot ids currently consumed by a running rollback."""
-
-    _ids: set[int] = field(default_factory=set)
-    _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-
-    async def register(self, snapshot_id: int) -> None:
-        async with self._lock:
-            self._ids.add(snapshot_id)
-
-    async def unregister(self, snapshot_id: int) -> None:
-        async with self._lock:
-            self._ids.discard(snapshot_id)
-
-    async def snapshot_ids(self) -> set[int]:
-        async with self._lock:
-            return set(self._ids)
 
 
 @dataclass(frozen=True)
@@ -202,16 +181,10 @@ class SnapshotService:
     def __init__(
         self,
         storage: "SQLiteStorage",
-        registry: InFlightRollbackRegistry | None = None,
         redactor: SnapshotRedactor | None = None,
     ) -> None:
         self._storage = storage
-        self._registry = registry or InFlightRollbackRegistry()
         self._redactor = redactor or SnapshotRedactor()
-
-    @property
-    def registry(self) -> InFlightRollbackRegistry:
-        return self._registry
 
     @property
     def redactor(self) -> SnapshotRedactor:
@@ -221,7 +194,6 @@ class SnapshotService:
         self,
         executor_id: int,
         retention: int,
-        exclude_ids: set[int] | None = None,
     ) -> list[int]:
         if retention < 1:
             logger.warning(
@@ -230,10 +202,6 @@ class SnapshotService:
                 executor_id,
             )
             return []
-
-        excluded = (
-            set(exclude_ids) if exclude_ids is not None else await self._registry.snapshot_ids()
-        )
 
         snapshots = await self._storage.list_executor_snapshots(
             executor_id,
@@ -244,9 +212,7 @@ class SnapshotService:
             return []
 
         overflow = snapshots[retention:]
-        prune_ids = [
-            s.id for s in overflow if s.id is not None and s.id not in excluded and not s.locked
-        ]
+        prune_ids = [s.id for s in overflow if s.id is not None and not s.locked]
         if not prune_ids:
             return []
 
@@ -324,9 +290,6 @@ class SnapshotService:
         if snapshot.locked:
             raise SnapshotLockedError("Snapshot is locked and cannot be deleted")
 
-        if snapshot_id in await self._registry.snapshot_ids():
-            raise SnapshotInUseError("Snapshot is currently in use by a rollback")
-
         deleted = await self._storage.delete_executor_snapshots(executor_id, [snapshot_id])
         if deleted:
             return True
@@ -334,6 +297,10 @@ class SnapshotService:
         current = await self._storage.get_executor_snapshot_by_id(executor_id, snapshot_id)
         if current is not None and current.locked:
             raise SnapshotLockedError("Snapshot became locked before it could be deleted")
+        if await self._storage.is_executor_snapshot_claimed(
+            executor_id=executor_id, snapshot_id=snapshot_id
+        ):
+            raise SnapshotInUseError("Snapshot is currently in use by a rollback")
         return False
 
     async def set_snapshot_locked(
@@ -368,7 +335,6 @@ class SnapshotService:
 
 
 __all__ = [
-    "InFlightRollbackRegistry",
     "PaginatedSnapshotsView",
     "REDACTED_MARKER",
     "SnapshotDetailView",

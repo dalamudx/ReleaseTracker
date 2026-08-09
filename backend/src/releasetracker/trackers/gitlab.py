@@ -8,6 +8,8 @@ import httpx
 import logging
 
 from ..models import Release
+from ..services.credentialed_http import credentialed_request
+from ..services.secure_urls import require_https_url
 from .base import BaseTracker
 
 logger = logging.getLogger(__name__)
@@ -28,6 +30,8 @@ class GitLabTracker(BaseTracker):
         self.project = project
         self.instance = instance.rstrip("/")
         self.token = token
+        if self.token:
+            require_https_url(self.instance, field="Credentialed GitLab endpoint")
 
     def _get_headers(self) -> dict:
         """Get request headers"""
@@ -35,6 +39,26 @@ class GitLabTracker(BaseTracker):
         if self.token:
             headers["PRIVATE-TOKEN"] = self.token
         return headers
+
+    async def _request(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        params: dict | None = None,
+        timeout: float = 10.0,
+    ) -> httpx.Response:
+        headers = self._get_headers()
+        if self.token:
+            return await credentialed_request(
+                client,
+                "GET",
+                url,
+                headers=headers,
+                params=params,
+                timeout=timeout,
+            )
+        return await client.get(url, headers=headers, params=params, timeout=timeout)
 
     async def fetch_latest(self, fallback_tags: bool = False) -> Release | None:
         """Fetch latest release"""
@@ -46,11 +70,10 @@ class GitLabTracker(BaseTracker):
     ) -> list[Release]:
         logger.info(f"Falling back to GitLab tags for {self.project}.")
         tag_url = f"{self.instance}/api/v4/projects/{project_id}/repository/tags"
-        tags_resp = await client.get(
+        tags_resp = await self._request(
+            client,
             tag_url,
-            headers=self._get_headers(),
             params={"per_page": min(limit, 100), "order_by": "version"},
-            timeout=10.0,
         )
         tags_resp.raise_for_status()
         tags_data = tags_resp.json()
@@ -75,9 +98,7 @@ class GitLabTracker(BaseTracker):
 
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.get(
-                    url, headers=self._get_headers(), params=params, timeout=10.0
-                )
+                response = await self._request(client, url, params=params)
                 response.raise_for_status()
                 data = response.json()
             except httpx.HTTPError:
@@ -100,7 +121,7 @@ class GitLabTracker(BaseTracker):
                     tag_url = (
                         f"{self.instance}/api/v4/projects/{project_id}/repository/tags/{tag_name}"
                     )
-                    tasks.append(client.get(tag_url, headers=self._get_headers(), timeout=10.0))
+                    tasks.append(self._request(client, tag_url))
 
             if tasks:
                 logger.info(f"Fetching missing commit info for {len(tasks)} releases from tags API")

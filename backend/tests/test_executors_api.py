@@ -2441,12 +2441,19 @@ async def test_delete_executor_snapshot_returns_409_for_in_flight_snapshot(authe
             image_at_capture="snapshot-in-flight-worker:1.0.0",
         )
     )
-    await authed_client.executor_scheduler.snapshot_service.registry.register(snapshot_id)
+    claim = await storage.claim_executor_snapshot_for_rollback(
+        executor_id=executor_id,
+        snapshot_id=snapshot_id,
+        run=ExecutorRunHistory(executor_id=executor_id, started_at=datetime.now(), status="queued"),
+        active_statuses=frozenset({"queued", "running", "health_checking"}),
+    )
+    assert claim is not None
+    _, run_id = claim
 
     try:
         response = authed_client.delete(f"/api/executors/{executor_id}/snapshots/{snapshot_id}")
     finally:
-        await authed_client.executor_scheduler.snapshot_service.registry.unregister(snapshot_id)
+        await storage.release_executor_snapshot_claim(snapshot_id=snapshot_id, run_id=run_id)
 
     assert response.status_code == 409
     assert response.json()["detail"] == "Snapshot is currently in use by a rollback"

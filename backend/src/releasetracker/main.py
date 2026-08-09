@@ -1,6 +1,7 @@
 """FastAPI application entry point"""
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 import logging
 
@@ -49,6 +50,13 @@ async def lifespan(app: FastAPI):
     # Ensure an admin user exists
     auth_service = AuthService(storage, system_key_manager)
     await auth_service.ensure_admin_user()
+    reconciled_claims = await storage.reconcile_stale_executor_snapshot_claims(
+        stale_before=datetime.now() - timedelta(minutes=30)
+    )
+    if reconciled_claims:
+        logging.getLogger(__name__).warning(
+            "Reconciled %s stale executor snapshot rollback claims", reconciled_claims
+        )
 
     # Initialize schedulers
     scheduler_host = SchedulerHost()

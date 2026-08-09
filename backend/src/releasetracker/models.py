@@ -13,6 +13,8 @@ from pydantic import (
     model_validator,
 )
 
+from .services.secure_urls import require_https_url
+
 
 class Release(BaseModel):
     """Release model"""
@@ -223,6 +225,19 @@ class TrackerSource(BaseModel):
         }:
             raise ValueError(
                 "source_config.published_at_mode must be one of: auto, prefer_real, first_observed"
+            )
+
+        if self.credential_name and self.source_type in {"gitlab", "gitea", "helm"}:
+            if self.source_type == "helm":
+                endpoint = self.source_config["repo"]
+            else:
+                default = (
+                    "https://gitlab.com" if self.source_type == "gitlab" else "https://gitea.com"
+                )
+                endpoint = self.source_config.get("instance", default)
+            require_https_url(
+                endpoint,
+                field=f"Credentialed {self.source_type} endpoint",
             )
 
         return self

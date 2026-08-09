@@ -36,6 +36,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
 BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY = STORAGE_BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY
+LEGACY_ADMIN_PASSWORD = "admin"
 
 
 class AuthService:
@@ -57,6 +58,7 @@ class AuthService:
         self, req: LoginRequest, user_agent: Optional[str] = None, ip_address: Optional[str] = None
     ) -> tuple[User, TokenPair]:
         """User login"""
+        await self.ensure_password_reset_not_required()
         user = await self.storage.get_user_by_username(req.username)
         if not user:
             raise ValueError("Invalid credentials")
@@ -111,6 +113,7 @@ class AuthService:
 
     async def refresh_token(self, refresh_token: str) -> TokenPair:
         """Refresh token"""
+        await self.ensure_password_reset_not_required()
         try:
             payload = decode_jwt(refresh_token, self.secret_key)
             subject = payload.get("sub")
@@ -150,6 +153,7 @@ class AuthService:
 
     async def get_current_user(self, token: str) -> User:
         """Get the current user from a token"""
+        await self.ensure_password_reset_not_required()
         try:
             payload = decode_jwt(token, self.secret_key)
             subject = payload.get("sub")
@@ -221,8 +225,41 @@ class AuthService:
         return encoded_jwt
 
     def verify_password(self, user: User, password: str) -> bool:
-        """Verify a local password for a re-authentication flow."""
+        """Verify a local password after the caller has checked reset state."""
         return bool(user.password_hash) and pwd_context.verify(password, user.password_hash)
+
+    async def verify_password_for_reauth(self, user: User, password: str) -> bool:
+        """Verify a re-authentication password while honoring the reset-required marker."""
+        await self.ensure_password_reset_not_required()
+        return self.verify_password(user, password)
+
+    async def ensure_password_reset_not_required(self) -> None:
+        """Fail closed while a known legacy administrator password awaits operator reset."""
+        if await self.storage.is_admin_password_reset_required():
+            raise ValueError("Administrator password reset is required")
+
+    async def reset_admin_password(self, new_password: str) -> int:
+        """Reset the stable administrator through the explicit local operator path."""
+        if not new_password:
+            raise ValueError("New administrator password must not be empty")
+        if new_password == LEGACY_ADMIN_PASSWORD:
+            raise ValueError("New administrator password must not be the legacy password 'admin'")
+        return await self.storage.reset_admin_password(pwd_context.hash(new_password))
+
+    async def _enforce_legacy_password_reset(self, user: User) -> None:
+        if user.id is None or not user.password_hash:
+            return
+        try:
+            uses_legacy_password = pwd_context.verify(LEGACY_ADMIN_PASSWORD, user.password_hash)
+        except Exception:
+            uses_legacy_password = False
+        if not uses_legacy_password:
+            return
+        revoked = await self.storage.mark_admin_password_reset_required(user.id)
+        logger.warning(
+            "Stable administrator uses the known legacy password; reset required and %s sessions revoked",
+            revoked,
+        )
 
     async def ensure_admin_user(self) -> None:
         """Bootstrap or validate the one stable persisted administrator identity."""
@@ -239,6 +276,7 @@ class AuthService:
                 )
             if await self.storage.get_setting(BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY) is None:
                 await self.storage.persist_admin_identity(admin_user_id)
+            await self._enforce_legacy_password_reset(user)
             return
 
         legacy_admin = await self.storage.get_user_by_username("admin")
@@ -249,6 +287,7 @@ class AuthService:
             if legacy_admin.id is None:
                 raise RuntimeError("Legacy admin user is not persisted")
             await self.storage.persist_admin_identity(legacy_admin.id)
+            await self._enforce_legacy_password_reset(legacy_admin)
             return
 
         if bootstrap_initialized is not None:
