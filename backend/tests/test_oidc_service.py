@@ -3,7 +3,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from authlib.jose import JsonWebKey, JsonWebToken
+from joserfc import jwt, jwk
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
@@ -22,7 +22,7 @@ def _signing_key(kid: str = "test-key"):
         serialization.PrivateFormat.PKCS8,
         serialization.NoEncryption(),
     )
-    return JsonWebKey.import_key(private_pem, {"kid": kid})
+    return jwk.RSAKey.import_key(private_pem, {"kid": kid})
 
 
 def _id_token(key, **overrides) -> str:
@@ -36,10 +36,11 @@ def _id_token(key, **overrides) -> str:
         "nonce": NONCE,
     }
     claims.update(overrides)
-    return (
-        JsonWebToken(["RS256"])
-        .encode({"alg": "RS256", "kid": key.as_dict()["kid"]}, claims, key)
-        .decode()
+    return jwt.encode(
+        {"alg": "RS256", "kid": key.as_dict()["kid"]},
+        claims,
+        key,
+        algorithms=["RS256"],
     )
 
 

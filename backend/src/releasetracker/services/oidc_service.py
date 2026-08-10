@@ -8,7 +8,10 @@ from datetime import datetime
 from urllib.parse import urlencode
 
 import httpx
-from authlib.jose import JoseError, JsonWebToken
+from joserfc import jwt
+from joserfc.errors import JoseError
+from joserfc.jwk import KeySet
+from joserfc.jwt import JWTClaimsRegistry
 
 from ..models import Session, TokenPair, User
 from ..oidc_models import OIDCIdentity, OIDCProvider, OAuthState
@@ -30,7 +33,6 @@ _ALLOWED_ID_TOKEN_ALGORITHMS = [
     "ES384",
     "ES512",
 ]
-_ID_TOKEN_JWT = JsonWebToken(_ALLOWED_ID_TOKEN_ALGORITHMS)
 
 
 def generate_pkce_pair() -> tuple[str, str]:
@@ -209,16 +211,16 @@ class OIDCService:
             "nonce": {"essential": True, "value": expected_nonce},
         }
         try:
-            claims = _ID_TOKEN_JWT.decode(
+            token = jwt.decode(
                 id_token,
-                jwks,
-                claims_options=claims_options,
+                KeySet.import_key_set(jwks),
+                algorithms=_ALLOWED_ID_TOKEN_ALGORITHMS,
             )
-            claims.validate()
+            JWTClaimsRegistry(**claims_options).validate(token.claims)
         except (JoseError, KeyError, TypeError, ValueError) as exc:
             raise ValueError("OIDC ID token validation failed") from exc
 
-        subject = claims.get("sub")
+        subject = token.claims.get("sub")
         if not isinstance(subject, str) or not subject.strip():
             raise ValueError("OIDC subject must be non-empty")
         return OIDCIdentity(issuer=provider.issuer_url, subject=subject.strip())
