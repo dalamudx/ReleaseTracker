@@ -7,18 +7,23 @@ from helpers.executor_runtime import (
 )
 from releasetracker.config import Channel, ExecutorConfig
 from releasetracker.models import ExecutorSnapshot, Release
+from releasetracker.scheduler import ReleaseScheduler
 from releasetracker.storage.sqlite import (
     DEFAULT_EXECUTOR_SNAPSHOT_RETENTION_COUNT,
     DEFAULT_RELEASE_HISTORY_RETENTION_COUNT,
     DEFAULT_SYSTEM_BASE_URL,
     DEFAULT_SYSTEM_LOG_LEVEL,
     DEFAULT_SYSTEM_TIMEZONE,
+    CANONICAL_BOOLEAN_FALSE,
+    CANONICAL_BOOLEAN_TRUE,
     SYSTEM_BASE_URL_SETTING_KEY,
+    SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY,
     SYSTEM_EXECUTOR_SNAPSHOT_RETENTION_COUNT_SETTING_KEY,
     SYSTEM_LOG_LEVEL_SETTING_KEY,
     SYSTEM_RELEASE_HISTORY_RETENTION_COUNT_SETTING_KEY,
     SYSTEM_TIMEZONE_SETTING_KEY,
 )
+from releasetracker.trackers import DockerTracker
 
 
 async def _create_executor_for_cleanup(storage, *, name: str) -> int:
@@ -333,11 +338,112 @@ async def test_runtime_setting_helpers_fall_back_to_defaults(storage):
     assert await storage.get_system_timezone() == DEFAULT_SYSTEM_TIMEZONE
     assert await storage.get_system_log_level() == DEFAULT_SYSTEM_LOG_LEVEL
     assert await storage.get_system_base_url() == DEFAULT_SYSTEM_BASE_URL
+    assert await storage.get_oci_registry_redirects_enabled() is False
 
     await storage.set_setting(SYSTEM_TIMEZONE_SETTING_KEY, "Mars/Base")
     await storage.set_setting(SYSTEM_LOG_LEVEL_SETTING_KEY, "TRACE")
     await storage.set_setting(SYSTEM_BASE_URL_SETTING_KEY, " https://example.com/releasetracker/ ")
+    await storage.set_setting(SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY, "enabled")
 
     assert await storage.get_system_timezone() == DEFAULT_SYSTEM_TIMEZONE
     assert await storage.get_system_log_level() == DEFAULT_SYSTEM_LOG_LEVEL
     assert await storage.get_system_base_url() == "https://example.com/releasetracker"
+    assert await storage.get_oci_registry_redirects_enabled() is False
+
+    await storage.set_setting(SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY, " true ")
+
+    assert await storage.get_oci_registry_redirects_enabled() is False
+
+    await storage.set_setting(
+        SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY, CANONICAL_BOOLEAN_TRUE
+    )
+
+    assert await storage.get_oci_registry_redirects_enabled() is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "value",
+    [CANONICAL_BOOLEAN_TRUE, CANONICAL_BOOLEAN_FALSE],
+)
+async def test_oci_registry_redirects_setting_accepts_canonical_boolean_values(
+    authed_client,
+    value,
+):
+    response = authed_client.post(
+        "/api/settings",
+        json={"key": SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY, "value": value},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["value"] == value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["TRUE", "False", "1", "yes", "", " true "])
+async def test_oci_registry_redirects_setting_rejects_noncanonical_values(
+    authed_client,
+    value,
+):
+    response = authed_client.post(
+        "/api/settings",
+        json={"key": SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY, "value": value},
+    )
+
+    assert response.status_code == 400, response.text
+
+
+@pytest.mark.asyncio
+async def test_settings_list_exposes_default_disabled_oci_redirect_toggle(authed_client, storage):
+    await storage.set_setting(SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY, " true ")
+
+    response = authed_client.get("/api/settings")
+
+    assert response.status_code == 200, response.text
+    settings = {item["key"]: item["value"] for item in response.json()}
+    assert settings[SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY] == CANONICAL_BOOLEAN_FALSE
+
+
+@pytest.mark.asyncio
+async def test_oci_redirect_setting_update_refreshes_cached_container_tracker(
+    authed_client,
+    storage,
+):
+    await save_docker_tracker_config(
+        storage,
+        name="settings-redirect-toggle",
+        image="ghcr.io/acme/app",
+        channels=[Channel(name="stable", enabled=True, type="release")],
+    )
+    scheduler = ReleaseScheduler(storage)
+    tracker_config = await storage.get_tracker_config("settings-redirect-toggle")
+    assert tracker_config is not None
+    cached_tracker = await scheduler._create_tracker(tracker_config)
+    assert isinstance(cached_tracker, DockerTracker)
+    assert cached_tracker.allow_registry_redirects is False
+    scheduler.trackers[tracker_config.name] = cached_tracker
+    authed_client.app.state.scheduler = scheduler
+
+    response = authed_client.post(
+        "/api/settings",
+        json={
+            "key": SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY,
+            "value": CANONICAL_BOOLEAN_TRUE,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    refreshed_tracker = scheduler.trackers[tracker_config.name]
+    assert isinstance(refreshed_tracker, DockerTracker)
+    assert refreshed_tracker is not cached_tracker
+    assert refreshed_tracker.allow_registry_redirects is True
+
+    delete_response = authed_client.delete(
+        f"/api/settings/{SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY}"
+    )
+
+    assert delete_response.status_code == 200, delete_response.text
+    deleted_setting_tracker = scheduler.trackers[tracker_config.name]
+    assert isinstance(deleted_setting_tracker, DockerTracker)
+    assert deleted_setting_tracker is not refreshed_tracker
+    assert deleted_setting_tracker.allow_registry_redirects is False

@@ -8,6 +8,7 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Literal
+from urllib.parse import urljoin
 
 import httpx
 
@@ -51,6 +52,8 @@ _registry_cooldowns: dict[str, float] = {}
 # Config-blob bodies are typically small; cap to defend against malicious /
 # mis-configured registries that could send very large JSON.
 _MAX_CONFIG_BLOB_BYTES = 256 * 1024  # 256 KiB
+_REGISTRY_MAX_REDIRECTS = 5
+_REGISTRY_MAX_TAG_PAGES = 100
 
 # Reproducible builds often set config.created to the Unix epoch. Treat any
 # timestamp before 2000 as "not a real publish time" and ignore it.
@@ -94,6 +97,7 @@ class DockerTracker(BaseTracker):
         registry: str | None = None,
         token: str | None = None,
         published_at_mode: PublishedAtMode = "auto",
+        allow_registry_redirects: bool = False,
         **kwargs,
     ):
         super().__init__(name, **kwargs)
@@ -109,6 +113,7 @@ class DockerTracker(BaseTracker):
         #   "ghp_xxxx" / raw Bearer Token
         self.token = token
         self.published_at_mode: PublishedAtMode = published_at_mode
+        self.allow_registry_redirects = bool(allow_registry_redirects)
 
     def _registry_url(self) -> str:
         return f"https://{self.registry}"
@@ -126,9 +131,147 @@ class DockerTracker(BaseTracker):
         return validated
 
     @staticmethod
-    def _reject_redirect(response: httpx.Response) -> None:
-        if 300 <= response.status_code < 400:
+    def _is_redirect(response: httpx.Response) -> bool:
+        return 300 <= response.status_code < 400
+
+    @classmethod
+    def _reject_redirect(cls, response: httpx.Response) -> None:
+        if cls._is_redirect(response):
             raise ValueError("Container registry redirect is not allowed")
+
+    @staticmethod
+    def _strip_credential_headers(headers: dict[str, str] | None) -> dict[str, str]:
+        if not headers:
+            return {}
+        credential_headers = {
+            "authorization",
+            "proxy-authorization",
+            "cookie",
+            "x-docker-token",
+            "x-registry-auth",
+        }
+        return {
+            name: value for name, value in headers.items() if name.lower() not in credential_headers
+        }
+
+    @staticmethod
+    def _resolve_redirect_url(current_url: str, location: str | None, *, field: str) -> str:
+        if not location:
+            raise ValueError("Container registry redirect is missing Location")
+        return require_https_url(urljoin(current_url, location), field=field)
+
+    async def _request_with_redirect_policy(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        origin_url: str,
+        allow_cross_origin_without_credentials: bool,
+        **kwargs,
+    ) -> httpx.Response:
+        """Send a request with explicit bounded redirect policy.
+
+        Registry metadata endpoints may only redirect within their original
+        HTTPS origin. Blob downloads may redirect to HTTPS storage origins, but
+        credentials are stripped irreversibly as soon as the chain changes
+        origin. Automatic httpx redirects remain disabled for every hop.
+        """
+
+        current_url = require_https_url(url, field="Container registry request URL")
+        origin_url = require_https_url(origin_url, field="Container registry origin URL")
+        current_headers = dict(headers or {})
+        request_params = kwargs.pop("params", None)
+        request_kwargs = {**kwargs, "follow_redirects": False}
+        visited: set[str] = set()
+        stripped_for_cross_origin = False
+
+        if not self.allow_registry_redirects:
+            single_hop_kwargs = dict(request_kwargs)
+            if request_params is not None:
+                single_hop_kwargs["params"] = request_params
+            response = await client.request(
+                method,
+                current_url,
+                headers=current_headers,
+                **single_hop_kwargs,
+            )
+            response.extensions["releasetracker_effective_url"] = _response_effective_url(
+                response,
+                current_url,
+            )
+            self._reject_redirect(response)
+            return response
+
+        for redirect_count in range(_REGISTRY_MAX_REDIRECTS + 1):
+            hop_kwargs = dict(request_kwargs)
+            if redirect_count == 0 and request_params is not None:
+                hop_kwargs["params"] = request_params
+            if stripped_for_cross_origin:
+                current_headers = self._strip_credential_headers(current_headers)
+                client.cookies.clear()
+
+            response = await client.request(
+                method,
+                current_url,
+                headers=current_headers,
+                **hop_kwargs,
+            )
+            effective_url = _response_effective_url(response, current_url)
+            response.extensions["releasetracker_effective_url"] = effective_url
+            if not self._is_redirect(response):
+                return response
+
+            if redirect_count >= _REGISTRY_MAX_REDIRECTS:
+                raise ValueError("Container registry redirect chain exceeded limit")
+
+            visited.add(effective_url)
+            next_url = self._resolve_redirect_url(
+                effective_url,
+                response.headers.get("location"),
+                field="Container registry redirect URL",
+            )
+            if next_url in visited:
+                raise ValueError("Container registry redirect loop detected")
+
+            next_is_same_origin = same_origin_https(origin_url, next_url)
+            if not allow_cross_origin_without_credentials and not next_is_same_origin:
+                raise ValueError("Container registry redirect refused a cross-origin URL")
+            if allow_cross_origin_without_credentials and not next_is_same_origin:
+                stripped_for_cross_origin = True
+            if stripped_for_cross_origin:
+                current_headers = self._strip_credential_headers(current_headers)
+
+            current_url = next_url
+
+        raise ValueError("Container registry redirect chain exceeded limit")
+
+    async def _registry_config_blob_request(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        **kwargs,
+    ) -> httpx.Response:
+        """Fetch an OCI config blob with bounded credential-free storage redirects."""
+        validated_url = self._validate_registry_request_url(url)
+        if method.upper() != "GET" or f"/v2/{self.image}/blobs/" not in validated_url:
+            raise ValueError(
+                "Container registry config blob redirect is only allowed for blob GETs"
+            )
+
+        return await self._request_with_redirect_policy(
+            client,
+            method,
+            validated_url,
+            headers=headers,
+            origin_url=self._registry_url(),
+            allow_cross_origin_without_credentials=True,
+            **kwargs,
+        )
 
     async def _registry_request(
         self,
@@ -140,14 +283,15 @@ class DockerTracker(BaseTracker):
         **kwargs,
     ) -> httpx.Response:
         """Send an authenticated request only to the configured HTTPS origin."""
-        response = await client.request(
+        return await self._request_with_redirect_policy(
+            client,
             method,
             self._validate_registry_request_url(url),
             headers=headers,
+            origin_url=self._registry_url(),
+            allow_cross_origin_without_credentials=False,
             **kwargs,
         )
-        self._reject_redirect(response)
-        return response
 
     def _should_fetch_config_blob(self) -> bool:
         """Decide whether config-blob reading is worth attempting for this registry.
@@ -186,7 +330,7 @@ class DockerTracker(BaseTracker):
                     auth_info = _parse_www_authenticate(www_auth)
                 else:
                     return None  # Authentication is not required
-            except Exception:
+            except (httpx.TimeoutException, httpx.RequestError):
                 return None
 
         if not auth_info:
@@ -205,14 +349,16 @@ class DockerTracker(BaseTracker):
         )
 
         try:
-            resp = await client.get(
+            resp = await self._request_with_redirect_policy(
+                client,
+                "GET",
                 realm,
                 params=params,
                 headers=headers,
                 timeout=self.timeout,
-                follow_redirects=False,
+                origin_url=realm,
+                allow_cross_origin_without_credentials=False,
             )
-            self._reject_redirect(resp)
             resp.raise_for_status()
             return resp.json().get("token") or resp.json().get("access_token")
         except Exception as e:
@@ -236,7 +382,15 @@ class DockerTracker(BaseTracker):
         headers = self._get_auth_header(bearer_token)
         tags = []
 
+        visited_pages: set[str] = set()
         while url:
+            url = self._validate_registry_request_url(url)
+            if url in visited_pages:
+                raise ValueError("Container registry pagination loop detected")
+            if len(visited_pages) >= _REGISTRY_MAX_TAG_PAGES:
+                raise ValueError("Container registry pagination exceeded limit")
+            visited_pages.add(url)
+
             try:
                 resp = await self._registry_request(
                     client, "GET", url, headers=headers, timeout=self.timeout
@@ -257,7 +411,8 @@ class DockerTracker(BaseTracker):
             tags.extend(data.get("tags") or [])
             # Pagination: Link header
             link = resp.headers.get("link", "")
-            next_url = _parse_link_header(link, self._registry_url())
+            page_url = resp.extensions.get("releasetracker_effective_url", url)
+            next_url = _parse_link_header(link, page_url)
             url = self._validate_registry_request_url(next_url) if next_url else None
 
         return tags
@@ -455,14 +610,14 @@ class DockerTracker(BaseTracker):
         # Step 3: fetch the config blob and read `created`.
         blob_url = f"{self._registry_url()}/v2/{self.image}/blobs/{config_digest}"
         try:
-            blob_resp = await self._registry_request(
+            blob_resp = await self._registry_config_blob_request(
                 client,
                 "GET",
                 blob_url,
                 headers=self._get_auth_header(current_token),
                 timeout=self.timeout,
             )
-        except (httpx.TimeoutException, httpx.RequestError):
+        except (ValueError, httpx.TimeoutException, httpx.RequestError):
             return None, current_token
 
         if blob_resp.status_code == 429:
@@ -615,6 +770,13 @@ class DockerTracker(BaseTracker):
 # ============================================================
 
 
+def _response_effective_url(response: httpx.Response, fallback_url: str) -> str:
+    try:
+        return str(response.request.url)
+    except RuntimeError:
+        return fallback_url
+
+
 def _parse_www_authenticate(header: str) -> dict | None:
     """Parse realm/service from a WWW-Authenticate Bearer header"""
     if not header.lower().startswith("bearer "):
@@ -630,7 +792,7 @@ def _parse_www_authenticate(header: str) -> dict | None:
 
 
 def _parse_link_header(link: str, base_url: str) -> str | None:
-    """Parse Link header to get the next page URL"""
+    """Parse Link header to get the next page URL."""
     if not link:
         return None
     # format: <url>; rel="next"
@@ -638,9 +800,9 @@ def _parse_link_header(link: str, base_url: str) -> str | None:
         part = part.strip()
         if 'rel="next"' in part:
             url_part = part.split(";")[0].strip().strip("<>")
-            if url_part.startswith("/"):
-                return base_url + url_part
-            return url_part
+            if not url_part:
+                return None
+            return urljoin(base_url, url_part)
     return None
 
 

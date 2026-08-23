@@ -166,6 +166,13 @@
       "cleanup": {
         "cleanNow": "Clean now",
         "cleaning": "Cleaning..."
+      },
+      "ociRegistryRedirects": {
+        "title": "OCI registry redirects",
+        "label": "Enable registry redirect compatibility",
+        "description": "Keep this disabled unless your registry requires redirects for tag, manifest, token, or blob access.",
+        "enabledHint": "Redirect compatibility is enabled for newly started container source checks.",
+        "disabledHint": "Redirect support is disabled. Registry redirects will be rejected before following them."
       }
     },
     "securityKeys": {

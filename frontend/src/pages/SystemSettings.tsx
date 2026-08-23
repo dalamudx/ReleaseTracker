@@ -16,6 +16,7 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import {
     Select,
     SelectContent,
@@ -40,6 +41,7 @@ export const SYSTEM_LOG_LEVEL_SETTING_KEY = "system.log_level"
 export const SYSTEM_BASE_URL_SETTING_KEY = "system.base_url"
 export const SYSTEM_RELEASE_HISTORY_RETENTION_COUNT_SETTING_KEY = "system.release_history_retention_count"
 export const SYSTEM_EXECUTOR_SNAPSHOT_RETENTION_COUNT_SETTING_KEY = "system.executor_snapshot_retention_count"
+export const SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY = "system.oci_registry_redirects_enabled"
 
 const DEFAULT_LOG_LEVEL = "INFO"
 const LOG_LEVEL_OPTIONS = ["DEBUG", "INFO", "WARNING", "ERROR"]
@@ -282,6 +284,50 @@ function SnapshotHistoryCountSettingItem({
     )
 }
 
+function OciRegistryRedirectsSettingItem({
+    enabled,
+    onEnabledChange,
+}: {
+    enabled: boolean
+    onEnabledChange: (value: boolean) => void
+}) {
+    const { t } = useTranslation()
+
+    return (
+        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] md:items-start">
+            <div className="flex min-w-0 gap-3">
+                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <Settings2 className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 space-y-1">
+                    <h3 className="text-sm font-semibold text-foreground">
+                        {t("systemSettings.global.ociRegistryRedirects.title")}
+                    </h3>
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                        {t("systemSettings.global.ociRegistryRedirects.description")}
+                    </p>
+                </div>
+            </div>
+            <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2">
+                <label className="min-w-0 text-sm font-medium" htmlFor="oci-registry-redirects-enabled">
+                    {t("systemSettings.global.ociRegistryRedirects.label")}
+                </label>
+                <Switch
+                    id="oci-registry-redirects-enabled"
+                    checked={enabled}
+                    onCheckedChange={onEnabledChange}
+                    aria-describedby="oci-registry-redirects-help"
+                />
+            </div>
+            <p id="oci-registry-redirects-help" className="text-xs leading-relaxed text-muted-foreground md:col-start-2">
+                {enabled
+                    ? t("systemSettings.global.ociRegistryRedirects.enabledHint")
+                    : t("systemSettings.global.ociRegistryRedirects.disabledHint")}
+            </p>
+        </div>
+    )
+}
+
 function TimezoneSettingItem({
     timezone,
     timezoneOptions,
@@ -494,6 +540,12 @@ export function SystemSettingsPage() {
         const value = settings.find((item) => item.key === SYSTEM_BASE_URL_SETTING_KEY)?.value
         return typeof value === "string" ? value.trim() : ""
     }, [settings])
+    const currentOciRegistryRedirectsEnabled = useMemo(() => {
+        const value = settings.find(
+            (item) => item.key === SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY,
+        )?.value
+        return value === "true"
+    }, [settings])
     const currentReleaseHistoryCount = useMemo(() => {
         const value = settings.find(
             (item) => item.key === SYSTEM_RELEASE_HISTORY_RETENTION_COUNT_SETTING_KEY,
@@ -519,11 +571,13 @@ export function SystemSettingsPage() {
     const [timezoneDraft, setTimezoneDraft] = useState<string | null>(null)
     const [logLevelDraft, setLogLevelDraft] = useState<string | null>(null)
     const [baseUrlDraft, setBaseUrlDraft] = useState<string | null>(null)
+    const [ociRegistryRedirectsEnabledDraft, setOciRegistryRedirectsEnabledDraft] = useState<boolean | null>(null)
     const [releaseHistoryCountDraft, setReleaseHistoryCountDraft] = useState<string | null>(null)
     const [snapshotHistoryCountDraft, setSnapshotHistoryCountDraft] = useState<string | null>(null)
     const timezone = timezoneDraft ?? currentTimezone
     const logLevel = logLevelDraft ?? currentLogLevel
     const baseUrl = baseUrlDraft ?? currentBaseUrl
+    const ociRegistryRedirectsEnabled = ociRegistryRedirectsEnabledDraft ?? currentOciRegistryRedirectsEnabled
     const releaseHistoryCountValue = releaseHistoryCountDraft ?? String(currentReleaseHistoryCount)
     const snapshotHistoryCountValue = snapshotHistoryCountDraft ?? String(currentSnapshotHistoryCount)
     const timezoneOptions = useMemo(() => {
@@ -576,6 +630,10 @@ export function SystemSettingsPage() {
                     value: normalizedBaseUrl,
                 }),
                 updateSetting.mutateAsync({
+                    key: SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY,
+                    value: ociRegistryRedirectsEnabled ? "true" : "false",
+                }),
+                updateSetting.mutateAsync({
                     key: SYSTEM_RELEASE_HISTORY_RETENTION_COUNT_SETTING_KEY,
                     value: String(normalizedReleaseHistoryCount),
                 }),
@@ -587,6 +645,7 @@ export function SystemSettingsPage() {
             setTimezoneDraft(null)
             setLogLevelDraft(null)
             setBaseUrlDraft(null)
+            setOciRegistryRedirectsEnabledDraft(null)
             setReleaseHistoryCountDraft(null)
             setSnapshotHistoryCountDraft(null)
             toast.success(t("common.saved"))
@@ -701,6 +760,10 @@ export function SystemSettingsPage() {
                                     timezone={timezone}
                                     timezoneOptions={timezoneOptions}
                                     onTimezoneChange={setTimezoneDraft}
+                                />
+                                <OciRegistryRedirectsSettingItem
+                                    enabled={ociRegistryRedirectsEnabled}
+                                    onEnabledChange={setOciRegistryRedirectsEnabledDraft}
                                 />
                                 <LogLevelSettingItem
                                     logLevel={logLevel}

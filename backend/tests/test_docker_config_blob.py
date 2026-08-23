@@ -94,7 +94,9 @@ class _FakeResponse(httpx.Response):
     """Minimal helper that wraps a dict body as JSON."""
 
 
-def _json_response(body: dict, *, status_code: int = 200, headers: dict | None = None) -> httpx.Response:
+def _json_response(
+    body: dict, *, status_code: int = 200, headers: dict | None = None
+) -> httpx.Response:
     serialized = json.dumps(body).encode("utf-8")
     merged_headers = {"Content-Type": "application/vnd.oci.image.manifest.v1+json"}
     if headers:
@@ -129,6 +131,33 @@ def _patch_httpx_mock(monkeypatch, *, responses: list[tuple[str, str, httpx.Resp
 
     async def fake_request(self, method, url, **kwargs):
         calls.append((method.upper(), str(url)))
+        for i, (expected_method, expected_url, response) in enumerate(responses):
+            if expected_method.upper() == method.upper() and str(url).endswith(expected_url):
+                responses.pop(i)
+                return response
+        raise AssertionError(f"unexpected HTTP call {method} {url}")
+
+    async def fake_get(self, url, **kwargs):
+        return await fake_request(self, "GET", url, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "request", fake_request)
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    return calls
+
+
+def _patch_httpx_mock_with_headers(
+    monkeypatch, *, responses: list[tuple[str, str, httpx.Response]]
+):
+    calls = []
+
+    async def fake_request(self, method, url, **kwargs):
+        call = {
+            "method": method.upper(),
+            "url": str(url),
+            "headers": kwargs.get("headers"),
+            "follow_redirects": kwargs.get("follow_redirects"),
+        }
+        calls.append(call)
         for i, (expected_method, expected_url, response) in enumerate(responses):
             if expected_method.upper() == method.upper() and str(url).endswith(expected_url):
                 responses.pop(i)
@@ -181,6 +210,284 @@ async def test_config_blob_upgrades_published_at_for_ghcr_anonymous(monkeypatch)
     # published_at was upgraded to the real creation time
     expected = datetime.fromisoformat(REAL_CREATED.replace("Z", "+00:00"))
     assert release.published_at == expected
+
+
+@pytest.mark.asyncio
+async def test_config_blob_redirect_is_rejected_when_redirect_support_is_disabled():
+    tracker = DockerTracker(
+        name="sample",
+        image="owner/sample",
+        registry="ghcr.io",
+        published_at_mode="auto",
+    )
+    blob_url = f"https://ghcr.io/v2/owner/sample/blobs/{CONFIG_DIGEST}"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            307,
+            headers={"Location": "https://storage.example/blob"},
+            request=request,
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ValueError, match="redirect"):
+            await tracker._registry_config_blob_request(
+                client,
+                "GET",
+                blob_url,
+                headers={"Authorization": "Bearer registry-token"},
+                timeout=tracker.timeout,
+            )
+
+
+@pytest.mark.asyncio
+async def test_config_blob_follows_multihop_redirects_and_strips_credentials_irreversibly(
+    monkeypatch,
+):
+    """Blob redirects may cross origins, but credentials never cross with them."""
+    tracker = DockerTracker(
+        name="sample",
+        image="owner/sample",
+        registry="ghcr.io",
+        token="user:secret",
+        published_at_mode="auto",
+        allow_registry_redirects=True,
+    )
+
+    async def fake_bearer(self, client, scope):
+        return "registry-bearer"
+
+    async def fake_tags(self, client, bearer_token):
+        return ["v1.0.0"]
+
+    monkeypatch.setattr(DockerTracker, "_get_bearer_token", fake_bearer)
+    monkeypatch.setattr(DockerTracker, "_fetch_tags", fake_tags)
+
+    storage_url = "https://pkg-containers.githubusercontent.com/ghcr1/blobs/config?sig=redacted"
+    storage_final_url = "https://pkg-containers.githubusercontent.com/ghcr1/blobs/final"
+    registry_return_url = f"https://ghcr.io/v2/owner/sample/blobs/{CONFIG_DIGEST}?signed=1"
+    calls = _patch_httpx_mock_with_headers(
+        monkeypatch,
+        responses=[
+            ("HEAD", "/manifests/v1.0.0", _head_response(MANIFEST_DIGEST)),
+            ("GET", "/manifests/v1.0.0", _json_response(_build_single_arch_manifest())),
+            (
+                "GET",
+                f"/blobs/{CONFIG_DIGEST}",
+                httpx.Response(
+                    307, headers={"Location": f"/v2/owner/sample/blobs/{CONFIG_DIGEST}?signed=1"}
+                ),
+            ),
+            ("GET", registry_return_url, httpx.Response(307, headers={"Location": storage_url})),
+            ("GET", storage_url, httpx.Response(307, headers={"Location": "final"})),
+            ("GET", storage_final_url, _json_response(_build_config_blob())),
+        ],
+    )
+
+    releases = await tracker.fetch_all(limit=1)
+
+    expected = datetime.fromisoformat(REAL_CREATED.replace("Z", "+00:00"))
+    assert releases[0].published_at == expected
+    registry_blob_calls = [
+        call
+        for call in calls
+        if call["url"].startswith("https://ghcr.io/") and "/blobs/" in call["url"]
+    ]
+    assert registry_blob_calls
+    assert all(
+        call["headers"] == {"Authorization": "Bearer registry-bearer"}
+        for call in registry_blob_calls
+    )
+    redirected_calls = [
+        call
+        for call in calls
+        if call["url"].startswith("https://pkg-containers.githubusercontent.com/")
+    ]
+    assert {call["url"] for call in redirected_calls} == {storage_url, storage_final_url}
+    for call in redirected_calls:
+        redirected_headers = call["headers"] or {}
+        lowered_headers = {name.lower() for name in redirected_headers}
+        assert "authorization" not in lowered_headers
+        assert "proxy-authorization" not in lowered_headers
+        assert "cookie" not in lowered_headers
+        assert call["follow_redirects"] is False
+
+
+@pytest.mark.asyncio
+async def test_config_blob_cross_origin_redirect_does_not_send_client_cookie_jar():
+    tracker = DockerTracker(
+        name="sample",
+        image="org/image",
+        registry="registry.example.com",
+        published_at_mode="auto",
+        allow_registry_redirects=True,
+    )
+    blob_url = f"https://registry.example.com/v2/org/image/blobs/{CONFIG_DIGEST}"
+    storage_url = "https://storage.example.com/blob"
+    seen_requests: list[tuple[str, str | None, str | None]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen_requests.append(
+            (
+                str(request.url),
+                request.headers.get("authorization"),
+                request.headers.get("cookie"),
+            )
+        )
+        if request.url.host == "registry.example.com":
+            return httpx.Response(
+                307,
+                headers={
+                    "Location": storage_url,
+                    "Set-Cookie": "registry_session=secret; Domain=.example.com; Path=/; Secure",
+                },
+                request=request,
+            )
+        return httpx.Response(200, json=_build_config_blob(), request=request)
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        follow_redirects=False,
+    ) as client:
+        response = await tracker._registry_config_blob_request(
+            client,
+            "GET",
+            blob_url,
+            headers={"Authorization": "Bearer registry-token"},
+            timeout=tracker.timeout,
+        )
+
+    assert response.status_code == 200
+    assert seen_requests == [
+        (blob_url, "Bearer registry-token", None),
+        (storage_url, None, None),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("location", "target_response", "expected_target_calls"),
+    [
+        ("http://pkg-containers.githubusercontent.com/ghcr1/blobs/config", None, 0),
+        (
+            "https://pkg-containers.githubusercontent.com/ghcr1/blobs/config?sig=redacted",
+            httpx.Response(
+                307,
+                headers={
+                    "Location": "https://pkg-containers.githubusercontent.com/ghcr1/blobs/config?sig=redacted"
+                },
+            ),
+            1,
+        ),
+        (
+            "https://pkg-containers.githubusercontent.com/ghcr1/blobs/missing-location",
+            httpx.Response(307),
+            1,
+        ),
+    ],
+)
+async def test_config_blob_rejects_unsafe_or_looping_redirects_without_failing(
+    monkeypatch,
+    location,
+    target_response,
+    expected_target_calls,
+):
+    tracker = DockerTracker(
+        name="sample",
+        image="owner/sample",
+        registry="ghcr.io",
+        token="user:secret",
+        published_at_mode="auto",
+        allow_registry_redirects=True,
+    )
+
+    async def fake_bearer(self, client, scope):
+        return "registry-bearer"
+
+    async def fake_tags(self, client, bearer_token):
+        return ["v1.0.0"]
+
+    monkeypatch.setattr(DockerTracker, "_get_bearer_token", fake_bearer)
+    monkeypatch.setattr(DockerTracker, "_fetch_tags", fake_tags)
+
+    responses = [
+        ("HEAD", "/manifests/v1.0.0", _head_response(MANIFEST_DIGEST)),
+        ("GET", "/manifests/v1.0.0", _json_response(_build_single_arch_manifest())),
+        (
+            "GET",
+            f"/blobs/{CONFIG_DIGEST}",
+            httpx.Response(307, headers={"Location": location}),
+        ),
+    ]
+    if target_response is not None:
+        responses.append(("GET", location, target_response))
+    calls = _patch_httpx_mock_with_headers(monkeypatch, responses=responses)
+
+    releases = await tracker.fetch_all(limit=1)
+
+    expected = datetime.fromisoformat(REAL_CREATED.replace("Z", "+00:00"))
+    assert releases[0].commit_sha == MANIFEST_DIGEST
+    assert releases[0].published_at != expected
+    target_calls = [call for call in calls if call["url"] == location]
+    assert len(target_calls) == expected_target_calls
+    for call in target_calls:
+        headers = call["headers"] or {}
+        assert "Authorization" not in headers
+        assert "authorization" not in {name.lower() for name in headers}
+        assert call["follow_redirects"] is False
+
+
+@pytest.mark.asyncio
+async def test_config_blob_excessive_redirect_chain_falls_back_without_credentials(monkeypatch):
+    tracker = DockerTracker(
+        name="sample",
+        image="owner/sample",
+        registry="ghcr.io",
+        token="user:secret",
+        published_at_mode="auto",
+        allow_registry_redirects=True,
+    )
+
+    async def fake_bearer(self, client, scope):
+        return "registry-bearer"
+
+    async def fake_tags(self, client, bearer_token):
+        return ["v1.0.0"]
+
+    monkeypatch.setattr(DockerTracker, "_get_bearer_token", fake_bearer)
+    monkeypatch.setattr(DockerTracker, "_fetch_tags", fake_tags)
+
+    storage_urls = [f"https://storage.example/config-hop-{index}" for index in range(6)]
+    responses = [
+        ("HEAD", "/manifests/v1.0.0", _head_response(MANIFEST_DIGEST)),
+        ("GET", "/manifests/v1.0.0", _json_response(_build_single_arch_manifest())),
+        (
+            "GET",
+            f"/blobs/{CONFIG_DIGEST}",
+            httpx.Response(307, headers={"Location": storage_urls[0]}),
+        ),
+    ]
+    responses.extend(
+        (
+            "GET",
+            storage_urls[index],
+            httpx.Response(307, headers={"Location": storage_urls[index + 1]}),
+        )
+        for index in range(5)
+    )
+    calls = _patch_httpx_mock_with_headers(monkeypatch, responses=responses)
+
+    releases = await tracker.fetch_all(limit=1)
+
+    expected = datetime.fromisoformat(REAL_CREATED.replace("Z", "+00:00"))
+    assert releases[0].commit_sha == MANIFEST_DIGEST
+    assert releases[0].published_at != expected
+    storage_calls = [call for call in calls if call["url"].startswith("https://storage.example/")]
+    assert [call["url"] for call in storage_calls] == storage_urls[:5]
+    for call in storage_calls:
+        headers = call["headers"] or {}
+        assert "authorization" not in {name.lower() for name in headers}
+        assert call["follow_redirects"] is False
 
 
 @pytest.mark.asyncio

@@ -54,6 +54,7 @@ SYSTEM_EXECUTOR_SNAPSHOT_RETENTION_COUNT_SETTING_KEY = "system.executor_snapshot
 SYSTEM_TIMEZONE_SETTING_KEY = "system.timezone"
 SYSTEM_LOG_LEVEL_SETTING_KEY = "system.log_level"
 SYSTEM_BASE_URL_SETTING_KEY = "system.base_url"
+SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY = "system.oci_registry_redirects_enabled"
 ADMIN_USER_ID_SETTING_KEY = sqlite_auth_oidc.ADMIN_USER_ID_SETTING_KEY
 BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY = sqlite_auth_oidc.BOOTSTRAP_ADMIN_INITIALIZED_SETTING_KEY
 ADMIN_PASSWORD_RESET_REQUIRED_SETTING_KEY = (
@@ -67,6 +68,9 @@ DEFAULT_EXECUTOR_SNAPSHOT_RETENTION_COUNT = 10
 DEFAULT_SYSTEM_TIMEZONE = "UTC"
 DEFAULT_SYSTEM_LOG_LEVEL = "INFO"
 DEFAULT_SYSTEM_BASE_URL = ""
+DEFAULT_OCI_REGISTRY_REDIRECTS_ENABLED = False
+CANONICAL_BOOLEAN_TRUE = "true"
+CANONICAL_BOOLEAN_FALSE = "false"
 ALLOWED_SYSTEM_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR"})
 MIN_RELEASE_HISTORY_RETENTION_COUNT = 1
 MAX_RELEASE_HISTORY_RETENTION_COUNT = 1000
@@ -4559,6 +4563,10 @@ class SQLiteStorage:
     async def get_system_base_url(self) -> str:
         value = await self.get_setting(SYSTEM_BASE_URL_SETTING_KEY)
         return str(value or DEFAULT_SYSTEM_BASE_URL).strip().rstrip("/")
+
+    async def get_oci_registry_redirects_enabled(self) -> bool:
+        value = await self.get_setting(SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY)
+        return value == CANONICAL_BOOLEAN_TRUE
 
     async def set_setting(self, key: str, value: str):
         """Save system setting"""

@@ -309,7 +309,7 @@ async def test_fetch_all_enriches_digest_with_head_then_get_fallback(monkeypatch
     async def fake_fetch_tags(self, client, bearer_token):
         return ["latest", "24.04", "24.04.1"]
 
-    async def fake_request(self, method, url, headers=None, timeout=None):
+    async def fake_request(self, method, url, headers=None, timeout=None, **_kwargs):
         request_calls.append((method, url))
         request = httpx.Request(method, url, headers=headers)
         tag = url.rsplit("/", 1)[-1]
@@ -385,7 +385,7 @@ async def test_fetch_all_normalizes_full_ghcr_image_ref(monkeypatch):
         tag_fetches.append((self.registry, self.image))
         return ["latest", "2.5.3"]
 
-    async def fake_request(self, method, url, headers=None, timeout=None):
+    async def fake_request(self, method, url, headers=None, timeout=None, **_kwargs):
         manifest_calls.append((method, url))
         request = httpx.Request(method, url, headers=headers)
         return httpx.Response(
@@ -447,7 +447,7 @@ async def test_manifest_request_retries_once_after_401_with_token_refresh(monkey
     tracker = DockerTracker(name="docker-test", image="library/sample-web")
     seen_auth: list[str | None] = []
 
-    async def fake_request(self, method, url, headers=None, timeout=None):
+    async def fake_request(self, method, url, headers=None, timeout=None, **_kwargs):
         seen_auth.append((headers or {}).get("Authorization"))
         request = httpx.Request(method, url, headers=headers)
         if len(seen_auth) == 1:

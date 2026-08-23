@@ -166,6 +166,13 @@
       "cleanup": {
         "cleanNow": "立即清理",
         "cleaning": "清理中..."
+      },
+      "ociRegistryRedirects": {
+        "title": "OCI 镜像仓库跳转",
+        "label": "启用镜像仓库跳转兼容",
+        "description": "仅在你的镜像仓库需要通过跳转访问标签、manifest、token 或 blob 时开启。",
+        "enabledHint": "跳转兼容已启用，后续开始的容器源检查会使用该策略。",
+        "disabledHint": "跳转支持已关闭。镜像仓库返回跳转时会在跟随前被拒绝。"
       }
     },
     "securityKeys": {

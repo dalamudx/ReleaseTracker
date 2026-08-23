@@ -22,7 +22,10 @@ from releasetracker.models import (
 )
 from releasetracker.scheduler import ReleaseScheduler
 from releasetracker.services.system_keys import SystemKeyManager
-from releasetracker.storage.sqlite import SQLiteStorage
+from releasetracker.storage.sqlite import (
+    SQLiteStorage,
+    SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY,
+)
 from releasetracker.trackers import DockerTracker, GitHubTracker
 from releasetracker.trackers.base import BaseTracker
 
@@ -540,6 +543,57 @@ async def test_create_tracker_dispatches_using_single_tracker_type_field(storage
     assert github_tracker.repo == "owner/repo"
     assert isinstance(docker_tracker, DockerTracker)
     assert docker_tracker.image == "ghcr.io/acme/app"
+
+
+@pytest.mark.asyncio
+async def test_create_container_tracker_uses_global_registry_redirect_setting(storage):
+    scheduler = ReleaseScheduler(storage)
+    config = TrackerConfig(
+        name="redirect-toggle-docker",
+        type="container",
+        image="ghcr.io/acme/app",
+        enabled=True,
+        channels=[Channel(name="stable", type="release")],
+    )
+
+    default_tracker = await scheduler._create_tracker(config)
+    assert isinstance(default_tracker, DockerTracker)
+    assert default_tracker.allow_registry_redirects is False
+
+    await storage.set_setting(SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY, "true")
+
+    enabled_tracker = await scheduler._create_tracker(config)
+    assert isinstance(enabled_tracker, DockerTracker)
+    assert enabled_tracker.allow_registry_redirects is True
+
+
+@pytest.mark.asyncio
+async def test_refresh_container_redirect_setting_replaces_only_cached_container_trackers(storage):
+    scheduler = ReleaseScheduler(storage)
+    config = TrackerConfig(
+        name="cached-redirect-toggle-docker",
+        type="container",
+        image="acme/app",
+        registry="ghcr.io",
+        enabled=True,
+        channels=[Channel(name="stable", type="release")],
+    )
+    await storage.save_tracker_config(config)
+    cached_container = await scheduler._create_tracker(config)
+    cached_github = GitHubTracker(name="cached-github", repo="owner/repo")
+    scheduler.trackers[config.name] = cached_container
+    scheduler.trackers["cached-github"] = cached_github
+
+    await storage.set_setting(SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY, "true")
+
+    refreshed_count = await scheduler.refresh_container_tracker_redirect_settings()
+
+    refreshed_container = scheduler.trackers[config.name]
+    assert refreshed_count == 1
+    assert isinstance(refreshed_container, DockerTracker)
+    assert refreshed_container is not cached_container
+    assert refreshed_container.allow_registry_redirects is True
+    assert scheduler.trackers["cached-github"] is cached_github
 
 
 @pytest.mark.asyncio
@@ -1137,7 +1191,6 @@ async def test_create_tracker_does_not_copy_first_enabled_channel_regex_into_leg
     )
 
     assert tracker.config.get("filter", {}) == {}
-
 
 
 @pytest.mark.asyncio

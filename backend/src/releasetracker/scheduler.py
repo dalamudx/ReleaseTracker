@@ -130,6 +130,25 @@ class ReleaseScheduler:
         if tracker_config:
             await self._add_or_update_tracker_job(tracker_config)
 
+    async def refresh_container_tracker_redirect_settings(self) -> int:
+        """Recreate cached container trackers after global redirect setting changes.
+
+        In-flight checks keep the tracker object they already captured; replacing
+        dictionary entries only affects subsequent checks. Non-container cached
+        trackers are intentionally left untouched.
+        """
+        refreshed_count = 0
+        cached_items = list(self.trackers.items())
+        for tracker_name, cached_tracker in cached_items:
+            if not isinstance(cached_tracker, DockerTracker):
+                continue
+            tracker_config = await self.storage.get_tracker_config(tracker_name)
+            if tracker_config is None or tracker_config.type != "container":
+                continue
+            self.trackers[tracker_name] = await self._create_tracker(tracker_config)
+            refreshed_count += 1
+        return refreshed_count
+
     async def remove_tracker(self, name: str):
         """Remove a tracker"""
         if name in self.trackers:
@@ -615,7 +634,10 @@ class ReleaseScheduler:
             return releases, []
 
         if source.source_key != release_notes.changelog_source_key:
-            return [release.model_copy(update={"body": None, "changelog_url": None}) for release in releases], []
+            return [
+                release.model_copy(update={"body": None, "changelog_url": None})
+                for release in releases
+            ], []
 
         token = None
         if source.credential_name:
@@ -641,7 +663,9 @@ class ReleaseScheduler:
                 diagnostics.append(
                     f"{source.source_key}/{release.tag_name or release.version}: {str(exc) or exc.__class__.__name__}"
                 )
-                rewritten_releases.append(release.model_copy(update={"body": None, "changelog_url": None}))
+                rewritten_releases.append(
+                    release.model_copy(update={"body": None, "changelog_url": None})
+                )
 
         return rewritten_releases, diagnostics
 
@@ -1226,12 +1250,14 @@ class ReleaseScheduler:
                 timeout=config.fetch_timeout,
             )
         elif config.type == "container":
+            allow_registry_redirects = await self.storage.get_oci_registry_redirects_enabled()
             return DockerTracker(
                 name=config.name,
                 image=config.image or "",
                 registry=config.registry,
                 token=_container_registry_auth_token(credential) if credential else token,
                 published_at_mode=config.published_at_mode,
+                allow_registry_redirects=allow_registry_redirects,
                 filter=legacy_filter,
                 channels=config.channels,
                 timeout=config.fetch_timeout,
@@ -1314,7 +1340,11 @@ class ReleaseScheduler:
                 ),
                 last_check=datetime.now(),
                 last_version=latest_version,
-                error=error if releases or latest_version else (error or "No version information found"),
+                error=(
+                    error
+                    if releases or latest_version
+                    else (error or "No version information found")
+                ),
                 channel_count=_tracker_channel_count(config),
                 manual_check_outcome="completed",
             )

@@ -20,6 +20,9 @@ from ..storage.sqlite import (
     SYSTEM_TIMEZONE_SETTING_KEY,
     SYSTEM_LOG_LEVEL_SETTING_KEY,
     SYSTEM_BASE_URL_SETTING_KEY,
+    SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY,
+    CANONICAL_BOOLEAN_FALSE,
+    CANONICAL_BOOLEAN_TRUE,
     ALLOWED_SYSTEM_LOG_LEVELS,
     RESERVED_AUTH_SETTING_KEYS,
     SQLiteStorage,
@@ -103,6 +106,17 @@ def get_storage(request: Request):
     return storage
 
 
+async def _refresh_cached_container_redirect_settings(request: Request) -> None:
+    scheduler = getattr(request.app.state, "scheduler", None)
+    refresh_redirect_settings = getattr(
+        scheduler,
+        "refresh_container_tracker_redirect_settings",
+        None,
+    )
+    if refresh_redirect_settings is not None:
+        await refresh_redirect_settings()
+
+
 async def _build_security_keys_status(
     storage: SQLiteStorage,
     key_manager: SystemKeyManager,
@@ -151,6 +165,17 @@ def _normalize_setting_value(key: str, value: str) -> str:
             return require_canonical_https_base_url(normalized_value)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if key == SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY:
+        if str(value) != normalized_value or normalized_value not in {
+            CANONICAL_BOOLEAN_TRUE,
+            CANONICAL_BOOLEAN_FALSE,
+        }:
+            raise HTTPException(
+                status_code=400,
+                detail="OCI registry redirects setting must be true or false",
+            )
+        return normalized_value
 
     if key != SYSTEM_RELEASE_HISTORY_RETENTION_COUNT_SETTING_KEY:
         if key == SYSTEM_EXECUTOR_SNAPSHOT_RETENTION_COUNT_SETTING_KEY:
@@ -328,6 +353,11 @@ async def get_settings(
     """Get all system settings"""
     storage: SQLiteStorage = get_storage(request)
     settings_dict = await storage.get_all_settings()
+    if settings_dict.get(SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY) not in {
+        CANONICAL_BOOLEAN_TRUE,
+        CANONICAL_BOOLEAN_FALSE,
+    }:
+        settings_dict[SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY] = CANONICAL_BOOLEAN_FALSE
     return [
         SettingItem(
             key=k, value=v, updated_at=datetime.now().isoformat()
@@ -352,6 +382,8 @@ async def update_setting(
     await storage.set_setting(setting.key, setting.value)
     if setting.key == SYSTEM_LOG_LEVEL_SETTING_KEY:
         logging.getLogger().setLevel(getattr(logging, setting.value))
+    if setting.key == SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY:
+        await _refresh_cached_container_redirect_settings(request)
     return setting
 
 
@@ -364,4 +396,6 @@ async def delete_setting(
     if key in RESERVED_AUTH_SETTING_KEYS:
         raise HTTPException(status_code=403, detail="Reserved authentication setting")
     await storage.delete_setting(key)
+    if key == SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY:
+        await _refresh_cached_container_redirect_settings(request)
     return {"message": "Setting deleted"}
