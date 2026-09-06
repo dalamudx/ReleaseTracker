@@ -136,7 +136,9 @@ class _ComposeProjectAdapterMixin:
                         text=True,
                         capture_output=True,
                         check=False,
-                        timeout=runtime_operation_policy(self.runtime_connection).write_timeout_seconds,
+                        timeout=runtime_operation_policy(
+                            self.runtime_connection
+                        ).write_timeout_seconds,
                     )
                 except subprocess.TimeoutExpired as exc:
                     raise RuntimeError(

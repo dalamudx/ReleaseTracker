@@ -2796,7 +2796,9 @@ class SQLiteStorage:
 
     async def create_runtime_connection(self, runtime_connection: RuntimeConnectionConfig) -> int:
         async with self._encryption_rotation_lock:
-            return await sqlite_runtime_executors.create_runtime_connection(self, runtime_connection)
+            return await sqlite_runtime_executors.create_runtime_connection(
+                self, runtime_connection
+            )
 
     async def get_total_runtime_connections_count(self, search: str | None = None) -> int:
         return await sqlite_runtime_executors.get_total_runtime_connections_count(self, search)

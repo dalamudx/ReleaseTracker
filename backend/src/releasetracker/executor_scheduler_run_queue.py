@@ -62,7 +62,9 @@ class ExecutorSchedulerRunQueue:
                         expected_revision=expected_revision,
                     )
                 except BaseException:
-                    await self._finalize_interrupted_run(config, run_id, "manual executor run interrupted")
+                    await self._finalize_interrupted_run(
+                        config, run_id, "manual executor run interrupted"
+                    )
                     raise
                 finally:
                     await self._release_executor_run(executor_id)
@@ -71,9 +73,12 @@ class ExecutorSchedulerRunQueue:
             return run_id
         except BaseException:
             if run_id is not None:
-                await self._finalize_interrupted_run(config, run_id, "manual executor run interrupted")
+                await self._finalize_interrupted_run(
+                    config, run_id, "manual executor run interrupted"
+                )
             await self._release_executor_run(executor_id)
             raise
+
     async def _try_acquire_executor_run(self, executor_id: int) -> bool:
         async with self._running_executor_ids_lock:
             if executor_id in self._running_executor_ids:
@@ -84,7 +89,6 @@ class ExecutorSchedulerRunQueue:
     async def _release_executor_run(self, executor_id: int) -> None:
         async with self._running_executor_ids_lock:
             self._running_executor_ids.discard(executor_id)
-
 
     async def _claim_executor_run(self, executor_id: int, *, trigger: str) -> int | None:
         return await self.storage.create_executor_run_if_no_active(
@@ -121,6 +125,7 @@ class ExecutorSchedulerRunQueue:
             )
         except Exception:
             logger.exception("Failed to finalize interrupted executor run %s", run_id)
+
     async def _run_executor_with_overlap_guard(
         self,
         executor_config: ExecutorConfig,
@@ -161,6 +166,7 @@ class ExecutorSchedulerRunQueue:
             raise
         finally:
             await self._release_executor_run(executor_id)
+
     async def _pending_desired_state_revision(self, executor_id: int) -> str | None:
         desired_state = await self.storage.get_executor_desired_state(executor_id)
         if desired_state is None or not desired_state.pending:

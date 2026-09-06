@@ -72,7 +72,9 @@ class TrackerConfig(BaseModel):
     version_sort_mode: Literal["published_at", "semver"] = "published_at"  # Version sorting mode
     fetch_limit: int = 10  # Fetch limit per run
     fetch_timeout: int = 15  # Fetch timeout in seconds
-    fallback_tags: bool = False  # If normal fetching fails, such as empty GitHub Releases, fall back to extracting versions from refs/tags
+    fallback_tags: bool = (
+        False  # If normal fetching fails, such as empty GitHub Releases, fall back to extracting versions from refs/tags
+    )
     github_fetch_mode: Literal["graphql_first", "rest_first"] = "rest_first"
     interval: int = 360  # Check interval in minutes
     credential_name: str | None = (

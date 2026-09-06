@@ -7,7 +7,6 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, TypeVar
 
-
 logger = logging.getLogger(__name__)
 
 DEFAULT_RUNTIME_READ_TIMEOUT_SECONDS = 20

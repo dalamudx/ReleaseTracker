@@ -608,6 +608,6 @@ async def test_rollback_passes_target_snapshot_to_adapter_not_prerollback(storag
     # Exactly one call: the rollback recovery itself.
     assert adapter.recover_calls == 1
     recovered = adapter.recover_snapshot_args[0]
-    assert recovered["image"] == "acme/api:1.0.0", (
-        "adapter must receive the target snapshot data, not the pre_rollback row"
-    )
+    assert (
+        recovered["image"] == "acme/api:1.0.0"
+    ), "adapter must receive the target snapshot data, not the pre_rollback row"

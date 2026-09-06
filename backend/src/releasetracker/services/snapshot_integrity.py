@@ -8,7 +8,6 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-
 CURRENT_SNAPSHOT_FORMAT_VERSION = 1
 MAX_EXECUTOR_SNAPSHOT_BYTES = 2 * 1024 * 1024
 

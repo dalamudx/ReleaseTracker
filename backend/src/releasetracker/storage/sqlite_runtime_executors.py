@@ -476,7 +476,7 @@ def _row_to_executor_snapshot(storage: "SQLiteStorage", row: Any) -> ExecutorSna
         row["snapshot_format_version"] if "snapshot_format_version" in row_keys else None
     )
     snapshot_sha256 = row["snapshot_sha256"] if "snapshot_sha256" in row_keys else None
-    snapshot_size_bytes = (row["snapshot_size_bytes"] if "snapshot_size_bytes" in row_keys else None)
+    snapshot_size_bytes = row["snapshot_size_bytes"] if "snapshot_size_bytes" in row_keys else None
     return ExecutorSnapshot(
         id=row["id"],
         executor_id=row["executor_id"],

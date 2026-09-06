@@ -38,8 +38,7 @@ async def enqueue_executor_binding_targets(
         # Legacy single-target executors may predate explicit source bindings.
         # They still select a particular channel from their aggregate tracker.
         if (
-            tracker_name is not None
-            and executor_config.tracker_name != tracker_name
+            tracker_name is not None and executor_config.tracker_name != tracker_name
         ) or executor_config.channel_name is None:
             return False
         contexts = [
@@ -131,7 +130,9 @@ def _binding_contexts(executor_config: "ExecutorConfig") -> list[_ExecutorBindin
                 tracker_source_id=binding.tracker_source_id,
                 channel_name=binding.channel_name,
             )
-            for binding in sorted(executor_config.service_bindings, key=lambda binding: binding.service)
+            for binding in sorted(
+                executor_config.service_bindings, key=lambda binding: binding.service
+            )
         ]
     if executor_config.tracker_source_id is None or executor_config.channel_name is None:
         return []

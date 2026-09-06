@@ -153,6 +153,7 @@ class ExecutorScheduler(
         if executor_config.id is None:
             return
         self.scheduler_host.remove_job(self._job_namespace, executor_config.id)
+
     async def _execute_executor_by_id(self, executor_id: int) -> None:
         config = await self.storage.get_executor_config(executor_id)
         if not config:
@@ -162,6 +163,7 @@ class ExecutorScheduler(
         except ValueError as exc:
             if "already running" not in str(exc):
                 raise
+
     async def _execute_executor(
         self, executor_config: ExecutorConfig, *, manual: bool, _run_id: int | None = None
     ) -> ExecutorRunOutcome:

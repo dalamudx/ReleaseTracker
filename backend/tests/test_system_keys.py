@@ -273,6 +273,7 @@ async def test_encryption_key_rotation_replays_after_key_journal_before_database
     finally:
         await restarted_storage.close()
 
+
 @pytest.mark.asyncio
 async def test_invalid_encryption_key_rotation_returns_400(client, auth_service):
     await authenticate_admin(client, auth_service)

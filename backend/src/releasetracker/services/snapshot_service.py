@@ -337,7 +337,9 @@ class SnapshotService:
         )
 
     @staticmethod
-    def _integrity_status(snapshot: "ExecutorSnapshot") -> Literal["verified", "legacy_unverified", "invalid"]:
+    def _integrity_status(
+        snapshot: "ExecutorSnapshot",
+    ) -> Literal["verified", "legacy_unverified", "invalid"]:
         try:
             return verify_snapshot_integrity(snapshot)  # type: ignore[return-value]
         except SnapshotIntegrityError:
