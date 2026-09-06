@@ -1,202 +1,83 @@
-<div align="center">
-  <img src="frontend/public/logo.svg" width="120" alt="ReleaseTracker Logo" />
-</div>
-
 # ReleaseTracker
 
-[中文](README.md) | [English](README.en.md)
+[中文](README.md) | [English](README.en.md) · [Wiki](https://dalamudx.github.io/ReleaseTracker/)
 
-ReleaseTracker 是一款轻量级、可配置的版本追踪与更新编排工具。它追踪 GitHub、GitLab、Gitea、Helm Chart 与 OCI 容器镜像仓库的 release / tag，并帮助将选定版本应用到 Docker、Podman、Portainer、Kubernetes、Helm 等受支持的运行时目标。
+轻量级版本追踪与更新编排工具：追踪 GitHub、GitLab、Gitea、Helm Chart 和 OCI 镜像版本，并将选定版本应用到受支持的 Docker、Podman、Portainer、Kubernetes 和 Helm 目标。
 
 ![Python](https://img.shields.io/badge/Python-3.12+-blue)
 ![React](https://img.shields.io/badge/React-19-61dafb)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-teal)
 ![License](https://img.shields.io/badge/License-GPL%20v3-blue)
 
 ## 功能特性
 
-- **多源版本追踪**：GitHub、GitLab（含自托管）、Gitea、Helm Chart、Docker Hub、GHCR、私有 OCI Registry。
-- **聚合追踪器**：一个追踪器绑定多个版本源，按发布渠道规则筛选、归并与展示。
-- **版本历史与当前投影**：保留历史版本的同时，维护可执行更新的最新版本视图。
-- **运行时连接**：接入 Docker、Podman、Portainer、Kubernetes，凭证统一加密管理。
-- **执行器编排**：Docker / Podman 容器与 Compose 项目、Portainer Stack、Kubernetes Workload、Helm Release 的目标发现、绑定、手动 / 定时执行、维护窗口与执行历史。
-- **运行时更新**：Docker / Podman 单容器与 Compose 分组更新会基于已检查到的配置重建目标；Portainer Stack、Kubernetes Workload、Helm Release 通过对应平台的控制面、声明式状态或 Helm release 历史更新，ReleaseTracker 不声明为这些目标管理完整快照。
-- **快照与手动回滚**：具备破坏性重建路径的 Docker / Podman 更新会捕获完整配置快照，操作员可通过 UI 或 API 手动回滚；快照历史支持回滚，并可在功能可用处删除。
-- **健康检查**：自动运行时原生检查与手动配置的 HTTP / TCP 探针均有时间边界；失败会记录给操作员处理，不会触发自动回滚，也不声明 Kubernetes / Portainer / Helm 一定具备主机端口探测能力。
-- **安全**：稳定的单一管理员 + JWT + 显式绑定的 OIDC 身份；敏感数据 Fernet 加密；系统密钥可轮换。
-- **系统设置**：时区、日志级别、版本历史保留、BASE URL、密钥轮换等均可在 Web UI 配置。
-- **通知**：Webhook 通知，可按事件过滤，提供中英文消息与 Discord / Slack 兼容字段。
-- **现代前端**：React 19 + TypeScript + TailwindCSS，中英文、深色模式、响应式。
+- 聚合多个版本来源，通过发布渠道和规则筛选版本，保留版本历史与发布说明。
+- 绑定运行时目标，按手动、立即或维护窗口策略更新，并记录执行诊断。
+- 对支持的目标提供配置快照、更新后健康检查和手动回滚。
+- Webhook 事件通知、单一管理员与显式 OIDC 绑定、加密凭证和密钥轮换。
+- React Web UI，支持中英文、深色模式和浏览器内配置。
+
+各运行时能力不同，详见 [Wiki 支持矩阵](https://dalamudx.github.io/ReleaseTracker/reference/support/)。更新失败不会自动回滚，执行器快照不是应用数据备份。
 
 ## 功能截图
 
-界面截图见 [FEATURES.md](FEATURES.md)。
+![追踪器与版本列表](docs/images/trackers.png)
 
-![Trackers](docs/images/trackers.png)
-
-## 架构概览
-
-```mermaid
-flowchart TD
-    UI[React 前端 UI<br/>Dashboard / Trackers / Releases / Executors / Settings]
-    API[FastAPI 后端<br/>Auth / Trackers / Releases / Executors / OIDC]
-    DB[(SQLite<br/>配置 / 凭证 / 版本历史 / 执行记录)]
-    Scheduler[调度器<br/>定时检查 / 手动检查 / 版本归并]
-    VersionSources[版本源<br/>GitHub / GitLab / Gitea / Helm / OCI Registry]
-    RuntimeAPI[运行时接口<br/>Docker / Podman / Portainer / Kubernetes]
-    Executors[执行器<br/>目标发现 / 版本绑定 / 更新执行]
-    Notifiers[通知<br/>Webhook]
-
-    UI -->|REST API / JWT / OIDC| API
-    API --> DB
-    API --> Scheduler
-    API --> RuntimeAPI
-    API --> Notifiers
-    Scheduler --> VersionSources
-    Scheduler --> DB
-    RuntimeAPI --> Executors
-    Executors --> DB
-    Executors --> RuntimeAPI
-    Notifiers -->|版本事件| UI
-```
-
-生产部署下，FastAPI 在同一进程中托管前端静态资源与 API；开发模式下，Vite 作为前端 dev server 并将 `/api` 代理到后端。
+更多界面见 [FEATURES.md](FEATURES.md)。截图册展示界面，操作说明统一维护在 Wiki。
 
 ## 快速开始
 
-### 前置要求
+生产环境推荐 Docker / Docker Compose。安装命令、持久化要求和首次登录步骤见 [安装与首次运行](https://dalamudx.github.io/ReleaseTracker/getting-started/installation/)。
 
-- Python 3.12+
-- Node.js 20+
-- npm
-- uv
+| 任务 | 文档 |
+| --- | --- |
+| 配置来源、版本规则与 Changelog | [追踪器](https://dalamudx.github.io/ReleaseTracker/guides/trackers/) |
+| 接入容器平台并更新服务 | [运行时连接](https://dalamudx.github.io/ReleaseTracker/guides/runtime-connections/) · [执行器](https://dalamudx.github.io/ReleaseTracker/guides/executors/) |
+| 配置代理或 SSO | [反向代理](https://dalamudx.github.io/ReleaseTracker/operations/reverse-proxy/) · [管理员与 OIDC](https://dalamudx.github.io/ReleaseTracker/operations/accounts-and-oidc/) |
+| 备份、升级或恢复 | [运维指南](https://dalamudx.github.io/ReleaseTracker/operations/backup-and-upgrade/) · [故障排查](https://dalamudx.github.io/ReleaseTracker/reference/troubleshooting/) |
 
-### 开发环境
+## 架构概览
+
+生产环境由一个 FastAPI 进程托管前端静态资源、API 和调度器，使用 SQLite 保存配置与运行记录，`system-secrets.json` 保存系统密钥。版本源 API 与运行时控制面是外部依赖。按单实例部署。
+
+## 开发命令
+
+需要 Python 3.12+、Node.js 20+、uv 和 npm：
 
 ```bash
 git clone https://github.com/dalamudx/ReleaseTracker.git
 cd ReleaseTracker
-
 make install
 make dev
 ```
 
-开发服务启动后访问：
-
-- 前端：http://localhost:5173
-- 后端 API：http://localhost:8000
-- Swagger UI / ReDoc：http://localhost:8000/docs、http://localhost:8000/redoc
-
-### Docker 部署
+访问前端 `http://localhost:5173`；API 与 Swagger 在 `http://localhost:8000` 和 `/docs`。Vite 将开发请求代理到后端。
 
 ```bash
-docker run -d \
-  --name releasetracker \
-  -p 8000:8000 \
-  -v $(pwd)/data:/app/backend/data \
-  ghcr.io/dalamudx/releasetracker:latest migrate-and-serve
+uv --directory backend run pytest -q
+npm --prefix frontend run test
+make lint
+make build
 ```
 
-访问 http://localhost:8000 即可使用。全新安装首次启动时会创建 `admin` 用户，并生成一个加密安全的随机一次性引导密码。请从启动日志中查看：
+数据库迁移使用 `make dbmate-migrate`；`make version VERSION=x.y.z` 同步版本元数据和后端锁文件。完整命令见 `make help`。
+
+### 文档维护
+
+每个主题同时维护中文 `.md` 与英文 `.en.md`，新增页面同步加入 `mkdocs.yml`。一个事实只维护一个主要位置；保留旧页锚点，截图只解释难以用文字表达的操作。
 
 ```bash
-docker logs releasetracker 2>&1 | grep "one-time bootstrap admin password"
+python -m pip install -r docs-requirements.txt
+python -m unittest discover -s scripts/tests -p 'test_check_docs.py'
+mkdocs build --strict --site-dir site
+python scripts/check_docs.py --site-dir site
 ```
 
-该密码仅在首次成功初始化时以 INFO 级别记录一次，且不会通过 API 返回。请使用 `admin` 登录并**立即修改密码**。升级时会保留现有的非默认管理员凭证；若稳定管理员仍使用已知的旧版 `admin/admin` 凭证，启动后会撤销其会话并阻止本地与 OIDC 登录，直到操作员在容器内显式重置密码：
-
-```bash
-docker exec -it releasetracker python -m releasetracker.cli reset-admin-password
-# Docker Compose：docker compose exec releasetracker python -m releasetracker.cli reset-admin-password
-```
-
-重置命令直接使用挂载的数据目录，不通过 HTTP API，并会再次撤销现有管理员会话。若之后删除了引导管理员，ReleaseTracker 将拒绝启动，而不会重新生成凭证；请从可信备份恢复管理员或数据库。
-
-### Docker Compose
-
-```yaml
-services:
-  releasetracker:
-    image: ghcr.io/dalamudx/releasetracker:latest
-    container_name: releasetracker
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./data:/app/backend/data
-    restart: unless-stopped
-    command: migrate-and-serve
-```
-
-启动：
-
-```bash
-docker compose up -d
-```
-
-## 配置说明
-
-详细配置过程指引和配置说明，请查看 wiki 文档(https://dalamudx.github.io/ReleaseTracker)
-
-运行时配置（时区、日志级别、版本历史保留、BASE URL、密钥轮换等）全部通过「系统设置」页面管理，无需 `.env` 或环境变量。
-
-### BASE URL / 反向代理
-
-BASE URL 是浏览器访问 ReleaseTracker 的公开地址，用于反向代理部署以及 OIDC callback 生成。在「系统设置 → 全局配置 → BASE URL」配置，例如 `https://releases.example.com` 或带子路径的 `https://example.com/releasetracker`。子路径部署时 BASE URL 必须包含完整子路径。启用 OIDC 时该值必须是规范的绝对 HTTPS URL；服务不会从请求的 `Host` 头推导 callback 或前端跳转地址，缺失或不安全的配置会直接阻止 OIDC 流程。
-
-OIDC callback 将使用：
-
-```text
-{BASE URL}/auth/oidc/{provider}/callback
-```
-
-### 单一管理员与 OIDC 绑定
-
-ReleaseTracker 仅维护一个稳定的管理员身份。升级现有安装时会从当前 `admin` 账户回填该身份；之后修改用户名不会转移管理员权限。用户注册已禁用，Tracker、版本、执行器、运行时、凭证、通知、OIDC 与系统设置操作均仅限管理员。本地密码登录始终保留为恢复路径。
-
-仅配置 OIDC 提供商不会启用登录。请先以本地管理员身份登录，将当前本地密码提交到 `POST /api/oidc-providers/{provider_id}/admin-binding/authorize`，然后打开返回的 `authorization_url` 并完成 IdP 流程。ReleaseTracker 会验证已签名的 ID Token，并将其精确的 issuer + subject 绑定到现有管理员，绝不会自动创建 OIDC 用户。OIDC issuer、发现文档中的授权 / token / JWKS / UserInfo 端点以及手工配置的对应端点都必须使用 HTTPS；授权事务还通过 Secure、HttpOnly、SameSite 浏览器 Cookie 与一次性数据库 state 绑定。可通过 `GET /api/oidc-providers/admin-binding` 查看绑定状态；通过 `POST /api/oidc-providers/admin-binding/unbind` 提交当前本地密码解除绑定。已绑定的提供商必须先解除绑定，才能修改或删除。
-
-带凭证的 GitLab、Gitea、Helm 与自定义 changelog 请求只接受 HTTPS 端点，并且只会在同源 HTTPS 跳转中继续携带凭证；跨源跳转或 HTTPS 降级会被拒绝。匿名的旧版 HTTP Tracker 配置仍可用于不携带凭证的兼容场景。
-
-### 数据目录与系统密钥
-
-默认数据目录为容器内 `/app/backend/data`，部署时务必挂载持久化目录：
-
-```bash
--v $(pwd)/data:/app/backend/data
-```
-
-首次启动会在数据目录生成 `system-secrets.json`，保存 JWT 签名密钥与 Fernet 加密密钥。通过系统设置页面可以轮换；加密密钥轮换会重新加密现有数据，若存在无法解密的数据则会阻止轮换。
-
-### 数据库迁移
-
-SQLite schema 由 dbmate 管理，Docker 镜像入口命令：
-
-| 命令 | 说明 |
-|------|------|
-| `serve` | 启动应用，不执行迁移 |
-| `migrate` | 仅执行数据库迁移 |
-| `migrate-and-serve` | 先迁移后启动 |
-
-本地开发：`make dbmate-migrate`。
-
-## 开发命令
-
-常用：`make install`、`make dev`、`make lint`、`make build`、`make version VERSION=x.y.z`。版本目标会同步前后端版本元数据并刷新 `backend/uv.lock`。完整列表运行 `make help`。
-
-测试：
-
-```bash
-uv --directory backend run pytest -q     # 后端
-npm --prefix frontend run test           # 前端
-```
+文档检查覆盖双语配对、导航、内部链接、图片和旧锚点。产品行为变更还需核对支持矩阵和操作示例，不能只依赖构建通过。依赖审计、SBOM 与发布步骤以 [CI](.github/workflows/ci.yml) 和 [发布工作流](.github/workflows/release.yml) 为准。
 
 ## 路线图
 
-- [x] 执行器运行时更新可靠性
-- [x] 为 Docker / Podman 破坏性更新增加执行器快照与手动回滚
-- [x] 增加有时间边界、不会自动回滚的更新后健康检查
-- [x] 支持 CHANGELOG 自定义功能
-- [ ] 更多通知渠道
+- 更多通知渠道。
+- 后续能力以 release notes 和 Wiki 支持范围为准。
 
 ## 特别感谢
 

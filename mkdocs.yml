@@ -59,11 +59,22 @@ plugins:
           build: true
           nav_translations:
             首页: Home
-            快速开始: Getting Started
-            安装部署: Installation
-            配置说明: Configuration
-            配置与功能: Configuration & Features
-            已知限制: Known Limitations
+            开始使用: Getting started
+            安装与首次运行: Installation and first run
+            配置与使用: Usage guides
+            追踪器与版本规则: Trackers and version rules
+            凭证与运行时连接: Credentials and runtimes
+            执行器与更新策略: Executors and update policies
+            健康检查与回滚: Health checks and rollback
+            Webhook 通知: Webhook notifications
+            部署与运维: Operations
+            反向代理与子路径: Reverse proxy and sub-paths
+            管理员与 OIDC: Administrator and OIDC
+            备份、升级与密钥: Backups, upgrades, and keys
+            参考: Reference
+            系统设置: System settings
+            支持范围: Support matrix
+            故障排查: Troubleshooting
 
 markdown_extensions:
   - admonition
@@ -95,13 +106,29 @@ markdown_extensions:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
 
+# Keep legacy pages published for old URLs, but omit them from navigation/search.
+not_in_nav: |
+  /configuration/flow*.md
+  /limitations*.md
+
 nav:
   - 首页: index.md
-  - 快速开始:
-      - 安装部署: getting-started/installation.md
-  - 配置说明:
-      - 配置与功能: configuration/flow.md
-  - 已知限制: limitations.md
+  - 开始使用:
+      - 安装与首次运行: getting-started/installation.md
+  - 配置与使用:
+      - 追踪器与版本规则: guides/trackers.md
+      - 凭证与运行时连接: guides/runtime-connections.md
+      - 执行器与更新策略: guides/executors.md
+      - 健康检查与回滚: guides/health-and-rollback.md
+      - Webhook 通知: guides/notifications.md
+  - 部署与运维:
+      - 反向代理与子路径: operations/reverse-proxy.md
+      - 管理员与 OIDC: operations/accounts-and-oidc.md
+      - 备份、升级与密钥: operations/backup-and-upgrade.md
+  - 参考:
+      - 系统设置: reference/settings.md
+      - 支持范围: reference/support.md
+      - 故障排查: reference/troubleshooting.md
 
 extra:
   social:

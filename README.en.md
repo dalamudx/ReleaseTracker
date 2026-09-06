@@ -1,204 +1,85 @@
-<div align="center">
-  <img src="frontend/public/logo.svg" width="120" alt="ReleaseTracker Logo" />
-</div>
-
 # ReleaseTracker
 
-[中文](README.md) | [English](README.en.md)
+[中文](README.md) | [English](README.en.md) · [Wiki](https://dalamudx.github.io/ReleaseTracker/en/)
 
-ReleaseTracker is a lightweight, configurable release tracking and update orchestration tool. It tracks releases and tags from GitHub, GitLab, Gitea, Helm charts, and OCI container registries, then helps apply selected version changes to supported runtime targets such as Docker, Podman, Portainer, Kubernetes, and Helm.
+Lightweight version tracking and update orchestration. Track GitHub, GitLab, Gitea, Helm charts, and OCI images, then apply selected versions to supported Docker, Podman, Portainer, Kubernetes, and Helm targets.
 
 ![Python](https://img.shields.io/badge/Python-3.12+-blue)
 ![React](https://img.shields.io/badge/React-19-61dafb)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-teal)
 ![License](https://img.shields.io/badge/License-GPL%20v3-blue)
 
 ## Features
 
-- **Multi-source tracking**: GitHub, GitLab (incl. self-hosted), Gitea, Helm charts, Docker Hub, GHCR, private OCI registries.
-- **Aggregate trackers**: bind multiple sources under one tracker; filter, merge, and display via release channel rules.
-- **History + current projection**: keep full release history while maintaining the latest installable version view.
-- **Runtime connections**: Docker, Podman, Portainer, Kubernetes; secrets centrally managed and encrypted.
-- **Executor orchestration**: target discovery, binding, manual / scheduled execution, maintenance windows, and run history for Docker / Podman containers and Compose projects, Portainer stacks, Kubernetes workloads, and Helm releases.
-- **Runtime updates**: Docker / Podman single-container and Compose grouped updates recreate targets from inspected configuration; Portainer stack, Kubernetes workload, and Helm release updates use their platform control planes, declarative state, or Helm release history, and ReleaseTracker does not claim to manage full snapshots for those targets.
-- **Snapshots & manual rollback**: destructive Docker / Podman updates capture full configuration snapshots for operator-initiated rollback via the UI or API; snapshot history supports rollback and can be deleted where that action is available.
-- **Health checks**: automatic runtime-native checks and manually configured HTTP / TCP probes run with bounded timing; failures are recorded for operator action and do not trigger automatic rollback, and ReleaseTracker does not claim host-port probing is always available for Kubernetes / Portainer / Helm targets.
-- **Security**: stable single administrator + JWT + explicitly bound OIDC identity; sensitive data encrypted with Fernet; rotatable system keys.
-- **System settings**: timezone, log level, history retention, BASE URL, key rotation — all from the Web UI.
-- **Notifications**: webhook with event filtering, bilingual messages, and Discord / Slack compatible fields.
-- **Modern frontend**: React 19 + TypeScript + TailwindCSS, bilingual (zh/en), dark mode, responsive layout.
+- Aggregate version sources, filter through channels and rules, and retain history and release notes.
+- Bind runtime targets for manual, immediate, or maintenance-window updates with execution diagnostics.
+- Configuration snapshots, post-update health checks, and manual rollback for supported targets.
+- Webhook events, one administrator with explicit OIDC binding, encrypted credentials, and key rotation.
+- React Web UI with Chinese/English, dark mode, and browser-managed configuration.
 
-## Feature Screenshots
+Runtime capabilities differ; see the [Wiki support matrix](https://dalamudx.github.io/ReleaseTracker/en/reference/support/). Failed updates never roll back automatically. Executor snapshots are not application-data backups.
 
-See [FEATURES.md](FEATURES.md) for UI screenshots.
+## Feature screenshots
 
-![Trackers](docs/images/trackers.png)
+![Trackers and version lists](docs/images/trackers.png)
+
+See [FEATURES.md](FEATURES.md) for more screens. The gallery shows the UI; procedures are maintained in the Wiki.
+
+## Quick start
+
+Use Docker / Docker Compose for production. See [Installation and first run](https://dalamudx.github.io/ReleaseTracker/en/getting-started/installation/) for commands, persistence, and first login.
+
+| Task | Documentation |
+| --- | --- |
+| Configure sources, version rules, and changelogs | [Trackers](https://dalamudx.github.io/ReleaseTracker/en/guides/trackers/) |
+| Connect platforms and update services | [Runtimes](https://dalamudx.github.io/ReleaseTracker/en/guides/runtime-connections/) · [Executors](https://dalamudx.github.io/ReleaseTracker/en/guides/executors/) |
+| Configure a proxy or SSO | [Reverse proxy](https://dalamudx.github.io/ReleaseTracker/en/operations/reverse-proxy/) · [Administrator and OIDC](https://dalamudx.github.io/ReleaseTracker/en/operations/accounts-and-oidc/) |
+| Back up, upgrade, or recover | [Operations](https://dalamudx.github.io/ReleaseTracker/en/operations/backup-and-upgrade/) · [Troubleshooting](https://dalamudx.github.io/ReleaseTracker/en/reference/troubleshooting/) |
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    UI[React Frontend UI<br/>Dashboard / Trackers / Releases / Executors / Settings]
-    API[FastAPI Backend<br/>Auth / Trackers / Releases / Executors / OIDC]
-    DB[(SQLite<br/>Settings / Credentials / Release History / Execution Records)]
-    Scheduler[Scheduler<br/>Scheduled Checks / Manual Checks / Version Aggregation]
-    VersionSources[Version Sources<br/>GitHub / GitLab / Gitea / Helm / OCI Registry]
-    RuntimeAPI[Runtime APIs<br/>Docker / Podman / Portainer / Kubernetes]
-    Executors[Executors<br/>Target Discovery / Version Binding / Update Execution]
-    Notifiers[Notifications<br/>Webhook]
+In production, one FastAPI process hosts static frontend assets, APIs, and schedulers. SQLite stores configuration and run records; `system-secrets.json` holds system keys. Source APIs and runtime control planes are external dependencies. Deploy a single instance.
 
-    UI -->|REST API / JWT / OIDC| API
-    API --> DB
-    API --> Scheduler
-    API --> RuntimeAPI
-    API --> Notifiers
-    Scheduler --> VersionSources
-    Scheduler --> DB
-    RuntimeAPI --> Executors
-    Executors --> DB
-    Executors --> RuntimeAPI
-    Notifiers -->|Release Events| UI
-```
+## Development commands
 
-In production, FastAPI serves the built frontend and the API from a single process. In development, Vite runs the dev server and proxies `/api` to the backend.
-
-## Quick Start
-
-### Requirements
-
-- Python 3.12+
-- Node.js 20+
-- npm
-- uv
-
-### Development
+Requires Python 3.12+, Node.js 20+, uv, and npm:
 
 ```bash
 git clone https://github.com/dalamudx/ReleaseTracker.git
 cd ReleaseTracker
-
 make install
 make dev
 ```
 
-After the development servers start, open:
-
-- Frontend: http://localhost:5173
-- Backend API: http://localhost:8000
-- Swagger UI / ReDoc: http://localhost:8000/docs, http://localhost:8000/redoc
-
-### Docker Deployment
+Open the frontend at `http://localhost:5173`. API and Swagger run at `http://localhost:8000` and `/docs`. Vite proxies development requests to the backend.
 
 ```bash
-docker run -d \
-  --name releasetracker \
-  -p 8000:8000 \
-  -v $(pwd)/data:/app/backend/data \
-  ghcr.io/dalamudx/releasetracker:latest migrate-and-serve
+uv --directory backend run pytest -q
+npm --prefix frontend run test
+make lint
+make build
 ```
 
-Open http://localhost:8000. On a fresh installation, the first launch creates the `admin` user with a cryptographically random, one-time bootstrap password. Read it from the startup log:
+Use `make dbmate-migrate` for migrations and `make version VERSION=x.y.z` to synchronize version metadata and the backend lockfile. Run `make help` for the full command list.
+
+### Documentation maintenance
+
+Maintain Chinese `.md` and English `.en.md` together, registering new pages in `mkdocs.yml`. Give each fact one primary home, retain legacy anchors, and use screenshots only where text is insufficient.
 
 ```bash
-docker logs releasetracker 2>&1 | grep "one-time bootstrap admin password"
+python -m pip install -r docs-requirements.txt
+python -m unittest discover -s scripts/tests -p 'test_check_docs.py'
+mkdocs build --strict --site-dir site
+python scripts/check_docs.py --site-dir site
 ```
 
-The password is logged at INFO only during the successful initial bootstrap and is never returned by the API. Log in as `admin` and **change the password immediately**. Existing installations keep their current admin credentials. If the bootstrapped admin is later deleted, ReleaseTracker fails startup rather than generating another credential; restore the admin or database from a trusted backup.
-
-### Docker Compose
-
-```yaml
-services:
-  releasetracker:
-    image: ghcr.io/dalamudx/releasetracker:latest
-    container_name: releasetracker
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./data:/app/backend/data
-    restart: unless-stopped
-    command: migrate-and-serve
-```
-
-Start the service:
-
-```bash
-docker compose up -d
-```
-
-## Configuration
-
-Runtime configuration (timezone, log level, release history retention, BASE URL, key rotation, etc.) is managed from the System Settings page — no `.env` files or environment variables required.
-
-### BASE URL / Reverse Proxy
-
-The BASE URL is the public address browsers use to reach ReleaseTracker. It drives reverse-proxy deployments and OIDC callback generation. Set it in `System Settings → Global Settings → BASE URL`, for example `https://releases.example.com` or, under a sub-path, `https://example.com/releasetracker`. Sub-path deployments must include the full sub-path.
-
-OIDC callbacks resolve to:
-
-```text
-{BASE URL}/auth/oidc/{provider}/callback
-```
-
-### Single Administrator and OIDC Binding
-
-ReleaseTracker has one stable administrator identity. Existing installations backfill it from the
-current `admin` account; later username changes do not transfer administrator access. User
-registration is disabled, and all tracker, release, executor, runtime, credential, notifier, OIDC,
-and system-setting operations are administrator-only. Local password login remains the recovery
-path.
-
-Configuring an OIDC provider does not enable login by itself. While locally authenticated as the
-administrator, submit the current local password to
-`POST /api/oidc-providers/{provider_id}/admin-binding/authorize`, then open the returned
-`authorization_url` and complete the IdP flow. ReleaseTracker validates the signed ID token and
-binds its exact issuer + subject to the existing administrator; it never provisions an OIDC user.
-Use `GET /api/oidc-providers/admin-binding` to inspect the binding and
-`POST /api/oidc-providers/admin-binding/unbind` with the current local password to remove it. A
-bound provider must be unbound before it can be changed or deleted.
-
-### Data Directory and System Keys
-
-The container data directory defaults to `/app/backend/data`. Mount a persistent directory when deploying:
-
-```bash
--v $(pwd)/data:/app/backend/data
-```
-
-On first startup, ReleaseTracker creates `system-secrets.json` holding the JWT signing key and the Fernet encryption key. Both can be rotated from System Settings; encryption key rotation re-encrypts existing data and is blocked when any row cannot be decrypted with the current key.
-
-### Database Migrations
-
-The SQLite schema is managed by dbmate. Docker entrypoint commands:
-
-| Command | Description |
-|------|------|
-| `serve` | Start the app without running migrations |
-| `migrate` | Run migrations only |
-| `migrate-and-serve` | Run migrations, then start the app |
-
-For local development: `make dbmate-migrate`.
-
-## Development Commands
-
-Common: `make install`, `make dev`, `make lint`, `make build`, `make version VERSION=x.y.z`. The version target synchronizes backend/frontend metadata and refreshes `backend/uv.lock`. Run `make help` for the full list.
-
-Tests:
-
-```bash
-uv --directory backend run pytest -q     # Backend
-npm --prefix frontend run test           # Frontend
-```
+Checks cover translation pairs, navigation, internal links, images, and legacy anchors. Behavior changes still need support-matrix and example review; a passing build is not proof of accuracy. See [CI](.github/workflows/ci.yml) and the [release workflow](.github/workflows/release.yml) for dependency audits, SBOMs, and publishing.
 
 ## Roadmap
 
-- [x] Executor runtime update reliability
-- [x] Add executor snapshots and manual rollback for destructive Docker / Podman updates
-- [x] Add bounded post-update health checks without automatic rollback
-- [x] Add customizable CHANGELOG support
-- [ ] Add more notification channels
+- More notification channels.
+- Consult release notes and the Wiki support matrix for subsequent capabilities.
 
-## Special Thanks
+## Special thanks
 
 [![LINUX.DO](https://img.shields.io/badge/LINUX.DO-Community-blue)](https://linux.do)
 

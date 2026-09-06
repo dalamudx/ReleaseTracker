@@ -1,0 +1,10 @@
+{
+  "index.html": ["releasetracker", "_1", "_2", "_3", "_4"],
+  "en/index.html": ["releasetracker", "what-it-is", "who-it-is-for", "core-capabilities", "next-steps"],
+  "limitations/index.html": ["_1", "1", "2", "3", "4", "5", "6-portainer", "7-kubernetes-helm", "8", "9", "10", "11-api-ui"],
+  "configuration/flow/index.html": ["_1", "1", "2", "_2", "_3", "oidc", "3", "4", "5", "6", "_4", "_5", "_6", "_7", "_8", "_9", "7", "_10", "_11", "_12", "_13", "_14", "_15"],
+  "getting-started/installation/index.html": ["_1", "1", "2-docker", "_2", "3", "4", "5", "6", "7", "8", "9", "10"],
+  "en/limitations/index.html": ["known-limitations", "1-deployment-architecture", "2-snapshot-and-rollback-coverage", "3-health-check-framework", "4-authentication-and-accounts", "5-supply-chain-checks", "6-portainer", "7-kubernetes-helm", "8-notifications", "9-trackers", "10-database-and-migrations", "11-api-ui"],
+  "en/configuration/flow/index.html": ["configuration-guide", "1-log-in", "2-system-settings", "global-configuration", "security-keys", "oidc", "3-notifications", "4-credentials", "5-runtime-connections", "6-trackers", "adding-a-tracker", "tracker-identity", "tracking-channels", "release-channels", "fetch-preferences", "release-notes", "7-executors", "target-discovery", "binding", "policy", "health-check", "review", "snapshots"],
+  "en/getting-started/installation/index.html": ["installation", "1-prerequisites", "2-docker", "entry-commands", "3-first-login", "4-quick-start", "5-data-directory-layout", "6-reverse-proxy-optional-but-recommended", "7-upgrades", "8-local-development", "9-common-deployment-issues", "10-next-steps"]
+}

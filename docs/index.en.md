@@ -4,48 +4,39 @@ title: ReleaseTracker Wiki
 
 # ReleaseTracker
 
-<div class="grid cards" markdown>
+Track upstream versions and apply selected versions to runtime targets according to policy. This Wiki is for self-hosted instance administrators. Tracking versions alone does not require an executor.
 
--   :material-rocket-launch-outline: **Get started**
+## Get started {#next-steps}
 
-    ---
+Follow [Installation and first run](getting-started/installation.md) to deploy, sign in, and complete your first version check.
 
-    Deploy with Docker or Docker Compose.
+## Concepts {#what-it-is}
 
-    [:octicons-arrow-right-24: Installation](getting-started/installation.en.md)
+| Object | Purpose |
+| --- | --- |
+| Tracker | Groups one or more version sources for a project |
+| Version source | A Git repository, Helm chart, or OCI registry providing versions |
+| Release channel | Filters source versions by release status and version rules |
+| Runtime connection | Provides access to Docker, Podman, Portainer, or Kubernetes |
+| Executor | Binds a source's release channel to a runtime target and runs updates |
 
--   :material-source-branch: **Source**
+Version source → release channel → selected version → executor → runtime target.
 
-    ---
+## Find a task {#who-it-is-for}
 
-    Hosted on GitHub. Issues and pull requests welcome.
+| I want to… | Documentation |
+| --- | --- |
+| Filter versions or configure a changelog | [Trackers and version rules](guides/trackers.md) |
+| Connect private sources or container platforms | [Credentials and runtimes](guides/runtime-connections.md) |
+| Configure automatic updates and maintenance windows | [Executors and update policies](guides/executors.md) |
+| Validate an update or roll back | [Health checks and rollback](guides/health-and-rollback.md) |
+| Receive version and execution events | [Webhook notifications](guides/notifications.md) |
+| Set up HTTPS, sub-paths, or SSO | [Reverse proxy](operations/reverse-proxy.md) · [Administrator and OIDC](operations/accounts-and-oidc.md) |
+| Back up, upgrade, or rotate keys | [Backups, upgrades, and keys](operations/backup-and-upgrade.md) |
+| Look up settings, support, or errors | [System settings](reference/settings.md) · [Support matrix](reference/support.md) · [Troubleshooting](reference/troubleshooting.md) |
 
-    [:octicons-arrow-right-24: GitHub](https://github.com/dalamudx/ReleaseTracker)
+## Before running updates {#core-capabilities}
 
-</div>
+Deploy a single instance. Verify the selected version and bindings manually before enabling automatic updates. Executor snapshots are not application-data backups. See the [support matrix](reference/support.md) for update, health-check, and recovery coverage.
 
-## What it is
-
-ReleaseTracker is a lightweight, configurable release tracking and update orchestration tool. It tracks releases and tags from GitHub, GitLab, Gitea, Helm charts, and OCI container registries, and maps version changes to runtime targets such as Docker, Podman, Portainer, Kubernetes, and Helm releases.
-
-## Who it is for
-
-- **Ops / DevOps**: teams tracking upstream dependency versions and rolling updates into their own environments on a schedule.
-- **Self-hosting administrators**: operators who want a single console to manage upgrades across multiple Docker / Kubernetes / Helm deployments.
-
-!!! info "This Wiki is under construction"
-    Available: Installation, System Settings, Credentials, Runtime Connections, Notifications, Trackers, Executors, Known Limitations. More chapters (operations, FAQ) will follow.
-
-## Core capabilities
-
-- **Multi-source release tracking**: GitHub, GitLab (including self-hosted instances), Gitea, Helm charts, Docker Hub, GHCR, and private OCI registries.
-- **Aggregate trackers**: bind multiple sources under a single tracker; filter, merge, and display releases through release channel rules.
-- **Executor orchestration**: target discovery, binding, manual / scheduled execution, maintenance windows, and run history for containers, Compose projects, Portainer stacks, Kubernetes workloads, and Helm releases.
-- **Snapshot and rollback (selected executors)**: full runtime configuration snapshots / restores are used for destructive Docker / Podman recreate targets: single containers and Compose grouped updates. Portainer stacks, Kubernetes workloads, and Helm releases rely on declarative updates, version history, or run history rather than full ReleaseTracker-managed runtime snapshots.
-- **Security**: stable single administrator plus JWT and explicitly bound OIDC identity; sensitive data is encrypted with Fernet; system keys are rotatable.
-- **Web UI configuration**: timezone, log level, release history retention, BASE URL, and key rotation are all handled from the browser without environment variables.
-
-## Next steps
-
-- Follow [Installation](getting-started/installation.en.md) to deploy ReleaseTracker.
-- Retrieve the one-time bootstrap password from the startup log, sign in as `admin`, and change it immediately.
+Source code, development commands, and contribution entry points are in the [GitHub repository](https://github.com/dalamudx/ReleaseTracker).

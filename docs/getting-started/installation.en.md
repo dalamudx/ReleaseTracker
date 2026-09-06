@@ -1,43 +1,28 @@
 ---
-title: Installation
+title: Installation and first run
 ---
 
-# Installation
+# Installation and first run {#installation}
 
-This page covers the three deployment paths for ReleaseTracker: Docker, Docker Compose, and local development. Docker or Docker Compose is recommended for production.
+Goal: start an instance, sign in, and find a project's versions. Use Docker or Docker Compose for production; see the [README](https://github.com/dalamudx/ReleaseTracker/blob/main/README.en.md#development-commands) for local development.
 
-## 1. Prerequisites
+## Requirements {#1-prerequisites}
 
-| Item | Requirement | Notes |
-| ---- | ----------- | ----- |
-| Operating system | Linux x86_64 | The official image is currently published for `linux/amd64` only. |
-| Port | `8000` | Frontend assets and the API share this port, optionally fronted by a reverse proxy. |
-| Persistent volume | Mounted at `/app/backend/data` | Holds the SQLite database and the system keys. |
-| Outbound network | Access to upstream services (GitHub / GitLab / … and OCI registries) | Required during version scans. |
+- Official image: `linux/amd64`; the application and API share port `8000`.
+- Persist `/app/backend/data` in a directory writable by the process.
+- Allow outbound access to the upstream services you track.
+- Run one instance; do not share its data directory between active replicas.
 
-Local development additionally requires Python 3.12+, Node.js 20+, `npm`, and `uv`.
+!!! warning "Keep the database and keys"
+    The data directory contains the database and `system-secrets.json`. Reuse it when recreating containers. Losing the key file makes encrypted credentials unreadable.
 
-!!! warning "Always configure a persistent volume"
-    Running without a volume works, but every container recreation wipes the database and `system-secrets.json`. Losing `system-secrets.json` makes every encrypted credential, OIDC client secret, and runtime connection secret **permanently undecryptable**.
+## Start the container {#2-docker}
 
-## 2. Docker
-
-=== "Single container"
-
-    ```bash
-    mkdir -p ./data
-
-    docker run -d \
-      --name releasetracker \
-      -p 8000:8000 \
-      -v $(pwd)/data:/app/backend/data \
-      --restart unless-stopped \
-      ghcr.io/dalamudx/releasetracker:latest migrate-and-serve
-    ```
+These examples bind to the host loopback address for local access or a proxy on the same host. For remote access, configure an [HTTPS proxy](../operations/reverse-proxy.md) rather than exposing the management port directly.
 
 === "Docker Compose"
 
-    `docker-compose.yml`:
+    Save as `compose.yml`:
 
     ```yaml
     services:
@@ -45,197 +30,59 @@ Local development additionally requires Python 3.12+, Node.js 20+, `npm`, and `u
         image: ghcr.io/dalamudx/releasetracker:latest
         container_name: releasetracker
         ports:
-          - "8000:8000"
+          - "127.0.0.1:8000:8000"
         volumes:
           - ./data:/app/backend/data
         restart: unless-stopped
         command: migrate-and-serve
     ```
 
-    Start:
-
     ```bash
+    mkdir -p ./data
     docker compose up -d
     ```
 
-### Entry commands
+=== "Docker run"
 
-The image supports three entry commands:
-
-| Command | Behaviour | When to use |
-| ------- | --------- | ----------- |
-| `serve` | Starts the application without running migrations. | When the schema is known to be up to date. |
-| `migrate` | Runs database migrations only. | To migrate ahead of a cut-over and separate migration cost from startup. |
-| `migrate-and-serve` | Runs migrations, then starts the application. | Recommended default for both fresh installs and upgrades. |
-
-Once the application is up, the log should contain entries similar to:
-
-```
-SQLite persistent connection established with WAL mode enabled
-INFO:     Uvicorn running on http://0.0.0.0:8000
-```
-
-## 3. First login
-
-Open <http://localhost:8000> (or the address exposed by the reverse proxy). On a fresh installation, the first launch creates the `admin` administrator with a cryptographically random, one-time bootstrap password. Read it from the startup log:
-
-```bash
-docker logs releasetracker 2>&1 | grep "one-time bootstrap admin password"
-```
-
-The password is logged at INFO only during the successful initial bootstrap and is never returned by the API. Existing installations keep their current administrator credentials. If the bootstrap administrator is later deleted, ReleaseTracker refuses to start instead of generating another password; restore the administrator or database from a trusted backup.
-
-!!! danger "Change the bootstrap password immediately"
-    Sign in with the password from the startup log, then open the **user menu at the bottom-left of the sidebar → User Settings → Change Password** and set a strong password. Restrict access to startup logs.
-
-## 4. Quick start
-
-After the service is installed and reachable, use this workflow for the first setup:
-
-1. **Open the web UI and sign in**: Visit the deployed address and sign in as `admin` with the one-time password from the startup log. Change the password immediately after the first login.
-2. **Review System Settings**: Open **System Settings** and confirm that BASE URL, language, log level, retention, and other basic settings match the deployment. When using a reverse proxy or OIDC, BASE URL must match the externally reachable address.
-3. **Add notification channels**: Open **Notifications** and configure and test Webhook or other notification channels. Notifications are optional, but recommended before enabling Immediate or Maintenance window execution so failures, skips, and successes are visible.
-4. **Add credentials only when needed**: Add credentials under **Credentials** only for private repositories, protected GitHub / GitLab / Gitea projects, private image registries, Kubernetes, Portainer, or similar protected services. Public sources can be tracked without credentials.
-5. **Add runtime connections**: If ReleaseTracker will run updates, add Docker, Podman, Kubernetes, or Portainer connections under **Runtime Connections**. Helm release executors use Kubernetes connections. Skip this when you only need version tracking.
-6. **Add trackers and release sources**: Add projects, images, or Helm charts under **Trackers**, then configure release channels or source filters as needed.
-7. **Create executors**: Create executors from supported version sources, choose the target runtime and update target, then select an execution policy. Start with manual execution to validate the setup before enabling Immediate or Maintenance window execution.
-8. **Configure health checks**: Add HTTP, TCP, Helm status, or runtime-native health checks when they are available for the target and the service needs availability verification. A failed health check records a failed run, but it does not trigger automatic rollback.
-9. **Run once or wait for scheduling**: Run an executor manually for validation, or wait for trackers and executors to run on their schedules.
-10. **Review history, snapshots, and rollback**: Review each run in execution history. Destructive Docker / Podman single-container and Docker / Podman Compose grouped targets keep pre-update snapshots; update or health-check failures do not roll back automatically, so operators must manually trigger rollback after confirming the snapshot is suitable.
-
-## 5. Data directory layout
-
-The volume mounted at `/app/backend/data` typically contains:
-
-```
-data/
-├── releases.db                 # SQLite main database
-├── releases.db-shm             # SQLite WAL shared memory
-├── releases.db-wal             # SQLite WAL write-ahead log
-└── system-secrets.json         # JWT signing key + Fernet encryption key
-```
-
-Backup guidance:
-
-- **Back up the directory as a unit.** `.db-wal` / `.db-shm` and the main database form a set; copying them independently can yield an inconsistent snapshot.
-- **`system-secrets.json` and the database must travel together.** Without the keys, the encrypted columns (credentials, OIDC client secrets, runtime connection secrets) cannot be decrypted.
-- For production backups, stop the container (`docker compose stop` or `docker stop releasetracker`) before performing file-level copies.
-
-## 6. Reverse proxy (optional but recommended)
-
-ReleaseTracker is typically placed behind Nginx / Traefik / Caddy for HTTPS, access control, or sub-path hosting.
-
-=== "Nginx"
-
-    ```nginx
-    server {
-        listen 443 ssl http2;
-        server_name releases.example.com;
-
-        ssl_certificate     /etc/letsencrypt/live/releases.example.com/fullchain.pem;
-        ssl_certificate_key /etc/letsencrypt/live/releases.example.com/privkey.pem;
-
-        location / {
-            proxy_pass http://127.0.0.1:8000;
-            proxy_set_header Host              $host;
-            proxy_set_header X-Real-IP         $remote_addr;
-            proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_read_timeout 300s;
-        }
-    }
-    ```
-
-=== "Caddy"
-
-    ```caddy
-    releases.example.com {
-        reverse_proxy 127.0.0.1:8000
-    }
-    ```
-
-=== "Traefik v2/v3"
-
-    ```yaml
-    services:
-      releasetracker:
-        image: ghcr.io/dalamudx/releasetracker:latest
-        restart: unless-stopped
-        volumes:
-          - ./data:/app/backend/data
-        command: migrate-and-serve
-        labels:
-          - "traefik.enable=true"
-          - "traefik.http.routers.rt.rule=Host(`releases.example.com`)"
-          - "traefik.http.routers.rt.entrypoints=websecure"
-          - "traefik.http.routers.rt.tls.certresolver=letsencrypt"
-          - "traefik.http.services.rt.loadbalancer.server.port=8000"
-    ```
-
-After deployment, set **System Settings → Global Settings → BASE URL** to match the public address, for example `https://releases.example.com`. For sub-path deployments (e.g. `https://example.com/releasetracker`), the BASE URL must include the full sub-path. BASE URL drives the OIDC callback:
-
-```text
-{BASE URL}/auth/oidc/{provider}/callback
-```
-
-A mismatched BASE URL most commonly surfaces as OIDC logins redirecting to the wrong host or failing with `redirect_uri_mismatch`.
-
-## 7. Upgrades
-
-1. Stop the running container: `docker compose stop`, or `docker stop releasetracker`.
-2. Back up the `./data/` directory (see section 5).
-3. Pull the new image: `docker compose pull`, or `docker pull ghcr.io/dalamudx/releasetracker:latest`.
-4. Start again: `docker compose up -d`. The `migrate-and-serve` entry command runs dbmate migrations before the server boots.
-5. Follow the logs to confirm the migration completed: `docker compose logs -f`.
-
-!!! note "About downgrades"
-    dbmate migrations are forward-only. After a new version's migrations have been applied, reverting to an older container may refuse to start due to schema mismatch; recovery requires restoring from the backup taken in step 2.
-
-## 8. Local development
-
-For contributors and local debugging only.
-
-```bash
-git clone https://github.com/dalamudx/ReleaseTracker.git
-cd ReleaseTracker
-
-make install       # Install backend + frontend dependencies (requires uv and npm)
-make dev           # Run backend + frontend in parallel
-```
-
-Default ports:
-
-- Frontend (Vite): <http://localhost:5173>
-- Backend API: <http://localhost:8000>
-- Swagger UI / ReDoc: <http://localhost:8000/docs>, <http://localhost:8000/redoc>
-
-In development, Vite proxies `/api` to the backend, so only the frontend port needs to be visited from the browser.
-
-## 9. Common deployment issues
-
-!!! failure "Container cannot write to `data/`"
-    The container runs as `root` by default, so permission errors are uncommon. If deploying with rootless Docker, SELinux, or another runtime that restricts write access, make sure the mount is writable for the process, for example:
     ```bash
-    chmod -R u+rwX ./data
+    mkdir -p ./data
+    docker run -d \
+      --name releasetracker \
+      -p 127.0.0.1:8000:8000 \
+      -v "$(pwd)/data:/app/backend/data" \
+      --restart unless-stopped \
+      ghcr.io/dalamudx/releasetracker:latest migrate-and-serve
     ```
 
-!!! failure "OIDC login fails with `redirect_uri_mismatch`"
-    - Verify that **System Settings → Global Settings → BASE URL** matches the callback prefix registered at the IdP exactly.
-    - Sub-path deployments must include the full sub-path.
-    - Changes to the BASE URL only take effect after signing out and back in.
+`migrate-and-serve` migrates the database before starting. Other [entry commands](../operations/backup-and-upgrade.md#entry-commands){#entry-commands} are for maintenance. Pin a tested release tag instead of `latest` in production.
 
-!!! failure "The UI loads through the reverse proxy but API calls return 404"
-    Usually the proxy is not forwarding `/api/*`, or is stripping a path prefix. ReleaseTracker serves the API and static assets from the same FastAPI process, so `/` and `/api` should use identical `proxy_pass` without path rewriting.
+## First login {#3-first-login}
 
-!!! failure "Container keeps restarting after an upgrade"
-    Run the `migrate` entry once to inspect the migration output:
+1. Open <http://localhost:8000>.
+2. Read the one-time `admin` password from the first startup log:
+
     ```bash
-    docker run --rm \
-      -v $(pwd)/data:/app/backend/data \
-      ghcr.io/dalamudx/releasetracker:latest migrate
+    docker logs releasetracker 2>&1 | grep "one-time bootstrap admin password"
     ```
-    Schema conflicts typically indicate the database was modified by hand; restore from backup.
 
-## 10. Next steps
+3. Sign in, then immediately open **User menu → User Settings → Change Password**.
 
-After installation, see the [Configuration guide](../configuration/flow.md) for the full walkthrough of trackers, credentials, and executors.
+The bootstrap password is logged only during initial setup; restrict log access. Existing installations do not generate another password. For a forgotten or blocked legacy default password, use [local password recovery](../operations/accounts-and-oidc.md#password-recovery).
+
+## First version check {#4-quick-start}
+
+1. Create a **Tracker** with a GitHub source, for example `cli/cli`.
+2. Enable the `stable` release channel, select Release, and keep the default fetch settings initially.
+3. Save and run a manual check. Confirm that versions, sources, and release notes appear.
+
+Public sources can start with anonymous REST access; add credentials if rate-limited. See [Trackers and version rules](../guides/trackers.md) for filtering and sorting.
+
+## Next steps {#10-next-steps}
+
+- Tracking only: [Webhook notifications](../guides/notifications.md).
+- Updating services: [Credentials and runtimes](../guides/runtime-connections.md) → [Executors](../guides/executors.md).
+- [Data directory and backups](../operations/backup-and-upgrade.md#backup){#5-data-directory-layout}.
+- [Reverse proxy and sub-paths](../operations/reverse-proxy.md){#6-reverse-proxy-optional-but-recommended}.
+- [Upgrade the instance](../operations/backup-and-upgrade.md#upgrade){#7-upgrades}.
+- [Local development](https://github.com/dalamudx/ReleaseTracker/blob/main/README.en.md#development-commands){#8-local-development}.
+- [Deployment troubleshooting](../reference/troubleshooting.md){#9-common-deployment-issues}.

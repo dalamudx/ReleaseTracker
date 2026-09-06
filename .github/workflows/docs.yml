@@ -6,12 +6,22 @@ on:
       - main
     paths:
       - docs/**
+      - README.md
+      - README.en.md
+      - scripts/check_docs.py
+      - scripts/docs-legacy-anchors.json
+      - scripts/tests/test_check_docs.py
       - docs-requirements.txt
       - mkdocs.yml
       - .github/workflows/docs.yml
   pull_request:
     paths:
       - docs/**
+      - README.md
+      - README.en.md
+      - scripts/check_docs.py
+      - scripts/docs-legacy-anchors.json
+      - scripts/tests/test_check_docs.py
       - docs-requirements.txt
       - mkdocs.yml
       - .github/workflows/docs.yml
@@ -41,8 +51,14 @@ jobs:
       - name: Install documentation dependencies
         run: pip install -r docs-requirements.txt
 
+      - name: Test documentation checks
+        run: python -m unittest discover -s scripts/tests -p 'test_check_docs.py'
+
       - name: Build MkDocs site (strict)
         run: mkdocs build --strict --site-dir site
+
+      - name: Check Wiki links and translations
+        run: python scripts/check_docs.py --site-dir site
 
       - name: Upload Pages artifact
         if: github.event_name != 'pull_request'

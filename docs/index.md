@@ -4,48 +4,39 @@ title: ReleaseTracker Wiki
 
 # ReleaseTracker
 
-<div class="grid cards" markdown>
+追踪上游版本，并按策略将选定版本应用到运行时目标。本文档面向自托管实例的管理员；只做版本追踪时不需要配置执行器。
 
--   :material-rocket-launch-outline: **快速上手**
+## 开始使用 {#_4}
 
-    ---
+首次部署请阅读[安装与首次运行](getting-started/installation.md)，完成部署、登录和第一次版本检查。
 
-    通过 Docker 或 Docker Compose 完成部署。
+## 概念关系 {#_1}
 
-    [:octicons-arrow-right-24: 安装部署](getting-started/installation.md)
+| 对象 | 作用 |
+| --- | --- |
+| 追踪器 | 组织同一个项目的一个或多个版本来源 |
+| 版本来源 | 提供版本的 Git 仓库、Helm Chart 或 OCI 镜像仓库 |
+| 发布渠道 | 用发布状态和版本规则筛选来源中的版本 |
+| 运行时连接 | 提供访问 Docker、Podman、Portainer 或 Kubernetes 的连接 |
+| 执行器 | 将来源的发布渠道绑定到运行时目标，并执行更新 |
 
--   :material-source-branch: **源码仓库**
+版本来源 → 发布渠道 → 选定版本 → 执行器 → 运行时目标。
 
-    ---
+## 按任务查阅 {#_2}
 
-    代码托管在 GitHub，欢迎提交 issue 与 PR。
+| 我想…… | 文档 |
+| --- | --- |
+| 筛选版本、配置 Changelog | [追踪器与版本规则](guides/trackers.md) |
+| 接入私有来源或容器平台 | [凭证与运行时连接](guides/runtime-connections.md) |
+| 配置自动更新和维护窗口 | [执行器与更新策略](guides/executors.md) |
+| 验证更新结果或回滚 | [健康检查与回滚](guides/health-and-rollback.md) |
+| 接收版本和执行事件 | [Webhook 通知](guides/notifications.md) |
+| 配置 HTTPS、子路径或 SSO | [反向代理](operations/reverse-proxy.md) · [管理员与 OIDC](operations/accounts-and-oidc.md) |
+| 备份、升级或轮换密钥 | [备份、升级与密钥](operations/backup-and-upgrade.md) |
+| 查参数、支持边界或错误 | [系统设置](reference/settings.md) · [支持范围](reference/support.md) · [故障排查](reference/troubleshooting.md) |
 
-    [:octicons-arrow-right-24: GitHub](https://github.com/dalamudx/ReleaseTracker)
+## 使用边界 {#_3}
 
-</div>
+按单实例部署。自动更新前先手动验证版本和绑定；执行器快照不是应用数据备份。各目标的更新、健康检查和恢复能力以[支持范围](reference/support.md)为准。
 
-## 项目定位
-
-ReleaseTracker 是一款轻量级、可配置的版本追踪与更新编排工具。它追踪 GitHub、GitLab、Gitea、Helm Chart 与 OCI 容器镜像仓库中的 release / tag，并将版本变化关联到 Docker、Podman、Portainer、Kubernetes 与 Helm Release 等运行时目标。
-
-## 适用人群
-
-- **运维 / DevOps**：需要跟踪上游依赖版本，并按计划推进到自有环境。
-- **自托管服务管理员**：希望在统一面板中管理多套 Docker / Kubernetes / Helm 部署的升级。
-
-!!! info "Wiki 正在建设中"
-    已上线：安装部署、系统设置、凭证管理、运行时连接、通知、追踪器、执行器、已知限制。更多章节（运维指南、常见问题等）会陆续补齐。
-
-## 核心能力
-
-- **多源版本追踪**：GitHub、GitLab（含自托管）、Gitea、Helm Chart、Docker Hub、GHCR、私有 OCI Registry。
-- **聚合追踪器**：单个追踪器可绑定多个版本源，按发布渠道规则筛选、归并与展示。
-- **执行器编排**：为容器、Compose Project、Portainer Stack、Kubernetes Workload、Helm Release 提供目标发现、绑定、手动 / 定时执行、维护窗口与执行历史。
-- **快照与回滚（部分执行器）**：完整运行时配置快照 / 恢复用于 Docker / Podman 的破坏性重建目标：单容器与 Compose 分组更新。Portainer Stack、Kubernetes Workload、Helm Release 以声明式更新、版本历史或运行历史为主，不作为 ReleaseTracker 管理的完整运行时配置快照。
-- **安全**：稳定的单一管理员 + JWT + 显式绑定的 OIDC 身份；敏感数据使用 Fernet 加密；系统密钥可轮换。
-- **Web UI 配置**：时区、日志级别、版本历史保留、BASE URL、密钥轮换等运行参数均可在浏览器中完成，无需环境变量。
-
-## 下一步
-
-- 按照 [安装部署](getting-started/installation.md) 完成部署。
-- 从启动日志获取一次性引导密码登录 `admin`，然后立即修改密码。
+源码、开发命令和贡献入口见 [GitHub 仓库](https://github.com/dalamudx/ReleaseTracker)。
