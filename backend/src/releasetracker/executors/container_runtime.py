@@ -4,9 +4,15 @@ from typing import Any
 from urllib.parse import urlparse
 
 from ..config import normalize_executor_target_ref
-from .base import BaseRuntimeAdapter, RuntimeTarget, RuntimeUpdateResult
+from .base import (
+    BaseRuntimeAdapter,
+    RuntimeTarget,
+    RuntimeUpdateResult,
+    offload_blocking_runtime_adapter_methods,
+)
 
 
+@offload_blocking_runtime_adapter_methods
 class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
     def __init__(self, runtime_connection, client=None):
         super().__init__(runtime_connection)
@@ -34,6 +40,16 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
 
     def _should_expose_container(self, container) -> bool:
         return True
+
+    def is_target_missing_error(self, exc: Exception) -> bool:
+        # Docker and Podman SDKs use different NotFound exception classes.
+        # Only an explicit 404-like error may bypass the pre-rollback capture.
+        if isinstance(exc, KeyError):
+            return True
+        if exc.__class__.__name__ in {"NotFound", "NotFoundError"}:
+            return True
+        response = getattr(exc, "response", None)
+        return getattr(response, "status_code", None) == 404
 
     async def validate_target_ref(self, target_ref: dict[str, Any]) -> None:
         normalize_executor_target_ref(
@@ -336,7 +352,9 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
                 if selected_services is not None and service.lower() not in selected_services:
                     continue
                 matched = True
-                if not containers or not any(self._container_has_healthcheck(container) for container in containers):
+                if not containers or not any(
+                    self._container_has_healthcheck(container) for container in containers
+                ):
                     return False
             return matched
 
@@ -349,9 +367,7 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
 
     @staticmethod
     def _extract_primary_container_ip(attrs: dict[str, Any]) -> str | None:
-        network_settings = (
-            attrs.get("NetworkSettings") if isinstance(attrs, dict) else None
-        )
+        network_settings = attrs.get("NetworkSettings") if isinstance(attrs, dict) else None
         networks: dict[str, Any] = {}
         if isinstance(network_settings, dict):
             nested = network_settings.get("Networks")
@@ -397,7 +413,9 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
         if host_port is not None:
             return host_port
         if container_port is not None:
-            raise ValueError(f"container has no published host port for container port {container_port}")
+            raise ValueError(
+                f"container has no published host port for container port {container_port}"
+            )
 
         all_host_ports = self._extract_all_published_host_ports(attrs)
         if len(all_host_ports) == 1:

@@ -71,6 +71,12 @@ jobs:
       - name: Install backend dependencies
         run: uv --directory backend sync --locked --extra dev
 
+      - name: Lint backend
+        run: uv --directory backend run --locked --extra dev ruff check src tests
+
+      - name: Check backend formatting
+        run: uv --directory backend run --locked --extra dev black --check src tests
+
       - name: Generate backend locked requirements
         run: |
           mkdir -p "$GITHUB_WORKSPACE/artifacts"
@@ -99,6 +105,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm --prefix frontend ci
 
+      - name: Lint frontend
+        run: npm --prefix frontend run lint
+
       - name: Audit frontend dependencies
         run: npm --prefix frontend audit --audit-level=high
 
@@ -116,6 +125,18 @@ jobs:
 
       - name: Run frontend tests
         run: npm --prefix frontend run test
+
+      - name: Build frontend
+        run: npm --prefix frontend run build
+
+      - name: Install Chromium for browser E2E
+        run: npx --prefix frontend playwright install --with-deps chromium
+
+      - name: Run browser E2E
+        run: npm --prefix frontend run test:e2e
+
+      - name: Enforce initial bundle budget
+        run: npm --prefix frontend run check:bundle
 
   build:
     runs-on: ubuntu-latest

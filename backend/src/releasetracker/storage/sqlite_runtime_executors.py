@@ -21,6 +21,7 @@ from ..models import (
     ExecutorSnapshot,
     ExecutorStatus,
 )
+from ..services.snapshot_integrity import build_snapshot_integrity
 
 if TYPE_CHECKING:
     from .sqlite import SQLiteStorage
@@ -81,21 +82,52 @@ async def create_runtime_connection(
     return runtime_connection_id
 
 
-async def get_total_runtime_connections_count(storage: "SQLiteStorage") -> int:
+async def _runtime_connection_search_sql(
+    storage: "SQLiteStorage", db: aiosqlite.Connection, search: str | None
+) -> tuple[str, str, tuple[str, ...]]:
+    normalized_search = search.strip().lower() if search and search.strip() else None
+    if normalized_search is None:
+        return "", "", ()
+
+    like = f"%{normalized_search}%"
+    credential_join = ""
+    credential_condition = ""
+    params: tuple[str, ...] = (like, like, like)
+    if "credential_id" in await _runtime_connection_columns(db):
+        credential_join = "LEFT JOIN credentials c ON c.id = rc.credential_id"
+        credential_condition = " OR LOWER(COALESCE(c.name, '')) LIKE ?"
+        params = (*params, like)
+
+    return (
+        credential_join,
+        "WHERE LOWER(rc.name) LIKE ? OR LOWER(rc.type) LIKE ? "
+        "OR LOWER(COALESCE(rc.description, '')) LIKE ?" + credential_condition,
+        params,
+    )
+
+
+async def get_total_runtime_connections_count(
+    storage: "SQLiteStorage", search: str | None = None
+) -> int:
     db = await storage._get_connection()
-    cursor = await db.execute("SELECT COUNT(*) FROM runtime_connections")
+    joins, where_sql, params = await _runtime_connection_search_sql(storage, db, search)
+    cursor = await db.execute(
+        f"SELECT COUNT(*) FROM runtime_connections rc {joins} {where_sql}", params
+    )
     row = await cursor.fetchone()
     return row[0] if row else 0
 
 
 async def get_runtime_connections_paginated(
-    storage: "SQLiteStorage", skip: int = 0, limit: int = 20
+    storage: "SQLiteStorage", skip: int = 0, limit: int = 20, search: str | None = None
 ) -> list[RuntimeConnectionConfig]:
     db = await storage._get_connection()
     db.row_factory = aiosqlite.Row
+    joins, where_sql, params = await _runtime_connection_search_sql(storage, db, search)
     cursor = await db.execute(
-        "SELECT * FROM runtime_connections ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        (limit, skip),
+        f"SELECT rc.* FROM runtime_connections rc {joins} {where_sql} "
+        "ORDER BY rc.created_at DESC LIMIT ? OFFSET ?",
+        (*params, limit, skip),
     )
     rows = await cursor.fetchall()
     return [_row_to_runtime_connection(storage, row) for row in rows]
@@ -440,6 +472,11 @@ def _row_to_executor_snapshot(storage: "SQLiteStorage", row: Any) -> ExecutorSna
         bool(row["unredacted_persisted"]) if "unredacted_persisted" in row_keys else False
     )
     locked = bool(row["locked"]) if "locked" in row_keys else False
+    snapshot_format_version = (
+        row["snapshot_format_version"] if "snapshot_format_version" in row_keys else None
+    )
+    snapshot_sha256 = row["snapshot_sha256"] if "snapshot_sha256" in row_keys else None
+    snapshot_size_bytes = (row["snapshot_size_bytes"] if "snapshot_size_bytes" in row_keys else None)
     return ExecutorSnapshot(
         id=row["id"],
         executor_id=row["executor_id"],
@@ -449,6 +486,9 @@ def _row_to_executor_snapshot(storage: "SQLiteStorage", row: Any) -> ExecutorSna
         executor_run_id=executor_run_id,
         unredacted_persisted=unredacted_persisted,
         locked=locked,
+        snapshot_format_version=snapshot_format_version,
+        snapshot_sha256=snapshot_sha256,
+        snapshot_size_bytes=snapshot_size_bytes,
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
@@ -552,9 +592,28 @@ async def save_executor_config(storage: "SQLiteStorage", executor_config: Execut
     return await create_executor_config(storage, executor_config)
 
 
-async def get_total_executor_configs_count(storage: "SQLiteStorage") -> int:
+async def get_total_executor_configs_count(
+    storage: "SQLiteStorage", search: str | None = None
+) -> int:
     db = await storage._get_connection()
-    cursor = await db.execute("SELECT COUNT(*) FROM executors")
+    normalized_search = search.strip().lower() if search and search.strip() else None
+    if normalized_search is None:
+        cursor = await db.execute("SELECT COUNT(*) FROM executors")
+    else:
+        like = f"%{normalized_search}%"
+        cursor = await db.execute(
+            """
+            SELECT COUNT(*)
+            FROM executors e
+            LEFT JOIN runtime_connections rc ON rc.id = e.runtime_connection_id
+            WHERE LOWER(e.name) LIKE ?
+               OR LOWER(COALESCE(e.description, '')) LIKE ?
+               OR LOWER(COALESCE(e.tracker_name, '')) LIKE ?
+               OR LOWER(COALESCE(e.runtime_type, '')) LIKE ?
+               OR LOWER(COALESCE(rc.name, '')) LIKE ?
+            """,
+            (like, like, like, like, like),
+        )
     row = await cursor.fetchone()
     return row[0] if row else 0
 
@@ -580,13 +639,32 @@ async def get_all_executor_configs(storage: "SQLiteStorage") -> list[ExecutorCon
 
 
 async def get_executor_configs_paginated(
-    storage: "SQLiteStorage", skip: int = 0, limit: int = 20
+    storage: "SQLiteStorage", skip: int = 0, limit: int = 20, search: str | None = None
 ) -> list[ExecutorConfig]:
     db = await storage._get_connection()
     db.row_factory = aiosqlite.Row
-    cursor = await db.execute(
-        "SELECT * FROM executors ORDER BY name ASC LIMIT ? OFFSET ?", (limit, skip)
-    )
+    normalized_search = search.strip().lower() if search and search.strip() else None
+    if normalized_search is None:
+        cursor = await db.execute(
+            "SELECT * FROM executors ORDER BY name ASC LIMIT ? OFFSET ?", (limit, skip)
+        )
+    else:
+        like = f"%{normalized_search}%"
+        cursor = await db.execute(
+            """
+            SELECT e.*
+            FROM executors e
+            LEFT JOIN runtime_connections rc ON rc.id = e.runtime_connection_id
+            WHERE LOWER(e.name) LIKE ?
+               OR LOWER(COALESCE(e.description, '')) LIKE ?
+               OR LOWER(COALESCE(e.tracker_name, '')) LIKE ?
+               OR LOWER(COALESCE(e.runtime_type, '')) LIKE ?
+               OR LOWER(COALESCE(rc.name, '')) LIKE ?
+            ORDER BY e.name ASC
+            LIMIT ? OFFSET ?
+            """,
+            (like, like, like, like, like, limit, skip),
+        )
     rows = await cursor.fetchall()
     executor_ids = [row["id"] for row in rows]
     bindings_map = await _load_executor_service_bindings_map(
@@ -782,41 +860,48 @@ async def create_executor_run_if_no_active(
     """Atomically insert a run only when the executor has no active run."""
     if not active_statuses:
         raise ValueError("active_statuses must not be empty")
-    db = await storage._get_connection()
-    placeholders = ", ".join("?" for _ in active_statuses)
-    cursor = await db.execute(
-        f"""
-        INSERT INTO executor_run_history
-        (executor_id, started_at, finished_at, status, from_version, to_version, message, diagnostics, created_at)
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
-        WHERE NOT EXISTS (
-            SELECT 1
-            FROM executor_run_history
-            WHERE executor_id = ?
-              AND status IN ({placeholders})
-        )
-        """,
-        (
-            run.executor_id,
-            run.started_at.isoformat(),
-            run.finished_at.isoformat() if run.finished_at else None,
-            run.status,
-            run.from_version,
-            run.to_version,
-            run.message,
-            storage._dump_json(run.diagnostics),
-            run.created_at.isoformat(),
-            run.executor_id,
-            *sorted(active_statuses),
-        ),
-    )
-    await db.commit()
-    if not cursor.rowcount:
-        return None
-    run_id = cursor.lastrowid
-    if run_id is None:
-        raise ValueError("Failed to create executor run history")
-    return run_id
+    async with storage._transaction_lock:
+        db = await storage._get_connection()
+        placeholders = ", ".join("?" for _ in active_statuses)
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            cursor = await db.execute(
+                f"""
+                INSERT INTO executor_run_history
+                (executor_id, started_at, finished_at, status, from_version, to_version, message, diagnostics, created_at)
+                SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM executor_run_history
+                    WHERE executor_id = ?
+                      AND status IN ({placeholders})
+                )
+                """,
+                (
+                    run.executor_id,
+                    run.started_at.isoformat(),
+                    run.finished_at.isoformat() if run.finished_at else None,
+                    run.status,
+                    run.from_version,
+                    run.to_version,
+                    run.message,
+                    storage._dump_json(run.diagnostics),
+                    run.created_at.isoformat(),
+                    run.executor_id,
+                    *sorted(active_statuses),
+                ),
+            )
+            if not cursor.rowcount:
+                await db.rollback()
+                return None
+            run_id = cursor.lastrowid
+            if run_id is None:
+                raise ValueError("Failed to create executor run history")
+            await db.commit()
+            return run_id
+        except Exception:
+            await db.rollback()
+            raise
 
 
 async def enqueue_executor_projection_trigger_work(
@@ -828,6 +913,7 @@ async def enqueue_executor_projection_trigger_work(
     current_version: str,
     previous_identity_key: str | None = None,
     current_identity_key: str | None = None,
+    binding_targets: list[dict[str, Any]] | None = None,
     queued_at: datetime | None = None,
 ) -> bool:
     del queued_at
@@ -852,6 +938,8 @@ async def enqueue_executor_projection_trigger_work(
         "previous_identity_key": previous_identity_key,
         "current_identity_key": normalized_current_identity_key,
     }
+    if binding_targets is not None:
+        desired_target["binding_targets"] = binding_targets
 
     return await upsert_executor_desired_state(
         storage,
@@ -1040,13 +1128,15 @@ async def create_executor_snapshot(storage: "SQLiteStorage", snapshot: ExecutorS
         snapshot.updated_at.isoformat() if snapshot.updated_at else datetime.now().isoformat()
     )
 
+    integrity = build_snapshot_integrity(snapshot.snapshot_data)
     db = await storage._get_connection()
     cursor = await db.execute(
         """
         INSERT INTO executor_snapshots
-        (executor_id, snapshot_data, trigger, image_at_capture,
-         executor_run_id, unredacted_persisted, locked, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (executor_id, snapshot_data, trigger, image_at_capture, executor_run_id,
+         unredacted_persisted, locked, snapshot_format_version, snapshot_sha256,
+         snapshot_size_bytes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             snapshot.executor_id,
@@ -1056,6 +1146,9 @@ async def create_executor_snapshot(storage: "SQLiteStorage", snapshot: ExecutorS
             snapshot.executor_run_id,
             1 if snapshot.unredacted_persisted else 0,
             1 if snapshot.locked else 0,
+            integrity.format_version,
+            integrity.sha256,
+            integrity.size_bytes,
             created_at,
             updated_at,
         ),

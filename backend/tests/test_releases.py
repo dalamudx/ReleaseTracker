@@ -583,9 +583,7 @@ async def test_cleanup_release_history_keeps_latest_per_source_authoritative_cha
             prerelease=False,
             channel_name="stable",
             commit_sha=(
-                f"github-sha-{version}"
-                if source_type == "github"
-                else f"sha256:{version:064d}"
+                f"github-sha-{version}" if source_type == "github" else f"sha256:{version:064d}"
             ),
         )
 

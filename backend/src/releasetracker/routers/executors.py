@@ -466,10 +466,13 @@ async def _validate_executor_payload(
 
 @router.get("", dependencies=[Depends(get_current_admin_user)])
 async def get_executors(
-    storage: Annotated[SQLiteStorage, Depends(get_storage)], skip: int = 0, limit: int = 20
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    skip: int = 0,
+    limit: int = 20,
+    search: str | None = None,
 ):
-    total = await storage.get_total_executor_configs_count()
-    executors = await storage.get_executor_configs_paginated(skip, limit)
+    total = await storage.get_total_executor_configs_count(search)
+    executors = await storage.get_executor_configs_paginated(skip, limit, search)
     items = [await _build_executor_list_item(storage, executor) for executor in executors]
     return {"items": items, "total": total, "skip": skip, "limit": limit}
 
@@ -727,6 +730,10 @@ def _serialize_snapshot_list_item(item) -> dict[str, Any]:
         "executor_run_id": item.executor_run_id,
         "unredacted_persisted": item.unredacted_persisted,
         "locked": item.locked,
+        "integrity_status": item.integrity_status,
+        "snapshot_format_version": item.snapshot_format_version,
+        "snapshot_sha256": item.snapshot_sha256,
+        "snapshot_size_bytes": item.snapshot_size_bytes,
     }
 
 
@@ -877,6 +884,42 @@ async def unlock_executor_snapshot(
     if not updated:
         raise HTTPException(status_code=404, detail="Snapshot not found")
     return {"message": "Snapshot unlocked", "locked": False}
+
+
+@router.post(
+    "/{executor_id}/rollback/preview",
+    dependencies=[Depends(get_current_admin_user)],
+)
+async def preview_executor_rollback(
+    executor_id: int,
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    scheduler: Annotated[ExecutorScheduler, Depends(get_executor_scheduler)],
+    payload: RollbackRequest | None = None,
+):
+    """Check snapshot integrity and adapter compatibility without mutating runtime state."""
+    executor = await storage.get_executor_config(executor_id)
+    if not executor:
+        raise HTTPException(status_code=404, detail="Executor not found")
+    runtime_connection = await storage.get_runtime_connection(executor.runtime_connection_id)
+    if not runtime_connection:
+        raise HTTPException(status_code=400, detail="Runtime connection not found")
+    materialized_runtime = await materialize_runtime_connection_credentials(
+        storage, runtime_connection
+    )
+    adapter = _get_runtime_adapter(materialized_runtime)
+    preview = await RollbackService(storage, scheduler.snapshot_service).preview(
+        executor_config=executor,
+        adapter=adapter,
+        snapshot_id=payload.snapshot_id if payload is not None else None,
+    )
+    return {
+        "snapshot_id": preview.snapshot_id,
+        "image_at_capture": preview.image_at_capture,
+        "integrity_status": preview.integrity_status,
+        "snapshot_valid": preview.snapshot_valid,
+        "validation_error": preview.validation_error,
+        "mutation_performed": False,
+    }
 
 
 @router.post(

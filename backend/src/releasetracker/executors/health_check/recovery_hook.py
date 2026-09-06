@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from ...models import ExecutorSnapshot
+from ...services.snapshot_integrity import SnapshotIntegrityError, verify_snapshot_integrity
 
 if TYPE_CHECKING:
     from ...storage.sqlite import SQLiteStorage
@@ -106,6 +107,7 @@ class RecoveryHookCoordinator:
         snapshot_data = snapshot.snapshot_data
 
         try:
+            verify_snapshot_integrity(snapshot)
             await adapter.validate_snapshot(target_ref, snapshot_data)
         except NotImplementedError:
             logger.info(
@@ -113,7 +115,7 @@ class RecoveryHookCoordinator:
                 executor_id,
             )
             return RecoveryResult(outcome="not_supported")
-        except Exception as exc:
+        except (SnapshotIntegrityError, Exception) as exc:
             logger.warning(
                 "recovery_hook_invalid_snapshot executor_id=%s cause=%s",
                 executor_id,

@@ -13,11 +13,14 @@ import asyncio
 import textwrap
 from typing import Any, Sequence
 
+import httpx
 import pytest
 
 from releasetracker.config import RuntimeConnectionConfig
-from releasetracker.executors.portainer import PortainerRuntimeAdapter
-
+from releasetracker.executors.portainer import (
+    PortainerRequestTimeoutError,
+    PortainerRuntimeAdapter,
+)
 
 # ---- Fake HTTP client -----------------------------------------------------
 
@@ -47,9 +50,7 @@ class _FakePortainerHttpClient:
     async def request(self, method, path, params=None, json=None, timeout=None):
         normalized_params = dict(params) if isinstance(params, dict) else None
         normalized_json = dict(json) if isinstance(json, dict) else None
-        endpoint_id = (
-            normalized_params.get("endpointId") if normalized_params is not None else None
-        )
+        endpoint_id = normalized_params.get("endpointId") if normalized_params is not None else None
         self.calls.append(
             {
                 "method": method,
@@ -71,15 +72,13 @@ class _FakePortainerHttpClient:
 # ---- Fixtures -------------------------------------------------------------
 
 
-_STACK_FILE = textwrap.dedent(
-    """\
+_STACK_FILE = textwrap.dedent("""\
     services:
       api:
         image: ghcr.io/acme/api:1.0.0
       worker:
         image: ghcr.io/acme/worker:1.0.0
-    """
-)
+    """)
 
 _STACK_DETAIL_ACTIVE: dict[str, Any] = {
     "Id": 42,
@@ -120,6 +119,50 @@ def _target_ref() -> dict[str, Any]:
 
 def _ok(payload: Any) -> _FakePortainerHttpResponse:
     return _FakePortainerHttpResponse(status_code=200, payload=payload)
+
+
+@pytest.mark.asyncio
+async def test_portainer_stack_explicitly_rejects_single_image_operations():
+    adapter = PortainerRuntimeAdapter(_runtime_connection())
+
+    assert not adapter.supports_single_image_operations(_target_ref())
+    with pytest.raises(NotImplementedError, match="multi-service Portainer stack"):
+        await adapter.get_current_image(_target_ref())
+    with pytest.raises(NotImplementedError, match="update_stack_services"):
+        await adapter.update_image(_target_ref(), "ghcr.io/acme/api:2.0.0")
+
+
+@pytest.mark.asyncio
+async def test_portainer_retries_transient_get_requests_only():
+    responses = {
+        ("GET", "/api/endpoints", None): [
+            httpx.ReadTimeout("temporary timeout"),
+            _ok([]),
+        ]
+    }
+    client = _FakePortainerHttpClient(responses)
+    runtime = _runtime_connection()
+    runtime.config["operation_policy"] = {"read_timeout_seconds": 1, "read_retries": 1}
+    adapter = PortainerRuntimeAdapter(runtime, client=client)
+
+    assert await adapter.discover_endpoints() == []
+    assert len(client.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_portainer_stack_update_timeout_is_not_replayed():
+    responses = {("PUT", "/api/stacks/42", 1): [httpx.WriteTimeout("write timed out")]}
+    client = _FakePortainerHttpClient(responses)
+    adapter = PortainerRuntimeAdapter(_runtime_connection(), client=client)
+
+    with pytest.raises(PortainerRequestTimeoutError, match="stack update"):
+        await adapter._update_stack(
+            endpoint_id=1,
+            stack_id=42,
+            stack=_STACK_DETAIL_ACTIVE,
+            stack_file_content=_STACK_FILE,
+        )
+    assert len(client.calls) == 1
 
 
 # ---- capture_snapshot ----------------------------------------------------

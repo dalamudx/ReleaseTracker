@@ -1,7 +1,6 @@
 """Settings routes"""
 
 import logging
-from datetime import datetime
 from typing import Literal, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -352,18 +351,23 @@ async def get_settings(
 ):
     """Get all system settings"""
     storage: SQLiteStorage = get_storage(request)
-    settings_dict = await storage.get_all_settings()
-    if settings_dict.get(SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY) not in {
+    settings: dict[str, tuple[str, str | None]] = {
+        key: (value, updated_at)
+        for key, (value, updated_at) in (await storage.get_all_settings_with_updated_at()).items()
+    }
+    oci_redirects_setting = settings.get(SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY)
+    if oci_redirects_setting is None or oci_redirects_setting[0] not in {
         CANONICAL_BOOLEAN_TRUE,
         CANONICAL_BOOLEAN_FALSE,
     }:
-        settings_dict[SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY] = CANONICAL_BOOLEAN_FALSE
+        settings[SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY] = (
+            CANONICAL_BOOLEAN_FALSE,
+            None,
+        )
     return [
-        SettingItem(
-            key=k, value=v, updated_at=datetime.now().isoformat()
-        )  # TODO: Fetch real updated_at from DB
-        for k, v in settings_dict.items()
-        if k not in RESERVED_AUTH_SETTING_KEYS
+        SettingItem(key=key, value=value, updated_at=updated_at)
+        for key, (value, updated_at) in settings.items()
+        if key not in RESERVED_AUTH_SETTING_KEYS
     ]
 
 
@@ -379,7 +383,7 @@ async def update_setting(
         raise HTTPException(status_code=403, detail="Reserved authentication setting")
 
     setting.value = _normalize_setting_value(setting.key, setting.value)
-    await storage.set_setting(setting.key, setting.value)
+    setting.updated_at = await storage.set_setting(setting.key, setting.value)
     if setting.key == SYSTEM_LOG_LEVEL_SETTING_KEY:
         logging.getLogger().setLevel(getattr(logging, setting.value))
     if setting.key == SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY:

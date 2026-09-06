@@ -178,9 +178,7 @@ async def test_tcp_probe_healthy_against_live_listener():
 @pytest.mark.asyncio
 async def test_tcp_probe_connection_refused():
     profile = _make_profile(port=_closed_port())
-    ctx = _context(
-        profile, [ProbeHost(service=None, host="127.0.0.1", port=profile.tcp.port)]
-    )
+    ctx = _context(profile, [ProbeHost(service=None, host="127.0.0.1", port=profile.tcp.port)])
     result = await TCPProbe().attempt(ctx)
     assert result.healthy is False
     assert result.error_category == "connection_refused"

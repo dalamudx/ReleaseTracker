@@ -76,7 +76,12 @@ async def test_settings_crud_endpoints(authed_client):
     )
 
     assert create_response.status_code == 200, create_response.text
-    assert create_response.json() == {"key": "test.setting", "value": "enabled", "updated_at": None}
+    created_setting = create_response.json()
+    assert created_setting["key"] == "test.setting"
+    assert created_setting["value"] == "enabled"
+    created_at = created_setting["updated_at"]
+    assert created_at is not None
+    datetime.fromisoformat(created_at)
 
     list_response = authed_client.get("/api/settings")
 
@@ -84,7 +89,7 @@ async def test_settings_crud_endpoints(authed_client):
     settings = list_response.json()
     created_setting = next(item for item in settings if item["key"] == "test.setting")
     assert created_setting["value"] == "enabled"
-    assert created_setting["updated_at"] is not None
+    assert created_setting["updated_at"] == created_at
 
     delete_response = authed_client.delete("/api/settings/test.setting")
 

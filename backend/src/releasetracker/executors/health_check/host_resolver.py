@@ -47,9 +47,7 @@ async def resolve_probe_hosts(
     """
     resolver = getattr(adapter, "resolve_probe_hosts", None)
     if not callable(resolver):
-        raise ValueError(
-            f"{adapter.__class__.__name__} does not implement resolve_probe_hosts"
-        )
+        raise ValueError(f"{adapter.__class__.__name__} does not implement resolve_probe_hosts")
     result = await resolver(
         target_ref,
         services=services,

@@ -23,6 +23,29 @@ describe("release query semantics", () => {
         expect(queryKeys.latestCurrentReleases).toEqual(["releases", "latest-current"])
     })
 
+    it("keeps list search query keys and API parameters isolated", async () => {
+        const params = { limit: 20, skip: 0, search: "production" }
+        expect(queryKeys.trackers(params)).toEqual(["trackers", params])
+        expect(queryKeys.notifiers(params)).toEqual(["notifiers", params])
+        expect(queryKeys.runtimeConnections(params)).toEqual(["runtime-connections", params])
+        expect(queryKeys.executors(params)).toEqual(["executors", params])
+
+        const getSpy = vi.spyOn(apiClient, "get").mockResolvedValue({
+            data: { items: [], total: 0, skip: 0, limit: 20 },
+        })
+        await Promise.all([
+            api.getTrackers(params),
+            api.getNotifiers(params),
+            api.getRuntimeConnections(params),
+            api.getExecutors(params),
+        ])
+
+        expect(getSpy).toHaveBeenCalledWith("/api/trackers", { params })
+        expect(getSpy).toHaveBeenCalledWith("/api/notifiers", { params })
+        expect(getSpy).toHaveBeenCalledWith("/api/runtime-connections", { params })
+        expect(getSpy).toHaveBeenCalledWith("/api/executors", { params })
+    })
+
     it("builds a short digest or commit hash release identity prefix", () => {
         expect(buildReleaseIdentityPrefix({
             digest: "sha256:1234567890abcdef",

@@ -83,14 +83,10 @@ async def test_helm_status_deployed_is_healthy():
     assert result.healthy is True
     assert result.terminate_phase is False
     assert result.detail["helm_status"] == "deployed"
-    assert adapter.calls == [
-        ["status", "api", "--namespace", "prod", "--output", "json"]
-    ]
+    assert adapter.calls == [["status", "api", "--namespace", "prod", "--output", "json"]]
 
 
-@pytest.mark.parametrize(
-    "status", ["pending-install", "pending-upgrade", "pending-rollback"]
-)
+@pytest.mark.parametrize("status", ["pending-install", "pending-upgrade", "pending-rollback"])
 @pytest.mark.asyncio
 async def test_helm_pending_statuses_retry(status: str):
     adapter = _FakeHelmAdapter(output=_status_payload(status))
@@ -111,9 +107,7 @@ async def test_helm_failed_status_short_circuits_phase():
     assert result.terminate_phase is True
 
 
-@pytest.mark.parametrize(
-    "status", ["superseded", "uninstalled", "uninstalling", "unknown"]
-)
+@pytest.mark.parametrize("status", ["superseded", "uninstalled", "uninstalling", "unknown"])
 @pytest.mark.asyncio
 async def test_helm_unknown_status_retries(status: str):
     adapter = _FakeHelmAdapter(output=_status_payload(status))

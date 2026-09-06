@@ -1,7 +1,8 @@
 /**
- * OIDC authentication API functions
- * All requests use relative paths and are proxied to the backend by Vite
+ * OIDC authentication API functions.
+ * Paths remain same-origin under an optional deployment sub-path.
  */
+import { appPath } from "@/lib/base-path"
 
 export interface OIDCProvider {
     slug: string
@@ -62,14 +63,14 @@ export interface AdminOIDCBindingAuthorizeResponse {
 
 /** Get enabled OIDC providers for display on the login page */
 export async function getOIDCProviders(): Promise<OIDCProvider[]> {
-    const res = await fetch('/api/auth/oidc/providers')
+    const res = await fetch(appPath('/api/auth/oidc/providers'))
     if (!res.ok) return []
     return res.json()
 }
 
 /** Start OIDC login and redirect to the IdP via backend /api/auth/oidc/{slug}/authorize */
 export function initiateOIDCLogin(providerSlug: string) {
-    window.location.href = `/api/auth/oidc/${providerSlug}/authorize`
+    window.location.href = appPath(`/api/auth/oidc/${providerSlug}/authorize`)
 }
 
 /**
@@ -101,7 +102,7 @@ function authHeaders(): HeadersInit {
 
 /** Get the singleton administrator OIDC binding. Administrators only. */
 export async function getAdminOIDCBinding(): Promise<AdminOIDCBindingStatus> {
-    const res = await fetch('/api/oidc-providers/admin-binding', { headers: authHeaders() })
+    const res = await fetch(appPath('/api/oidc-providers/admin-binding'), { headers: authHeaders() })
     if (!res.ok) throw new Error('获取 OIDC 管理员绑定状态失败')
     return res.json()
 }
@@ -111,7 +112,7 @@ export async function authorizeAdminOIDCBinding(
     providerId: number,
     currentPassword: string,
 ): Promise<AdminOIDCBindingAuthorizeResponse> {
-    const res = await fetch(`/api/oidc-providers/${providerId}/admin-binding/authorize`, {
+    const res = await fetch(appPath(`/api/oidc-providers/${providerId}/admin-binding/authorize`), {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ current_password: currentPassword }),
@@ -125,7 +126,7 @@ export async function authorizeAdminOIDCBinding(
 
 /** Remove the administrator OIDC binding after password confirmation. */
 export async function unbindAdminOIDC(currentPassword: string): Promise<{ message: string }> {
-    const res = await fetch('/api/oidc-providers/admin-binding/unbind', {
+    const res = await fetch(appPath('/api/oidc-providers/admin-binding/unbind'), {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ current_password: currentPassword }),
@@ -139,14 +140,14 @@ export async function unbindAdminOIDC(currentPassword: string): Promise<{ messag
 
 /** Get all OIDC provider configurations. Administrators only. */
 export async function getOIDCProvidersAdmin(): Promise<OIDCProviderConfig[]> {
-    const res = await fetch('/api/oidc-providers', { headers: authHeaders() })
+    const res = await fetch(appPath('/api/oidc-providers'), { headers: authHeaders() })
     if (!res.ok) throw new Error('获取 OIDC 提供商失败')
     return res.json()
 }
 
 /** Create OIDC provider configuration. Administrators only. */
 export async function createOIDCProvider(data: CreateOIDCProviderRequest): Promise<{ message: string; id: number }> {
-    const res = await fetch('/api/oidc-providers', {
+    const res = await fetch(appPath('/api/oidc-providers'), {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify(data),
@@ -160,7 +161,7 @@ export async function createOIDCProvider(data: CreateOIDCProviderRequest): Promi
 
 /** Update OIDC provider configuration. Administrators only. */
 export async function updateOIDCProvider(id: number, data: UpdateOIDCProviderRequest): Promise<{ message: string }> {
-    const res = await fetch(`/api/oidc-providers/${id}`, {
+    const res = await fetch(appPath(`/api/oidc-providers/${id}`), {
         method: 'PUT',
         headers: authHeaders(),
         body: JSON.stringify(data),
@@ -174,7 +175,7 @@ export async function updateOIDCProvider(id: number, data: UpdateOIDCProviderReq
 
 /** Delete OIDC provider configuration. Administrators only. */
 export async function deleteOIDCProvider(id: number): Promise<{ message: string }> {
-    const res = await fetch(`/api/oidc-providers/${id}`, {
+    const res = await fetch(appPath(`/api/oidc-providers/${id}`), {
         method: 'DELETE',
         headers: authHeaders(),
     })

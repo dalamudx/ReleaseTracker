@@ -6,7 +6,11 @@ from cryptography.fernet import Fernet
 from releasetracker.config import RuntimeConnectionConfig
 from releasetracker.models import Credential, LoginRequest
 from releasetracker.oidc_models import OIDCProvider
-from releasetracker.services.system_keys import SystemKeyManager, rotate_encryption_key
+from releasetracker.services.system_keys import (
+    SystemKeyManager,
+    recover_pending_encryption_key_rotation,
+    rotate_encryption_key,
+)
 from releasetracker.storage.sqlite import SQLiteStorage
 
 
@@ -185,6 +189,89 @@ async def test_encryption_key_rotation_preserves_encrypted_data(
     assert provider_after["client_secret"] != provider_before["client_secret"]
     assert runtime_after["secrets"] != runtime_before["secrets"]
 
+
+@pytest.mark.asyncio
+async def test_encryption_key_rotation_recovers_after_database_commit_before_key_finalize(
+    storage: SQLiteStorage, system_key_manager, monkeypatch
+):
+    credential_id = await storage.create_credential(
+        Credential(name="recoverable-rotation", type="docker", token="secret-token")
+    )
+    new_key = Fernet.generate_key().decode("utf-8")
+    original_complete = system_key_manager._complete_encryption_key_rotation_locked
+
+    def _interrupt_after_database_commit(_value: str) -> None:
+        raise OSError("simulated key-file finalization failure")
+
+    monkeypatch.setattr(
+        system_key_manager,
+        "_complete_encryption_key_rotation_locked",
+        _interrupt_after_database_commit,
+    )
+    with pytest.raises(OSError, match="finalization failure"):
+        await rotate_encryption_key(storage, system_key_manager, value=new_key)
+
+    persisted = json.loads(system_key_manager.secrets_path.read_text(encoding="utf-8"))
+    assert persisted["encryption_key"] != new_key
+    assert persisted["pending_encryption_key"] == new_key
+
+    monkeypatch.setattr(
+        system_key_manager,
+        "_complete_encryption_key_rotation_locked",
+        original_complete,
+    )
+    restarted_manager = SystemKeyManager(system_key_manager.secrets_path)
+    await restarted_manager.initialize()
+    restarted_storage = SQLiteStorage(
+        storage.db_path,
+        system_key_manager=restarted_manager,
+    )
+    await restarted_storage.initialize()
+    try:
+        assert await recover_pending_encryption_key_rotation(restarted_storage, restarted_manager)
+        assert restarted_manager.encryption_key == new_key
+        assert restarted_manager.pending_encryption_key is None
+        recovered_credential = await restarted_storage.get_credential(credential_id)
+        assert recovered_credential is not None
+        assert recovered_credential.token == "secret-token"
+        persisted = json.loads(restarted_manager.secrets_path.read_text(encoding="utf-8"))
+        assert persisted["encryption_key"] == new_key
+        assert "pending_encryption_key" not in persisted
+    finally:
+        await restarted_storage.close()
+
+
+@pytest.mark.asyncio
+async def test_encryption_key_rotation_replays_after_key_journal_before_database_commit(
+    storage: SQLiteStorage, system_key_manager, monkeypatch
+):
+    credential_id = await storage.create_credential(
+        Credential(name="replayable-rotation", type="docker", token="secret-token")
+    )
+    new_key = Fernet.generate_key().decode("utf-8")
+
+    async def _interrupt_before_database_commit(_value: str):
+        raise RuntimeError("simulated database interruption")
+
+    monkeypatch.setattr(storage, "_rotate_encrypted_data_locked", _interrupt_before_database_commit)
+    with pytest.raises(RuntimeError, match="database interruption"):
+        await rotate_encryption_key(storage, system_key_manager, value=new_key)
+
+    restarted_manager = SystemKeyManager(system_key_manager.secrets_path)
+    await restarted_manager.initialize()
+    restarted_storage = SQLiteStorage(
+        storage.db_path,
+        system_key_manager=restarted_manager,
+    )
+    await restarted_storage.initialize()
+    try:
+        assert await recover_pending_encryption_key_rotation(restarted_storage, restarted_manager)
+        assert restarted_manager.encryption_key == new_key
+        recovered_credential = await restarted_storage.get_credential(credential_id)
+        assert recovered_credential is not None
+        assert recovered_credential.token == "secret-token"
+    finally:
+        await restarted_storage.close()
 
 @pytest.mark.asyncio
 async def test_invalid_encryption_key_rotation_returns_400(client, auth_service):

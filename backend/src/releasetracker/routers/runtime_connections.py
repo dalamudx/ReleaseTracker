@@ -141,10 +141,13 @@ async def _build_portainer_endpoint_discovery_config(
 
 @router.get("", dependencies=[Depends(get_current_admin_user)])
 async def get_runtime_connections(
-    storage: Annotated[SQLiteStorage, Depends(get_storage)], skip: int = 0, limit: int = 20
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    skip: int = 0,
+    limit: int = 20,
+    search: str | None = None,
 ):
-    total = await storage.get_total_runtime_connections_count()
-    runtime_connections = await storage.get_runtime_connections_paginated(skip, limit)
+    total = await storage.get_total_runtime_connections_count(search)
+    runtime_connections = await storage.get_runtime_connections_paginated(skip, limit, search)
     return {
         "items": [
             await _serialize_runtime_connection(storage, item) for item in runtime_connections

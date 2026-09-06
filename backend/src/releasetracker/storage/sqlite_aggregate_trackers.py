@@ -115,10 +115,9 @@ async def load_tracker_sources(
     return [row_to_tracker_source(row) for row in rows]
 
 
-async def load_aggregate_tracker_from_row(
-    storage: "SQLiteStorage", db: aiosqlite.Connection, row: aiosqlite.Row
+def aggregate_tracker_from_row(
+    row: aiosqlite.Row, sources: list[TrackerSource]
 ) -> AggregateTracker:
-    sources = await load_tracker_sources(storage, db, row["id"])
     primary_source_key = None
     if row["primary_changelog_source_id"] is not None:
         primary_source = next(
@@ -139,6 +138,13 @@ async def load_aggregate_tracker_from_row(
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
+
+
+async def load_aggregate_tracker_from_row(
+    storage: "SQLiteStorage", db: aiosqlite.Connection, row: aiosqlite.Row
+) -> AggregateTracker:
+    sources = await load_tracker_sources(storage, db, row["id"])
+    return aggregate_tracker_from_row(row, sources)
 
 
 async def persist_tracker_sources(
@@ -312,6 +318,85 @@ async def get_all_aggregate_trackers(storage: "SQLiteStorage") -> list[Aggregate
     cursor = await db.execute("SELECT * FROM aggregate_trackers ORDER BY name ASC")
     rows = await cursor.fetchall()
     return [await load_aggregate_tracker_from_row(storage, db, row) for row in rows]
+
+
+async def get_aggregate_trackers_page(
+    storage: "SQLiteStorage", *, skip: int, limit: int, search: str | None = None
+) -> tuple[list[AggregateTracker], int]:
+    """Load one aggregate-tracker page without materializing every tracker."""
+    if not await storage._aggregate_schema_available():
+        return [], 0
+
+    db = await storage._get_connection()
+    db.row_factory = aiosqlite.Row
+    normalized_search = search.strip().lower() if search and search.strip() else None
+    where_sql = ""
+    params: list[Any] = []
+    if normalized_search is not None:
+        like = f"%{normalized_search}%"
+        where_sql = """
+            WHERE LOWER(at.name) LIKE ?
+               OR LOWER(COALESCE(at.description, '')) LIKE ?
+               OR EXISTS (
+                   SELECT 1
+                   FROM aggregate_tracker_sources ats
+                   LEFT JOIN json_tree(
+                       CASE
+                           WHEN json_valid(ats.source_config) THEN ats.source_config
+                           ELSE '{}'
+                       END
+                   ) config_value ON TRUE
+                   WHERE ats.aggregate_tracker_id = at.id
+                     AND (
+                         LOWER(ats.source_key) LIKE ?
+                         OR LOWER(ats.source_type) LIKE ?
+                         OR (
+                             config_value.type NOT IN ('object', 'array', 'null')
+                             AND LOWER(CAST(config_value.value AS TEXT)) LIKE ?
+                         )
+                     )
+               )
+        """
+        params = [like, like, like, like, like]
+
+    total_row = await (
+        await db.execute(
+            f"SELECT COUNT(*) AS total FROM aggregate_trackers at {where_sql}", tuple(params)
+        )
+    ).fetchone()
+    total = int(total_row["total"])
+    rows = await (
+        await db.execute(
+            f"SELECT at.* FROM aggregate_trackers at {where_sql} ORDER BY at.name ASC LIMIT ? OFFSET ?",
+            (*params, limit, skip),
+        )
+    ).fetchall()
+
+    tracker_ids = [row["id"] for row in rows]
+    sources_by_tracker_id: dict[int, list[TrackerSource]] = {
+        tracker_id: [] for tracker_id in tracker_ids
+    }
+    if tracker_ids:
+        placeholders = ", ".join("?" for _ in tracker_ids)
+        source_rows = await (
+            await db.execute(
+                f"""
+                SELECT *
+                FROM aggregate_tracker_sources
+                WHERE aggregate_tracker_id IN ({placeholders})
+                ORDER BY aggregate_tracker_id ASC, source_rank ASC, id ASC
+                """,
+                tuple(tracker_ids),
+            )
+        ).fetchall()
+        for source_row in source_rows:
+            sources_by_tracker_id[source_row["aggregate_tracker_id"]].append(
+                row_to_tracker_source(source_row)
+            )
+
+    return [
+        aggregate_tracker_from_row(row, sources_by_tracker_id[row["id"]]) for row in rows
+    ], total
 
 
 async def get_executor_binding(

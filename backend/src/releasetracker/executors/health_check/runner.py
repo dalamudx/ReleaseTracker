@@ -144,9 +144,7 @@ class HealthCheckRunner:
                     last_error=f"attempt exceeded {per_attempt_timeout}s timeout",
                 )
 
-            attempt_duration_ms = int(
-                (self._monotonic() - attempt_monotonic_start) * 1000
-            )
+            attempt_duration_ms = int((self._monotonic() - attempt_monotonic_start) * 1000)
             logger.debug(
                 "health_check_probe_attempt %s",
                 redact_for_log(

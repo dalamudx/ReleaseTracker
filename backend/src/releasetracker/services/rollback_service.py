@@ -9,11 +9,13 @@ from typing import TYPE_CHECKING, Literal
 
 from fastapi import HTTPException
 
+from ..executor_scheduler_run_lifecycle import ACTIVE_EXECUTOR_RUN_STATUSES
 from ..executors.health_check.recovery_hook import (
     RecoveryHookCoordinator,
     RecoveryOutcome,
 )
 from ..models import ExecutorRunHistory, ExecutorSnapshot
+from .snapshot_integrity import SnapshotIntegrityError, verify_snapshot_integrity
 
 if TYPE_CHECKING:
     from ..config import ExecutorConfig
@@ -25,7 +27,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-_ROLLBACK_ACTIVE_STATES = frozenset({"queued", "running", "health_checking"})
+_ROLLBACK_ACTIVE_STATES = ACTIVE_EXECUTOR_RUN_STATUSES
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,15 @@ class RollbackOutcome:
     run: ExecutorRunHistory
     recovery_outcome: RecoveryOutcome
     recovery_error: str | None = None
+
+
+@dataclass(frozen=True)
+class RollbackPreview:
+    snapshot_id: int
+    image_at_capture: str | None
+    integrity_status: str
+    snapshot_valid: bool
+    validation_error: str | None = None
 
 
 class RollbackService:
@@ -43,6 +54,41 @@ class RollbackService:
     ) -> None:
         self._storage = storage
         self._snapshot_service = snapshot_service
+
+    async def preview(
+        self,
+        *,
+        executor_config: "ExecutorConfig",
+        adapter: "BaseRuntimeAdapter",
+        snapshot_id: int | None,
+    ) -> RollbackPreview:
+        """Validate a rollback candidate without a claim, run record, or runtime mutation."""
+        if executor_config.id is None:
+            raise HTTPException(status_code=400, detail="Executor id is required")
+        snapshot = (
+            await self._storage.get_executor_snapshot_by_id(executor_config.id, snapshot_id)
+            if snapshot_id is not None
+            else await self._storage.get_executor_snapshot(executor_config.id)
+        )
+        if snapshot is None or snapshot.id is None:
+            raise HTTPException(status_code=404, detail="Snapshot not found")
+        try:
+            integrity_status = verify_snapshot_integrity(snapshot)
+            await adapter.validate_snapshot(executor_config.target_ref, snapshot.snapshot_data)
+        except Exception as exc:
+            return RollbackPreview(
+                snapshot_id=snapshot.id,
+                image_at_capture=snapshot.image_at_capture,
+                integrity_status="invalid",
+                snapshot_valid=False,
+                validation_error=str(exc),
+            )
+        return RollbackPreview(
+            snapshot_id=snapshot.id,
+            image_at_capture=snapshot.image_at_capture,
+            integrity_status=integrity_status,
+            snapshot_valid=True,
+        )
 
     async def rollback(
         self,
@@ -93,8 +139,27 @@ class RollbackService:
         recovery_outcome: RecoveryOutcome = "failed"
         from_version: str | None = None
         try:
+            # Validate the requested historical snapshot before doing any work.
+            # A missing live target is recoverable; malformed or tampered history is not.
+            try:
+                diagnostics["snapshot_integrity"] = verify_snapshot_integrity(snapshot)
+                await adapter.validate_snapshot(executor_config.target_ref, snapshot.snapshot_data)
+            except (SnapshotIntegrityError, Exception) as exc:
+                diagnostics["snapshot_validation_error"] = str(exc)
+                return await self._finalize_failed(
+                    run_id=run_id,
+                    diagnostics=diagnostics,
+                    message=f"rollback snapshot validation failed: {exc}",
+                    recovery_error=str(exc),
+                    from_version=None,
+                )
+
             await self._storage.set_executor_run_status(run_id, "running")
-            pre_rollback_captured, from_version = await self._capture_pre_rollback_snapshot(
+            (
+                pre_rollback_captured,
+                from_version,
+                target_missing,
+            ) = await self._capture_pre_rollback_snapshot(
                 executor_config=executor_config,
                 adapter=adapter,
                 run_id=run_id,
@@ -114,6 +179,8 @@ class RollbackService:
                     recovery_error=capture_detail,
                     from_version=from_version,
                 )
+            if target_missing:
+                diagnostics["pre_rollback_snapshot"] = "skipped: target is absent"
 
             coordinator = RecoveryHookCoordinator(self._storage)
             recovery_result = await coordinator.recover_detailed(
@@ -204,17 +271,19 @@ class RollbackService:
         adapter: "BaseRuntimeAdapter",
         run_id: int,
         diagnostics: dict,
-    ) -> tuple[bool, str | None]:
+    ) -> tuple[bool, str | None, bool]:
+        """Capture current state, except when the runtime confirms it is absent."""
         target_ref = executor_config.target_ref
-        try:
-            current_image = await adapter.get_current_image(target_ref)
-        except Exception as exc:
-            logger.debug(
-                "rollback could not resolve current image for executor_id=%s: %s",
-                executor_config.id,
-                exc,
-            )
-            current_image = ""
+        current_image = ""
+        if adapter.supports_single_image_operations(target_ref):
+            try:
+                current_image = await adapter.get_current_image(target_ref)
+            except Exception as exc:
+                if adapter.is_target_missing_error(exc):
+                    diagnostics["pre_rollback_snapshot_skipped"] = "target is absent"
+                    return True, None, True
+                diagnostics["pre_rollback_capture_error"] = str(exc)
+                return False, None, False
 
         try:
             snapshot_data = await adapter.capture_snapshot(target_ref, current_image)
@@ -223,10 +292,10 @@ class RollbackService:
             diagnostics["pre_rollback_capture_error"] = (
                 f"adapter does not support snapshot capture: {exc}"
             )
-            return False, current_image or None
+            return False, current_image or None, False
         except Exception as exc:
             diagnostics["pre_rollback_capture_error"] = str(exc)
-            return False, current_image or None
+            return False, current_image or None, False
 
         redacted, unredacted = self._snapshot_service.redact_for_persist(
             snapshot_data, runtime_type=executor_config.runtime_type
@@ -251,7 +320,7 @@ class RollbackService:
                 executor_config.id,
                 exc,
             )
-        return True, current_image or None
+        return True, current_image or None, False
 
     async def _refresh_container_target_ref(
         self,

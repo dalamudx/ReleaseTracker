@@ -25,7 +25,9 @@ def test_render_changelog_template_uses_version_placeholders():
         render_changelog_template("CHANGELOG/CHANGELOG-{major}.{minor}.md", release)
         == "CHANGELOG/CHANGELOG-1.2.md"
     )
-    assert render_changelog_template("docs/releases/{version}.md", release) == "docs/releases/1.2.3.md"
+    assert (
+        render_changelog_template("docs/releases/{version}.md", release) == "docs/releases/1.2.3.md"
+    )
     assert render_changelog_template("changelog/{tag}.md", release) == "changelog/v1.2.3.md"
 
 
@@ -59,7 +61,10 @@ def test_extract_whole_file_mode():
         extraction_mode="whole_file",
     )
 
-    assert extract_changelog_content("# v1.2.3\n\nAll notes", _release(), config) == "# v1.2.3\n\nAll notes"
+    assert (
+        extract_changelog_content("# v1.2.3\n\nAll notes", _release(), config)
+        == "# v1.2.3\n\nAll notes"
+    )
 
 
 def test_extract_kubernetes_style_subheading():

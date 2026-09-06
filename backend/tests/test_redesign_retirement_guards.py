@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -10,16 +9,26 @@ def _read(rel_path: str) -> str:
 
 def test_retired_active_authority_paths_remain_retired() -> None:
     scheduler_text = _read("backend/src/releasetracker/scheduler.py")
+    scheduled_checks_text = _read("backend/src/releasetracker/scheduler_scheduled_checks.py")
+    manual_checks_text = _read("backend/src/releasetracker/scheduler_manual_checks.py")
     executors_router_text = _read("backend/src/releasetracker/routers/executors.py")
     executor_scheduler_text = _read("backend/src/releasetracker/executor_scheduler.py")
+    target_resolution_text = _read(
+        "backend/src/releasetracker/executor_scheduler_target_resolution.py"
+    )
     trackers_router_text = _read("backend/src/releasetracker/routers/trackers.py")
     frontend_client_text = _read("frontend/src/api/client.ts")
-    aggregate_helpers_text = _read("backend/src/releasetracker/storage/sqlite_aggregate_trackers.py")
+    aggregate_helpers_text = _read(
+        "backend/src/releasetracker/storage/sqlite_aggregate_trackers.py"
+    )
 
-    # Scheduler must stay aggregate-only for live checks.
-    assert "aggregate_tracker = self._require_aggregate_tracker_for_live_check(" in scheduler_text
-    assert "result = await self._process_aggregate_tracker_check(" in scheduler_text
-    assert "await self._process_tracker_check(" not in scheduler_text
+    # Scheduled and manual live-check lifecycles must stay aggregate-only.
+    for live_check_text in (scheduled_checks_text, manual_checks_text):
+        assert (
+            "aggregate_tracker = self._require_aggregate_tracker_for_live_check(" in live_check_text
+        )
+        assert "result = await self._process_aggregate_tracker_check(" in live_check_text
+        assert "await self._process_tracker_check(" not in live_check_text
 
     # Legacy scheduler helper can exist for passive/backward code organization,
     # but it must not become a live execution path again.
@@ -28,8 +37,9 @@ def test_retired_active_authority_paths_remain_retired() -> None:
     # Executor API/scheduler binding must not infer from tracker name.
     assert "if tracker_source_id_value is None:" in executors_router_text
     assert "tracker_source_id must be specified" in executors_router_text
-    assert "if executor_config.tracker_source_id is None:" in executor_scheduler_text
-    assert "return None" in executor_scheduler_text
+    assert "ExecutorSchedulerTargetResolution" in executor_scheduler_text
+    assert "if executor_config.tracker_source_id is None:" in target_resolution_text
+    assert "return None" in target_resolution_text
 
     # Active tracker API shims must not reintroduce legacy fields.
     assert "primary_changelog_channel_key" not in trackers_router_text

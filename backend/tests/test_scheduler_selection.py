@@ -244,7 +244,7 @@ async def test_projection_winner_change_enqueues_executor_trigger_work(storage, 
     assert first_desired_state.pending is True
     assert first_desired_state.desired_target["current_version"] == "1.0.0"
     assert first_desired_state.desired_target["previous_version"] is None
-    assert first_desired_state.desired_target["current_identity_key"] == "1.0.0"
+    assert first_desired_state.desired_target["current_identity_key"].startswith("bindings:")
 
     release_state["releases"] = [
         make_release(
@@ -260,7 +260,7 @@ async def test_projection_winner_change_enqueues_executor_trigger_work(storage, 
     assert desired_state.pending is True
     assert desired_state.desired_target["previous_version"] == "1.0.0"
     assert desired_state.desired_target["current_version"] == "1.1.0"
-    assert desired_state.desired_target["current_identity_key"] == "1.1.0"
+    assert desired_state.desired_target["current_identity_key"].startswith("bindings:")
     assert desired_state.desired_state_revision != first_revision
     assert desired_state.updated_at >= first_updated_at
 
@@ -276,7 +276,9 @@ async def test_projection_winner_change_enqueues_executor_trigger_work(storage, 
 
 
 @pytest.mark.asyncio
-async def test_projection_change_enqueues_grouped_executor_for_non_primary_service_binding(storage):
+async def test_projection_change_enqueues_grouped_executor_for_non_primary_service_binding(
+    storage, monkeypatch
+):
     channels = [Channel(name="stable", type="release")]
     await storage.save_tracker_config(make_config("compose-api-trigger", channels))
     await storage.save_tracker_config(make_config("compose-worker-trigger", channels))
@@ -336,6 +338,13 @@ async def test_projection_change_enqueues_grouped_executor_for_non_primary_servi
         )
     )
 
+    async def _fake_resolve_target(_storage, tracker_name, *_args, **_kwargs):
+        return ("2.0.0" if tracker_name == "compose-worker-trigger" else "1.0.0", None)
+
+    monkeypatch.setattr(
+        "releasetracker.executor_trigger._resolve_tracker_latest_target_from_storage",
+        _fake_resolve_target,
+    )
     scheduler = ReleaseScheduler(storage)
     queued_count = await scheduler._emit_executor_trigger_work_for_projection_change(
         tracker_name="compose-worker-trigger",
@@ -396,6 +405,7 @@ async def test_projection_winner_unchanged_emits_no_executor_trigger_work(storag
         current_version: str,
         previous_identity_key: str | None = None,
         current_identity_key: str | None = None,
+        binding_targets: list[dict[str, object]] | None = None,
     ):
         nonlocal enqueue_calls
         enqueue_calls += 1
@@ -406,6 +416,7 @@ async def test_projection_winner_unchanged_emits_no_executor_trigger_work(storag
             current_version=current_version,
             previous_identity_key=previous_identity_key,
             current_identity_key=current_identity_key,
+            binding_targets=binding_targets,
         )
 
     monkeypatch.setattr(
@@ -482,6 +493,7 @@ async def test_projection_trigger_enqueue_happens_after_refresh_commit(storage, 
         current_version: str,
         previous_identity_key: str | None = None,
         current_identity_key: str | None = None,
+        binding_targets: list[dict[str, object]] | None = None,
     ):
         projection_versions = await storage.get_tracker_current_releases(aggregate_tracker.id)
         projection_versions_observed_during_enqueue.append(
@@ -495,6 +507,7 @@ async def test_projection_trigger_enqueue_happens_after_refresh_commit(storage, 
             current_version=current_version,
             previous_identity_key=previous_identity_key,
             current_identity_key=current_identity_key,
+            binding_targets=binding_targets,
         )
 
     monkeypatch.setattr(

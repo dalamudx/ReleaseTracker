@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { Plus, Search, X } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
 import type { RuntimeConnection } from "@/api/types"
 import { RuntimeConnectionDialog } from "@/components/runtime-connections/RuntimeConnectionDialog"
+
 import { RuntimeConnectionList } from "@/components/runtime-connections/RuntimeConnectionList"
 import { Button } from "@/components/ui/button"
 import {
@@ -42,23 +43,13 @@ export default function RuntimeConnectionsPage() {
     const [search, setSearch] = useState("")
 
     const skip = (page - 1) * pageSize
-    const { data, isLoading: loading } = useRuntimeConnections({ skip, limit: pageSize })
-    const rawRuntimeConnections = data?.items ?? []
+    const { data, isLoading: loading } = useRuntimeConnections({
+        skip,
+        limit: pageSize,
+        search: search.trim() || undefined,
+    })
+    const runtimeConnections = data?.items ?? []
     const total = data?.total ?? 0
-
-    // Client-side filter — API doesn't accept a search param; this filters the
-    // current page locally and is a no-op when the input is empty.
-    const runtimeConnections = useMemo(() => {
-        const term = search.trim().toLowerCase()
-        if (!term) return rawRuntimeConnections
-        return rawRuntimeConnections.filter((connection) => {
-            if (connection.name.toLowerCase().includes(term)) return true
-            if (connection.description?.toLowerCase().includes(term)) return true
-            if (connection.type.toLowerCase().includes(term)) return true
-            if (connection.credential_name?.toLowerCase().includes(term)) return true
-            return false
-        })
-    }, [rawRuntimeConnections, search])
 
     const deleteRuntimeConnection = useDeleteRuntimeConnection()
 
@@ -99,7 +90,10 @@ export default function RuntimeConnectionsPage() {
                         <InputGroupInput
                             placeholder={t("runtimeConnections.searchPlaceholder")}
                             value={search}
-                            onChange={(event) => setSearch(event.target.value)}
+                            onChange={(event) => {
+                                setSearch(event.target.value)
+                                setPage(1)
+                            }}
                         />
                         {search ? (
                             <InputGroupAddon align="inline-end">
@@ -107,7 +101,10 @@ export default function RuntimeConnectionsPage() {
                                     variant="ghost"
                                     size="icon"
                                     className="h-6 w-6"
-                                    onClick={() => setSearch("")}
+                                    onClick={() => {
+                                        setSearch("")
+                                        setPage(1)
+                                    }}
                                     title={t("common.clear")}
                                 >
                                     <X className="h-3.5 w-3.5" />

@@ -294,7 +294,10 @@ async def test_executor_api_uses_canonical_tracker_source_id_contract(
                             enabled=True,
                         )
                     ],
-                    source_config={"image": "ghcr.io/acme/canonical-executor", "registry": "ghcr.io"},
+                    source_config={
+                        "image": "ghcr.io/acme/canonical-executor",
+                        "registry": "ghcr.io",
+                    },
                 )
             ],
         )
@@ -326,21 +329,21 @@ async def test_executor_api_uses_canonical_tracker_source_id_contract(
     create_response = authed_client.post(
         "/api/executors",
         json={
-                "name": "canonical-executor-binding",
-                "runtime_type": "docker",
-                "runtime_connection_id": runtime_id,
-                "tracker_name": "canonical-executor",
+            "name": "canonical-executor-binding",
+            "runtime_type": "docker",
+            "runtime_connection_id": runtime_id,
+            "tracker_name": "canonical-executor",
             "tracker_source_id": tracker_source_id,
             "channel_name": "stable",
             "enabled": True,
             "image_selection_mode": "use_tracker_image_and_tag",
             "update_mode": "manual",
-                "target_ref": {
-                    "mode": "container",
-                    "container_id": "abc",
-                    "container_name": "canonical-executor",
-                },
+            "target_ref": {
+                "mode": "container",
+                "container_id": "abc",
+                "container_name": "canonical-executor",
             },
+        },
     )
 
     assert create_response.status_code == 200, create_response.text

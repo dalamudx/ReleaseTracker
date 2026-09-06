@@ -7,7 +7,9 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
+
+from .snapshot_integrity import SnapshotIntegrityError, verify_snapshot_integrity
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle guard
     from ..models import ExecutorSnapshot
@@ -55,6 +57,10 @@ class SnapshotListItemView:
     executor_run_id: int | None
     unredacted_persisted: bool
     locked: bool
+    integrity_status: Literal["verified", "legacy_unverified", "invalid"]
+    snapshot_format_version: int | None
+    snapshot_sha256: str | None
+    snapshot_size_bytes: int | None
 
 
 @dataclass(frozen=True)
@@ -278,6 +284,10 @@ class SnapshotService:
             executor_run_id=snapshot.executor_run_id,
             unredacted_persisted=snapshot.unredacted_persisted,
             locked=snapshot.locked,
+            integrity_status=self._integrity_status(snapshot),
+            snapshot_format_version=snapshot.snapshot_format_version,
+            snapshot_sha256=snapshot.snapshot_sha256,
+            snapshot_size_bytes=snapshot.snapshot_size_bytes,
             snapshot_data=redacted_payload if isinstance(redacted_payload, dict) else {},
         )
 
@@ -320,7 +330,18 @@ class SnapshotService:
             executor_run_id=snapshot.executor_run_id,
             unredacted_persisted=snapshot.unredacted_persisted,
             locked=snapshot.locked,
+            integrity_status=self._integrity_status(snapshot),
+            snapshot_format_version=snapshot.snapshot_format_version,
+            snapshot_sha256=snapshot.snapshot_sha256,
+            snapshot_size_bytes=snapshot.snapshot_size_bytes,
         )
+
+    @staticmethod
+    def _integrity_status(snapshot: "ExecutorSnapshot") -> Literal["verified", "legacy_unverified", "invalid"]:
+        try:
+            return verify_snapshot_integrity(snapshot)  # type: ignore[return-value]
+        except SnapshotIntegrityError:
+            return "invalid"
 
     def redact_for_persist(
         self,

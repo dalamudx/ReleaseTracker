@@ -6,6 +6,9 @@ import { Button } from "@/components/ui/button"
 import { api } from "@/api/client"
 import type { ApiCredential, CredentialReferencesResponse } from "@/api/types"
 import { CredentialList } from "@/components/credentials/CredentialList"
+
+const EMPTY_CREDENTIALS: ApiCredential[] = []
+
 import { CredentialDialog } from "@/components/credentials/CredentialDialog"
 import { DataPagination } from "@/components/common/DataPagination"
 import {
@@ -77,11 +80,9 @@ export default function CredentialsPage() {
 
     const skip = (page - 1) * pageSize
     const { data, isLoading: loading } = useCredentials({ skip, limit: pageSize })
-    const rawCredentials = data?.items ?? []
+    const rawCredentials = data?.items ?? EMPTY_CREDENTIALS
     const total = data?.total ?? 0
 
-    // Client-side filter — API doesn't accept a search param; this filters the
-    // current page locally and is a no-op when the input is empty.
     const credentials = useMemo(() => {
         const term = search.trim().toLowerCase()
         if (!term) return rawCredentials
@@ -89,8 +90,7 @@ export default function CredentialsPage() {
             if (cred.name.toLowerCase().includes(term)) return true
             if (cred.description?.toLowerCase().includes(term)) return true
             if (cred.type.toLowerCase().includes(term)) return true
-            if (getCredentialTypeLabel(t, cred.type).toLowerCase().includes(term)) return true
-            return false
+            return getCredentialTypeLabel(t, cred.type).toLowerCase().includes(term)
         })
     }, [rawCredentials, search, t])
 
@@ -153,7 +153,10 @@ export default function CredentialsPage() {
                         <InputGroupInput
                             placeholder={t("credentials.searchPlaceholder")}
                             value={search}
-                            onChange={(event) => setSearch(event.target.value)}
+                            onChange={(event) => {
+                                setSearch(event.target.value)
+                                setPage(1)
+                            }}
                         />
                         {search ? (
                             <InputGroupAddon align="inline-end">
@@ -161,7 +164,10 @@ export default function CredentialsPage() {
                                     variant="ghost"
                                     size="icon"
                                     className="h-6 w-6"
-                                    onClick={() => setSearch("")}
+                                    onClick={() => {
+                                        setSearch("")
+                                        setPage(1)
+                                    }}
                                     title={t("common.clear")}
                                 >
                                     <X className="h-3.5 w-3.5" />

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Edit, MoreHorizontal, Plus, Search, Send, Trash2, X } from "lucide-react"
 import { useForm } from "react-hook-form"
@@ -76,6 +76,7 @@ import {
 import type { Notifier } from "@/api/types"
 import { toast } from "sonner"
 
+
 export function NotifierSettings() {
     const { t } = useTranslation()
     const [dialogOpen, setDialogOpen] = useState(false)
@@ -86,21 +87,13 @@ export function NotifierSettings() {
     const [pageSize, setPageSize] = usePageSize("settings.notifiers.pageSize")
 
     const skip = (page - 1) * pageSize
-    const { data, isLoading: loading } = useNotifiers({ skip, limit: pageSize })
-    const rawNotifiers = data?.items ?? []
+    const { data, isLoading: loading } = useNotifiers({
+        skip,
+        limit: pageSize,
+        search: search.trim() || undefined,
+    })
+    const notifiers = data?.items ?? []
     const total = data?.total ?? 0
-
-    // Client-side filter.
-    const notifiers = useMemo(() => {
-        const term = search.trim().toLowerCase()
-        if (!term) return rawNotifiers
-        return rawNotifiers.filter((notifier) => {
-            if (notifier.name.toLowerCase().includes(term)) return true
-            if (notifier.url.toLowerCase().includes(term)) return true
-            if (notifier.description?.toLowerCase().includes(term)) return true
-            return false
-        })
-    }, [rawNotifiers, search])
 
     const deleteNotifier = useDeleteNotifier()
     const testNotifier = useTestNotifier()
@@ -145,7 +138,10 @@ export function NotifierSettings() {
                         <InputGroupInput
                             placeholder={t("settings.notifications.searchPlaceholder")}
                             value={search}
-                            onChange={(event) => setSearch(event.target.value)}
+                            onChange={(event) => {
+                                setSearch(event.target.value)
+                                setPage(1)
+                            }}
                         />
                         {search ? (
                             <InputGroupAddon align="inline-end">
@@ -153,7 +149,10 @@ export function NotifierSettings() {
                                     variant="ghost"
                                     size="icon"
                                     className="h-6 w-6"
-                                    onClick={() => setSearch("")}
+                                    onClick={() => {
+                                        setSearch("")
+                                        setPage(1)
+                                    }}
                                     title={t("common.clear")}
                                 >
                                     <X className="h-3.5 w-3.5" />

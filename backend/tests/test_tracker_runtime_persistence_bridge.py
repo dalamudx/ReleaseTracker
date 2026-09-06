@@ -54,7 +54,9 @@ async def test_save_tracker_runtime_config_keeps_runtime_channels_out_of_canonic
     runtime_config = await storage.get_tracker_config("aggregate-runtime-only")
 
     assert aggregate_tracker is not None
-    image_source = next(source for source in aggregate_tracker.sources if source.source_key == "image")
+    image_source = next(
+        source for source in aggregate_tracker.sources if source.source_key == "image"
+    )
     assert image_source.release_channels == []
 
     assert runtime_config is not None
@@ -100,7 +102,9 @@ async def test_save_tracker_runtime_config_persists_runtime_only_fields_in_track
     async with aiosqlite.connect(storage.db_path) as db:
         db.row_factory = aiosqlite.Row
         tracker_row = await (
-            await db.execute("SELECT * FROM trackers WHERE name = ?", ("aggregate-runtime-row-shape",))
+            await db.execute(
+                "SELECT * FROM trackers WHERE name = ?", ("aggregate-runtime-row-shape",)
+            )
         ).fetchone()
 
     assert tracker_row is not None

@@ -626,6 +626,9 @@ class ExecutorSnapshot(BaseModel):
     executor_run_id: int | None = None
     unredacted_persisted: bool = False
     locked: bool = False
+    snapshot_format_version: int | None = None
+    snapshot_sha256: str | None = None
+    snapshot_size_bytes: int | None = None
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
 

@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label"
 import { ArrowRight, Loader2 } from "lucide-react"
 import { motion } from "framer-motion"
 import { useTranslation } from "react-i18next"
+import { assetPath } from "@/lib/base-path"
 import { OIDCLoginButton } from "@/components/auth/OIDCLoginButton"
 import { getOIDCProviders, initiateOIDCLogin, type OIDCProvider } from "@/api/oidc"
 
@@ -86,7 +87,7 @@ export function LoginPage() {
                                 transition={{ type: "spring", stiffness: 260, damping: 20, delay: 0.1 }}
                                 className="p-3 bg-primary/10 rounded-xl shadow-sm"
                             >
-                                <img src="/logo.svg" alt="App Logo" className="h-10 w-10" />
+                                <img src={assetPath("logo.svg")} alt="App Logo" className="h-10 w-10" />
                             </motion.div>
                             <h1 className="text-3xl font-bold tracking-tight text-foreground">{t('auth.login.title')}</h1>
                             <p className="text-sm text-muted-foreground">{t('auth.login.subtitle')}</p>

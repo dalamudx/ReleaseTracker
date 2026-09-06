@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .models import ReleaseChannel
 from .services.outbound_http import ALLOWED_OUTBOUND_PORTS
+from .services.runtime_policy import MAX_RUNTIME_READ_RETRIES, MAX_RUNTIME_TIMEOUT_SECONDS
 
 EXECUTOR_BINDABLE_SOURCE_TYPES = frozenset({"container", "helm"})
 EXECUTOR_GROUPED_BINDING_TARGET_MODES = frozenset(
@@ -71,9 +72,7 @@ class TrackerConfig(BaseModel):
     version_sort_mode: Literal["published_at", "semver"] = "published_at"  # Version sorting mode
     fetch_limit: int = 10  # Fetch limit per run
     fetch_timeout: int = 15  # Fetch timeout in seconds
-    fallback_tags: bool = (
-        False  # If normal fetching fails, such as empty GitHub Releases, fall back to extracting versions from refs/tags
-    )
+    fallback_tags: bool = False  # If normal fetching fails, such as empty GitHub Releases, fall back to extracting versions from refs/tags
     github_fetch_mode: Literal["graphql_first", "rest_first"] = "rest_first"
     interval: int = 360  # Check interval in minutes
     credential_name: str | None = (
@@ -124,6 +123,7 @@ class RuntimeConnectionConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_runtime_connection(self):
+        self._validate_operation_policy()
         if self.type in {"docker", "podman"}:
             self._validate_container_runtime_connection()
         elif self.type == "kubernetes":
@@ -133,7 +133,7 @@ class RuntimeConnectionConfig(BaseModel):
         return self
 
     def _validate_container_runtime_connection(self) -> None:
-        allowed_config_keys = {"socket", "tls_verify", "api_version"}
+        allowed_config_keys = {"socket", "tls_verify", "api_version", "operation_policy"}
         self._reject_unknown_keys(self.config, allowed_config_keys, "config")
 
         socket = self._optional_non_empty_string(self.config.get("socket"), "config.socket")
@@ -150,7 +150,13 @@ class RuntimeConnectionConfig(BaseModel):
             self._optional_non_empty_string(self.config["api_version"], "config.api_version")
 
     def _validate_kubernetes_runtime_connection(self) -> None:
-        allowed_config_keys = {"context", "namespace", "namespaces", "in_cluster"}
+        allowed_config_keys = {
+            "context",
+            "namespace",
+            "namespaces",
+            "in_cluster",
+            "operation_policy",
+        }
         self._reject_unknown_keys(self.config, allowed_config_keys, "config")
 
         in_cluster = self.config.get("in_cluster", False)
@@ -182,7 +188,7 @@ class RuntimeConnectionConfig(BaseModel):
             self.config["namespaces"] = normalized_namespaces
 
     def _validate_portainer_runtime_connection(self) -> None:
-        allowed_config_keys = {"base_url", "endpoint_id", "endpoint_name"}
+        allowed_config_keys = {"base_url", "endpoint_id", "endpoint_name", "operation_policy"}
 
         self._reject_unknown_keys(self.config, allowed_config_keys, "config")
 
@@ -201,6 +207,39 @@ class RuntimeConnectionConfig(BaseModel):
 
         if self.credential_id is None:
             raise ValueError("Portainer runtime connection requires credential_id")
+
+    def _validate_operation_policy(self) -> None:
+        policy = self.config.get("operation_policy")
+        if policy is None:
+            return
+        if not isinstance(policy, dict):
+            raise ValueError("config.operation_policy must be an object")
+        allowed_keys = {"read_timeout_seconds", "write_timeout_seconds", "read_retries"}
+        self._reject_unknown_keys(policy, allowed_keys, "config.operation_policy")
+        for key in ("read_timeout_seconds", "write_timeout_seconds"):
+            if key not in policy:
+                continue
+            value = policy[key]
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or not 1 <= value <= MAX_RUNTIME_TIMEOUT_SECONDS
+            ):
+                raise ValueError(
+                    f"config.operation_policy.{key} must be an integer between 1 and "
+                    f"{MAX_RUNTIME_TIMEOUT_SECONDS}"
+                )
+        if "read_retries" in policy:
+            retries = policy["read_retries"]
+            if (
+                not isinstance(retries, int)
+                or isinstance(retries, bool)
+                or not 0 <= retries <= MAX_RUNTIME_READ_RETRIES
+            ):
+                raise ValueError(
+                    "config.operation_policy.read_retries must be an integer between 0 and "
+                    f"{MAX_RUNTIME_READ_RETRIES}"
+                )
 
     @staticmethod
     def _reject_unknown_keys(payload: dict[str, Any], allowed_keys: set[str], label: str) -> None:

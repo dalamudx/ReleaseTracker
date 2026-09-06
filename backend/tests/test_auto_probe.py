@@ -89,7 +89,11 @@ def _runtime(runtime_type: str = "docker") -> RuntimeConnectionConfig:
         name=f"{runtime_type}-runtime",
         type=runtime_type,
         enabled=True,
-        config={"socket": "unix:///var/run/docker.sock"} if runtime_type in {"docker", "podman"} else {"in_cluster": True},
+        config=(
+            {"socket": "unix:///var/run/docker.sock"}
+            if runtime_type in {"docker", "podman"}
+            else {"in_cluster": True}
+        ),
         secrets={"token": "x"} if runtime_type in {"docker", "podman"} else {},
     )
 
@@ -158,7 +162,9 @@ async def test_auto_uses_runtime_native_when_healthcheck_exists():
 
 @pytest.mark.asyncio
 async def test_auto_host_port_unresolvable_falls_back_to_runtime_native_when_no_ports():
-    adapter = _AutoAdapter(_runtime(), host_error=ValueError("container has no published host ports"))
+    adapter = _AutoAdapter(
+        _runtime(), host_error=ValueError("container has no published host ports")
+    )
     result = await AutoProbe().attempt(_context(adapter))
     assert result.healthy is True
     assert adapter.native_calls == 1
@@ -170,7 +176,9 @@ async def test_auto_host_port_unresolvable_falls_back_to_runtime_native_when_no_
 async def test_auto_host_port_success_uses_resolved_tcp_target():
     server, port = await _start_listener()
     try:
-        adapter = _AutoAdapter(_runtime(), hosts=[ProbeHost(service=None, host="127.0.0.1", port=port)])
+        adapter = _AutoAdapter(
+            _runtime(), hosts=[ProbeHost(service=None, host="127.0.0.1", port=port)]
+        )
         result = await AutoProbe().attempt(_context(adapter))
         assert result.healthy is True
         assert adapter.native_calls == 0

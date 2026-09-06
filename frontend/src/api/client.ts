@@ -1,4 +1,5 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
+import { appPath } from "@/lib/base-path"
 import type {
     AggregateTracker,
     ReleaseStats,
@@ -48,7 +49,7 @@ import type {
     TrackerStatus,
 } from "./types"
 
-const API_BASE = '' // Vite proxy handles /api
+const API_BASE = appPath("")
 
 export const apiClient = axios.create({
     baseURL: API_BASE,
@@ -60,13 +61,13 @@ export const apiClient = axios.create({
 const AUTH_REDIRECT_HEADER = 'x-auth-skip-redirect'
 const AUTH_REFRESH_ENDPOINT = '/api/auth/refresh'
 const AUTH_REDIRECT_EXCLUDED_PATHS = new Set([
-    '/api/auth/login',
-    '/api/auth/register',
+    appPath('/api/auth/login'),
+    appPath('/api/auth/register'),
 ])
 const AUTH_REFRESH_EXCLUDED_PATHS = new Set([
-    '/api/auth/login',
-    '/api/auth/logout',
-    '/api/auth/refresh',
+    appPath('/api/auth/login'),
+    appPath('/api/auth/logout'),
+    appPath('/api/auth/refresh'),
 ])
 
 type RetryableRequestConfig = InternalAxiosRequestConfig & {
@@ -86,10 +87,15 @@ function resolveRequestPath(error: AxiosError): string | null {
         return null
     }
 
+    const path = requestUrl.split('?')[0]
+    if (path.startsWith('/')) {
+        return appPath(path)
+    }
+
     try {
-        return new URL(requestUrl, window.location.origin).pathname
+        return new URL(path, window.location.origin).pathname
     } catch {
-        return requestUrl.split('?')[0]
+        return path
     }
 }
 
@@ -140,8 +146,9 @@ export function clearAuthStorage(): void {
 }
 
 function redirectToLogin(): void {
-    if (!window.location.pathname.startsWith('/login')) {
-        window.location.href = '/login'
+    const loginPath = appPath('/login')
+    if (window.location.pathname !== loginPath) {
+        window.location.href = loginPath
     }
 }
 
@@ -242,7 +249,7 @@ function normalizeLatestCurrentReleaseSummary(item: LatestCurrentReleaseSummary)
 
 export const api = {
     getStats: () => apiClient.get<ReleaseStats>('/api/stats').then(res => res.data),
-    getTrackers: (params?: { skip?: number, limit?: number }) =>
+    getTrackers: (params?: { skip?: number, limit?: number, search?: string }) =>
         apiClient.get<{ items: AggregateTracker[], total: number }>('/api/trackers', { params }).then(res => res.data),
     getLatestCurrentReleases: () => apiClient.get<LatestCurrentReleaseSummary[]>('/api/releases/latest').then(res =>
         res.data.map(normalizeLatestCurrentReleaseSummary),
@@ -279,7 +286,7 @@ export const api = {
     deleteCredential: (id: number) => apiClient.delete(`/api/credentials/${id}`).then(res => res.data),
 
     // Notifiers
-    getNotifiers: (params?: { skip?: number, limit?: number }) =>
+    getNotifiers: (params?: { skip?: number, limit?: number, search?: string }) =>
         apiClient.get<PaginatedResponse<Notifier>>('/api/notifiers', { params }).then(res => res.data),
     getNotifier: (id: number) => apiClient.get<Notifier>(`/api/notifiers/${id}`).then(res => res.data),
     createNotifier: (data: Partial<Notifier>) => apiClient.post<Notifier>('/api/notifiers', data).then(res => res.data),
@@ -307,7 +314,7 @@ export const api = {
     rotateEncryptionKey: (data: RotateSecurityKeyRequest) => apiClient.post<RotateEncryptionKeyResponse>('/api/settings/security-keys/encryption-key', data).then(res => res.data),
 
     // Runtime Connections
-    getRuntimeConnections: (params?: { skip?: number, limit?: number }) =>
+    getRuntimeConnections: (params?: { skip?: number, limit?: number, search?: string }) =>
         apiClient.get<PaginatedResponse<RuntimeConnection>>('/api/runtime-connections', { params }).then(res => res.data),
     getRuntimeConnection: (id: number) => apiClient.get<RuntimeConnection>(`/api/runtime-connections/${id}`).then(res => res.data),
     discoverKubernetesNamespaces: (data: Partial<RuntimeConnection>) =>
@@ -318,7 +325,7 @@ export const api = {
     updateRuntimeConnection: (id: number, data: UpdateRuntimeConnectionRequest) => apiClient.put<{ message: string, updated_at: string }>(`/api/runtime-connections/${id}`, data).then(res => res.data),
     deleteRuntimeConnection: (id: number) => apiClient.delete<{ message: string }>(`/api/runtime-connections/${id}`).then(res => res.data),
 
-    getExecutors: (params?: { skip?: number, limit?: number }) =>
+    getExecutors: (params?: { skip?: number, limit?: number, search?: string }) =>
         apiClient.get<PaginatedResponse<ExecutorListItem>>('/api/executors', { params }).then(res => res.data),
     getExecutor: (id: number) => apiClient.get<ExecutorDetail>(`/api/executors/${id}`).then(res => res.data),
     getExecutorConfig: (id: number) => apiClient.get<ExecutorConfig>(`/api/executors/${id}/config`).then(res => res.data),

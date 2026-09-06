@@ -14,6 +14,11 @@ from releasetracker.config import (
     RuntimeConnectionConfig,
 )
 from releasetracker.models import ExecutorRunHistory, ExecutorSnapshot
+from releasetracker.services.snapshot_integrity import (
+    MAX_EXECUTOR_SNAPSHOT_BYTES,
+    SnapshotIntegrityError,
+    verify_snapshot_integrity,
+)
 from releasetracker.services.snapshot_service import SnapshotService
 from releasetracker.storage.sqlite import SQLiteStorage
 
@@ -145,6 +150,53 @@ async def test_prune_skips_when_retention_is_invalid(storage):
 
     assert deleted == []
     assert await storage.count_executor_snapshots(executor_id) == 3
+
+
+@pytest.mark.asyncio
+async def test_new_snapshot_persists_deterministic_integrity_metadata(storage):
+    executor_id = await _create_executor(storage, name="snapshot-integrity")
+    snapshot_id = (await _seed_snapshots(storage, executor_id, count=1))[0]
+
+    snapshot = await storage.get_executor_snapshot_by_id(executor_id, snapshot_id)
+    assert snapshot is not None
+    assert snapshot.snapshot_format_version == 1
+    assert snapshot.snapshot_sha256 is not None
+    assert snapshot.snapshot_size_bytes is not None
+    assert verify_snapshot_integrity(snapshot) == "verified"
+
+
+@pytest.mark.asyncio
+async def test_tampered_snapshot_is_reported_invalid_and_cannot_pass_integrity_check(storage):
+    executor_id = await _create_executor(storage, name="snapshot-tampered")
+    snapshot_id = (await _seed_snapshots(storage, executor_id, count=1))[0]
+    db = await storage._get_connection()
+    await db.execute(
+        "UPDATE executor_snapshots SET snapshot_data = ? WHERE id = ?",
+        ('{"image":"attacker:latest"}', snapshot_id),
+    )
+    await db.commit()
+
+    snapshot = await storage.get_executor_snapshot_by_id(executor_id, snapshot_id)
+    assert snapshot is not None
+    with pytest.raises(SnapshotIntegrityError, match="integrity metadata"):
+        verify_snapshot_integrity(snapshot)
+    detail = await SnapshotService(storage).get_snapshot(executor_id, snapshot_id)
+    assert detail is not None
+    assert detail.integrity_status == "invalid"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_size_cap_rejects_before_database_write(storage):
+    executor_id = await _create_executor(storage, name="snapshot-size-cap")
+    with pytest.raises(SnapshotIntegrityError, match="safety limit"):
+        await storage.create_executor_snapshot(
+            ExecutorSnapshot(
+                executor_id=executor_id,
+                snapshot_data={"payload": "x" * (MAX_EXECUTOR_SNAPSHOT_BYTES + 1)},
+                trigger="manual",
+            )
+        )
+    assert await storage.count_executor_snapshots(executor_id) == 0
 
 
 @pytest.mark.asyncio

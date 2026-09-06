@@ -18,6 +18,14 @@ from ..dependencies import (
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
+def _request_login_audit_context(request: Request) -> tuple[str | None, str | None]:
+    """Return direct peer metadata without trusting spoofable forwarded headers."""
+    return (
+        request.headers.get("user-agent"),
+        request.client.host if request.client is not None else None,
+    )
+
+
 class RefreshTokenRequest(BaseModel):
     refresh_token: str = Field(min_length=1)
 
@@ -38,11 +46,15 @@ async def register(
 
 
 @router.post("/login", response_model=dict)
-async def login(req: LoginRequest, auth_service: Annotated[AuthService, Depends(get_auth_service)]):
+async def login(
+    req: LoginRequest,
+    request: Request,
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+):
     try:
-        # TODO: Get the real IP and user agent
+        user_agent, ip_address = _request_login_audit_context(request)
         user, token_pair = await auth_service.login(
-            req, user_agent="unknown", ip_address="127.0.0.1"
+            req, user_agent=user_agent, ip_address=ip_address
         )
         return {"user": user, "token": token_pair}
     except ValueError as e:
@@ -51,14 +63,16 @@ async def login(req: LoginRequest, auth_service: Annotated[AuthService, Depends(
 
 @router.post("/token", response_model=TokenPair)
 async def login_for_access_token(
+    request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ):
     """OAuth2-compatible login endpoint for Swagger UI"""
     req = LoginRequest(username=form_data.username, password=form_data.password)
     try:
+        user_agent, ip_address = _request_login_audit_context(request)
         user, token_pair = await auth_service.login(
-            req, user_agent="Swagger UI", ip_address="127.0.0.1"
+            req, user_agent=user_agent, ip_address=ip_address
         )
         return token_pair
     except ValueError:

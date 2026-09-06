@@ -140,9 +140,7 @@ class HealthCheckResult:
             "first_attempt_at": (
                 self.first_attempt_at.isoformat() if self.first_attempt_at else None
             ),
-            "last_attempt_at": (
-                self.last_attempt_at.isoformat() if self.last_attempt_at else None
-            ),
+            "last_attempt_at": (self.last_attempt_at.isoformat() if self.last_attempt_at else None),
             "duration_seconds": self.duration_seconds,
             "failure_policy": self.failure_policy,
             "last_error": last_error,

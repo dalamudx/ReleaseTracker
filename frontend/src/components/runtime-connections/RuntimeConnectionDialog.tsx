@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useEffectEvent, useRef, useState } from "react"
 import { Loader2, RefreshCw, Save } from "lucide-react"
 import { useForm, useWatch, type UseFormReturn } from "react-hook-form"
 import { useTranslation } from "react-i18next"
@@ -97,6 +97,11 @@ export function RuntimeConnectionDialog({ open, onOpenChange, runtimeConnection,
         defaultValues: DEFAULT_VALUES,
     })
 
+    const reportCredentialLoadError = useEffectEvent((error: unknown) => {
+        console.error('Failed to load credentials', error)
+        toast.error(t('common.unexpectedError'))
+    })
+
     useEffect(() => {
         if (!open) {
             return
@@ -104,10 +109,7 @@ export function RuntimeConnectionDialog({ open, onOpenChange, runtimeConnection,
 
         api.getCredentials({ limit: 100 })
             .then((result) => setCredentials(result.items))
-            .catch((error) => {
-                console.error('Failed to load credentials', error)
-                toast.error(t('common.unexpectedError'))
-            })
+            .catch(reportCredentialLoadError)
 
         if (!runtimeConnection) {
             form.reset(DEFAULT_VALUES)

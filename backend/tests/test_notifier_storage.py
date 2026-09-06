@@ -17,6 +17,34 @@ async def test_notifier_language_defaults_to_english(storage):
 
 
 @pytest.mark.asyncio
+async def test_notifiers_search_visible_metadata(storage):
+    await storage.create_notifier(
+        {
+            "name": "ops-webhook",
+            "type": "webhook",
+            "url": "https://ops.example.com/releases",
+            "events": ["new_release"],
+            "enabled": True,
+            "description": "Operations release notifications",
+        }
+    )
+    await storage.create_notifier(
+        {
+            "name": "marketing-webhook",
+            "type": "webhook",
+            "url": "https://marketing.example.com/releases",
+            "events": ["new_release"],
+            "enabled": True,
+        }
+    )
+
+    notifiers = await storage.get_notifiers_paginated(search="OPERATIONS")
+
+    assert await storage.get_total_notifiers_count("OPERATIONS") == 1
+    assert [notifier.name for notifier in notifiers] == ["ops-webhook"]
+
+
+@pytest.mark.asyncio
 async def test_notifier_language_persists_on_create_and_update(storage):
     notifier = await storage.create_notifier(
         {

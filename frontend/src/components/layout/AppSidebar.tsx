@@ -16,6 +16,7 @@ import {
     SidebarFooter,
 } from "@/components/ui/sidebar"
 import { UserNav } from "./UserNav"
+import { assetPath } from "@/lib/base-path"
 
 const appVersion = import.meta.env.VITE_APP_VERSION
 
@@ -41,7 +42,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                     <SidebarMenuItem>
                         <SidebarMenuButton size="lg" asChild>
                             <Link to="/">
-                                <img src="/logo.svg" alt="Logo" className="size-8" />
+                                <img src={assetPath("logo.svg")} alt="Logo" className="size-8" />
                                 <div className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm leading-tight">
                                     <span className="truncate font-semibold">ReleaseTracker</span>
                                     <Badge

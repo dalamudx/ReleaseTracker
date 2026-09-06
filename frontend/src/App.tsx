@@ -6,6 +6,7 @@ import AppLayout from "@/components/layout/AppLayout"
 import { Navigate, Outlet } from "react-router"
 import { useAuth } from "@/context/auth-context"
 import { Spinner } from "@/components/ui/spinner"
+import { appBasePath } from "@/lib/base-path"
 
 // Lazy load pages
 const DashboardPage = lazy(() => import("@/pages/Dashboard"))
@@ -50,7 +51,7 @@ function RequireAuth() {
 function App() {
   return (
     <ThemeProvider defaultTheme="system" storageKey="vite-ui-theme">
-      <BrowserRouter>
+      <BrowserRouter basename={appBasePath()}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
 

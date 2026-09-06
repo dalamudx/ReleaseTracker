@@ -9,11 +9,19 @@ import os
 import subprocess
 import tempfile
 
-from .base import BaseRuntimeAdapter, RuntimeMutationError, RuntimeTarget, RuntimeUpdateResult
+from ..services.runtime_policy import runtime_operation_policy
+from .base import (
+    BaseRuntimeAdapter,
+    RuntimeMutationError,
+    RuntimeTarget,
+    RuntimeUpdateResult,
+    offload_blocking_runtime_adapter_methods,
+)
 
 logger = logging.getLogger(__name__)
 
 
+@offload_blocking_runtime_adapter_methods
 class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
     def __init__(self, runtime_connection, apps_api=None):
         super().__init__(runtime_connection)
@@ -388,18 +396,14 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
         metadata = workload.get("metadata") if isinstance(workload, dict) else None
         status = workload.get("status") if isinstance(workload, dict) else None
         spec = workload.get("spec") if isinstance(workload, dict) else None
-        if not (
-            isinstance(metadata, dict) and isinstance(status, dict) and isinstance(spec, dict)
-        ):
+        if not (isinstance(metadata, dict) and isinstance(status, dict) and isinstance(spec, dict)):
             return ProbeAttemptResult(
                 healthy=False,
                 error_category="runtime_api_error",
                 last_error="workload response is missing metadata/status/spec",
             )
 
-        observed_generation = status.get("observedGeneration") or status.get(
-            "observed_generation"
-        )
+        observed_generation = status.get("observedGeneration") or status.get("observed_generation")
         generation = metadata.get("generation")
         baseline_generation = baseline.get("generation")
         effective_baseline = baseline_generation if baseline_generation is not None else generation
@@ -492,12 +496,12 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
             return ProbeAttemptResult(healthy=True, detail=detail)
 
         if kind == "DaemonSet":
-            updated_scheduled = status.get("updatedNumberScheduled") or status.get(
-                "updated_number_scheduled"
-            ) or 0
-            desired_scheduled = status.get("desiredNumberScheduled") or status.get(
-                "desired_number_scheduled"
-            ) or 0
+            updated_scheduled = (
+                status.get("updatedNumberScheduled") or status.get("updated_number_scheduled") or 0
+            )
+            desired_scheduled = (
+                status.get("desiredNumberScheduled") or status.get("desired_number_scheduled") or 0
+            )
             ready = status.get("numberReady") or status.get("number_ready") or 0
             detail.update(
                 {
@@ -671,7 +675,10 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
                     capture_output=True,
                     text=True,
                     env=env,
+                    timeout=runtime_operation_policy(self.runtime_connection).write_timeout_seconds,
                 )
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError(f"Helm command timed out: {' '.join(args)}") from exc
             except FileNotFoundError as exc:
                 raise RuntimeError(
                     "Missing Helm binary required by KubernetesRuntimeAdapter"

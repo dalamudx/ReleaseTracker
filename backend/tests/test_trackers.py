@@ -347,6 +347,47 @@ async def test_get_trackers_pagination(authed_client):
 
 
 @pytest.mark.asyncio
+async def test_get_trackers_searches_and_paginates_without_full_tracker_load(
+    authed_client, storage, monkeypatch
+):
+    authed_client.post("/api/trackers", json=make_tracker_payload("alpha"))
+    authed_client.post("/api/trackers", json=make_tracker_payload("bravo"))
+    authed_client.post("/api/trackers", json=make_tracker_payload("charlie"))
+
+    async def fail_if_full_tracker_list_is_loaded():
+        raise AssertionError("the tracker list endpoint must use SQL pagination")
+
+    monkeypatch.setattr(storage, "get_all_aggregate_trackers", fail_if_full_tracker_list_is_loaded)
+    response = authed_client.get("/api/trackers?search=owner%2Fbravo&skip=0&limit=1")
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert [item["name"] for item in data["items"]] == ["bravo"]
+    assert data["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_tracker_list_reuses_page_data_instead_of_per_tracker_loads(
+    authed_client, storage, monkeypatch
+):
+    for name in ("page-data-alpha", "page-data-bravo", "page-data-charlie"):
+        response = authed_client.post("/api/trackers", json=make_tracker_payload(name))
+        assert response.status_code == 200, response.text
+
+    async def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("the list endpoint must reuse its page-level tracker data")
+
+    monkeypatch.setattr(storage, "get_tracker_config", fail_if_called)
+    monkeypatch.setattr(storage, "get_tracker_current_release_rows", fail_if_called)
+    monkeypatch.setattr(storage, "get_tracker_current_status_derivation", fail_if_called)
+
+    response = authed_client.get("/api/trackers?limit=3")
+
+    assert response.status_code == 200, response.text
+    assert len(response.json()["items"]) == 3
+
+
+@pytest.mark.asyncio
 async def test_tracker_status_last_version_uses_projection_derived_latest_identity(
     authed_client, storage
 ):

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
 from abc import ABC, abstractmethod
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
+from functools import wraps
+from typing import Any, Callable
 
 from ..config import RuntimeConnectionConfig
 
@@ -30,6 +34,58 @@ class RuntimeMutationError(RuntimeError):
         self.destructive_started = destructive_started
 
 
+_runtime_adapter_worker_active: ContextVar[bool] = ContextVar(
+    "runtime_adapter_worker_active", default=False
+)
+
+
+def _run_adapter_operation_in_thread(
+    operation: Callable[..., Any], args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> Any:
+    async def invoke() -> Any:
+        token = _runtime_adapter_worker_active.set(True)
+        try:
+            return await operation(*args, **kwargs)
+        finally:
+            _runtime_adapter_worker_active.reset(token)
+
+    return asyncio.run(invoke())
+
+
+def offload_blocking_runtime_adapter_methods(cls):
+    """Run coroutine methods of a synchronous runtime SDK adapter off the event loop.
+
+    Docker, Podman, and Kubernetes SDKs expose blocking Python methods behind
+    async adapter APIs. Nested adapter calls remain in the same worker thread;
+    cancellation waits for a destructive SDK operation to complete before the
+    caller can release its executor overlap guard.
+    """
+
+    for name, member in vars(cls).items():
+        if not inspect.iscoroutinefunction(member):
+            continue
+
+        @wraps(member)
+        async def offloaded(self, *args, __member=member, **kwargs):
+            if _runtime_adapter_worker_active.get():
+                return await __member(self, *args, **kwargs)
+
+            worker = asyncio.create_task(
+                asyncio.to_thread(_run_adapter_operation_in_thread, __member, (self, *args), kwargs)
+            )
+            try:
+                return await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                try:
+                    await asyncio.shield(worker)
+                except Exception:
+                    pass
+                raise
+
+        setattr(cls, name, offloaded)
+    return cls
+
+
 class BaseRuntimeAdapter(ABC):
     def __init__(self, runtime_connection: RuntimeConnectionConfig):
         self.runtime_connection = runtime_connection
@@ -41,6 +97,15 @@ class BaseRuntimeAdapter(ABC):
     @abstractmethod
     async def validate_target_ref(self, target_ref: dict[str, Any]) -> None:
         raise NotImplementedError
+
+    def supports_single_image_operations(self, target_ref: dict[str, Any]) -> bool:
+        """Whether the generic one-target/one-image contract applies.
+
+        Grouped runtime targets override this to keep callers from treating a
+        multi-service target as if it had one current image.
+        """
+        del target_ref
+        return True
 
     @abstractmethod
     async def get_current_image(self, target_ref: dict[str, Any]) -> str:
@@ -64,6 +129,11 @@ class BaseRuntimeAdapter(ABC):
         self, target_ref: dict[str, Any], snapshot: dict[str, Any]
     ) -> RuntimeUpdateResult:
         raise NotImplementedError("runtime adapter does not support recovery")
+
+    def is_target_missing_error(self, exc: Exception) -> bool:
+        """Return true only for an explicit runtime resource-not-found error."""
+        del exc
+        return False
 
     async def probe_runtime_native_health(
         self,

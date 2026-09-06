@@ -8,6 +8,7 @@ import httpx
 import yaml
 
 from ..config import normalize_executor_target_ref
+from ..services.runtime_policy import run_read_operation, runtime_operation_policy
 from .base import BaseRuntimeAdapter, RuntimeTarget, RuntimeUpdateResult
 
 _SUPPORTED_PORTAINER_STACK_TYPES = {"standalone"}
@@ -24,6 +25,10 @@ _PORTAINER_STACK_UPDATE_TIMEOUT = httpx.Timeout(connect=5.0, read=90.0, write=90
 # this bound only guards against Portainer getting stuck mid-restore.
 _PORTAINER_RECOVERY_POLL_TIMEOUT_SECONDS = 120
 _PORTAINER_RECOVERY_POLL_INTERVAL_SECONDS = 2
+_PORTAINER_SINGLE_IMAGE_OPERATION_ERROR = (
+    "single-image operations do not apply to a multi-service Portainer stack; "
+    "use fetch_stack_service_images() and update_stack_services()"
+)
 
 
 class PortainerRequestTimeoutError(RuntimeError):
@@ -48,6 +53,12 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
     def __init__(self, runtime_connection, client: Any | None = None):
         super().__init__(runtime_connection)
         self._client = client
+        self._operation_policy = runtime_operation_policy(runtime_connection)
+
+    def supports_single_image_operations(self, target_ref: dict[str, Any]) -> bool:
+        """Portainer targets are updated as grouped multi-service stacks."""
+        del target_ref
+        return False
 
     async def discover_endpoints(self) -> list[PortainerEndpoint]:
         payload = await self._request_payload("GET", "/api/endpoints")
@@ -255,13 +266,13 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         return PortainerStackServiceUpdateResult(
             updated_services=updated_service_names,
             message=(
-                "Portainer stack updated via API for services: "
-                f"{', '.join(updated_service_names)}"
+                f"Portainer stack updated via API for services: {', '.join(updated_service_names)}"
             ),
         )
 
     async def get_current_image(self, target_ref: dict[str, Any]) -> str:
-        raise NotImplementedError("Portainer image resolution is not implemented yet")
+        del target_ref
+        raise NotImplementedError(_PORTAINER_SINGLE_IMAGE_OPERATION_ERROR)
 
     async def capture_snapshot(
         self, target_ref: dict[str, Any], current_image: str
@@ -275,9 +286,7 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         services; when the stack declares multiple distinct images the
         value is left null.
         """
-        normalized_target_ref = normalize_executor_target_ref(
-            target_ref, runtime_type="portainer"
-        )
+        normalized_target_ref = normalize_executor_target_ref(target_ref, runtime_type="portainer")
         endpoint_id = normalized_target_ref["endpoint_id"]
         stack_id = normalized_target_ref["stack_id"]
 
@@ -289,9 +298,7 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         if unsupported_reason is not None:
             raise ValueError(unsupported_reason)
 
-        stack_file = await self.fetch_stack_file(
-            endpoint_id=endpoint_id, stack_id=stack_id
-        )
+        stack_file = await self.fetch_stack_file(endpoint_id=endpoint_id, stack_id=stack_id)
         service_metadata = self._extract_stack_service_metadata(stack_file)
 
         env_payload = stack.get("Env")
@@ -320,9 +327,7 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
 
         return snapshot
 
-    async def validate_snapshot(
-        self, target_ref: dict[str, Any], snapshot: dict[str, Any]
-    ) -> None:
+    async def validate_snapshot(self, target_ref: dict[str, Any], snapshot: dict[str, Any]) -> None:
         """Validate that a Portainer snapshot can be restored against the
         current target.
 
@@ -345,15 +350,11 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
                 f"{snapshot_stack_type}; only standalone stacks are supported"
             )
 
-        normalized_target_ref = normalize_executor_target_ref(
-            target_ref, runtime_type="portainer"
-        )
+        normalized_target_ref = normalize_executor_target_ref(target_ref, runtime_type="portainer")
         endpoint_id = normalized_target_ref["endpoint_id"]
         stack_id = normalized_target_ref["stack_id"]
 
-        live_stack = await self.fetch_stack_detail(
-            endpoint_id=endpoint_id, stack_id=stack_id
-        )
+        live_stack = await self.fetch_stack_detail(endpoint_id=endpoint_id, stack_id=stack_id)
         live_stack_type = self._resolve_stack_type(live_stack)
         if live_stack_type != snapshot_stack_type:
             raise ValueError(
@@ -373,9 +374,7 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         """
         await self.validate_snapshot(target_ref, snapshot)
 
-        normalized_target_ref = normalize_executor_target_ref(
-            target_ref, runtime_type="portainer"
-        )
+        normalized_target_ref = normalize_executor_target_ref(target_ref, runtime_type="portainer")
         endpoint_id = normalized_target_ref["endpoint_id"]
         stack_id = normalized_target_ref["stack_id"]
 
@@ -384,9 +383,7 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         if not isinstance(env_payload, list):
             env_payload = []
 
-        live_stack = await self.fetch_stack_detail(
-            endpoint_id=endpoint_id, stack_id=stack_id
-        )
+        live_stack = await self.fetch_stack_detail(endpoint_id=endpoint_id, stack_id=stack_id)
         # Reuse the single in-adapter update path so we get the same error
         # handling as forward updates, but override env with the snapshot
         # version so recovery is byte-for-byte deterministic.
@@ -435,9 +432,7 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         last_status: Any = None
 
         while True:
-            stack = await self.fetch_stack_detail(
-                endpoint_id=endpoint_id, stack_id=stack_id
-            )
+            stack = await self.fetch_stack_detail(endpoint_id=endpoint_id, stack_id=stack_id)
             last_status = stack.get("Status") if "Status" in stack else stack.get("status")
             if isinstance(last_status, int) and last_status == 1:
                 return
@@ -454,7 +449,8 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
             await asyncio.sleep(_PORTAINER_RECOVERY_POLL_INTERVAL_SECONDS)
 
     async def update_image(self, target_ref: dict[str, Any], new_image: str) -> RuntimeUpdateResult:
-        raise NotImplementedError("Portainer update is not implemented yet")
+        del target_ref, new_image
+        raise NotImplementedError(_PORTAINER_SINGLE_IMAGE_OPERATION_ERROR)
 
     async def fetch_stack_detail(self, *, endpoint_id: int, stack_id: int) -> dict[str, Any]:
         return await self._request_json(
@@ -473,8 +469,7 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
             f"/api/stacks/{stack_id}/file",
             params={"endpointId": endpoint_id},
             not_found_message=(
-                "Portainer stack file not found for "
-                f"endpoint_id={endpoint_id}, stack_id={stack_id}"
+                f"Portainer stack file not found for endpoint_id={endpoint_id}, stack_id={stack_id}"
             ),
         )
 
@@ -514,12 +509,11 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
                     "prune": True,
                     "pullImage": True,
                 },
-                timeout=_PORTAINER_STACK_UPDATE_TIMEOUT,
+                timeout=self._write_timeout(),
             )
-        except httpx.TimeoutException as exc:
+        except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
             raise PortainerRequestTimeoutError(
-                "Portainer API request timed out during stack update: "
-                f"PUT /api/stacks/{stack_id}"
+                f"Portainer API request timed out during stack update: PUT /api/stacks/{stack_id}"
             ) from exc
         if response.status_code == 404:
             raise ValueError(
@@ -561,13 +555,8 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         not_found_message: str | None = None,
     ) -> Any:
         try:
-            response = await self._get_client().request(
-                method,
-                path,
-                params=params,
-                timeout=_PORTAINER_DEFAULT_TIMEOUT,
-            )
-        except httpx.TimeoutException as exc:
+            response = await self._read_request(method, path, params=params)
+        except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
             raise PortainerRequestTimeoutError(
                 f"Portainer API request timed out: {method} {path}"
             ) from exc
@@ -581,6 +570,28 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
                 )
             raise RuntimeError(f"Portainer API request failed ({response.status_code})")
         return response.json()
+
+    def _read_timeout(self) -> httpx.Timeout:
+        timeout = float(self._operation_policy.read_timeout_seconds)
+        return httpx.Timeout(connect=min(5.0, timeout), read=timeout, write=timeout, pool=5.0)
+
+    def _write_timeout(self) -> httpx.Timeout:
+        timeout = float(self._operation_policy.write_timeout_seconds)
+        return httpx.Timeout(connect=min(5.0, timeout), read=timeout, write=timeout, pool=5.0)
+
+    async def _read_request(
+        self, method: str, path: str, *, params: dict[str, Any] | None = None
+    ) -> httpx.Response:
+        async def _request() -> httpx.Response:
+            return await self._get_client().request(
+                method, path, params=params, timeout=self._read_timeout()
+            )
+
+        return await run_read_operation(
+            _request,
+            policy=self._operation_policy,
+            operation_name=f"portainer:{method}:{path}",
+        )
 
     @classmethod
     def _extract_stack_service_metadata(cls, stack_file: str) -> list[dict[str, str | None]]:

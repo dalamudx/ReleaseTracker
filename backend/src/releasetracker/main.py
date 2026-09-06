@@ -2,20 +2,25 @@
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+from html import escape
 from pathlib import Path
+from urllib.parse import urlsplit
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from . import __version__
 from .scheduler import ReleaseScheduler
 from .scheduler_host import SchedulerHost
 from .executor_scheduler import ExecutorScheduler
 from .services.auth import AuthService
-from .services.system_keys import SystemKeyManager
+from .services.system_keys import (
+    SystemKeyManager,
+    recover_pending_encryption_key_rotation,
+)
 from .storage.sqlite import SQLiteStorage
 from .logger import LogConfig
 from .routers import auth, notifiers, settings, trackers, credentials, releases, system
@@ -23,6 +28,25 @@ from .routers import runtime_connections
 from .routers import executors
 from .routers import oidc as oidc_router
 from .routers import oidc_admin as oidc_admin_router
+
+
+class StorageConnectionCleanupMiddleware:
+    """Close request-scoped SQLite connections while the ASGI loop is alive."""
+
+    def __init__(self, application) -> None:
+        self.application = application
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await self.application(scope, receive, send)
+        finally:
+            if scope["type"] == "http":
+                application = scope.get("app")
+                storage = (
+                    getattr(application.state, "storage", None) if application is not None else None
+                )
+                if storage is not None:
+                    await storage.close_current_task_connection()
 
 
 @asynccontextmanager
@@ -39,6 +63,7 @@ async def lifespan(app: FastAPI):
 
     storage = SQLiteStorage(db_path, system_key_manager=system_key_manager)
     await storage.initialize()
+    await recover_pending_encryption_key_rotation(storage, system_key_manager)
     LogConfig.setup_logging(level=getattr(logging, await storage.get_system_log_level()))
     # Initialize configuration without AppConfig
 
@@ -101,6 +126,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(StorageConnectionCleanupMiddleware)
 
 
 # ==================== Route registration ====================
@@ -123,32 +149,61 @@ app.include_router(oidc_admin_router.router)
 # Check whether the static files directory exists
 static_dir = Path(__file__).resolve().parent.parent.parent / "static"
 
-if static_dir.exists():
-    from fastapi import Request
-    from fastapi.responses import JSONResponse
 
-    # Mount the assets directory for static resources such as JS and CSS
-    app.mount("/assets", StaticFiles(directory=static_dir / "assets"), name="assets")
+def _resolve_static_file(static_root: Path, request_path: str) -> Path | None:
+    """Resolve a requested static file without allowing directory escapes."""
+    try:
+        resolved_root = static_root.resolve(strict=True)
+        resolved_file = (resolved_root / request_path.lstrip("/")).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
 
-    # Custom 404 handler for SPA fallback
-    @app.exception_handler(404)
-    async def custom_404_handler(request: Request, exc):
-        """Handle 404 errors by returning the SPA index.html"""
-        # Return index.html only for non-API and non-OIDC callback paths
-        if request.url.path.startswith("/api") or request.url.path.startswith("/auth/oidc"):
+    if resolved_root not in resolved_file.parents or not resolved_file.is_file():
+        return None
+    return resolved_file
+
+
+def _frontend_base_path(base_url: str | None, root_path: str) -> str:
+    """Return the normalized app path for the document's runtime ``<base>``."""
+    configured_path = urlsplit(base_url).path if base_url else root_path
+    normalized_path = configured_path.rstrip("/")
+    return f"{normalized_path}/" if normalized_path else "/"
+
+
+async def _render_static_index(request: Request, index_template: str) -> HTMLResponse:
+    storage = getattr(request.app.state, "storage", None)
+    base_url = await storage.get_system_base_url() if storage is not None else None
+    base_path = _frontend_base_path(base_url, request.scope.get("root_path", ""))
+    base_tag = f'<base href="{escape(base_path, quote=True)}">'
+    return HTMLResponse(index_template.replace("<!-- APP_BASE_HREF -->", base_tag))
+
+
+def configure_static_frontend(application: FastAPI, static_root: Path) -> None:
+    """Serve production assets and fall back to the SPA only for client routes."""
+    application.mount("/assets", StaticFiles(directory=static_root / "assets"), name="assets")
+    index_path = static_root / "index.html"
+    index_template = index_path.read_text(encoding="utf-8") if index_path.is_file() else None
+    resolved_index_path = index_path.resolve() if index_template is not None else None
+
+    @application.exception_handler(404)
+    async def static_aware_404_handler(request: Request, exc):
+        del exc
+        request_path = request.url.path
+        if request_path.startswith("/api") or request_path.startswith("/auth/oidc"):
             return JSONResponse(status_code=404, content={"detail": "Not found"})
 
-        # Try to return a static file
-        file_path = static_dir / request.url.path.lstrip("/")
-        if file_path.is_file():
-            return FileResponse(file_path)
+        static_file = _resolve_static_file(static_root, request_path)
+        if static_file is not None and static_file != resolved_index_path:
+            return FileResponse(static_file)
 
-        # SPA fallback - return index.html
-        index_path = static_dir / "index.html"
-        if index_path.exists():
-            return FileResponse(index_path)
+        if index_template is not None:
+            return await _render_static_index(request, index_template)
 
         return JSONResponse(status_code=404, content={"detail": "Not found"})
+
+
+if static_dir.exists():
+    configure_static_frontend(app, static_dir)
 
 else:
 

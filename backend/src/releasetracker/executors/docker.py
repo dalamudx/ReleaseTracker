@@ -5,11 +5,17 @@ from collections import defaultdict
 from typing import Any
 from urllib.parse import urlparse
 
-from .base import RuntimeMutationError, RuntimeUpdateResult
+from ..services.runtime_policy import runtime_operation_policy
+from .base import (
+    RuntimeMutationError,
+    RuntimeUpdateResult,
+    offload_blocking_runtime_adapter_methods,
+)
 from .compose_runtime_update import GroupedRuntimeRecreateSpec, build_grouped_runtime_recreate_spec
 from .container_runtime import _ContainerRuntimeAdapter
 
 
+@offload_blocking_runtime_adapter_methods
 class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
     async def fetch_compose_service_images(self, target_ref: dict[str, Any]) -> dict[str, str]:
         if target_ref.get("mode") != "docker_compose":
@@ -149,6 +155,7 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
             base_url=base_url,
             version=api_version,
             tls=tls_config,
+            timeout=runtime_operation_policy(self.runtime_connection).write_timeout_seconds,
         )
 
     async def update_image(self, target_ref: dict[str, Any], new_image: str) -> RuntimeUpdateResult:

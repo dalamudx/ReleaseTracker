@@ -1,3 +1,5 @@
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 import pytest
 
 from releasetracker import main as main_module
@@ -167,3 +169,55 @@ async def test_lifespan_starts_without_identity_drift_repair(monkeypatch):
     assert fake_storage_holder["storage"].closed is True
     assert fake_scheduler_host_holder["scheduler_host"].shutdown_called is True
     assert fake_executor_holder["executor"].shutdown_called is True
+
+
+def test_static_frontend_rejects_paths_outside_static_root(tmp_path):
+    static_root = tmp_path / "static"
+    assets = static_root / "assets"
+    assets.mkdir(parents=True)
+    (static_root / "index.html").write_text("<html>ReleaseTracker</html>", encoding="utf-8")
+    (static_root / "logo.svg").write_text("safe-logo", encoding="utf-8")
+    secret_path = tmp_path / "outside-static.txt"
+    secret_path.write_text("must-not-be-served", encoding="utf-8")
+    (static_root / "linked-secret.txt").symlink_to(secret_path)
+
+    app = FastAPI()
+    main_module.configure_static_frontend(app, static_root)
+
+    with TestClient(app) as client:
+        assert client.get("/logo.svg").text == "safe-logo"
+        for path in (
+            "/%2e%2e/outside-static.txt",
+            "/assets/%2e%2e/%2e%2e/outside-static.txt",
+            "/linked-secret.txt",
+        ):
+            response = client.get(path)
+            assert response.status_code == 200
+            assert response.text == "<html>ReleaseTracker</html>"
+
+        api_response = client.get("/api/not-found")
+        assert api_response.status_code == 404
+        assert api_response.json() == {"detail": "Not found"}
+
+
+def test_static_frontend_uses_configured_base_url_for_runtime_assets(tmp_path):
+    static_root = tmp_path / "static"
+    (static_root / "assets").mkdir(parents=True)
+    (static_root / "index.html").write_text(
+        "<html><head><!-- APP_BASE_HREF --></head><body>ReleaseTracker</body></html>",
+        encoding="utf-8",
+    )
+
+    class StaticStorage:
+        async def get_system_base_url(self):
+            return "https://example.com/releasetracker"
+
+    app = FastAPI()
+    app.state.storage = StaticStorage()
+    main_module.configure_static_frontend(app, static_root)
+
+    with TestClient(app) as client:
+        response = client.get("/trackers")
+
+    assert response.status_code == 200
+    assert '<base href="/releasetracker/">' in response.text

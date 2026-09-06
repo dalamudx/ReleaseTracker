@@ -1,4 +1,4 @@
-.PHONY: help install run-backend run-frontend lint format clean build dbmate-migrate version
+.PHONY: help install run-backend run-frontend lint test test-backend test-frontend format clean build dbmate-migrate version
 
 # Default target
 .DEFAULT_GOAL := help
@@ -6,7 +6,6 @@
 # Variable definitions
 PYTHON = python3
 UV = uv
-PIP = uv pip
 NPM = npm
 
 help: ## Show help information
@@ -17,9 +16,9 @@ help: ## Show help information
 
 install: ## Install all dependencies (backend and frontend)
 	@echo "📦 Installing backend dependencies..."
-	cd backend && $(PIP) install -e ".[dev]"
+	cd backend && $(UV) sync --locked --extra dev
 	@echo "📦 Installing frontend dependencies..."
-	cd frontend && $(NPM) install
+	cd frontend && $(NPM) ci
 
 run-backend: ## Run the backend service
 	@echo "🚀 Starting backend service..."
@@ -35,13 +34,23 @@ dev: ## Run the backend and frontend together (requires make -j2)
 
 lint: ## Check code (backend ruff/black, frontend eslint)
 	@echo "🔍 Checking backend code..."
-	cd backend && ruff check . && black --check .
+	cd backend && $(UV) run --locked --extra dev ruff check src tests
+	cd backend && $(UV) run --locked --extra dev black --check src tests
 	@echo "� Checking frontend code..."
 	cd frontend && $(NPM) run lint
 
+test: test-backend test-frontend ## Run backend and frontend unit tests
+
+test-backend: ## Run backend unit tests with locked dependencies
+	cd backend && $(UV) run --locked --extra dev pytest -q
+
+test-frontend: ## Run frontend unit tests
+	cd frontend && $(NPM) run test
+
 format: ## Format code (backend black/ruff)
 	@echo "✨ Formatting backend code..."
-	cd backend && black . && ruff check . --fix
+	cd backend && $(UV) run --locked --extra dev black src tests
+	cd backend && $(UV) run --locked --extra dev ruff check --fix src tests
 
 build: ## Build the frontend production bundle
 	@echo "🏗️ Building frontend..."

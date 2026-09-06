@@ -88,9 +88,7 @@ class TCPProbe(HealthCheckProbe):
             )
             if host.service is not None:
                 per_service[host.service] = svc_result
-            aggregate_detail["tcp"].append(
-                {"service": host.service, **svc_result.detail}
-            )
+            aggregate_detail["tcp"].append({"service": host.service, **svc_result.detail})
             if not svc_result.healthy:
                 overall_healthy = False
                 if aggregate_last_error is None:

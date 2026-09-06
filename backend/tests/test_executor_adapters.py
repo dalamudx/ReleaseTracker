@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from json import JSONDecodeError
+import asyncio
 import json
 import logging
+from types import SimpleNamespace
+import threading
+import time
 
 import pytest
 
@@ -980,10 +984,11 @@ class FakeDockerModule:
                 self.verify = verify
 
     class DockerClient:
-        def __init__(self, base_url=None, version=None, tls=None):
+        def __init__(self, base_url=None, version=None, tls=None, timeout=None):
             self.base_url = base_url
             self.version = version
             self.tls = tls
+            self.timeout = timeout
 
 
 class FakePodmanModule:
@@ -995,10 +1000,11 @@ class FakePodmanModule:
                 self.verify = verify
 
     class PodmanClient:
-        def __init__(self, base_url=None, version=None, tls=None):
+        def __init__(self, base_url=None, version=None, tls=None, timeout=None):
             self.base_url = base_url
             self.version = version
             self.tls = tls
+            self.timeout = timeout
 
 
 class FakeKubeConfig:
@@ -1019,6 +1025,44 @@ class FakeKubeClient:
     class AppsV1Api:
         def __init__(self):
             self.created = True
+
+
+@pytest.mark.asyncio
+async def test_docker_adapter_offloads_blocking_sdk_calls_and_waits_on_cancellation():
+    started = threading.Event()
+    completed = threading.Event()
+
+    class SlowContainerManager:
+        def list(self, all=True):
+            del all
+            started.set()
+            time.sleep(0.1)
+            completed.set()
+            return []
+
+    runtime = RuntimeConnectionConfig(
+        name="docker-prod",
+        type="docker",
+        config={"socket": "unix:///var/run/docker.sock"},
+        secrets={},
+    )
+    adapter = DockerRuntimeAdapter(
+        runtime,
+        client=SimpleNamespace(containers=SlowContainerManager()),
+    )
+
+    operation = asyncio.create_task(adapter.discover_targets())
+    assert await asyncio.to_thread(started.wait, 1)
+
+    started_at = time.monotonic()
+    await asyncio.sleep(0.02)
+    assert time.monotonic() - started_at < 0.06
+    assert not operation.done()
+
+    operation.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await operation
+    assert completed.is_set()
 
 
 @pytest.mark.asyncio
@@ -1642,6 +1686,7 @@ async def test_docker_adapter_create_client_imports_sdk(monkeypatch):
     monkeypatch.setattr("importlib.import_module", fake_import)
     client = adapter._create_client()
     assert client.base_url == "unix:///var/run/docker.sock"
+    assert client.timeout == 90
 
 
 @pytest.mark.asyncio
@@ -1662,6 +1707,7 @@ async def test_podman_adapter_create_client_imports_sdk(monkeypatch):
     client = adapter._create_client()
     assert client.base_url == "tcp://localhost:8080"
     assert client.version == "3.0"
+    assert client.timeout == 90
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,10 @@
 from typing import Any
 
-from releasetracker.executors.base import BaseRuntimeAdapter, RuntimeMutationError, RuntimeUpdateResult
+from releasetracker.executors.base import (
+    BaseRuntimeAdapter,
+    RuntimeMutationError,
+    RuntimeUpdateResult,
+)
 
 
 class MutableFakeRuntimeAdapter(BaseRuntimeAdapter):

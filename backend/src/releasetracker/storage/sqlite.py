@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import sqlite3
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -19,6 +20,10 @@ from . import (
     sqlite_auth_oidc,
     sqlite_credentials,
     sqlite_runtime_executors,
+    sqlite_release_history,
+    sqlite_current_releases,
+    sqlite_source_observations,
+    sqlite_release_queries,
 )
 from ..models import (
     Release,
@@ -87,9 +92,18 @@ class SQLiteStorage:
         self.system_key_manager = system_key_manager
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
-        # Persistent database connection, lazily created via _get_connection()
-        self._db: aiosqlite.Connection | None = None
+        # Each asyncio task receives its own connection. Reusing one connection for
+        # concurrent tasks lets one task commit or roll back another task's work.
+        self._task_connections: dict[asyncio.Task[Any], aiosqlite.Connection] = {}
+        self._task_connection_cleanup_tasks: set[asyncio.Task[None]] = set()
+        # Storage can be exercised from TestClient's worker loop as well as
+        # the caller's loop. This lock protects bookkeeping across both.
+        self._connection_lock = threading.RLock()
         self._transaction_lock = asyncio.Lock()
+        # All writes that encrypt user-managed secrets share this lock with
+        # key rotation, so a row cannot miss a rotation scan.
+        self._encryption_rotation_lock = asyncio.Lock()
+        self._fallback_fernets: tuple[Fernet, ...] = ()
 
         # Notifier in-memory cache, invalidated after CRUD operations
         self._notifiers_cache: list | None = None
@@ -99,30 +113,102 @@ class SQLiteStorage:
 
         self.set_encryption_key(system_key_manager.encryption_key)
 
+    async def _open_connection(self) -> aiosqlite.Connection:
+        connection = await aiosqlite.connect(self.db_path)
+        connection.row_factory = aiosqlite.Row
+        # WAL permits readers to continue while a writer holds its transaction.
+        await connection.execute("PRAGMA journal_mode=WAL")
+        await connection.execute("PRAGMA busy_timeout=5000")
+        await connection.execute("PRAGMA cache_size=-16384")
+        await connection.commit()
+        return connection
+
+    def _schedule_task_connection_cleanup(self, task: asyncio.Task[Any]) -> None:
+        loop = task.get_loop()
+        if loop.is_closed():
+            return
+        cleanup_task = loop.create_task(self._close_task_connection(task))
+        with self._connection_lock:
+            self._task_connection_cleanup_tasks.add(cleanup_task)
+        cleanup_task.add_done_callback(self._discard_task_connection_cleanup)
+
+    def _discard_task_connection_cleanup(self, cleanup_task: asyncio.Task[None]) -> None:
+        with self._connection_lock:
+            self._task_connection_cleanup_tasks.discard(cleanup_task)
+
+    async def _close_task_connection(self, task: asyncio.Task[Any]) -> None:
+        with self._connection_lock:
+            connection = self._task_connections.get(task)
+        if connection is None:
+            return
+
+        closed = False
+        try:
+            if connection.in_transaction:
+                await connection.rollback()
+            await connection.close()
+            closed = True
+        finally:
+            # Keep a cancelled cleanup's connection discoverable so close()
+            # can finish it from a still-running application loop.
+            if closed:
+                with self._connection_lock:
+                    if self._task_connections.get(task) is connection:
+                        self._task_connections.pop(task, None)
+
     async def _get_connection(self) -> aiosqlite.Connection:
-        """Get the persistent database connection, creating it lazily on first use"""
-        if self._db is None:
-            self._db = await aiosqlite.connect(self.db_path)
-            self._db.row_factory = aiosqlite.Row
-            # Enable WAL mode to allow concurrent reads and writes and improve high-load concurrency
-            await self._db.execute("PRAGMA journal_mode=WAL")
-            # Set busy timeout in milliseconds to avoid immediate database is locked errors under concurrency
-            await self._db.execute("PRAGMA busy_timeout=5000")
-            # Increase cache size in pages; default is 4KB per page, here about 16MB
-            await self._db.execute("PRAGMA cache_size=-16384")
-            await self._db.commit()
-            logger.info(
-                f"SQLite persistent connection established with WAL mode enabled: {self.db_path}"
-            )
-        return self._db
+        """Return a task-scoped SQLite connection with isolated transactions."""
+        task = asyncio.current_task()
+        if task is None:
+            raise RuntimeError("SQLite storage access requires an asyncio task")
+
+        with self._connection_lock:
+            connection = self._task_connections.get(task)
+        if connection is not None:
+            return connection
+
+        connection = await self._open_connection()
+        with self._connection_lock:
+            existing_connection = self._task_connections.get(task)
+            if existing_connection is None:
+                self._task_connections[task] = connection
+                task.add_done_callback(self._schedule_task_connection_cleanup)
+                logger.debug("SQLite task-scoped connection established: %s", self.db_path)
+                return connection
+
+        await connection.close()
+        return existing_connection
+
+    async def close_current_task_connection(self) -> None:
+        """Release the request/job connection before its event loop can shut down."""
+        task = asyncio.current_task()
+        if task is not None:
+            await self._close_task_connection(task)
 
     async def close(self) -> None:
-        """Close the persistent database connection at application shutdown."""
-        if self._db is not None:
-            await self._db.close()
-            self._db = None
-            await asyncio.sleep(0)
-            logger.info("SQLite persistent connection closed")
+        """Close every task-scoped database connection at application shutdown."""
+        current_loop = asyncio.get_running_loop()
+        with self._connection_lock:
+            cleanup_tasks = tuple(
+                task
+                for task in self._task_connection_cleanup_tasks
+                if task.get_loop() is current_loop
+            )
+        if cleanup_tasks:
+            await asyncio.gather(*cleanup_tasks, return_exceptions=True)
+
+        with self._connection_lock:
+            connections = list(self._task_connections.values())
+            self._task_connections.clear()
+            self._task_connection_cleanup_tasks.clear()
+        for connection in connections:
+            try:
+                if connection.in_transaction:
+                    await connection.rollback()
+            finally:
+                await connection.close()
+        if connections or cleanup_tasks:
+            logger.info("SQLite task-scoped connections closed")
 
     def invalidate_notifiers_cache(self) -> None:
         """Invalidate notifier in-memory cache after CRUD operations"""
@@ -134,9 +220,23 @@ class SQLiteStorage:
             return cast(str, value)
         raise ValueError("notifier language must be one of: en, zh")
 
+    @property
+    def encryption_rotation_lock(self) -> asyncio.Lock:
+        return self._encryption_rotation_lock
+
     def set_encryption_key(self, key: str) -> None:
+        self.set_encryption_keys(key)
+
+    def set_encryption_keys(self, primary_key: str, fallback_keys: tuple[str, ...] = ()) -> None:
         try:
-            self.fernet = Fernet(key.encode("utf-8") if isinstance(key, str) else key)
+            self.fernet = Fernet(
+                primary_key.encode("utf-8") if isinstance(primary_key, str) else primary_key
+            )
+            self._fallback_fernets = tuple(
+                Fernet(key.encode("utf-8") if isinstance(key, str) else key)
+                for key in fallback_keys
+                if key != primary_key
+            )
         except Exception as e:
             logger.error(f"Invalid ENCRYPTION_KEY: {e}")
             raise
@@ -153,14 +253,16 @@ class SQLiteStorage:
     def _decrypt(self, enc: str) -> str | None:
         if not enc:
             return None
-        try:
-            return self.fernet.decrypt(enc.encode()).decode()
-        except InvalidToken:
-            # Assume legacy plaintext data
-            return enc
-        except Exception as e:
-            logger.error(f"Decryption failed: {e}")
-            return enc
+        for fernet in (self.fernet, *self._fallback_fernets):
+            try:
+                return fernet.decrypt(enc.encode()).decode()
+            except InvalidToken:
+                continue
+            except Exception as e:
+                logger.error(f"Decryption failed: {e}")
+                return enc
+        # Assume legacy plaintext data only after all known rotation keys fail.
+        return enc
 
     @staticmethod
     def _looks_like_fernet_token(value: str) -> bool:
@@ -327,6 +429,10 @@ class SQLiteStorage:
         return {"inventory": inventory, "undecryptable_count": undecryptable_count}
 
     async def rotate_encrypted_data(self, new_key: str) -> dict[str, Any]:
+        async with self._encryption_rotation_lock:
+            return await self._rotate_encrypted_data_locked(new_key)
+
+    async def _rotate_encrypted_data_locked(self, new_key: str) -> dict[str, Any]:
         old_fernet = self.fernet
         new_fernet = Fernet(new_key.encode("utf-8"))
         db = await self._get_connection()
@@ -423,7 +529,7 @@ class SQLiteStorage:
             raise
 
         try:
-            await db.execute("BEGIN")
+            await db.execute("BEGIN IMMEDIATE")
             await db.executemany(
                 "UPDATE credentials SET token = ?, secrets = ? WHERE id = ?",
                 credential_updates,
@@ -437,7 +543,7 @@ class SQLiteStorage:
                 runtime_connection_updates,
             )
             await db.commit()
-        except Exception:
+        except BaseException:
             await db.rollback()
             raise
 
@@ -1048,6 +1154,13 @@ class SQLiteStorage:
     async def get_all_aggregate_trackers(self) -> list[AggregateTracker]:
         return await sqlite_aggregate_trackers.get_all_aggregate_trackers(self)
 
+    async def get_aggregate_trackers_page(
+        self, *, skip: int, limit: int, search: str | None = None
+    ) -> tuple[list[AggregateTracker], int]:
+        return await sqlite_aggregate_trackers.get_aggregate_trackers_page(
+            self, skip=skip, limit=limit, search=search
+        )
+
     async def get_tracker_source(self, tracker_source_id: int) -> TrackerSource | None:
         db = await self._get_connection()
         db.row_factory = aiosqlite.Row
@@ -1629,18 +1742,9 @@ class SQLiteStorage:
         trigger_mode: str,
         started_at: datetime | None = None,
     ) -> int:
-        db = await self._get_connection()
-        timestamp = (started_at or datetime.now()).isoformat()
-        cursor = await db.execute(
-            """
-            INSERT INTO source_fetch_runs
-            (tracker_source_id, trigger_mode, started_at, status, created_at)
-            VALUES (?, ?, ?, 'running', ?)
-            """,
-            (tracker_source_id, trigger_mode, timestamp, timestamp),
+        return await sqlite_release_history.create_source_fetch_run(
+            self, tracker_source_id, trigger_mode=trigger_mode, started_at=started_at
         )
-        await db.commit()
-        return self._require_lastrowid(cursor.lastrowid, "source fetch run")
 
     async def finalize_source_fetch_run(
         self,
@@ -1652,28 +1756,15 @@ class SQLiteStorage:
         error_message: str | None = None,
         finished_at: datetime | None = None,
     ) -> None:
-        db = await self._get_connection()
-        finished_at_value = (finished_at or datetime.now()).isoformat()
-        await db.execute(
-            """
-            UPDATE source_fetch_runs
-            SET status = ?,
-                fetched_count = ?,
-                filtered_in_count = ?,
-                error_message = ?,
-                finished_at = ?
-            WHERE id = ?
-            """,
-            (
-                status,
-                fetched_count,
-                filtered_in_count,
-                error_message,
-                finished_at_value,
-                source_fetch_run_id,
-            ),
+        return await sqlite_release_history.finalize_source_fetch_run(
+            self,
+            source_fetch_run_id,
+            status=status,
+            fetched_count=fetched_count,
+            filtered_in_count=filtered_in_count,
+            error_message=error_message,
+            finished_at=finished_at,
         )
-        await db.commit()
 
     async def append_source_history_for_run(
         self,
@@ -1684,316 +1775,40 @@ class SQLiteStorage:
         aggregate_tracker_id: int | None = None,
         observed_at: datetime | None = None,
     ) -> dict[str, int]:
-        if tracker_source.id is None:
-            raise ValueError("tracker_source.id is required to append source history")
-
-        db = await self._get_connection()
-        db.row_factory = aiosqlite.Row
-        timestamp = (observed_at or datetime.now()).isoformat()
-        source_history_ids_by_identity: dict[str, int] = {}
-
-        for release in releases:
-            version, app_version, chart_version = self._release_version_metadata(
-                release, source_type=tracker_source.source_type
-            )
-            source_release_key = self._source_release_key_for_release(
-                release, source_type=tracker_source.source_type
-            )
-            digest = self._release_digest_value(release, source_type=tracker_source.source_type)
-            identity_key = self.release_identity_key_for_source(
-                release, source_type=tracker_source.source_type
-            )
-            tag_name = chart_version or self._normalize_release_value(release.tag_name) or version
-
-            # When a container fetch couldn't resolve the manifest digest
-            # (registry errors, intermittent unavailability, or manifest 404
-            # for a retired tag) the release enters this function without
-            # `commit_sha`. The identity_key for such a release falls back
-            # to `version` instead of the digest, which would silently
-            # create a *second* history row that shadows the real one.
-            # Skip the write entirely if a row with a real digest already
-            # exists for this (source, tag) so the stable observation and
-            # its original published_at stay authoritative.
-            if (
-                tracker_source.source_type == "container"
-                and digest is None
-                and tag_name is not None
-            ):
-                prior_digest_row = await (
-                    await db.execute(
-                        """
-                        SELECT id
-                        FROM source_release_history
-                        WHERE tracker_source_id = ?
-                          AND tag_name = ?
-                          AND commit_sha IS NOT NULL
-                          AND commit_sha != ''
-                        LIMIT 1
-                        """,
-                        (tracker_source.id, tag_name),
-                    )
-                ).fetchone()
-                if prior_digest_row is not None:
-                    source_history_ids_by_identity[identity_key] = prior_digest_row["id"]
-                    await db.execute(
-                        """
-                        INSERT OR IGNORE INTO source_release_run_observations
-                        (source_fetch_run_id, source_release_history_id, observed_at, created_at)
-                        VALUES (?, ?, ?, ?)
-                        """,
-                        (
-                            source_fetch_run_id,
-                            prior_digest_row["id"],
-                            timestamp,
-                            timestamp,
-                        ),
-                    )
-                    continue
-
-            raw_payload: dict[str, Any] = {
-                "aggregate_tracker_id": aggregate_tracker_id,
-                "source_key": tracker_source.source_key,
-                "source_type": tracker_source.source_type,
-                "channel_name": release.channel_name,
-            }
-            if app_version is not None:
-                raw_payload["appVersion"] = app_version
-            if chart_version is not None:
-                raw_payload["chartVersion"] = chart_version
-
-            await db.execute(
-                """
-                INSERT OR IGNORE INTO source_release_history
-                (tracker_source_id, first_source_fetch_run_id, source_type, source_release_key, version, digest, digest_algorithm, digest_media_type, digest_platform, identity_key, immutable_key, name, tag_name, published_at, url, changelog_url, prerelease, body, commit_sha, raw_payload, first_observed_at, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    tracker_source.id,
-                    source_fetch_run_id,
-                    tracker_source.source_type,
-                    source_release_key,
-                    version,
-                    digest,
-                    "sha256" if digest else None,
-                    None,
-                    None,
-                    identity_key,
-                    identity_key,
-                    release.name,
-                    tag_name,
-                    release.published_at.isoformat(),
-                    release.url,
-                    getattr(release, "changelog_url", None),
-                    1 if release.prerelease else 0,
-                    release.body,
-                    release.commit_sha,
-                    self._dump_json(raw_payload),
-                    timestamp,
-                    timestamp,
-                ),
-            )
-
-            source_row = await (
-                await db.execute(
-                    """
-                    SELECT id, version, tag_name, published_at, commit_sha
-                    FROM source_release_history
-                    WHERE tracker_source_id = ? AND immutable_key = ?
-                    """,
-                    (tracker_source.id, identity_key),
-                )
-            ).fetchone()
-            if source_row is None:
-                raise ValueError("Failed to read source release history row")
-            source_history_id = source_row["id"]
-            source_history_ids_by_identity[identity_key] = source_history_id
-
-            normalized_existing_commit = self._normalize_release_value(source_row["commit_sha"])
-            normalized_new_commit = self._normalize_release_value(release.commit_sha)
-            preserved_published_at = release.published_at.isoformat()
-
-            # Decide whether the existing published_at should be preserved.
-            #
-            # The goal is to treat published_at as "time of the most recent
-            # content change", so the timestamp stays stable when nothing
-            # about the release has actually changed.
-            #
-            # - Non-container sources (github/gitlab/gitea/helm): preserve when
-            #   version and commit_sha match, i.e. the upstream API returned
-            #   the exact same release metadata we already stored.
-            # - Container sources: preserve when version matches AND digest
-            #   is unchanged. If the existing digest is null (backfilled
-            #   history or a prior fetch where manifest HEAD failed) treat a
-            #   now-available digest as the "first time we learned what this
-            #   tag points to", which is NOT a content change, so we still
-            #   preserve the existing published_at.
-            # - Container sources where we failed to resolve a digest this
-            #   fetch (new digest is null): we have no way to tell if the
-            #   image changed, so we must NOT reset published_at — preserve
-            #   the previous value rather than claim a fake update.
-            if source_row["version"] == version:
-                if tracker_source.source_type == "container":
-                    digest_matches_or_absent = (
-                        normalized_new_commit is None
-                        or normalized_existing_commit is None
-                        or normalized_existing_commit == normalized_new_commit
-                    )
-                    if digest_matches_or_absent:
-                        preserved_published_at = source_row["published_at"]
-                elif (
-                    normalized_existing_commit is not None
-                    and normalized_existing_commit == normalized_new_commit
-                ):
-                    preserved_published_at = source_row["published_at"]
-
-            if self._should_replace_source_history_display(
-                source_type=tracker_source.source_type,
-                version=version,
-                tag_name=tag_name,
-                existing_version=source_row["version"],
-                existing_tag_name=source_row["tag_name"],
-            ):
-                await db.execute(
-                    """
-                    UPDATE source_release_history
-                    SET source_release_key = ?,
-                        version = ?,
-                        digest = ?,
-                        digest_algorithm = ?,
-                        name = ?,
-                        tag_name = ?,
-                        published_at = ?,
-                        url = ?,
-                        changelog_url = ?,
-                        prerelease = ?,
-                        body = ?,
-                        commit_sha = ?,
-                        raw_payload = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        source_release_key,
-                        version,
-                        digest,
-                        "sha256" if digest else None,
-                        release.name,
-                        tag_name,
-                        preserved_published_at,
-                        release.url,
-                        getattr(release, "changelog_url", None),
-                        1 if release.prerelease else 0,
-                        release.body,
-                        release.commit_sha,
-                        self._dump_json(raw_payload),
-                        source_history_id,
-                    ),
-                )
-
-            await db.execute(
-                """
-                INSERT OR IGNORE INTO source_release_run_observations
-                (source_fetch_run_id, source_release_history_id, observed_at, created_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (source_fetch_run_id, source_history_id, timestamp, timestamp),
-            )
-
-        await db.commit()
-        return source_history_ids_by_identity
+        return await sqlite_release_history.append_source_history_for_run(
+            self,
+            source_fetch_run_id,
+            tracker_source,
+            releases,
+            aggregate_tracker_id=aggregate_tracker_id,
+            observed_at=observed_at,
+        )
 
     async def get_source_release_history_releases_by_source(
         self,
         tracker_source_id: int,
     ) -> list[Release]:
-        db = await self._get_connection()
-        db.row_factory = aiosqlite.Row
-        rows = await (
-            await db.execute(
-                """
-                SELECT *
-                FROM source_release_history
-                WHERE tracker_source_id = ?
-                ORDER BY published_at DESC, id DESC
-                """,
-                (tracker_source_id,),
-            )
-        ).fetchall()
-
-        releases: list[Release] = []
-        for row in rows:
-            raw_payload = self._load_json(row["raw_payload"])
-            releases.append(
-                Release(
-                    tracker_name="",
-                    tracker_type=row["source_type"],
-                    name=row["name"],
-                    tag_name=row["tag_name"],
-                    version=row["version"],
-                    app_version=raw_payload.get("appVersion"),
-                    chart_version=raw_payload.get("chartVersion"),
-                    published_at=datetime.fromisoformat(row["published_at"]),
-                    url=row["url"],
-                    changelog_url=row["changelog_url"],
-                    prerelease=bool(row["prerelease"]),
-                    body=row["body"],
-                    channel_name=raw_payload.get("channel_name"),
-                    commit_sha=row["commit_sha"],
-                    created_at=datetime.fromisoformat(row["created_at"]),
-                )
-            )
-
-        return releases
+        return await sqlite_release_history.get_source_release_history_releases_by_source(
+            self, tracker_source_id
+        )
 
     async def get_source_release_history_id(
         self,
         tracker_source_id: int,
         identity_key: str,
     ) -> int | None:
-        db = await self._get_connection()
-        db.row_factory = aiosqlite.Row
-        row = await (
-            await db.execute(
-                """
-                SELECT id
-                FROM source_release_history
-                WHERE tracker_source_id = ? AND immutable_key = ?
-                """,
-                (tracker_source_id, identity_key),
-            )
-        ).fetchone()
-        return row["id"] if row else None
+        return await sqlite_release_history.get_source_release_history_id(
+            self, tracker_source_id, identity_key
+        )
 
     async def get_source_release_history_digests(
         self,
         tracker_source_id: int,
         tag_names: list[str],
     ) -> dict[str, str | None]:
-        """
-        Return {tag_name → existing digest} for any rows already present.
-
-        Used by incremental fetchers (primarily the container tracker) to skip
-        additional metadata lookups on tags that are already stored with a
-        known digest. Missing tags are absent from the returned mapping.
-        """
-        if not tag_names:
-            return {}
-
-        db = await self._get_connection()
-        db.row_factory = aiosqlite.Row
-        # Build placeholders for the IN clause; SQLite doesn't support array params.
-        placeholders = ",".join("?" for _ in tag_names)
-        rows = await (
-            await db.execute(
-                f"""
-                SELECT tag_name, commit_sha
-                FROM source_release_history
-                WHERE tracker_source_id = ? AND tag_name IN ({placeholders})
-                """,
-                (tracker_source_id, *tag_names),
-            )
-        ).fetchall()
-
-        return {row["tag_name"]: row["commit_sha"] for row in rows}
+        return await sqlite_release_history.get_source_release_history_digests(
+            self, tracker_source_id, tag_names
+        )
 
     async def upsert_tracker_release_history(
         self,
@@ -2004,173 +1819,22 @@ class SQLiteStorage:
         supporting_source_release_history_ids: list[int] | None = None,
         source_type: str | None = None,
     ) -> tuple[int, bool]:
-        db = await self._get_connection()
-        db.row_factory = aiosqlite.Row
-
-        identity_key = self.release_identity_key_for_source(release, source_type=source_type)
-        digest = self._release_digest_value(release, source_type=source_type)
-        version, _, _ = self._release_version_metadata(release, source_type=source_type)
-        timestamp = datetime.now().isoformat()
-
-        cursor = await db.execute(
-            """
-            INSERT OR IGNORE INTO tracker_release_history
-            (aggregate_tracker_id, identity_key, immutable_key, version, digest, digest_algorithm, digest_media_type, digest_platform, primary_source_release_history_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                aggregate_tracker_id,
-                identity_key,
-                identity_key,
-                version,
-                digest,
-                "sha256" if digest else None,
-                None,
-                None,
-                primary_source_release_history_id,
-                timestamp,
-            ),
+        return await sqlite_release_history.upsert_tracker_release_history(
+            self,
+            aggregate_tracker_id,
+            release,
+            primary_source_release_history_id=primary_source_release_history_id,
+            supporting_source_release_history_ids=supporting_source_release_history_ids,
+            source_type=source_type,
         )
-        is_new = cursor.rowcount > 0
-
-        row = await (
-            await db.execute(
-                """
-                SELECT id
-                FROM tracker_release_history
-                WHERE aggregate_tracker_id = ? AND immutable_key = ?
-                """,
-                (aggregate_tracker_id, identity_key),
-            )
-        ).fetchone()
-        if row is None:
-            raise ValueError("Failed to read tracker release history row")
-        tracker_release_history_id = row["id"]
-
-        await db.execute(
-            """
-            UPDATE tracker_release_history
-            SET version = ?,
-                digest = ?,
-                digest_algorithm = ?,
-                digest_media_type = ?,
-                digest_platform = ?,
-                primary_source_release_history_id = ?
-            WHERE id = ?
-            """,
-            (
-                version,
-                digest,
-                "sha256" if digest else None,
-                None,
-                None,
-                primary_source_release_history_id,
-                tracker_release_history_id,
-            ),
-        )
-
-        await db.execute(
-            """
-            UPDATE tracker_release_history_sources
-            SET contribution_kind = 'supporting'
-            WHERE tracker_release_history_id = ?
-              AND contribution_kind = 'primary'
-            """,
-            (tracker_release_history_id,),
-        )
-
-        await db.execute(
-            """
-            INSERT OR IGNORE INTO tracker_release_history_sources
-            (tracker_release_history_id, source_release_history_id, contribution_kind, created_at)
-            VALUES (?, ?, 'primary', ?)
-            """,
-            (tracker_release_history_id, primary_source_release_history_id, timestamp),
-        )
-        await db.execute(
-            """
-            UPDATE tracker_release_history_sources
-            SET contribution_kind = 'primary'
-            WHERE tracker_release_history_id = ?
-              AND source_release_history_id = ?
-            """,
-            (tracker_release_history_id, primary_source_release_history_id),
-        )
-
-        for source_release_history_id in supporting_source_release_history_ids or []:
-            if source_release_history_id == primary_source_release_history_id:
-                continue
-            await db.execute(
-                """
-                INSERT OR IGNORE INTO tracker_release_history_sources
-                (tracker_release_history_id, source_release_history_id, contribution_kind, created_at)
-                VALUES (?, ?, 'supporting', ?)
-                """,
-                (tracker_release_history_id, source_release_history_id, timestamp),
-            )
-
-        await db.commit()
-        return tracker_release_history_id, is_new
 
     async def get_tracker_release_history_releases(
         self,
         aggregate_tracker_id: int,
     ) -> list[Release]:
-        db = await self._get_connection()
-        db.row_factory = aiosqlite.Row
-        rows = await (
-            await db.execute(
-                """
-                SELECT trh.id AS tracker_release_history_id,
-                       trh.identity_key,
-                       trh.version AS tracker_version,
-                       trh.digest,
-                       trh.created_at AS tracker_created_at,
-                       srh.source_type,
-                       srh.name,
-                       srh.tag_name,
-                       srh.version,
-                       srh.published_at,
-                       srh.url,
-                       srh.changelog_url,
-                       srh.prerelease,
-                       srh.body,
-                       srh.commit_sha,
-                       srh.raw_payload
-                FROM tracker_release_history trh
-                JOIN source_release_history srh ON srh.id = trh.primary_source_release_history_id
-                WHERE trh.aggregate_tracker_id = ?
-                ORDER BY trh.created_at DESC, trh.id DESC
-                """,
-                (aggregate_tracker_id,),
-            )
-        ).fetchall()
-
-        releases: list[Release] = []
-        for row in rows:
-            raw_payload = self._load_json(row["raw_payload"])
-            releases.append(
-                Release(
-                    id=row["tracker_release_history_id"],
-                    tracker_name="",
-                    tracker_type=row["source_type"],
-                    name=row["name"],
-                    tag_name=row["tag_name"],
-                    version=row["version"],
-                    app_version=raw_payload.get("appVersion"),
-                    chart_version=raw_payload.get("chartVersion"),
-                    published_at=datetime.fromisoformat(row["published_at"]),
-                    url=row["url"],
-                    changelog_url=row["changelog_url"],
-                    prerelease=bool(row["prerelease"]),
-                    body=row["body"],
-                    channel_name=raw_payload.get("channel_name"),
-                    commit_sha=row["commit_sha"],
-                    created_at=datetime.fromisoformat(row["tracker_created_at"]),
-                )
-            )
-
-        return releases
+        return await sqlite_release_history.get_tracker_release_history_releases(
+            self, aggregate_tracker_id
+        )
 
     @staticmethod
     def select_top_releases_for_channel(
@@ -2530,137 +2194,28 @@ class SQLiteStorage:
         *,
         source_type: str | None = None,
     ) -> None:
-        db = await self._get_connection()
-        db.row_factory = aiosqlite.Row
-        projection_releases = releases
-        projected_at = datetime.now().isoformat()
-
-        await db.execute(
-            "DELETE FROM tracker_current_releases WHERE aggregate_tracker_id = ?",
-            (aggregate_tracker_id,),
+        return await sqlite_current_releases.refresh_tracker_current_releases(
+            self, aggregate_tracker_id, releases, source_type=source_type
         )
 
-        for release in self.dedupe_releases_by_immutable_identity(projection_releases):
-            identity_key = self.release_identity_key_for_source(release, source_type=source_type)
-            digest = self._release_digest_value(release, source_type=source_type)
-            history_row = await (
-                await db.execute(
-                    """
-                    SELECT id
-                    FROM tracker_release_history
-                    WHERE aggregate_tracker_id = ? AND immutable_key = ?
-                    """,
-                    (aggregate_tracker_id, identity_key),
-                )
-            ).fetchone()
-            if history_row is None:
-                continue
-
-            await db.execute(
-                """
-                INSERT INTO tracker_current_releases
-                (aggregate_tracker_id, identity_key, immutable_key, version, digest, tracker_release_history_id, name, tag_name, published_at, url, changelog_url, prerelease, body, projected_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    aggregate_tracker_id,
-                    identity_key,
-                    identity_key,
-                    release.version,
-                    digest,
-                    history_row["id"],
-                    release.name,
-                    release.tag_name,
-                    release.published_at.isoformat(),
-                    release.url,
-                    release.changelog_url,
-                    1 if release.prerelease else 0,
-                    release.body,
-                    projected_at,
-                    projected_at,
-                ),
-            )
-
-        await db.commit()
+    async def _get_tracker_current_projection_rows_by_aggregate_tracker_id(
+        self, aggregate_tracker_ids: list[int]
+    ) -> dict[int, list[dict[str, Any]]]:
+        return await sqlite_current_releases._get_tracker_current_projection_rows_by_aggregate_tracker_id(
+            self, aggregate_tracker_ids
+        )
 
     async def get_tracker_current_releases(self, aggregate_tracker_id: int) -> list[Release]:
-        projection_rows = await self._get_tracker_current_projection_rows(aggregate_tracker_id)
-        return [row["release"] for row in projection_rows]
+        return await sqlite_current_releases.get_tracker_current_releases(
+            self, aggregate_tracker_id
+        )
 
     async def _get_tracker_current_projection_rows(
         self, aggregate_tracker_id: int
     ) -> list[dict[str, Any]]:
-        db = await self._get_connection()
-        db.row_factory = aiosqlite.Row
-        rows = await (
-            await db.execute(
-                """
-                SELECT tcr.*,
-                       trh.id AS tracker_release_history_id,
-                       trh.created_at AS tracker_created_at,
-                       srh.id AS primary_source_release_history_id,
-                       ats.source_key AS primary_source_key,
-                       ats.source_type AS primary_source_type,
-                       srh.commit_sha,
-                       srh.raw_payload
-                FROM tracker_current_releases tcr
-                JOIN tracker_release_history trh ON trh.id = tcr.tracker_release_history_id
-                JOIN source_release_history srh ON srh.id = trh.primary_source_release_history_id
-                LEFT JOIN aggregate_tracker_sources ats ON ats.id = srh.tracker_source_id
-                WHERE tcr.aggregate_tracker_id = ?
-                ORDER BY tcr.published_at DESC, tcr.id DESC
-                """,
-                (aggregate_tracker_id,),
-            )
-        ).fetchall()
-
-        projection_rows: list[dict[str, Any]] = []
-        for row in rows:
-            raw_payload = self._load_json(row["raw_payload"])
-            projection_rows.append(
-                {
-                    "tracker_release_history_id": row["tracker_release_history_id"],
-                    "identity_key": row["identity_key"],
-                    "version": row["version"],
-                    "digest": row["digest"],
-                    "published_at": datetime.fromisoformat(row["published_at"]),
-                    "name": row["name"],
-                    "tag_name": row["tag_name"],
-                    "prerelease": bool(row["prerelease"]),
-                    "url": row["url"],
-                    "changelog_url": row["changelog_url"],
-                    "body": row["body"],
-                    "projected_at": datetime.fromisoformat(row["projected_at"]),
-                    "primary_source": (
-                        {
-                            "source_key": row["primary_source_key"],
-                            "source_type": row["primary_source_type"],
-                            "source_release_history_id": row["primary_source_release_history_id"],
-                        }
-                        if row["primary_source_release_history_id"] is not None
-                        else None
-                    ),
-                    "release": Release(
-                        id=row["tracker_release_history_id"],
-                        tracker_name="",
-                        tracker_type=row["primary_source_type"] or "github",
-                        name=row["name"],
-                        tag_name=row["tag_name"],
-                        version=row["version"],
-                        app_version=raw_payload.get("appVersion"),
-                        chart_version=raw_payload.get("chartVersion"),
-                        published_at=datetime.fromisoformat(row["published_at"]),
-                        url=row["url"],
-                        changelog_url=row["changelog_url"],
-                        prerelease=bool(row["prerelease"]),
-                        body=row["body"],
-                        channel_name=raw_payload.get("channel_name"),
-                        commit_sha=row["commit_sha"],
-                        created_at=datetime.fromisoformat(row["tracker_created_at"]),
-                    ),
-                }
-            )
-        return projection_rows
+        return await sqlite_current_releases._get_tracker_current_projection_rows(
+            self, aggregate_tracker_id
+        )
 
     @classmethod
     def _select_top_current_projection_release(
@@ -2669,35 +2224,9 @@ class SQLiteStorage:
         channels: list[Any],
         sort_mode: str,
     ) -> Release | None:
-        if not releases:
-            return None
-
-        unique_releases = cls.dedupe_releases_by_immutable_identity(releases)
-        enabled_channels = [channel for channel in channels if channel.enabled] if channels else []
-        for channel in enabled_channels:
-            channel_source_type = getattr(channel, "source_type", None)
-            channel_name = getattr(channel, "name", "")
-            if isinstance(channel, dict):
-                channel_source_type = channel.get("source_type")
-                channel_name = str(channel.get("name") or "")
-            channel_candidates = [
-                release
-                for release in unique_releases
-                if cls._release_matches_channel(
-                    release, channel, channel_source_type=channel_source_type
-                )
-            ]
-            if channel_candidates:
-                winner = max(
-                    channel_candidates,
-                    key=lambda release: cls._release_order_key(release, sort_mode),
-                )
-                return cls._copy_release_with_channel_name(winner, channel_name)
-
-        if enabled_channels:
-            return None
-
-        return max(unique_releases, key=lambda release: cls._release_order_key(release, sort_mode))
+        return sqlite_current_releases._select_top_current_projection_release(
+            cls, releases, channels, sort_mode
+        )
 
     @classmethod
     def _filter_projection_rows_by_channels(
@@ -2705,113 +2234,50 @@ class SQLiteStorage:
         rows: list[dict[str, Any]],
         channels: list[Any],
     ) -> list[dict[str, Any]]:
-        enabled_channels = [channel for channel in channels if channel.enabled] if channels else []
-        if not enabled_channels:
-            return rows
-
-        visible_rows: list[dict[str, Any]] = []
-        for row in rows:
-            release = row["release"]
-            if any(
-                cls._release_matches_channel(
-                    release,
-                    channel,
-                    channel_source_type=(
-                        channel.get("source_type")
-                        if isinstance(channel, dict)
-                        else getattr(channel, "source_type", None)
-                    ),
-                )
-                for channel in enabled_channels
-            ):
-                visible_rows.append(row)
-
-        return visible_rows
+        return sqlite_current_releases._filter_projection_rows_by_channels(cls, rows, channels)
 
     async def get_tracker_current_release_rows(self, tracker_name: str) -> list[dict[str, Any]]:
-        aggregate_tracker = await self.get_aggregate_tracker(tracker_name)
-        if aggregate_tracker is None or aggregate_tracker.id is None:
-            return []
-
-        current_rows = await self._get_tracker_current_projection_rows(aggregate_tracker.id)
-        tracker_config = await self.get_tracker_config(tracker_name)
-        channels = tracker_config.channels if tracker_config is not None else []
-        return self._filter_projection_rows_by_channels(current_rows, channels)
+        return await sqlite_current_releases.get_tracker_current_release_rows(self, tracker_name)
 
     async def get_tracker_latest_current_release_summary(
         self, tracker_name: str
     ) -> dict[str, Any] | None:
-        current_rows = await self.get_tracker_current_release_rows(tracker_name)
-        if not current_rows:
-            return None
-
-        tracker_config = await self.get_tracker_config(tracker_name)
-        sort_mode = (
-            tracker_config.version_sort_mode if tracker_config is not None else "published_at"
+        return await sqlite_current_releases.get_tracker_latest_current_release_summary(
+            self, tracker_name
         )
-        channels = tracker_config.channels if tracker_config is not None else []
-        current_releases = [
-            row["release"].model_copy(update={"tracker_name": tracker_name}) for row in current_rows
-        ]
-        latest_release = self._select_top_current_projection_release(
-            current_releases,
-            channels,
-            sort_mode,
-        )
-        if latest_release is None:
-            return None
-
-        latest_identity_key = self.release_identity_key_for_source(
-            latest_release,
-            source_type=latest_release.tracker_type,
-        )
-        latest_row = next(
-            (row for row in current_rows if row["identity_key"] == latest_identity_key),
-            None,
-        )
-        if latest_row is None:
-            return None
-
-        return {
-            "tracker_name": tracker_name,
-            "tracker_release_history_id": latest_row["tracker_release_history_id"],
-            "identity_key": latest_row["identity_key"],
-            "version": latest_release.version,
-            "digest": latest_row["digest"],
-            "published_at": latest_row["published_at"],
-            "prerelease": latest_release.prerelease,
-            "name": latest_release.name,
-            "tag_name": latest_release.tag_name,
-            "url": latest_release.url,
-            "changelog_url": latest_release.changelog_url,
-            "body": latest_release.body,
-            "channel_name": latest_row["release"].channel_name,
-            "primary_source": latest_row["primary_source"],
-            "primary_source_type": (
-                latest_row["primary_source"]["source_type"]
-                if latest_row["primary_source"] is not None
-                else None
-            ),
-            "projected_at": latest_row["projected_at"],
-            "release": latest_release,
-        }
 
     async def get_tracker_current_status_derivation(self, tracker_name: str) -> dict[str, Any]:
-        tracker_status = await self.get_tracker_status(tracker_name)
-        latest_summary = await self.get_tracker_latest_current_release_summary(tracker_name)
-        return {
-            "tracker_name": tracker_name,
-            "last_check": tracker_status.last_check if tracker_status is not None else None,
-            "error": tracker_status.error if tracker_status is not None else None,
-            "latest_identity_key": (
-                latest_summary["identity_key"] if latest_summary is not None else None
-            ),
-            "latest_version": latest_summary["version"] if latest_summary is not None else None,
-            "latest_tracker_release_history_id": (
-                latest_summary["tracker_release_history_id"] if latest_summary is not None else None
-            ),
-            "projected_at": latest_summary["projected_at"] if latest_summary is not None else None,
-        }
+        return await sqlite_current_releases.get_tracker_current_status_derivation(
+            self, tracker_name
+        )
+
+    async def get_tracker_runtime_configs_for_aggregate_trackers(
+        self, trackers: list[AggregateTracker]
+    ) -> dict[str, Any]:
+        return await sqlite_current_releases.get_tracker_runtime_configs_for_aggregate_trackers(
+            self, trackers
+        )
+
+    async def get_tracker_current_release_rows_for_aggregate_trackers(
+        self,
+        trackers: list[AggregateTracker],
+        runtime_configs: dict[str, Any],
+    ) -> dict[str, list[dict[str, Any]]]:
+        return (
+            await sqlite_current_releases.get_tracker_current_release_rows_for_aggregate_trackers(
+                self, trackers, runtime_configs
+            )
+        )
+
+    async def get_tracker_current_status_derivations_for_aggregate_trackers(
+        self,
+        trackers: list[AggregateTracker],
+        current_rows_by_tracker_name: dict[str, list[dict[str, Any]]],
+        runtime_configs: dict[str, Any],
+    ) -> dict[str, dict[str, Any]]:
+        return await sqlite_current_releases.get_tracker_current_status_derivations_for_aggregate_trackers(
+            self, trackers, current_rows_by_tracker_name, runtime_configs
+        )
 
     async def _upsert_source_release_observation(
         self,
@@ -2824,119 +2290,16 @@ class SQLiteStorage:
         changelog_url: str | None = None,
         source_type: str | None = None,
     ) -> int:
-        comparison_version, app_version, chart_version = self._release_version_metadata(
-            release, source_type=source_type
+        return await sqlite_source_observations._upsert_source_release_observation(
+            self,
+            db,
+            tracker_source_id,
+            release,
+            observed_at=observed_at,
+            raw_payload=raw_payload,
+            changelog_url=changelog_url,
+            source_type=source_type,
         )
-        tag_name = (
-            chart_version or self._normalize_release_value(release.tag_name) or comparison_version
-        )
-        source_release_key = tag_name
-        if not source_release_key:
-            raise ValueError("release tag_name or version must be a non-empty string")
-
-        observed_at_iso = observed_at.isoformat()
-        persisted_raw_payload = dict(raw_payload or {})
-        if app_version is not None:
-            persisted_raw_payload["appVersion"] = app_version
-        if chart_version is not None:
-            persisted_raw_payload["chartVersion"] = chart_version
-        raw_payload_json = self._dump_json(persisted_raw_payload)
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute(
-            """
-            SELECT id, version, published_at, commit_sha
-            FROM source_release_observations
-            WHERE tracker_source_id = ? AND source_release_key = ?
-            """,
-            (tracker_source_id, source_release_key),
-        )
-        existing_row = await cursor.fetchone()
-
-        if existing_row is None:
-            cursor = await db.execute(
-                """
-                INSERT INTO source_release_observations
-                (tracker_source_id, source_release_key, name, tag_name, version, published_at, url, changelog_url, prerelease, body, commit_sha, raw_payload, observed_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    tracker_source_id,
-                    source_release_key,
-                    release.name,
-                    tag_name,
-                    comparison_version,
-                    release.published_at.isoformat(),
-                    release.url,
-                    changelog_url,
-                    1 if release.prerelease else 0,
-                    release.body,
-                    release.commit_sha,
-                    raw_payload_json,
-                    observed_at_iso,
-                    observed_at_iso,
-                    observed_at_iso,
-                ),
-            )
-            return self._require_lastrowid(cursor.lastrowid, "source release observation")
-
-        persisted_published_at = release.published_at.isoformat()
-        normalized_existing_commit = self._normalize_release_value(existing_row["commit_sha"])
-        normalized_new_commit = self._normalize_release_value(release.commit_sha)
-
-        # Mirror the digest-diff logic from append_source_history_for_run:
-        # container releases preserve their prior published_at unless the
-        # digest itself changes (and failed-lookup digests don't count as
-        # a change), while other sources keep preserving on version+commit
-        # identity like before.
-        if existing_row["version"] == comparison_version:
-            if source_type == "container":
-                digest_matches_or_absent = (
-                    normalized_new_commit is None
-                    or normalized_existing_commit is None
-                    or normalized_existing_commit == normalized_new_commit
-                )
-                if digest_matches_or_absent:
-                    persisted_published_at = existing_row["published_at"]
-            elif (
-                normalized_existing_commit is not None
-                and normalized_existing_commit == normalized_new_commit
-            ):
-                persisted_published_at = existing_row["published_at"]
-
-        await db.execute(
-            """
-            UPDATE source_release_observations
-            SET name = ?,
-                tag_name = ?,
-                version = ?,
-                published_at = ?,
-                url = ?,
-                changelog_url = ?,
-                prerelease = ?,
-                body = ?,
-                commit_sha = ?,
-                raw_payload = ?,
-                observed_at = ?,
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (
-                release.name,
-                tag_name,
-                comparison_version,
-                persisted_published_at,
-                release.url,
-                changelog_url,
-                1 if release.prerelease else 0,
-                release.body,
-                release.commit_sha,
-                raw_payload_json,
-                observed_at_iso,
-                observed_at_iso,
-                existing_row["id"],
-            ),
-        )
-        return existing_row["id"]
 
     async def save_source_observations(
         self,
@@ -2947,74 +2310,14 @@ class SQLiteStorage:
         observed_at: datetime | None = None,
         append_truth: bool = True,
     ) -> list[int]:
-        if tracker_source.id is None:
-            raise ValueError("tracker_source.id is required to save source observations")
-
-        persisted_observation_ids: list[int] = []
-        timestamp = observed_at or datetime.now()
-
-        if append_truth:
-            source_fetch_run_id = await self.create_source_fetch_run(
-                tracker_source.id,
-                trigger_mode="bootstrap",
-                started_at=timestamp,
-            )
-            await self.append_source_history_for_run(
-                source_fetch_run_id,
-                tracker_source,
-                releases,
-                aggregate_tracker_id=aggregate_tracker_id,
-                observed_at=timestamp,
-            )
-            await self.finalize_source_fetch_run(
-                source_fetch_run_id,
-                status="success",
-                fetched_count=len(releases),
-                filtered_in_count=len(releases),
-                finished_at=timestamp,
-            )
-
-        source_release_keys = {
-            self._source_release_key_for_release(release, source_type=tracker_source.source_type)
-            for release in releases
-        }
-
-        db = await self._get_connection()
-        db.row_factory = aiosqlite.Row
-        for release in releases:
-            observation_id = await self._upsert_source_release_observation(
-                db,
-                tracker_source.id,
-                release,
-                observed_at=timestamp,
-                raw_payload={
-                    "aggregate_tracker_id": aggregate_tracker_id,
-                    "source_key": tracker_source.source_key,
-                    "source_type": tracker_source.source_type,
-                    "channel_name": release.channel_name,
-                },
-                changelog_url=getattr(release, "changelog_url", None),
-                source_type=tracker_source.source_type,
-            )
-            persisted_observation_ids.append(observation_id)
-
-        if source_release_keys:
-            placeholders = ", ".join("?" for _ in source_release_keys)
-            await db.execute(
-                f"DELETE FROM source_release_observations WHERE tracker_source_id = ? AND source_release_key NOT IN ({placeholders})",
-                (tracker_source.id, *source_release_keys),
-            )
-        else:
-            await db.execute(
-                "DELETE FROM source_release_observations WHERE tracker_source_id = ?",
-                (tracker_source.id,),
-            )
-
-        await self._rebuild_canonical_releases_for_tracker(db, aggregate_tracker_id)
-
-        await db.commit()
-
-        return persisted_observation_ids
+        return await sqlite_source_observations.save_source_observations(
+            self,
+            aggregate_tracker_id,
+            tracker_source,
+            releases,
+            observed_at=observed_at,
+            append_truth=append_truth,
+        )
 
     async def _upsert_canonical_release_observation(
         self,
@@ -3107,126 +2410,21 @@ class SQLiteStorage:
         prerelease: bool | None = None,
         include_history: bool = True,
     ) -> list[Release]:
-        aggregate_trackers: list[AggregateTracker] = []
-        if tracker_name:
-            aggregate_tracker = await self.get_aggregate_tracker(tracker_name)
-            if aggregate_tracker is not None:
-                aggregate_trackers = [aggregate_tracker]
-        else:
-            aggregate_trackers = await self.get_all_aggregate_trackers()
-
-        releases: list[Release] = []
-        for aggregate_tracker in aggregate_trackers:
-            tracker_releases: list[Release] = []
-            if aggregate_tracker.id is not None:
-                if include_history:
-                    tracker_releases = await self.get_tracker_release_history_releases(
-                        aggregate_tracker.id
-                    )
-                else:
-                    tracker_releases = await self.get_tracker_current_releases(aggregate_tracker.id)
-
-            if tracker_releases:
-                if not include_history:
-                    tracker_config = await self.get_tracker_config(aggregate_tracker.name)
-                    channels = tracker_config.channels if tracker_config is not None else []
-                    if channels:
-                        tracker_releases = list(
-                            self.select_best_releases_by_channel(
-                                tracker_releases,
-                                channels,
-                                sort_mode=(
-                                    tracker_config.version_sort_mode
-                                    if tracker_config is not None
-                                    else "published_at"
-                                ),
-                                use_immutable_identity=True,
-                            ).values()
-                        )
-                for tracker_release in tracker_releases:
-                    tracker_release.tracker_name = aggregate_tracker.name
-                releases.extend(tracker_releases)
-                continue
-
-            if not include_history:
-                continue
-
-            canonical_releases = await self.get_canonical_releases(aggregate_tracker.name)
-            source_observations = await self.get_source_release_observations(aggregate_tracker.name)
-            observations_by_id = {
-                observation.id: observation
-                for observation in source_observations
-                if observation.id is not None
-            }
-            sources_by_id = {
-                source.id: source for source in aggregate_tracker.sources if source.id is not None
-            }
-            visible_canonical_releases = [
-                canonical_release
-                for canonical_release in canonical_releases
-                if self._canonical_release_should_be_listed_in_history(
-                    aggregate_tracker,
-                    canonical_release,
-                    observations_by_id,
-                    sources_by_id,
-                )
-            ]
-            releases.extend(
-                self._canonical_release_to_release(
-                    aggregate_tracker,
-                    canonical_release,
-                    observations_by_id,
-                )
-                for canonical_release in visible_canonical_releases
-            )
-
-        releases = [
-            release
-            for release in releases
-            if self._release_matches_filters(
-                release,
-                tracker_name=tracker_name,
-                search=search,
-                prerelease=prerelease,
-            )
-        ]
-        releases = sorted(releases, key=self._release_listing_sort_key, reverse=True)
-
-        if limit is None:
-            return releases[skip:]
-        return releases[skip : skip + limit]
+        return await sqlite_release_queries.get_releases(
+            self, tracker_name, skip, limit, search, prerelease, include_history
+        )
 
     @staticmethod
     def _tracker_type_for_canonical_release(
         tracker: AggregateTracker, canonical_release: CanonicalRelease
     ) -> str:
-        if canonical_release.primary_observation_id is not None:
-            observation = next(
-                (
-                    source
-                    for source in tracker.sources
-                    if source.id is not None
-                    and any(
-                        obs.source_release_observation_id
-                        == canonical_release.primary_observation_id
-                        for obs in canonical_release.observations
-                    )
-                ),
-                None,
-            )
-            if observation is not None:
-                return observation.source_type
-
-        runtime_source = SQLiteStorage._select_runtime_source(tracker)
-        if runtime_source is not None:
-            return runtime_source.source_type
-        return "github"
+        return sqlite_release_queries._tracker_type_for_canonical_release(
+            SQLiteStorage, tracker, canonical_release
+        )
 
     @staticmethod
     def _aggregate_tracker_prefers_repo_history(tracker: AggregateTracker) -> bool:
-        return any(
-            source.source_type in {"github", "gitlab", "gitea"} for source in tracker.sources
-        )
+        return sqlite_release_queries._aggregate_tracker_prefers_repo_history(tracker)
 
     @classmethod
     def _canonical_release_should_be_listed_in_history(
@@ -3236,18 +2434,9 @@ class SQLiteStorage:
         observations_by_id: dict[int, SourceReleaseObservation],
         sources_by_id: dict[int, TrackerSource],
     ) -> bool:
-        if not cls._aggregate_tracker_prefers_repo_history(tracker):
-            return True
-
-        for observation in canonical_release.observations:
-            source_observation = observations_by_id.get(observation.source_release_observation_id)
-            if source_observation is None:
-                continue
-            source = sources_by_id.get(source_observation.tracker_source_id)
-            if source and source.source_type in {"github", "gitlab", "gitea"}:
-                return True
-
-        return False
+        return sqlite_release_queries._canonical_release_should_be_listed_in_history(
+            cls, tracker, canonical_release, observations_by_id, sources_by_id
+        )
 
     @classmethod
     def _canonical_release_to_release(
@@ -3256,58 +2445,8 @@ class SQLiteStorage:
         canonical_release: CanonicalRelease,
         observations_by_id: dict[int, SourceReleaseObservation],
     ) -> Release:
-        tracker_type = cls._tracker_type_for_canonical_release(tracker, canonical_release)
-        primary_observation_id = canonical_release.primary_observation_id
-        primary_observation = (
-            observations_by_id.get(primary_observation_id)
-            if primary_observation_id is not None
-            else None
-        )
-        if primary_observation is not None:
-            app_version = primary_observation.app_version
-            chart_version = primary_observation.chart_version
-            if tracker_type == "helm" and app_version is None:
-                app_version = primary_observation.version
-            if tracker_type == "helm" and chart_version is None:
-                chart_version = primary_observation.tag_name
-            release_version = primary_observation.version
-            release_name = primary_observation.name
-            release_tag_name = primary_observation.tag_name
-            release_published_at = primary_observation.published_at
-            release_url = primary_observation.url
-            release_prerelease = primary_observation.prerelease
-            release_body = primary_observation.body
-            release_commit_sha = primary_observation.commit_sha
-            release_channel_name = primary_observation.raw_payload.get("channel_name")
-        else:
-            app_version = canonical_release.version if tracker_type == "helm" else None
-            chart_version = canonical_release.tag_name if tracker_type == "helm" else None
-            release_version = canonical_release.version
-            release_name = canonical_release.name
-            release_tag_name = canonical_release.tag_name
-            release_published_at = canonical_release.published_at
-            release_url = canonical_release.url
-            release_prerelease = canonical_release.prerelease
-            release_body = canonical_release.body
-            release_commit_sha = None
-            release_channel_name = None
-
-        return Release(
-            id=canonical_release.id,
-            tracker_name=tracker.name,
-            tracker_type=tracker_type,
-            name=release_name,
-            tag_name=release_tag_name,
-            version=release_version,
-            app_version=app_version,
-            chart_version=chart_version,
-            published_at=release_published_at,
-            url=release_url,
-            prerelease=release_prerelease,
-            body=release_body,
-            channel_name=release_channel_name,
-            commit_sha=release_commit_sha,
-            created_at=canonical_release.created_at,
+        return sqlite_release_queries._canonical_release_to_release(
+            cls, tracker, canonical_release, observations_by_id
         )
 
     @staticmethod
@@ -3318,35 +2457,16 @@ class SQLiteStorage:
         search: str | None = None,
         prerelease: bool | None = None,
     ) -> bool:
-        if tracker_name and release.tracker_name != tracker_name:
-            return False
-        if prerelease is not None and release.prerelease != prerelease:
-            return False
-        if search:
-            search_value = search.lower()
-            haystacks = [
-                release.tracker_name,
-                release.name,
-                release.tag_name,
-                release.version,
-            ]
-            if not any(search_value in haystack.lower() for haystack in haystacks):
-                return False
-        return True
+        return sqlite_release_queries._release_matches_filters(
+            release, tracker_name=tracker_name, search=search, prerelease=prerelease
+        )
 
     @staticmethod
     def _release_listing_sort_key(release: Release) -> tuple[float, float, int]:
-        created_at = release.created_at.timestamp() if release.created_at else 0.0
-        return (release.published_at.timestamp(), created_at, release.id or 0)
+        return sqlite_release_queries._release_listing_sort_key(release)
 
     async def get_latest_tracker_releases(self, limit: int = 5) -> list[Release]:
-        """Provide global recent releases for the dashboard, capped at one per tracker to avoid flooding"""
-        releases = await self.get_releases(limit=None, include_history=True)
-        latest_by_tracker: dict[str, Release] = {}
-        for release in releases:
-            if release.tracker_name not in latest_by_tracker:
-                latest_by_tracker[release.tracker_name] = release
-        return list(latest_by_tracker.values())[:limit]
+        return await sqlite_release_queries.get_latest_tracker_releases(self, limit)
 
     async def get_total_count(
         self,
@@ -3355,191 +2475,70 @@ class SQLiteStorage:
         prerelease: bool | None = None,
         include_history: bool = True,
     ) -> int:
-        """Get count of matching records"""
-        releases = await self.get_releases(
-            tracker_name=tracker_name,
-            search=search,
-            prerelease=prerelease,
-            limit=None,
-            include_history=include_history,
+        return await sqlite_release_queries.get_total_count(
+            self, tracker_name, search, prerelease, include_history
         )
-        return len(releases)
 
     async def get_releases_for_trackers_bulk(
         self, tracker_names: list[str], limit_per_tracker: int = 200
     ) -> dict[str, list[Release]]:
-        """
-        Fetch recent release records for multiple trackers in one query
-
-        Use a window function to avoid N+1 queries
-        Returns:{tracker_name: [Release, ...]}
-        """
-        if not tracker_names:
-            return {}
-
-        result = {name: [] for name in tracker_names}
-        for tracker_name in tracker_names:
-            result[tracker_name] = await self.get_releases(
-                tracker_name=tracker_name,
-                limit=limit_per_tracker,
-                include_history=False,
-            )
-
-        return result
+        return await sqlite_release_queries.get_releases_for_trackers_bulk(
+            self, tracker_names, limit_per_tracker
+        )
 
     async def get_latest_release(self, tracker_name: str) -> Release | None:
-        """Get the latest release for a tracker"""
-        latest_current_release = await self.get_tracker_latest_current_release_summary(tracker_name)
-        if latest_current_release is not None:
-            return latest_current_release["release"]
-        releases = await self.get_releases(tracker_name, limit=1)
-        return releases[0] if releases else None
+        return await sqlite_release_queries.get_latest_release(self, tracker_name)
 
     async def get_latest_release_for_channels(
         self, tracker_name: str, channels: list
     ) -> Release | None:
-        """Get the latest releases across all enabled channels for a tracker"""
-        if not channels:
-            return await self.get_latest_release(tracker_name)
-
-        all_releases = await self.get_releases(
-            tracker_name,
-            limit=None,
-            include_history=False,
-        )
-        sort_mode = await self.get_setting("version_sort_mode") or "published_at"
-        channel_winners = self.select_best_releases_by_channel(
-            all_releases,
-            channels,
-            sort_mode=sort_mode,
-            use_immutable_identity=True,
-        )
-        return self.select_best_release(
-            list(channel_winners.values()),
-            channels,
-            sort_mode=sort_mode,
-            use_immutable_identity=True,
+        return await sqlite_release_queries.get_latest_release_for_channels(
+            self, tracker_name, channels
         )
 
     @staticmethod
     def release_identity_key(release: Release) -> tuple[str, str]:
-        return (release.tracker_name, release.tag_name)
+        return sqlite_release_queries.release_identity_key(release)
 
     @classmethod
     def immutable_release_identity_key(cls, release: Release) -> tuple[str, str]:
-        source_type = cls._normalize_release_value(release.tracker_type) or "github"
-        return (
-            release.tracker_name,
-            cls.release_identity_key_for_source(release, source_type=source_type),
-        )
+        return sqlite_release_queries.immutable_release_identity_key(cls, release)
 
     @staticmethod
     def dedupe_releases_by_identity(releases: list[Release]) -> list[Release]:
-        unique_by_identity: dict[tuple[str, str], Release] = {}
-
-        for release in releases:
-            unique_by_identity[SQLiteStorage.release_identity_key(release)] = release
-
-        return list(unique_by_identity.values())
+        return sqlite_release_queries.dedupe_releases_by_identity(SQLiteStorage, releases)
 
     @classmethod
     def dedupe_releases_by_immutable_identity(cls, releases: list[Release]) -> list[Release]:
-        unique_by_identity: dict[tuple[str, str], Release] = {}
-
-        for release in releases:
-            identity_key = cls.immutable_release_identity_key(release)
-            existing_release = unique_by_identity.get(identity_key)
-            if existing_release is None or cls._should_replace_source_history_display(
-                source_type=release.tracker_type,
-                version=release.version,
-                tag_name=release.tag_name,
-                existing_version=existing_release.version,
-                existing_tag_name=existing_release.tag_name,
-            ):
-                unique_by_identity[identity_key] = release
-
-        return list(unique_by_identity.values())
+        return sqlite_release_queries.dedupe_releases_by_immutable_identity(cls, releases)
 
     @staticmethod
     def _release_matches_channel(
         release: Release, channel, *, channel_source_type: str | None = None
     ) -> bool:
-        from ..config import Channel
-        import re
-
-        if isinstance(channel, dict):
-            channel = Channel(**channel)
-
-        if SQLiteStorage._supports_release_type_filter(channel_source_type):
-            if channel.type == "release" and release.prerelease:
-                return False
-            if channel.type == "prerelease" and not release.prerelease:
-                return False
-
-        if channel.include_pattern:
-            try:
-                if not re.search(channel.include_pattern, release.tag_name):
-                    return False
-            except re.error:
-                pass
-
-        if channel.exclude_pattern:
-            try:
-                if any(
-                    re.search(channel.exclude_pattern, candidate)
-                    for candidate in SQLiteStorage._channel_exclude_match_candidates(release)
-                ):
-                    return False
-            except re.error:
-                pass
-
-        return True
+        return sqlite_release_queries._release_matches_channel(
+            SQLiteStorage, release, channel, channel_source_type=channel_source_type
+        )
 
     @staticmethod
     def _supports_release_type_filter(source_type: str | None) -> bool:
-        return source_type is None or source_type in {"github", "gitlab", "gitea"}
+        return sqlite_release_queries._supports_release_type_filter(source_type)
 
     @staticmethod
     def _channel_exclude_match_candidates(release: Release) -> list[str]:
-        return [release.tag_name]
+        return sqlite_release_queries._channel_exclude_match_candidates(release)
 
     @staticmethod
     def _release_order_key(release: Release, sort_mode: str = "published_at") -> tuple:
-        from packaging.version import InvalidVersion, parse as parse_version
-
-        normalized_version = SQLiteStorage._normalize_version_for_ordering(release.version)
-        semver_key: tuple[int, Any] | None = None
-        try:
-            semver_key = (1, parse_version(normalized_version))
-        except InvalidVersion:
-            semver_key = None
-
-        if sort_mode == "semver":
-            if semver_key is not None:
-                return (*semver_key, release.published_at.timestamp())
-            return (0, release.published_at.timestamp())
-
-        if semver_key is not None:
-            return (*semver_key, release.published_at.timestamp())
-
-        return (0, release.published_at.timestamp())
+        return sqlite_release_queries._release_order_key(SQLiteStorage, release, sort_mode)
 
     @staticmethod
     def _channel_selection_key(channel, index: int) -> str:
-        release_channel_key = getattr(channel, "release_channel_key", None)
-        if isinstance(channel, dict):
-            release_channel_key = channel.get("release_channel_key") or channel.get("channel_key")
-        if release_channel_key:
-            return str(release_channel_key)
-
-        channel_name = getattr(channel, "name", None)
-        if isinstance(channel, dict):
-            channel_name = channel.get("name")
-        return str(channel_name or f"legacy-channel-{index}")
+        return sqlite_release_queries._channel_selection_key(channel, index)
 
     @staticmethod
     def _copy_release_with_channel_name(release: Release, channel_name: str) -> Release:
-        return release.model_copy(update={"channel_name": channel_name})
+        return sqlite_release_queries._copy_release_with_channel_name(release, channel_name)
 
     @staticmethod
     def select_best_releases_by_channel(
@@ -3550,52 +2549,14 @@ class SQLiteStorage:
         channel_source_type: str | None = None,
         use_immutable_identity: bool = False,
     ) -> dict[str, Release]:
-        if not releases or not channels:
-            return {}
-
-        if not any(
-            ch.get("enabled", True) if isinstance(ch, dict) else ch.enabled for ch in channels
-        ):
-            return {}
-
-        unique_releases = (
-            SQLiteStorage.dedupe_releases_by_immutable_identity(releases)
-            if use_immutable_identity
-            else SQLiteStorage.dedupe_releases_by_identity(releases)
+        return sqlite_release_queries.select_best_releases_by_channel(
+            SQLiteStorage,
+            releases,
+            channels,
+            sort_mode,
+            channel_source_type=channel_source_type,
+            use_immutable_identity=use_immutable_identity,
         )
-        winners: dict[str, Release] = {}
-
-        for index, channel in enumerate(channels):
-            if isinstance(channel, dict):
-                if not channel.get("enabled", True):
-                    continue
-                channel_name = channel.get("name")
-            else:
-                if not channel.enabled:
-                    continue
-                channel_name = channel.name
-
-            if not channel_name:
-                continue
-            channel_candidates = [
-                release
-                for release in unique_releases
-                if SQLiteStorage._release_matches_channel(
-                    release, channel, channel_source_type=channel_source_type
-                )
-            ]
-
-            if not channel_candidates:
-                continue
-
-            winner = max(
-                channel_candidates,
-                key=lambda release: SQLiteStorage._release_order_key(release, sort_mode),
-            )
-            winner = SQLiteStorage._copy_release_with_channel_name(winner, channel_name)
-            winners[SQLiteStorage._channel_selection_key(channel, index)] = winner
-
-        return winners
 
     @staticmethod
     def select_best_releases_for_tracker_channel(
@@ -3605,20 +2566,11 @@ class SQLiteStorage:
         *,
         use_immutable_identity: bool = False,
     ) -> dict[str, Release]:
-        if tracker_channel is None:
-            return {}
-
-        release_channels = getattr(tracker_channel, "release_channels", None)
-        channel_source_type = getattr(tracker_channel, "source_type", None)
-        if isinstance(tracker_channel, dict):
-            release_channels = tracker_channel.get("release_channels")
-            channel_source_type = tracker_channel.get("source_type")
-
-        return SQLiteStorage.select_best_releases_by_channel(
+        return sqlite_release_queries.select_best_releases_for_tracker_channel(
+            SQLiteStorage,
             releases,
-            list(release_channels or []),
-            sort_mode=sort_mode,
-            channel_source_type=channel_source_type,
+            tracker_channel,
+            sort_mode,
             use_immutable_identity=use_immutable_identity,
         )
 
@@ -3630,45 +2582,12 @@ class SQLiteStorage:
         *,
         use_immutable_identity: bool = False,
     ) -> Release | None:
-        """
-        Select the latest release from the release list according to channel rules
-        """
-        if not releases:
-            return None
-
-        if not channels:
-            return max(
-                (
-                    SQLiteStorage.dedupe_releases_by_immutable_identity(releases)
-                    if use_immutable_identity
-                    else SQLiteStorage.dedupe_releases_by_identity(releases)
-                ),
-                key=lambda release: SQLiteStorage._release_order_key(release, sort_mode),
-            )
-
-        enabled_channels = [ch for ch in channels if ch.enabled]
-        if not enabled_channels:
-            return max(
-                (
-                    SQLiteStorage.dedupe_releases_by_immutable_identity(releases)
-                    if use_immutable_identity
-                    else SQLiteStorage.dedupe_releases_by_identity(releases)
-                ),
-                key=lambda release: SQLiteStorage._release_order_key(release, sort_mode),
-            )
-
-        channel_winners = SQLiteStorage.select_best_releases_by_channel(
+        return sqlite_release_queries.select_best_release(
+            SQLiteStorage,
             releases,
-            enabled_channels,
-            sort_mode=sort_mode,
+            channels,
+            sort_mode,
             use_immutable_identity=use_immutable_identity,
-        )
-        if not channel_winners:
-            return None
-
-        return max(
-            channel_winners.values(),
-            key=lambda release: SQLiteStorage._release_order_key(release, sort_mode),
         )
 
     async def update_tracker_status(self, status: TrackerStatus):
@@ -3841,7 +2760,8 @@ class SQLiteStorage:
     # ==================== Credential management ====================
 
     async def create_credential(self, credential) -> int:
-        return await sqlite_credentials.create_credential(self, credential)
+        async with self._encryption_rotation_lock:
+            return await sqlite_credentials.create_credential(self, credential)
 
     async def get_all_credentials(self) -> list:
         return await sqlite_credentials.get_all_credentials(self)
@@ -3859,7 +2779,8 @@ class SQLiteStorage:
         return await sqlite_credentials.get_credential_by_name(self, name)
 
     async def update_credential(self, credential_id: int, credential) -> bool:
-        return await sqlite_credentials.update_credential(self, credential_id, credential)
+        async with self._encryption_rotation_lock:
+            return await sqlite_credentials.update_credential(self, credential_id, credential)
 
     async def delete_credential(self, credential_id: int) -> bool:
         return await sqlite_credentials.delete_credential(self, credential_id)
@@ -3874,13 +2795,18 @@ class SQLiteStorage:
         return sqlite_credentials._row_to_credential(self, row)
 
     async def create_runtime_connection(self, runtime_connection: RuntimeConnectionConfig) -> int:
-        return await sqlite_runtime_executors.create_runtime_connection(self, runtime_connection)
+        async with self._encryption_rotation_lock:
+            return await sqlite_runtime_executors.create_runtime_connection(self, runtime_connection)
 
-    async def get_total_runtime_connections_count(self) -> int:
-        return await sqlite_runtime_executors.get_total_runtime_connections_count(self)
+    async def get_total_runtime_connections_count(self, search: str | None = None) -> int:
+        return await sqlite_runtime_executors.get_total_runtime_connections_count(self, search)
 
-    async def get_runtime_connections_paginated(self, skip: int = 0, limit: int = 20) -> list:
-        return await sqlite_runtime_executors.get_runtime_connections_paginated(self, skip, limit)
+    async def get_runtime_connections_paginated(
+        self, skip: int = 0, limit: int = 20, search: str | None = None
+    ) -> list:
+        return await sqlite_runtime_executors.get_runtime_connections_paginated(
+            self, skip, limit, search
+        )
 
     async def get_runtime_connection(self, runtime_connection_id: int):
         return await sqlite_runtime_executors.get_runtime_connection(self, runtime_connection_id)
@@ -3891,9 +2817,10 @@ class SQLiteStorage:
     async def update_runtime_connection(
         self, runtime_connection_id: int, runtime_connection: RuntimeConnectionConfig
     ) -> bool:
-        return await sqlite_runtime_executors.update_runtime_connection(
-            self, runtime_connection_id, runtime_connection
-        )
+        async with self._encryption_rotation_lock:
+            return await sqlite_runtime_executors.update_runtime_connection(
+                self, runtime_connection_id, runtime_connection
+            )
 
     async def delete_runtime_connection(self, runtime_connection_id: int) -> bool:
         return await sqlite_runtime_executors.delete_runtime_connection(self, runtime_connection_id)
@@ -3928,16 +2855,18 @@ class SQLiteStorage:
     async def save_executor_config(self, executor_config: ExecutorConfig) -> int:
         return await sqlite_runtime_executors.save_executor_config(self, executor_config)
 
-    async def get_total_executor_configs_count(self) -> int:
-        return await sqlite_runtime_executors.get_total_executor_configs_count(self)
+    async def get_total_executor_configs_count(self, search: str | None = None) -> int:
+        return await sqlite_runtime_executors.get_total_executor_configs_count(self, search)
 
     async def get_all_executor_configs(self) -> list[ExecutorConfig]:
         return await sqlite_runtime_executors.get_all_executor_configs(self)
 
     async def get_executor_configs_paginated(
-        self, skip: int = 0, limit: int = 20
+        self, skip: int = 0, limit: int = 20, search: str | None = None
     ) -> list[ExecutorConfig]:
-        return await sqlite_runtime_executors.get_executor_configs_paginated(self, skip, limit)
+        return await sqlite_runtime_executors.get_executor_configs_paginated(
+            self, skip, limit, search
+        )
 
     async def get_executor_config(self, executor_id: int):
         return await sqlite_runtime_executors.get_executor_config(self, executor_id)
@@ -3991,6 +2920,7 @@ class SQLiteStorage:
         current_version: str,
         previous_identity_key: str | None = None,
         current_identity_key: str | None = None,
+        binding_targets: list[dict[str, Any]] | None = None,
     ) -> bool:
         return await sqlite_runtime_executors.enqueue_executor_projection_trigger_work(
             self,
@@ -4000,6 +2930,7 @@ class SQLiteStorage:
             current_version=current_version,
             previous_identity_key=previous_identity_key,
             current_identity_key=current_identity_key,
+            binding_targets=binding_targets,
         )
 
     async def finalize_executor_run(
@@ -4352,20 +3283,43 @@ class SQLiteStorage:
             self._notifiers_cache = notifiers
             return list(notifiers)
 
-    async def get_total_notifiers_count(self) -> int:
-        """Get the notifier count."""
+    async def get_total_notifiers_count(self, search: str | None = None) -> int:
+        """Get the notifier count, optionally filtered by visible metadata."""
         db = await self._get_connection()
-        async with db.execute("SELECT COUNT(*) FROM notifiers") as cursor:
+        normalized_search = search.strip().lower() if search and search.strip() else None
+        if normalized_search is None:
+            query = "SELECT COUNT(*) FROM notifiers"
+            params: tuple[str, ...] = ()
+        else:
+            like = f"%{normalized_search}%"
+            query = (
+                "SELECT COUNT(*) FROM notifiers WHERE LOWER(name) LIKE ? "
+                "OR LOWER(url) LIKE ? OR LOWER(COALESCE(description, '')) LIKE ?"
+            )
+            params = (like, like, like)
+        async with db.execute(query, params) as cursor:
             row = await cursor.fetchone()
             return row[0] if row else 0
 
-    async def get_notifiers_paginated(self, skip: int = 0, limit: int = 20) -> list[Notifier]:
-        """Get notifiers with pagination"""
+    async def get_notifiers_paginated(
+        self, skip: int = 0, limit: int = 20, search: str | None = None
+    ) -> list[Notifier]:
+        """Get notifiers with pagination and optional visible-metadata search."""
         db = await self._get_connection()
         db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM notifiers ORDER BY created_at DESC LIMIT ? OFFSET ?", (limit, skip)
-        ) as cursor:
+        normalized_search = search.strip().lower() if search and search.strip() else None
+        if normalized_search is None:
+            query = "SELECT * FROM notifiers ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            params: tuple[int | str, ...] = (limit, skip)
+        else:
+            like = f"%{normalized_search}%"
+            query = (
+                "SELECT * FROM notifiers WHERE LOWER(name) LIKE ? "
+                "OR LOWER(url) LIKE ? OR LOWER(COALESCE(description, '')) LIKE ? "
+                "ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            )
+            params = (like, like, like, limit, skip)
+        async with db.execute(query, params) as cursor:
             rows = await cursor.fetchall()
             return [self._row_to_notifier(row) for row in rows]
 
@@ -4491,12 +3445,20 @@ class SQLiteStorage:
             raise ValueError(f"Notifier with id {notifier_id} not found")
 
     async def get_all_settings(self) -> dict:
-        """Get all system settings"""
+        """Get all system settings as a key/value mapping."""
         db = await self._get_connection()
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM settings") as cursor:
             rows = await cursor.fetchall()
             return {row["key"]: row["value"] for row in rows}
+
+    async def get_all_settings_with_updated_at(self) -> dict[str, tuple[str, str]]:
+        """Get system settings with their persisted update timestamps."""
+        db = await self._get_connection()
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT key, value, updated_at FROM settings") as cursor:
+            rows = await cursor.fetchall()
+            return {row["key"]: (row["value"], row["updated_at"]) for row in rows}
 
     async def get_setting(self, key: str) -> str | None:
         """Get one setting"""
@@ -4568,8 +3530,8 @@ class SQLiteStorage:
         value = await self.get_setting(SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY)
         return value == CANONICAL_BOOLEAN_TRUE
 
-    async def set_setting(self, key: str, value: str):
-        """Save system setting"""
+    async def set_setting(self, key: str, value: str) -> str:
+        """Save a system setting and return its persisted update timestamp."""
         now = datetime.now().isoformat()
         db = await self._get_connection()
         await db.execute(
@@ -4583,6 +3545,7 @@ class SQLiteStorage:
             (key, value, now),
         )
         await db.commit()
+        return now
 
     async def delete_setting(self, key: str):
         """Delete a system setting"""
@@ -4593,7 +3556,8 @@ class SQLiteStorage:
     # ==================== OIDC Provider Operations ====================
 
     async def save_oauth_provider(self, provider):
-        return await sqlite_auth_oidc.save_oauth_provider(self, provider)
+        async with self._encryption_rotation_lock:
+            return await sqlite_auth_oidc.save_oauth_provider(self, provider)
 
     async def get_total_oauth_providers_count(self) -> int:
         return await sqlite_auth_oidc.get_total_oauth_providers_count(self)
@@ -4608,7 +3572,8 @@ class SQLiteStorage:
         return await sqlite_auth_oidc.get_oauth_provider_by_id(self, provider_id)
 
     async def update_oauth_provider(self, provider_id: int, provider) -> None:
-        await sqlite_auth_oidc.update_oauth_provider(self, provider_id, provider)
+        async with self._encryption_rotation_lock:
+            await sqlite_auth_oidc.update_oauth_provider(self, provider_id, provider)
 
     async def delete_oauth_provider(self, provider_id: int) -> None:
         await sqlite_auth_oidc.delete_oauth_provider(self, provider_id)

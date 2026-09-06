@@ -33,7 +33,9 @@ class _ValidatingAdapter(BaseRuntimeAdapter):
     recover_result: RuntimeUpdateResult | None = None
     recover_delay: float = 0
 
-    def __init__(self, *, validate_raises=None, recover_raises=None, recover_result=None, recover_delay=0):
+    def __init__(
+        self, *, validate_raises=None, recover_raises=None, recover_result=None, recover_delay=0
+    ):
         # Skip super().__init__ because runtime_connection isn't used.
         self.validate_raises = validate_raises
         self.recover_raises = recover_raises
@@ -331,9 +333,7 @@ async def test_recover_uses_explicit_snapshot_over_storage_latest():
 
         async def recover_from_snapshot(self, target_ref, snapshot):
             captured["recovered"] = snapshot
-            return RuntimeUpdateResult(
-                updated=True, old_image=None, new_image="img:prev"
-            )
+            return RuntimeUpdateResult(updated=True, old_image=None, new_image="img:prev")
 
     adapter = _CaptureAdapter()
     result = await coord.recover_detailed(

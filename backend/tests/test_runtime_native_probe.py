@@ -14,7 +14,6 @@ from releasetracker.executors.health_check.probe import RuntimeNativeProbe
 from releasetracker.executors.health_check.types import HealthCheckContext, ProbeAttemptResult
 from releasetracker.executors.kubernetes import KubernetesRuntimeAdapter
 
-
 # ---- Helpers --------------------------------------------------------------
 
 
@@ -364,9 +363,7 @@ def _deployment_workload(
         "status": {
             "observedGeneration": observed_generation,
             "readyReplicas": ready,
-            "conditions": [
-                {"type": "Progressing", "status": "True", "reason": progressing_reason}
-            ],
+            "conditions": [{"type": "Progressing", "status": "True", "reason": progressing_reason}],
         },
     }
 
@@ -434,9 +431,7 @@ async def test_kubernetes_deployment_unhealthy_when_observed_generation_lags():
 async def test_kubernetes_deployment_unhealthy_when_ready_below_desired():
     adapter = _StubKubernetesAdapter(
         _make_runtime_connection("kubernetes"),
-        _deployment_workload(
-            generation=5, observed_generation=5, desired=3, ready=1
-        ),
+        _deployment_workload(generation=5, observed_generation=5, desired=3, ready=1),
     )
     executor = _make_executor_config(
         "kubernetes",

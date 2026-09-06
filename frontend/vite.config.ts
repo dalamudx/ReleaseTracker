@@ -10,7 +10,10 @@ const packageJson = JSON.parse(
 ) as { version: string }
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  // FastAPI injects a runtime <base> element for production sub-path deployments.
+  // Relative build assets let the same image run under any validated BASE URL path.
+  base: command === "build" ? "./" : "/",
   define: {
     "import.meta.env.VITE_APP_VERSION": JSON.stringify(packageJson.version),
   },
@@ -21,16 +24,17 @@ export default defineConfig({
     },
   },
   test: {
+    include: ["src/**/*.{test,spec}.{ts,tsx}"],
     environment: "jsdom",
     setupFiles: "./src/test/setup.ts",
     globals: true,
     clearMocks: true,
   },
   server: {
-    host: '0.0.0.0',
+    host: "0.0.0.0",
     proxy: {
-      '/api': {
-        target: 'http://localhost:8000',
+      "/api": {
+        target: "http://localhost:8000",
         changeOrigin: true,
       },
     },
@@ -38,74 +42,57 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks(id) {
-          if (!id.includes('node_modules')) {
-            return
-          }
-
-          // Chart libraries are heavy and only loaded on pages that surface
-          // visualisations.
-          if (id.includes('recharts') || id.includes('d3-')) {
-            return 'chart-vendor'
-          }
-
-          // Markdown rendering stack only pulled in by the lazy-loaded
-          // ReleaseNotesModal. Keeping it isolated allows the browser to
-          // cache it independently and skip downloading it entirely when the
-          // modal is never opened.
-          if (
-            id.includes('react-markdown')
-            || id.includes('remark-')
-            || id.includes('rehype-')
-            || id.includes('micromark')
-            || id.includes('mdast-')
-            || id.includes('hast-')
-            || id.includes('unist-')
-            || id.includes('unified')
-          ) {
-            return 'markdown-vendor'
-          }
-
-          if (id.includes('framer-motion')) {
-            return 'motion-vendor'
-          }
-
-          if (id.includes('@radix-ui') || id.includes('@base-ui') || id.includes('radix-ui')) {
-            return 'radix-vendor'
-          }
-
-          if (id.includes('@tanstack')) {
-            return 'tanstack-vendor'
-          }
-
-          if (id.includes('i18next') || id.includes('react-i18next')) {
-            return 'i18n-vendor'
-          }
-
-          if (id.includes('date-fns')) {
-            return 'date-vendor'
-          }
-
-          if (id.includes('lucide-react')) {
-            return 'icons-vendor'
-          }
-
-          if (id.includes('react-hook-form')) {
-            return 'form-vendor'
-          }
-
-          // Core React runtime shared by the entire app. Keep this last so
-          // the more specific groups above win.
-          if (
-            id.includes('/react/')
-            || id.includes('/react-dom/')
-            || id.includes('scheduler')
-            || id.includes('react-router')
-          ) {
-            return 'react-vendor'
-          }
-        }
-      }
-    }
-  }
-})
+        // Priorities keep core dependencies out of feature-only Chart/Markdown
+        // chunks. Broad manualChunks recursively pulled React into the entry.
+        codeSplitting: {
+          groups: [
+            {
+              name: "react-vendor",
+              priority: 100,
+              test: /node_modules[\\/](react|react-dom|react-router|scheduler)([\\/]|$)/,
+            },
+            {
+              name: "utility-vendor",
+              priority: 95,
+              test: /node_modules[\\/](clsx|tailwind-merge|class-variance-authority)([\\/]|$)/,
+            },
+            {
+              name: "radix-vendor",
+              priority: 90,
+              test: /node_modules[\\/](@radix-ui|@base-ui|radix-ui)([\\/]|$)/,
+            },
+            { name: "tanstack-vendor", priority: 80, test: /node_modules[\\/]@tanstack[\\/]/ },
+            {
+              name: "i18n-vendor",
+              priority: 80,
+              test: /node_modules[\\/](i18next|react-i18next)([\\/]|$)/,
+            },
+            { name: "date-vendor", priority: 80, test: /node_modules[\\/]date-fns[\\/]/ },
+            { name: "icons-vendor", priority: 80, test: /node_modules[\\/]lucide-react[\\/]/ },
+            {
+              name: "form-vendor",
+              priority: 80,
+              test: /node_modules[\\/]react-hook-form[\\/]/,
+            },
+            {
+              name: "motion-vendor",
+              priority: 70,
+              test: /node_modules[\\/](framer-motion|motion-dom|motion-utils)([\\/]|$)/,
+            },
+            {
+              name: "chart-vendor",
+              priority: 60,
+              test: /node_modules[\\/](recharts|d3-|victory-vendor)([\\/]|$)/,
+            },
+            {
+              name: "markdown-vendor",
+              priority: 60,
+              maxSize: 300 * 1024,
+              test: /node_modules[\\/](react-markdown|remark-|rehype-|micromark|mdast-|hast-|unist-|unified|parse5|node-emoji|emojilib)/,
+            },
+          ],
+        },
+      },
+    },
+  },
+}))

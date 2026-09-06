@@ -338,6 +338,36 @@ async def test_login_failure(client):
 
 
 @pytest.mark.asyncio
+async def test_login_endpoints_record_direct_request_context(client, auth_service, storage):
+    headers = {
+        "User-Agent": "ReleaseTracker auth context test",
+        "X-Forwarded-For": "203.0.113.99",
+    }
+    json_response = client.post(
+        "/api/auth/login",
+        json={"username": "admin", "password": "test-admin-password"},
+        headers=headers,
+    )
+    form_response = client.post(
+        "/api/auth/token",
+        data={"username": "admin", "password": "test-admin-password"},
+        headers=headers,
+    )
+
+    assert json_response.status_code == 200
+    assert form_response.status_code == 200
+    for access_token in (
+        json_response.json()["token"]["access_token"],
+        form_response.json()["access_token"],
+    ):
+        session = await storage.get_session(auth_service._hash_token(access_token))
+        assert session is not None
+        assert session.user_agent == "ReleaseTracker auth context test"
+        assert session.ip_address == "testclient"
+        assert session.ip_address != "203.0.113.99"
+
+
+@pytest.mark.asyncio
 async def test_refresh_returns_token_pair_and_allows_me(client, auth_service):
     await auth_service.ensure_admin_user()
 

@@ -14,6 +14,7 @@ from cryptography.fernet import Fernet
 if TYPE_CHECKING:
     from ..storage.sqlite import SQLiteStorage
 
+
 JWT_SECRET_MIN_LENGTH = 32
 
 
@@ -22,6 +23,7 @@ class SystemKeyManager:
         self.secrets_path = secrets_path
         self._jwt_secret = ""
         self._encryption_key = ""
+        self._pending_encryption_key: str | None = None
         self._lock = asyncio.Lock()
 
     @property
@@ -40,6 +42,10 @@ class SystemKeyManager:
             raise RuntimeError("Encryption key is not initialized")
         return self._encryption_key
 
+    @property
+    def pending_encryption_key(self) -> str | None:
+        return self._pending_encryption_key
+
     async def initialize(self) -> None:
         async with self._lock:
             payload = self._load_payload()
@@ -57,9 +63,13 @@ class SystemKeyManager:
                 payload["encryption_key"] = encryption_key
                 changed = True
 
+            pending_key = self._normalize_secret(payload.get("pending_encryption_key"))
             self.validate_encryption_key(encryption_key)
+            if pending_key is not None:
+                self.validate_encryption_key(pending_key)
             self._jwt_secret = jwt_secret
             self._encryption_key = encryption_key
+            self._pending_encryption_key = pending_key
 
             if changed or not self.secrets_path.exists():
                 payload["updated_at"] = self._now()
@@ -85,9 +95,29 @@ class SystemKeyManager:
     def _set_encryption_key_locked(self, value: str) -> None:
         payload = self._current_payload()
         payload["encryption_key"] = value
+        payload.pop("pending_encryption_key", None)
         payload["updated_at"] = self._now()
         self._write_payload(payload)
         self._encryption_key = value
+        self._pending_encryption_key = None
+
+    def _stage_encryption_key_rotation_locked(self, value: str) -> None:
+        """Durably record the recovery key before touching encrypted rows."""
+        payload = self._current_payload()
+        payload["pending_encryption_key"] = value
+        payload["updated_at"] = self._now()
+        self._write_payload(payload)
+        self._pending_encryption_key = value
+
+    def _complete_encryption_key_rotation_locked(self, value: str) -> None:
+        """Make a completed key rotation durable only after the DB commits."""
+        payload = self._current_payload()
+        payload["encryption_key"] = value
+        payload.pop("pending_encryption_key", None)
+        payload["updated_at"] = self._now()
+        self._write_payload(payload)
+        self._encryption_key = value
+        self._pending_encryption_key = None
 
     def _load_payload(self) -> dict[str, Any]:
         if not self.secrets_path.exists():
@@ -104,22 +134,29 @@ class SystemKeyManager:
         payload = self._load_payload()
         payload["jwt_secret"] = self.jwt_secret
         payload["encryption_key"] = self.encryption_key
+        if self._pending_encryption_key is not None:
+            payload["pending_encryption_key"] = self._pending_encryption_key
         return payload
 
     def _write_payload(self, payload: dict[str, Any]) -> None:
         self.secrets_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = self.secrets_path.with_name(f".{self.secrets_path.name}.tmp")
         content = json.dumps(payload, indent=2, sort_keys=True)
-        tmp_path.write_text(f"{content}\n", encoding="utf-8")
-        try:
-            tmp_path.chmod(0o600)
-        except OSError:
-            pass
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            handle.write(f"{content}\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        tmp_path.chmod(0o600)
         os.replace(tmp_path, self.secrets_path)
+        self.secrets_path.chmod(0o600)
+        directory_fd = os.open(
+            self.secrets_path.parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
         try:
-            self.secrets_path.chmod(0o600)
-        except OSError:
-            pass
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
 
     @staticmethod
     def fingerprint(secret: str) -> str:
@@ -169,7 +206,11 @@ async def rotate_jwt_secret(
     value: str | None = None,
     generate: bool = False,
 ) -> dict[str, Any]:
-    new_secret = key_manager.generate_jwt_secret() if generate else key_manager.validate_jwt_secret(value or "")
+    new_secret = (
+        key_manager.generate_jwt_secret()
+        if generate
+        else key_manager.validate_jwt_secret(value or "")
+    )
     async with key_manager.lock:
         key_manager.validate_jwt_secret(new_secret)
         key_manager._set_jwt_secret_locked(new_secret)
@@ -188,11 +229,69 @@ async def rotate_encryption_key(
     value: str | None = None,
     generate: bool = False,
 ) -> dict[str, Any]:
-    new_key = key_manager.generate_encryption_key() if generate else key_manager.validate_encryption_key(value or "")
+    new_key = (
+        key_manager.generate_encryption_key()
+        if generate
+        else key_manager.validate_encryption_key(value or "")
+    )
     async with key_manager.lock:
         key_manager.validate_encryption_key(new_key)
-        stats = await storage.rotate_encrypted_data(new_key)
-        key_manager._set_encryption_key_locked(new_key)
-        storage.set_encryption_key(new_key)
-        stats["fingerprint"] = key_manager.fingerprint(new_key)
-        return stats
+        old_key = key_manager.encryption_key
+        key_manager._stage_encryption_key_rotation_locked(new_key)
+        async with storage.encryption_rotation_lock:
+            rotation_task = asyncio.create_task(storage._rotate_encrypted_data_locked(new_key))
+            cancelled = False
+            try:
+                stats = await asyncio.shield(rotation_task)
+            except asyncio.CancelledError:
+                cancelled = True
+                stats = await asyncio.shield(rotation_task)
+
+            # The database is now new-key encrypted. Keep both keys readable
+            # until the final durable journal update succeeds.
+            storage.set_encryption_keys(new_key, (old_key,))
+            key_manager._complete_encryption_key_rotation_locked(new_key)
+            storage.set_encryption_key(new_key)
+            stats["fingerprint"] = key_manager.fingerprint(new_key)
+            if cancelled:
+                raise asyncio.CancelledError
+            return stats
+
+
+async def recover_pending_encryption_key_rotation(
+    storage: "SQLiteStorage", key_manager: SystemKeyManager
+) -> bool:
+    """Complete or finalize an interrupted encryption-key rotation at startup."""
+    pending_key = key_manager.pending_encryption_key
+    if pending_key is None:
+        return False
+
+    async with key_manager.lock:
+        pending_key = key_manager.pending_encryption_key
+        if pending_key is None:
+            return False
+        old_key = key_manager.encryption_key
+        async with storage.encryption_rotation_lock:
+            old_inventory = await storage.get_encryption_key_inventory()
+            if old_inventory["undecryptable_count"] == 0:
+                # The journal committed before the database transaction. Replay
+                # is safe because the data is either old-key ciphertext or legacy
+                # plaintext, and encrypted writes were not admitted meanwhile.
+                await storage._rotate_encrypted_data_locked(pending_key)
+                storage.set_encryption_keys(pending_key, (old_key,))
+                key_manager._complete_encryption_key_rotation_locked(pending_key)
+                storage.set_encryption_key(pending_key)
+                return True
+
+            # The DB likely committed before the last key-file replacement.
+            storage.set_encryption_keys(pending_key, (old_key,))
+            pending_inventory = await storage.get_encryption_key_inventory()
+            if pending_inventory["undecryptable_count"] != 0:
+                storage.set_encryption_keys(old_key, (pending_key,))
+                raise RuntimeError(
+                    "Cannot recover pending encryption key rotation: "
+                    "encrypted data matches neither journaled key"
+                )
+            key_manager._complete_encryption_key_rotation_locked(pending_key)
+            storage.set_encryption_key(pending_key)
+            return True

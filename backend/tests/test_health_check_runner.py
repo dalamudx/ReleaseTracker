@@ -158,7 +158,12 @@ async def test_unhealthy_then_healthy_retries_at_interval():
     clock = _FakeClock()
     probe = _ScriptedProbe(
         script=[
-            (ProbeAttemptResult(healthy=False, error_category="status_mismatch", last_error="503"), 0),
+            (
+                ProbeAttemptResult(
+                    healthy=False, error_category="status_mismatch", last_error="503"
+                ),
+                0,
+            ),
             (ProbeAttemptResult(healthy=True, detail={"status": "ok"}), 0),
         ]
     )

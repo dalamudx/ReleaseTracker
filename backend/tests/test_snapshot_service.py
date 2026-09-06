@@ -153,14 +153,10 @@ async def test_get_snapshot_redacts_snapshot_data_on_read(storage):
     detail = await service.get_snapshot(executor_id, snapshot_id, runtime_type="portainer")
     assert detail is not None
     assert detail.snapshot_data["token"] == REDACTED_MARKER
-    db_env = next(
-        entry for entry in detail.snapshot_data["env"] if entry["name"] == "DB_PASSWORD"
-    )
+    db_env = next(entry for entry in detail.snapshot_data["env"] if entry["name"] == "DB_PASSWORD")
     assert db_env["value"] == REDACTED_MARKER
     # Non-sensitive entries stay intact so the UI can display them.
-    keep = next(
-        entry for entry in detail.snapshot_data["env"] if entry["name"] == "LOG_LEVEL"
-    )
+    keep = next(entry for entry in detail.snapshot_data["env"] if entry["name"] == "LOG_LEVEL")
     assert keep["value"] == "info"
     # Metadata fields are preserved on the detail view.
     assert detail.trigger == "pre_update"

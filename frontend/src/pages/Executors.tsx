@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Plus, Search, X } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { Link } from "react-router"
@@ -112,7 +112,11 @@ export default function ExecutorsPage() {
         }
 
         const skip = (page - 1) * pageSize
-        const executorRequest = api.getExecutors({ skip, limit: pageSize })
+        const executorRequest = api.getExecutors({
+            skip,
+            limit: pageSize,
+            search: search.trim() || undefined,
+        })
         const auxiliaryRequest = refreshAuxiliary
             ? Promise.all([
                 api.getRuntimeConnections({ skip: 0, limit: 1000 }),
@@ -183,7 +187,7 @@ export default function ExecutorsPage() {
         } finally {
             setPrerequisitesLoading(false)
         }
-    }, [page, pageSize, t])
+    }, [page, pageSize, search, t])
 
     useEffect(() => {
         void Promise.resolve().then(() => loadExecutors())
@@ -281,21 +285,6 @@ export default function ExecutorsPage() {
     const selectedExecutor = executors.find((executor) => executor.id === selectedExecutorId) ?? selectedExecutorSnapshot
     const canViewSnapshots = supportsFullConfigSnapshots(selectedExecutor)
 
-    // Client-side filter. The API doesn't accept a search param yet, so we
-    // filter the current page locally — good enough for the common case and a
-    // no-op when the search box is empty.
-    const filteredExecutors = useMemo(() => {
-        const term = search.trim().toLowerCase()
-        if (!term) return executors
-        return executors.filter((executor) => {
-            if (executor.name.toLowerCase().includes(term)) return true
-            if (executor.description?.toLowerCase().includes(term)) return true
-            if (executor.tracker_name?.toLowerCase().includes(term)) return true
-            if (executor.runtime_connection_name?.toLowerCase().includes(term)) return true
-            if (executor.runtime_type?.toLowerCase().includes(term)) return true
-            return false
-        })
-    }, [executors, search])
 
     const hasRuntimeConnections = runtimeConnections.length > 0
     const hasTrackers = trackers.length > 0
@@ -324,7 +313,10 @@ export default function ExecutorsPage() {
                         <InputGroupInput
                             placeholder={t("executors.searchPlaceholder")}
                             value={search}
-                            onChange={(event) => setSearch(event.target.value)}
+                            onChange={(event) => {
+                                setSearch(event.target.value)
+                                setPage(1)
+                            }}
                         />
                         {search ? (
                             <InputGroupAddon align="inline-end">
@@ -332,7 +324,10 @@ export default function ExecutorsPage() {
                                     variant="ghost"
                                     size="icon"
                                     className="h-6 w-6"
-                                    onClick={() => setSearch("")}
+                                    onClick={() => {
+                                        setSearch("")
+                                        setPage(1)
+                                    }}
                                     title={t("common.clear")}
                                 >
                                     <X className="h-3.5 w-3.5" />
@@ -380,7 +375,7 @@ export default function ExecutorsPage() {
 
             <div className="flex min-h-0 flex-1 flex-col gap-3">
                 <ExecutorList
-                    executors={filteredExecutors}
+                    executors={executors}
                     loading={loading}
                     onEdit={handleEdit}
                     onDelete={setDeleteExecutorId}

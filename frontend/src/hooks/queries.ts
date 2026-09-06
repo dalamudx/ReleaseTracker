@@ -33,7 +33,7 @@ export const queryKeys = {
   latestCurrentReleases: ["releases", "latest-current"] as const,
 
   // Trackers
-  trackers: (params?: { skip?: number; limit?: number }) =>
+  trackers: (params?: { skip?: number; limit?: number; search?: string }) =>
     ["trackers", params] as const,
   tracker: (name: string) => ["trackers", name] as const,
   trackerConfig: (name: string) => ["trackers", name, "config"] as const,
@@ -62,7 +62,7 @@ export const queryKeys = {
     ["credentials", params] as const,
 
   // Notifiers
-  notifiers: (params?: { skip?: number; limit?: number }) =>
+  notifiers: (params?: { skip?: number; limit?: number; search?: string }) =>
     ["notifiers", params] as const,
   notifier: (id: number) => ["notifiers", id] as const,
 
@@ -71,12 +71,12 @@ export const queryKeys = {
   securityKeys: ["settings", "security-keys"] as const,
 
   // Runtime Connections
-  runtimeConnections: (params?: { skip?: number; limit?: number }) =>
+  runtimeConnections: (params?: { skip?: number; limit?: number; search?: string }) =>
     ["runtime-connections", params] as const,
   runtimeConnection: (id: number) => ["runtime-connections", id] as const,
 
   // Executors
-  executors: (params?: { skip?: number; limit?: number }) =>
+  executors: (params?: { skip?: number; limit?: number; search?: string }) =>
     ["executors", params] as const,
   executor: (id: number) => ["executors", id] as const,
   executorHistory: (
@@ -113,7 +113,7 @@ export function useLatestCurrentReleases() {
 
 // ==================== Trackers ====================
 
-export function useTrackers(params?: { skip?: number; limit?: number }) {
+export function useTrackers(params?: { skip?: number; limit?: number; search?: string }) {
   return useQuery({
     queryKey: queryKeys.trackers(params),
     queryFn: () => api.getTrackers(params),
@@ -276,7 +276,7 @@ export function useDeleteCredential() {
 
 // ==================== Notifiers ====================
 
-export function useNotifiers(params?: { skip?: number; limit?: number }) {
+export function useNotifiers(params?: { skip?: number; limit?: number; search?: string }) {
   return useQuery({
     queryKey: queryKeys.notifiers(params),
     queryFn: () => api.getNotifiers(params),
@@ -414,6 +414,7 @@ export function useRotateEncryptionKey() {
 export function useRuntimeConnections(params?: {
   skip?: number
   limit?: number
+  search?: string
 }) {
   return useQuery({
     queryKey: queryKeys.runtimeConnections(params),
@@ -473,7 +474,7 @@ export function useDeleteRuntimeConnection() {
 
 // ==================== Executors ====================
 
-export function useExecutors(params?: { skip?: number; limit?: number }) {
+export function useExecutors(params?: { skip?: number; limit?: number; search?: string }) {
   return useQuery({
     queryKey: queryKeys.executors(params),
     queryFn: () => api.getExecutors(params),

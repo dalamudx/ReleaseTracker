@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react"
 import { AlertTriangle, Clock3, Database, KeyRound, Link2, RotateCw, Save, Settings2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
+import { appPath } from "@/lib/base-path"
 import { toast } from "sonner"
 
 import { OIDCProvidersManagement } from "@/components/admin/OIDCProvidersManagement"
@@ -689,7 +690,7 @@ export function SystemSettingsPage() {
             toast.success(t("systemSettings.securityKeys.jwt.rotated", { count: result.invalidated_sessions }))
             setJwtDialogOpen(false)
             clearAuthStorage()
-            window.location.href = "/login"
+            window.location.href = appPath("/login")
         } catch (error) {
             console.error("Failed to rotate JWT secret", error)
             toast.error(t("common.unexpectedError"))

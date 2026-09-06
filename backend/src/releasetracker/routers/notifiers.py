@@ -28,12 +28,13 @@ async def get_notifiers(
     current_user: Annotated[User, Depends(get_current_admin_user)],
     skip: int = 0,
     limit: int = 20,
+    search: str | None = None,
 ):
     """Get all notifiers with pagination"""
     storage: SQLiteStorage = get_storage(request)
 
-    total = await storage.get_total_notifiers_count()
-    notifiers = await storage.get_notifiers_paginated(skip, limit)
+    total = await storage.get_total_notifiers_count(search)
+    notifiers = await storage.get_notifiers_paginated(skip, limit, search)
 
     return {"items": notifiers, "total": total, "skip": skip, "limit": limit}
 

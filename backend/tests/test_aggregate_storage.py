@@ -938,7 +938,6 @@ async def test_delete_aggregate_tracker_removes_sources(storage):
     assert source_count[0] == 0
 
 
-
 @pytest.mark.asyncio
 async def test_get_tracker_config_prefers_aggregate_source_fields_over_stale_legacy_row(storage):
     await storage.save_tracker_config(

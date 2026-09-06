@@ -384,6 +384,9 @@ async def _build_container_source_release_channel_current_values(
     storage: SQLiteStorage,
     tracker: AggregateTracker,
     runtime_config: TrackerConfig | None,
+    *,
+    current_rows: list[dict[str, Any]] | None = None,
+    contributions_by_history_id: dict[int, list[dict[str, Any]]] | None = None,
 ) -> dict[str, dict[str, dict[str, str | None]]]:
     container_sources = [
         source
@@ -393,14 +396,16 @@ async def _build_container_source_release_channel_current_values(
     if not container_sources:
         return {}
 
-    current_rows = await storage.get_tracker_current_release_rows(tracker.name)
+    if current_rows is None:
+        current_rows = await storage.get_tracker_current_release_rows(tracker.name)
     if not current_rows:
         return {source.source_key: {} for source in container_sources}
 
-    contributions_by_history_id = await _load_current_source_contributions(
-        storage,
-        [row["tracker_release_history_id"] for row in current_rows],
-    )
+    if contributions_by_history_id is None:
+        contributions_by_history_id = await _load_current_source_contributions(
+            storage,
+            [row["tracker_release_history_id"] for row in current_rows],
+        )
     source_rows_by_source_key: dict[str, list[dict[str, Any]]] = {}
     source_releases_by_source_key: dict[str, list[Release]] = {}
     for current_row in current_rows:
@@ -569,8 +574,15 @@ async def _build_tracker_response(
     tracker: AggregateTracker,
     *,
     current_status_map: dict[str, dict[str, Any]] | None = None,
+    runtime_configs: dict[str, TrackerConfig | None] | None = None,
+    current_rows_by_tracker_name: dict[str, list[dict[str, Any]]] | None = None,
+    current_source_contributions: dict[int, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
-    runtime_config = await storage.get_tracker_config(tracker.name)
+    runtime_config = (
+        runtime_configs.get(tracker.name)
+        if runtime_configs is not None
+        else await storage.get_tracker_config(tracker.name)
+    )
     tracker_status = (
         current_status_map.get(tracker.name) if current_status_map is not None else None
     )
@@ -582,6 +594,12 @@ async def _build_tracker_response(
         storage,
         tracker,
         runtime_config,
+        current_rows=(
+            current_rows_by_tracker_name.get(tracker.name)
+            if current_rows_by_tracker_name is not None
+            else None
+        ),
+        contributions_by_history_id=current_source_contributions,
     )
     sources = []
     for source in tracker.sources:
@@ -635,22 +653,40 @@ async def get_trackers(
 ):
     await storage.cleanup_blank_tracker_rows()
 
-    trackers = await storage.get_all_aggregate_trackers()
-    filtered_trackers = [tracker for tracker in trackers if _search_matches(tracker, search)]
-    total = len(filtered_trackers)
-    paginated_trackers = filtered_trackers[skip : skip + limit]
+    paginated_trackers, total = await storage.get_aggregate_trackers_page(
+        skip=skip, limit=limit, search=search
+    )
 
-    current_status_map: dict[str, dict[str, Any]] = {}
-    for tracker in paginated_trackers:
-        current_status_map[tracker.name] = await storage.get_tracker_current_status_derivation(
-            tracker.name
+    runtime_configs = await storage.get_tracker_runtime_configs_for_aggregate_trackers(
+        paginated_trackers
+    )
+    current_rows_by_tracker_name = (
+        await storage.get_tracker_current_release_rows_for_aggregate_trackers(
+            paginated_trackers, runtime_configs
         )
+    )
+    current_status_map = (
+        await storage.get_tracker_current_status_derivations_for_aggregate_trackers(
+            paginated_trackers, current_rows_by_tracker_name, runtime_configs
+        )
+    )
+    history_ids = [
+        row["tracker_release_history_id"]
+        for current_rows in current_rows_by_tracker_name.values()
+        for row in current_rows
+    ]
+    current_source_contributions = (
+        await _load_current_source_contributions(storage, history_ids) if history_ids else {}
+    )
 
     items = [
         await _build_tracker_response(
             storage,
             tracker,
             current_status_map=current_status_map,
+            runtime_configs=runtime_configs,
+            current_rows_by_tracker_name=current_rows_by_tracker_name,
+            current_source_contributions=current_source_contributions,
         )
         for tracker in paginated_trackers
     ]

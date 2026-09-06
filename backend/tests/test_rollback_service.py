@@ -35,6 +35,7 @@ class _RollbackAdapter(BaseRuntimeAdapter):
         recover_raises: Exception | None = None,
         recover_result: RuntimeUpdateResult | None = None,
         current_image: str = "acme/api:1.0.0",
+        supports_single_image_operations: bool = True,
     ):
         super().__init__(runtime_connection)
         self._capture_raises = capture_raises
@@ -44,6 +45,8 @@ class _RollbackAdapter(BaseRuntimeAdapter):
             updated=True, old_image=None, new_image="acme/api:prev"
         )
         self._current_image = current_image
+        self._supports_single_image_operations = supports_single_image_operations
+        self.current_image_calls = 0
         self.recover_calls = 0
         self.capture_calls = 0
         self.recover_snapshot_args: list[dict] = []
@@ -54,7 +57,11 @@ class _RollbackAdapter(BaseRuntimeAdapter):
     async def validate_target_ref(self, target_ref):
         return None
 
+    def supports_single_image_operations(self, target_ref):
+        return self._supports_single_image_operations
+
     async def get_current_image(self, target_ref):
+        self.current_image_calls += 1
         return self._current_image
 
     async def capture_snapshot(self, target_ref, current_image):
@@ -201,6 +208,28 @@ async def test_rollback_with_default_snapshot_uses_most_recent(storage):
 
 
 @pytest.mark.asyncio
+async def test_rollback_skips_single_image_lookup_for_grouped_adapter(storage):
+    executor = await _create_executor(storage, name="rb-grouped")
+    await _seed_snapshot(storage, executor.id, image="acme/api:1.0.0")
+    adapter = _RollbackAdapter(
+        await storage.get_runtime_connection(executor.runtime_connection_id),
+        supports_single_image_operations=False,
+    )
+    service = RollbackService(storage, SnapshotService(storage))
+
+    outcome = await service.rollback(
+        executor_config=executor,
+        adapter=adapter,
+        snapshot_id=None,
+        actor=None,
+    )
+
+    assert outcome.recovery_outcome == "succeeded"
+    assert adapter.current_image_calls == 0
+    assert adapter.capture_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_rollback_with_explicit_snapshot_id_restores_that_row(storage):
     executor = await _create_executor(storage, name="rb-explicit")
     oldest_id = await _seed_snapshot(storage, executor.id, image="acme/api:1.0.0", offset_minutes=0)
@@ -262,6 +291,56 @@ async def test_rollback_rejects_foreign_snapshot_id(storage):
             actor=None,
         )
     assert excinfo.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_rollback_preview_validates_without_claim_or_runtime_mutation(storage):
+    executor = await _create_executor(storage, name="rb-preview")
+    snapshot_id = await _seed_snapshot(storage, executor.id)
+    adapter = _RollbackAdapter(await storage.get_runtime_connection(executor.runtime_connection_id))
+    service = RollbackService(storage, SnapshotService(storage))
+
+    preview = await service.preview(
+        executor_config=executor,
+        adapter=adapter,
+        snapshot_id=snapshot_id,
+    )
+
+    assert preview.snapshot_id == snapshot_id
+    assert preview.snapshot_valid is True
+    assert preview.integrity_status == "verified"
+    assert adapter.current_image_calls == 0
+    assert adapter.capture_calls == 0
+    assert adapter.recover_calls == 0
+    assert not await storage.is_executor_snapshot_claimed(
+        executor_id=executor.id, snapshot_id=snapshot_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_rollback_rejects_tampered_snapshot_before_runtime_mutation(storage):
+    executor = await _create_executor(storage, name="rb-tampered")
+    snapshot_id = await _seed_snapshot(storage, executor.id)
+    db = await storage._get_connection()
+    await db.execute(
+        "UPDATE executor_snapshots SET snapshot_data = ? WHERE id = ?",
+        ('{"image":"attacker:latest"}', snapshot_id),
+    )
+    await db.commit()
+
+    adapter = _RollbackAdapter(await storage.get_runtime_connection(executor.runtime_connection_id))
+    outcome = await RollbackService(storage, SnapshotService(storage)).rollback(
+        executor_config=executor,
+        adapter=adapter,
+        snapshot_id=snapshot_id,
+        actor="operator",
+    )
+
+    assert outcome.run.status == "failed"
+    assert "integrity metadata" in (outcome.recovery_error or "")
+    assert adapter.current_image_calls == 0
+    assert adapter.capture_calls == 0
+    assert adapter.recover_calls == 0
 
 
 @pytest.mark.asyncio
@@ -529,6 +608,6 @@ async def test_rollback_passes_target_snapshot_to_adapter_not_prerollback(storag
     # Exactly one call: the rollback recovery itself.
     assert adapter.recover_calls == 1
     recovered = adapter.recover_snapshot_args[0]
-    assert (
-        recovered["image"] == "acme/api:1.0.0"
-    ), "adapter must receive the target snapshot data, not the pre_rollback row"
+    assert recovered["image"] == "acme/api:1.0.0", (
+        "adapter must receive the target snapshot data, not the pre_rollback row"
+    )

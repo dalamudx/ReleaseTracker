@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import importlib.util
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import aiosqlite
@@ -90,6 +91,22 @@ class SlowFakeAdapter(FakeAdapter):
         result = await super().update_image(target_ref, new_image)
         self.completed_runs += 1
         return result
+
+
+@pytest.mark.asyncio
+async def test_async_manual_run_releases_overlap_guard_when_queue_write_fails(storage):
+    scheduler = ExecutorScheduler(storage)
+    storage.get_executor_config = AsyncMock(return_value=SimpleNamespace(enabled=True))
+    storage.get_executor_desired_state = AsyncMock(return_value=None)
+    storage.create_executor_run_if_no_active = AsyncMock(side_effect=RuntimeError("write failed"))
+
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="write failed"):
+            await scheduler.run_executor_now_async(17)
+
+    assert storage.create_executor_run_if_no_active.await_count == 2
+    assert scheduler._running_executor_ids == set()
+    await scheduler.shutdown()
 
 
 @pytest.mark.asyncio
@@ -711,7 +728,10 @@ async def test_use_tracker_image_and_tag_prefixes_docker_hub_registry(storage, r
             enabled=True,
             image_selection_mode="use_tracker_image_and_tag",
             update_mode="manual",
-            target_ref={"mode": "container", "container_id": f"container-nginx-dockerhub-{registry}"},
+            target_ref={
+                "mode": "container",
+                "container_id": f"container-nginx-dockerhub-{registry}",
+            },
         )
     )
 
@@ -2453,6 +2473,8 @@ async def test_refresh_executor_enqueues_existing_projection_for_maintenance_win
     scheduler._adapters[executor_id] = adapter
 
     await scheduler.refresh_executor(executor_id)
+    # refresh_executor intentionally invalidates stale runtime clients.
+    scheduler._adapters[executor_id] = adapter
     await scheduler.reconcile_pending_desired_states()
 
     assert adapter.update_calls == ["window-created-after-projection:8.0.0"]
@@ -2513,6 +2535,8 @@ async def test_refresh_executor_defers_existing_projection_until_maintenance_win
     scheduler._adapters[executor_id] = adapter
 
     await scheduler.refresh_executor(executor_id)
+    # refresh_executor intentionally invalidates stale runtime clients.
+    scheduler._adapters[executor_id] = adapter
     await scheduler.reconcile_pending_desired_states()
 
     assert adapter.update_calls == []
@@ -2693,6 +2717,8 @@ async def test_immediate_mode_refresh_enqueues_existing_projection_without_per_e
     scheduler._adapters[executor_id] = adapter
 
     await scheduler.refresh_executor(executor_id)
+    # refresh_executor intentionally invalidates stale runtime clients.
+    scheduler._adapters[executor_id] = adapter
     await scheduler.reconcile_pending_desired_states()
 
     job = scheduler.scheduler_host.scheduler.get_job(f"executor_{executor_id}")

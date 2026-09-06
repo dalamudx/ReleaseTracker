@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { Plus, Search, X } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
@@ -9,7 +9,6 @@ import {
     InputGroupInput,
     InputGroupText,
 } from "@/components/ui/input-group"
-import type { TrackerStatus } from "@/api/types"
 import { TrackerDetail } from "@/components/trackers/TrackerDetail"
 import { TrackerList } from "@/components/trackers/TrackerList"
 import { TrackerDialog } from "@/components/trackers/TrackerDialog"
@@ -51,28 +50,15 @@ export default function TrackersPage() {
     const skip = (page - 1) * pageSize
 
     // Use React Query to fetch the Trackers list with 30-second cache.
-    const { data, isLoading: loading } = useTrackers({ skip, limit: pageSize })
-    const rawTrackers: TrackerStatus[] = useMemo(() => data?.items ?? [], [data?.items])
-
-    // Client-side filter — the current API doesn't accept a search param so we
-    // filter what's already on this page. This is fine for the common case
-    // (a few dozen trackers) and is a no-op when the search box is empty.
-    const trackers = useMemo(() => {
-        const term = search.trim().toLowerCase()
-        if (!term) return rawTrackers
-        return rawTrackers.filter((tracker) => {
-            if (tracker.name.toLowerCase().includes(term)) return true
-            if (tracker.description?.toLowerCase().includes(term)) return true
-            return tracker.sources?.some((source) =>
-                source.source_key?.toLowerCase().includes(term)
-                || source.source_type?.toLowerCase().includes(term),
-            ) ?? false
-        })
-    }, [rawTrackers, search])
-
+    const { data, isLoading: loading } = useTrackers({
+        skip,
+        limit: pageSize,
+        search: search.trim() || undefined,
+    })
+    const trackers = data?.items ?? []
     const total = data?.total ?? 0
     const visibleSelectedTrackerName = selectedTrackerName !== null
-        && rawTrackers.some((tracker) => tracker.name === selectedTrackerName)
+        && trackers.some((tracker) => tracker.name === selectedTrackerName)
         ? selectedTrackerName
         : null
 
@@ -155,7 +141,10 @@ export default function TrackersPage() {
                         <InputGroupInput
                             placeholder={t("trackers.searchPlaceholder")}
                             value={search}
-                            onChange={(event) => setSearch(event.target.value)}
+                            onChange={(event) => {
+                                setSearch(event.target.value)
+                                setPage(1)
+                            }}
                         />
                         {search ? (
                             <InputGroupAddon align="inline-end">
@@ -163,7 +152,10 @@ export default function TrackersPage() {
                                     variant="ghost"
                                     size="icon"
                                     className="h-6 w-6"
-                                    onClick={() => setSearch("")}
+                                    onClick={() => {
+                                        setSearch("")
+                                        setPage(1)
+                                    }}
                                     title={t("common.clear")}
                                 >
                                     <X className="h-3.5 w-3.5" />

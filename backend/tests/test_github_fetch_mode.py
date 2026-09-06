@@ -136,7 +136,9 @@ async def test_github_fetch_all_rest_first_does_not_fall_back_to_graphql(monkeyp
         post_responses=[
             (
                 lambda url, payload: url.endswith("/graphql"),
-                lambda url: _FakeResponse(200, {"data": {"repository": {"releases": {"nodes": []}}}}, url),
+                lambda url: _FakeResponse(
+                    200, {"data": {"repository": {"releases": {"nodes": []}}}}, url
+                ),
             )
         ],
     )

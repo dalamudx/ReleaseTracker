@@ -10,6 +10,8 @@ from typing import Any
 
 import yaml
 
+from ..services.runtime_policy import runtime_operation_policy
+
 _DEFAULT_COMPOSE_FILE_NAMES = (
     "compose.yml",
     "compose.yaml",
@@ -134,7 +136,13 @@ class _ComposeProjectAdapterMixin:
                         text=True,
                         capture_output=True,
                         check=False,
+                        timeout=runtime_operation_policy(self.runtime_connection).write_timeout_seconds,
                     )
+                except subprocess.TimeoutExpired as exc:
+                    raise RuntimeError(
+                        f"{self._compose_runtime_label()} compose command timed out: "
+                        f"{' '.join(compose_args)}"
+                    ) from exc
                 except FileNotFoundError:
                     continue
 

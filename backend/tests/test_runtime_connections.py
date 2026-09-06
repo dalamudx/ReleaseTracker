@@ -128,6 +128,18 @@ async def test_runtime_connections_crud_does_not_store_inline_secrets(
         ),
         (
             {
+                "name": "docker-invalid-operation-policy",
+                "type": "docker",
+                "config": {
+                    "socket": "unix:///var/run/docker.sock",
+                    "operation_policy": {"read_timeout_seconds": True},
+                },
+                "secrets": {},
+            },
+            "config.operation_policy.read_timeout_seconds must be an integer",
+        ),
+        (
+            {
                 "name": "portainer-invalid-url",
                 "type": "portainer",
                 "config": {"base_url": "portainer.local", "endpoint_id": 1},
@@ -300,6 +312,46 @@ async def test_runtime_connections_discover_kubernetes_namespaces(authed_client,
 
 
 @pytest.mark.asyncio
+async def test_runtime_connections_searches_across_pages(authed_client):
+    for payload in VALID_RUNTIME_CONNECTIONS[:2]:
+        response = authed_client.post("/api/runtime-connections", json=payload)
+        assert response.status_code == 200, response.text
+
+    response = authed_client.get("/api/runtime-connections?search=PODMAN&limit=1")
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["total"] == 1
+    assert [item["name"] for item in data["items"]] == ["podman-prod"]
+
+    credential_response = authed_client.post(
+        "/api/credentials",
+        json={
+            "name": "runtime-search-credential",
+            "type": "docker",
+            "secrets": {"username": "registry-user", "password": "secret"},
+        },
+    )
+    assert credential_response.status_code == 200, credential_response.text
+    runtime_response = authed_client.post(
+        "/api/runtime-connections",
+        json={
+            "name": "credential-backed-runtime",
+            "type": "docker",
+            "config": {"socket": "unix:///var/run/docker.sock"},
+            "credential_id": credential_response.json()["id"],
+        },
+    )
+    assert runtime_response.status_code == 200, runtime_response.text
+
+    response = authed_client.get("/api/runtime-connections?search=RUNTIME-SEARCH-CREDENTIAL")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["name"] == "credential-backed-runtime"
+
+
+@pytest.mark.asyncio
 async def test_runtime_connections_discover_portainer_endpoints(authed_client, monkeypatch):
     async def fake_discover_endpoints(self):
         assert self.runtime_connection.config["base_url"] == "https://portainer.example.com"
@@ -340,4 +392,3 @@ async def test_runtime_connections_discover_portainer_endpoints(authed_client, m
             {"id": 3, "name": "staging", "type": None, "status": None},
         ]
     }
-

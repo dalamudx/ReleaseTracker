@@ -353,6 +353,33 @@ async def _create_executor_via_api(
 
 
 @pytest.mark.asyncio
+async def test_executors_search_visible_metadata(authed_client, storage):
+    runtime_id = await _create_runtime_connection(
+        storage, name="searchable-runtime", description="production runtime"
+    )
+    await _create_tracker(storage, name="searchable-tracker")
+    await _create_executor_via_api(
+        authed_client,
+        storage=storage,
+        name="release-worker",
+        runtime_id=runtime_id,
+        tracker_name="searchable-tracker",
+        target_ref={
+            "mode": "container",
+            "container_id": "worker",
+            "container_name": "release-worker",
+        },
+        description="deploy the release",
+    )
+
+    response = authed_client.get("/api/executors?search=SEARCHABLE-RUNTIME&limit=1")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["total"] == 1
+    assert [item["name"] for item in response.json()["items"]] == ["release-worker"]
+
+
+@pytest.mark.asyncio
 async def test_executor_discovery_and_create_validation(authed_client, storage, monkeypatch):
     runtime_id = await _create_runtime_connection(storage)
     await _create_tracker(storage, name="sample-web")
@@ -2948,6 +2975,59 @@ async def test_get_executor_snapshot_detail_returns_404_for_foreign_snapshot(
     executor_b_id, _ = await _seed_executor_with_snapshot(storage, name="snap-foreign-b")
     response = authed_client.get(f"/api/executors/{executor_b_id}/snapshots/{snapshot_a}")
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_rollback_preview_endpoint_has_no_runtime_mutation(
+    authed_client, storage, monkeypatch
+):
+    executor_id, snapshot_id = await _seed_executor_with_snapshot(storage, name="snap-preview")
+    from releasetracker.executors.base import BaseRuntimeAdapter
+
+    class _PreviewAdapter(BaseRuntimeAdapter):
+        async def discover_targets(self):
+            return []
+
+        async def validate_target_ref(self, target_ref):
+            return None
+
+        async def get_current_image(self, target_ref):
+            raise AssertionError("preview must not read the running image")
+
+        async def capture_snapshot(self, target_ref, current_image):
+            raise AssertionError("preview must not capture a snapshot")
+
+        async def validate_snapshot(self, target_ref, snapshot):
+            return None
+
+        async def update_image(self, target_ref, new_image):
+            raise AssertionError("preview must not update runtime state")
+
+        async def recover_from_snapshot(self, target_ref, snapshot):
+            raise AssertionError("preview must not recover runtime state")
+
+    monkeypatch.setattr(
+        "releasetracker.routers.executors.DockerRuntimeAdapter",
+        lambda runtime_connection: _PreviewAdapter(runtime_connection),
+    )
+
+    response = authed_client.post(
+        f"/api/executors/{executor_id}/rollback/preview",
+        json={"snapshot_id": snapshot_id},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "snapshot_id": snapshot_id,
+        "image_at_capture": "acme/api:1.0.0",
+        "integrity_status": "verified",
+        "snapshot_valid": True,
+        "validation_error": None,
+        "mutation_performed": False,
+    }
+    assert not await storage.is_executor_snapshot_claimed(
+        executor_id=executor_id, snapshot_id=snapshot_id
+    )
 
 
 @pytest.mark.asyncio

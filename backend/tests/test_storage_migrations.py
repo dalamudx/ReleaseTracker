@@ -30,16 +30,13 @@ async def _create_test_storage(db_path: Path):
     return SQLiteStorage(str(db_path), system_key_manager=key_manager)
 
 
-def test_executor_image_selection_mode_migration_updates_existing_executor_table(
-    tmp_path
-):
+def test_executor_image_selection_mode_migration_updates_existing_executor_table(tmp_path):
     db_path = tmp_path / "releases.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     conn = sqlite3.connect(db_path)
     try:
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS runtime_connections (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
@@ -51,10 +48,8 @@ def test_executor_image_selection_mode_migration_updates_existing_executor_table
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS executors (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
@@ -70,8 +65,7 @@ def test_executor_image_selection_mode_migration_updates_existing_executor_table
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (runtime_connection_id) REFERENCES runtime_connections(id) ON DELETE CASCADE
             )
-            """
-        )
+            """)
         conn.commit()
 
         cursor = conn.execute("PRAGMA table_info(executors)")
@@ -87,8 +81,7 @@ def test_executor_snapshots_migration_updates_existing_executor_schema(tmp_path)
 
     conn = sqlite3.connect(db_path)
     try:
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS runtime_connections (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
@@ -100,10 +93,8 @@ def test_executor_snapshots_migration_updates_existing_executor_schema(tmp_path)
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS executors (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
@@ -119,10 +110,8 @@ def test_executor_snapshots_migration_updates_existing_executor_schema(tmp_path)
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (runtime_connection_id) REFERENCES runtime_connections(id) ON DELETE CASCADE
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS executor_status (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 executor_id INTEGER NOT NULL UNIQUE,
@@ -133,10 +122,8 @@ def test_executor_snapshots_migration_updates_existing_executor_schema(tmp_path)
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (executor_id) REFERENCES executors(id) ON DELETE CASCADE
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS executor_run_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 executor_id INTEGER NOT NULL,
@@ -149,8 +136,7 @@ def test_executor_snapshots_migration_updates_existing_executor_schema(tmp_path)
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (executor_id) REFERENCES executors(id) ON DELETE CASCADE
             )
-            """
-        )
+            """)
         conn.commit()
 
         cursor = conn.execute(
@@ -159,7 +145,6 @@ def test_executor_snapshots_migration_updates_existing_executor_schema(tmp_path)
         assert cursor.fetchone() is None
     finally:
         conn.close()
-
 
 
 @pytest.mark.asyncio
@@ -264,7 +249,7 @@ async def test_get_stats_ignores_canonical_only_rows_without_redesign_truth_proj
 
 @pytest.mark.asyncio
 async def test_initialize_preserves_existing_helm_observations_and_canonicals_idempotently(
-    tmp_path
+    tmp_path,
 ):
     db_path = tmp_path / "releases.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -433,8 +418,7 @@ async def test_initialize_rejects_legacy_only_database_for_reset_friendly_policy
 
     conn = sqlite3.connect(db_path)
     try:
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS releases (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tracker_name TEXT NOT NULL,
@@ -447,10 +431,8 @@ async def test_initialize_rejects_legacy_only_database_for_reset_friendly_policy
                 created_at TEXT NOT NULL,
                 UNIQUE(tracker_name, tag_name)
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS trackers (
                 name TEXT PRIMARY KEY,
                 type TEXT NOT NULL,
@@ -466,8 +448,7 @@ async def test_initialize_rejects_legacy_only_database_for_reset_friendly_policy
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
-            """
-        )
+            """)
         conn.execute(
             "INSERT INTO trackers (name, type, enabled, repo, channels, interval, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
@@ -524,4 +505,3 @@ async def test_initialize_succeeds_after_dbmate_schema_apply(tmp_path):
         conn.close()
 
     await storage.close()
-

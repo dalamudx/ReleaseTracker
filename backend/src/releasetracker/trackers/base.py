@@ -43,7 +43,9 @@ class BaseTracker(ABC):
 
         filter_config = self.config.get("filter", {})
 
-        if release.tracker_type != "container" and not filter_config.get("include_prerelease", False):
+        if release.tracker_type != "container" and not filter_config.get(
+            "include_prerelease", False
+        ):
             if release.prerelease:
                 return False
 

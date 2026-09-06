@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend quality and tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install dbmate
+        run: |
+          curl -fsSL -o /usr/local/bin/dbmate "https://github.com/amacneil/dbmate/releases/download/v2.32.0/dbmate-linux-amd64"
+          chmod +x /usr/local/bin/dbmate
+
+      - name: Install backend dependencies
+        run: uv --directory backend sync --locked --extra dev
+
+      - name: Lint backend
+        run: uv --directory backend run --locked --extra dev ruff check src tests
+
+      - name: Check backend formatting
+        run: uv --directory backend run --locked --extra dev black --check src tests
+
+      - name: Run backend tests
+        run: uv --directory backend run --locked --extra dev pytest -q
+
+  frontend:
+    name: Frontend quality, tests, and bundle budget
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm --prefix frontend ci
+
+      - name: Lint frontend
+        run: npm --prefix frontend run lint
+
+      - name: Run frontend tests
+        run: npm --prefix frontend run test
+
+      - name: Build frontend
+        run: npm --prefix frontend run build
+
+      - name: Install Chromium for browser E2E
+        run: npx --prefix frontend playwright install --with-deps chromium
+
+      - name: Run browser E2E
+        run: npm --prefix frontend run test:e2e
+
+      - name: Enforce initial bundle budget
+        run: npm --prefix frontend run check:bundle
