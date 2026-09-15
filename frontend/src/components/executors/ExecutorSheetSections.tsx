@@ -388,7 +388,9 @@ function renderReviewImageChanges(
             <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{t("executors.review.imageChanges")}</div>
             <div className="mt-3 grid gap-2">
                 {imageChanges.map((change) => {
-                    const targetImage = change.targetImage || t("executors.review.targetImageDeferred")
+                    const targetImage = change.targetImage || t(change.targetVersion
+                        ? "executors.review.targetImageDeferred"
+                        : "executors.review.targetVersionUnavailable")
                     return (
                         <div key={`${change.service}-${change.sourceImage}-${targetImage}`} className="rounded-lg border border-border/60 bg-background px-3 py-2">
                             <div className="text-sm font-medium text-foreground">{change.service || "-"}</div>

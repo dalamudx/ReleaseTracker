@@ -712,6 +712,7 @@
       "versionChanges": "Version changes",
       "targetVersion": "Target version",
       "targetImageDeferred": "Resolved at run time",
+      "targetVersionUnavailable": "Cannot determine the target version: no current version is available for the selected source and channel.",
       "maintenanceSummary": "Maintenance window: {{timezone}}, {{start}}–{{end}}.",
       "ready": "The executor configuration is complete and ready to save."
     },

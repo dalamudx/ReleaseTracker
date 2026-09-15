@@ -443,15 +443,17 @@ def _release_order_key(
     except InvalidVersion:
         semver_key = None
 
+    published_at_key = release.published_at.timestamp()
     if sort_mode == "semver":
         if semver_key is not None:
-            return (*semver_key, release.published_at.timestamp())
-        return (0, release.published_at.timestamp())
+            return (*semver_key, published_at_key)
+        return (0, published_at_key, normalized_version)
 
+    # Published-time mode must not let parseable versions outrank newer
+    # non-PEP-440 tags such as build/commit-suffixed development releases.
     if semver_key is not None:
-        return (*semver_key, release.published_at.timestamp())
-
-    return (0, release.published_at.timestamp())
+        return (published_at_key, *semver_key)
+    return (published_at_key, 0, normalized_version)
 
 
 def _channel_selection_key(channel, index: int) -> str:

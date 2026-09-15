@@ -247,32 +247,14 @@ def _select_top_current_projection_release(
     if not releases:
         return None
 
-    unique_releases = cls.dedupe_releases_by_immutable_identity(releases)
-    enabled_channels = [channel for channel in channels if channel.enabled] if channels else []
-    for channel in enabled_channels:
-        channel_source_type = getattr(channel, "source_type", None)
-        channel_name = getattr(channel, "name", "")
-        if isinstance(channel, dict):
-            channel_source_type = channel.get("source_type")
-            channel_name = str(channel.get("name") or "")
-        channel_candidates = [
-            release
-            for release in unique_releases
-            if cls._release_matches_channel(
-                release, channel, channel_source_type=channel_source_type
-            )
-        ]
-        if channel_candidates:
-            winner = max(
-                channel_candidates,
-                key=lambda release: cls._release_order_key(release, sort_mode),
-            )
-            return cls._copy_release_with_channel_name(winner, channel_name)
-
-    if enabled_channels:
-        return None
-
-    return max(unique_releases, key=lambda release: cls._release_order_key(release, sort_mode))
+    # Channels define eligibility, not priority. Select each channel's winner
+    # and then apply the configured tracker ordering across those winners.
+    return cls.select_best_release(
+        releases,
+        channels,
+        sort_mode=sort_mode,
+        use_immutable_identity=True,
+    )
 
 
 def _filter_projection_rows_by_channels(

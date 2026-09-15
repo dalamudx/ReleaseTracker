@@ -109,7 +109,11 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
     const versionViewMatrixModel = useMemo(
         () =>
             tracker && trackerReleaseHistoryQuery.data
-                ? buildTrackerHistoryMatrixPresentationModel(tracker.sources, trackerReleaseHistoryQuery.data.items)
+                ? buildTrackerHistoryMatrixPresentationModel(
+                    tracker.sources,
+                    trackerReleaseHistoryQuery.data.items,
+                    tracker.version_sort_mode,
+                )
                 : null,
         [tracker, trackerReleaseHistoryQuery.data],
     )

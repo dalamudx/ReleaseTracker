@@ -345,111 +345,31 @@ def _serialize_current_summary(summary: dict[str, Any] | None) -> dict[str, Any]
     }
 
 
-def _container_release_current_identity_values(
-    storage: SQLiteStorage,
-    rows: list[dict[str, Any]],
-    release: Release,
-) -> dict[str, str | None]:
-    identity_key = storage.release_identity_key_for_source(
-        release,
-        source_type="container",
-    )
-    row = next((item for item in rows if item["identity_key"] == identity_key), None)
-    return {
-        "last_version": release.version,
-        "digest": row["digest"] if row is not None else release.commit_sha,
-    }
-
-
-def _container_release_channel_winner_values_by_key(
-    storage: SQLiteStorage,
-    releases: list[Release],
-    channels: list[Any],
-    sort_mode: str,
-    rows: list[dict[str, Any]],
-) -> dict[str, dict[str, str | None]]:
-    channel_winners = storage.select_best_releases_by_channel(
-        releases,
-        channels,
-        sort_mode=sort_mode,
-        use_immutable_identity=True,
-    )
-    return {
-        channel_key: _container_release_current_identity_values(storage, rows, release)
-        for channel_key, release in channel_winners.items()
-    }
-
-
 async def _build_container_source_release_channel_current_values(
     storage: SQLiteStorage,
     tracker: AggregateTracker,
     runtime_config: TrackerConfig | None,
-    *,
-    current_rows: list[dict[str, Any]] | None = None,
-    contributions_by_history_id: dict[int, list[dict[str, Any]]] | None = None,
 ) -> dict[str, dict[str, dict[str, str | None]]]:
-    container_sources = [
-        source
-        for source in tracker.sources
-        if source.source_type == "container" and source.release_channels
-    ]
-    if not container_sources:
-        return {}
-
-    if current_rows is None:
-        current_rows = await storage.get_tracker_current_release_rows(tracker.name)
-    if not current_rows:
-        return {source.source_key: {} for source in container_sources}
-
-    if contributions_by_history_id is None:
-        contributions_by_history_id = await _load_current_source_contributions(
-            storage,
-            [row["tracker_release_history_id"] for row in current_rows],
-        )
-    source_rows_by_source_key: dict[str, list[dict[str, Any]]] = {}
-    source_releases_by_source_key: dict[str, list[Release]] = {}
-    for current_row in current_rows:
-        for contribution in contributions_by_history_id.get(
-            current_row["tracker_release_history_id"], []
-        ):
-            if contribution["source_type"] != "container":
-                continue
-
-            source_key = contribution["source_key"]
-            release = Release(
-                tracker_name=tracker.name,
-                tracker_type="container",
-                version=contribution["version"],
-                name=contribution["tag_name"] or contribution["version"],
-                tag_name=contribution["tag_name"] or contribution["version"],
-                url=contribution["url"] or "",
-                published_at=datetime.fromisoformat(contribution["published_at"]),
-                prerelease=bool(contribution["prerelease"]),
-                body=contribution["body"],
-                changelog_url=contribution["changelog_url"],
-                channel_name=contribution["channel_name"],
-                commit_sha=contribution["digest"],
-            )
-            identity_key = storage.release_identity_key_for_source(
-                release,
-                source_type="container",
-            )
-            source_rows_by_source_key.setdefault(source_key, []).append(
-                {**current_row, "identity_key": identity_key, "digest": contribution["digest"]}
-            )
-            source_releases_by_source_key.setdefault(source_key, []).append(release)
-
     sort_mode = runtime_config.version_sort_mode if runtime_config is not None else "published_at"
-    return {
-        source.source_key: _container_release_channel_winner_values_by_key(
-            storage,
-            source_releases_by_source_key.get(source.source_key, []),
-            source.release_channels,
-            sort_mode,
-            source_rows_by_source_key.get(source.source_key, []),
+    values = {}
+    for source in tracker.sources:
+        if source.source_type != "container" or not source.release_channels:
+            continue
+        # Aggregate winners can all belong to a different source. A bound
+        # source/channel must resolve independently, even with no current projection.
+        releases = (
+            await storage.get_source_release_history_releases_by_source(source.id)
+            if source.id is not None
+            else []
         )
-        for source in container_sources
-    }
+        winners = storage.select_best_releases_for_tracker_channel(
+            releases, source, sort_mode=sort_mode, use_immutable_identity=True
+        )
+        values[source.source_key] = {
+            channel_key: {"last_version": release.version, "digest": release.commit_sha}
+            for channel_key, release in winners.items()
+        }
+    return values
 
 
 def _augment_release_channels_with_current_values(
@@ -575,8 +495,6 @@ async def _build_tracker_response(
     *,
     current_status_map: dict[str, dict[str, Any]] | None = None,
     runtime_configs: dict[str, TrackerConfig | None] | None = None,
-    current_rows_by_tracker_name: dict[str, list[dict[str, Any]]] | None = None,
-    current_source_contributions: dict[int, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     runtime_config = (
         runtime_configs.get(tracker.name)
@@ -594,12 +512,6 @@ async def _build_tracker_response(
         storage,
         tracker,
         runtime_config,
-        current_rows=(
-            current_rows_by_tracker_name.get(tracker.name)
-            if current_rows_by_tracker_name is not None
-            else None
-        ),
-        contributions_by_history_id=current_source_contributions,
     )
     sources = []
     for source in tracker.sources:
@@ -670,23 +582,12 @@ async def get_trackers(
             paginated_trackers, current_rows_by_tracker_name, runtime_configs
         )
     )
-    history_ids = [
-        row["tracker_release_history_id"]
-        for current_rows in current_rows_by_tracker_name.values()
-        for row in current_rows
-    ]
-    current_source_contributions = (
-        await _load_current_source_contributions(storage, history_ids) if history_ids else {}
-    )
-
     items = [
         await _build_tracker_response(
             storage,
             tracker,
             current_status_map=current_status_map,
             runtime_configs=runtime_configs,
-            current_rows_by_tracker_name=current_rows_by_tracker_name,
-            current_source_contributions=current_source_contributions,
         )
         for tracker in paginated_trackers
     ]

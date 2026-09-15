@@ -539,15 +539,11 @@ export function resolveExecutorBindingTargetVersion(
     binding: ExecutorServiceBindingFormValue,
     trackers: TrackerStatus[],
 ): string | null {
-    const { selectedTracker, selectedBindableSource } = resolveExecutorServiceBinding(binding, trackers)
-    const matchedChannel = (selectedBindableSource?.release_channels ?? []).find((channel) => channel.name === binding.channel_name)
-    const channelVersion = getReleaseChannelStoredVersion(matchedChannel)
-    if (channelVersion) {
-        return channelVersion
-    }
-
-    const statusVersion = selectedTracker?.status.last_version ?? selectedTracker?.last_version ?? null
-    return typeof statusVersion === "string" && statusVersion.trim().length > 0 ? statusVersion.trim() : null
+    const { selectedBindableSource } = resolveExecutorServiceBinding(binding, trackers)
+    const matchedChannel = (selectedBindableSource?.release_channels ?? []).find((channel) => channel.name === binding.channel_name && channel.enabled)
+    // The tracker-wide latest version can belong to another source or channel.
+    // Missing scoped data must remain unknown, not become a stable image target.
+    return getReleaseChannelStoredVersion(matchedChannel)
 }
 
 export function resolveExecutorBindingTargetDigest(

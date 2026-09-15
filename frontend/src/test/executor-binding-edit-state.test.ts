@@ -1584,6 +1584,39 @@ describe("executor binding edit state helpers", () => {
         })
     })
 
+    describe.each(["docker", "portainer"] as const)("%s source-scoped image preview", (runtimeType) => {
+        it.each([undefined, "", "   ", "3.6.0-dev"])("does not fall back to the global stable version when the dev version is %s", (version) => {
+            const t = ((key: string) => key) as unknown as TFunction
+            const currentImage = "registry.example.com/canvas/nginx_frontend:3.6.0-dev-abc123"
+            const targetDisplay = buildExecutorTargetDisplay(runtimeType, runtimeType === "docker"
+                ? { mode: "container", container_name: "frontend" }
+                : { mode: "portainer_stack", endpoint_id: 2, stack_id: 11, stack_name: "stack", stack_type: "standalone", services: [{ service: "frontend", image: currentImage }], service_count: 1 }, t)
+            const tracker = createTracker({
+                last_version: "3.6.0",
+                status: { last_check: null, last_version: "3.6.0", error: null, source_count: 2, enabled_source_count: 2, source_types: ["container"] },
+                sources: [
+                    createTrackerSource({ id: 8, source_key: "other", release_channels: [{ name: "prerelease", enabled: true, last_version: "9.0.0-dev" }] }),
+                    createTrackerSource({ id: 9, release_channels: [
+                        { name: "stable", enabled: true, last_version: "3.6.0" },
+                        { name: "prerelease", enabled: true, include_pattern: ".*dev.*", last_version: version },
+                    ] }),
+                ],
+            })
+            const binding = createServiceBinding({ service: "frontend", tracker_source_id: "9", channel_name: "prerelease" })
+            const changes = buildExecutorReviewImageChanges({
+                targetDisplay, trackers: [tracker],
+                serviceBindings: runtimeType === "portainer" ? [binding] : [],
+                singleContainerBinding: binding, singleContainerCurrentImage: currentImage,
+                imageSelectionMode: "replace_tag_on_current_image", imageReferenceMode: "tag",
+            })
+            expect(changes).toEqual([{
+                service: "frontend", sourceImage: currentImage,
+                targetImage: version?.trim() ? "registry.example.com/canvas/nginx_frontend:3.6.0-dev" : "",
+                targetVersion: version?.trim() || null,
+            }])
+        })
+    })
+
     it("builds actual target image changes from stored binding versions", () => {
         const t = ((key: string, options?: Record<string, unknown>) => options?.count ? `${options.count} ${key}` : key) as unknown as TFunction
         const targetDisplay = buildExecutorTargetDisplay("portainer", {
@@ -1609,7 +1642,7 @@ describe("executor binding edit state helpers", () => {
                 createTrackerSource({
                     id: 9,
                     source_config: { image: "ghcr.io/acme/tracker-api" },
-                    release_channels: [{ release_channel_key: "stable", name: "stable", type: "release", enabled: true }],
+                    release_channels: [{ release_channel_key: "stable", name: "stable", type: "release", enabled: true, last_version: "2.0.0" }],
                 }),
             ],
         })
@@ -1657,7 +1690,7 @@ describe("executor binding edit state helpers", () => {
                 createTrackerSource({
                     id: 9,
                     source_config: { image: "acme/tracker-api", registry: "ghcr.io" },
-                    release_channels: [{ release_channel_key: "stable", name: "stable", type: "release", enabled: true }],
+                    release_channels: [{ release_channel_key: "stable", name: "stable", type: "release", enabled: true, last_version: "2.0.0" }],
                 }),
             ],
         })
@@ -1708,7 +1741,7 @@ describe("executor binding edit state helpers", () => {
                     createTrackerSource({
                         id: 9,
                         source_config: { image: "library/nginx", registry },
-                        release_channels: [{ release_channel_key: "stable", name: "stable", type: "release", enabled: true }],
+                        release_channels: [{ release_channel_key: "stable", name: "stable", type: "release", enabled: true, last_version: "1.30.0-trixie" }],
                     }),
                 ],
             })
@@ -1798,7 +1831,7 @@ describe("executor binding edit state helpers", () => {
                 enabled_source_count: 1,
                 source_types: ["container"],
             },
-            sources: [createTrackerSource({ id: 9 })],
+            sources: [createTrackerSource({ id: 9, release_channels: [{ release_channel_key: "stable", name: "stable", type: "release", enabled: true, last_version: "2.0.0" }] })],
         })
 
         const changes = buildExecutorReviewImageChanges({
@@ -1840,7 +1873,7 @@ describe("executor binding edit state helpers", () => {
             },
             sources: [
                 createTrackerSource({
-                    id: 9,
+                    id: 9, release_channels: [{ release_channel_key: "stable", name: "stable", type: "release", enabled: true, last_version: "2.0.0" }],
                     source_config: { image: "acme/tracker-api", registry: "ghcr.io" },
                 }),
             ],

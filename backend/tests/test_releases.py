@@ -2996,7 +2996,7 @@ def test_select_best_releases_by_channel_normalizes_version_prefix_before_semver
     assert winners["stable"].version == "version/2026.2.2"
 
 
-def test_select_best_releases_by_channel_prefers_semver_over_published_at_even_when_mode_is_published_at():
+def test_select_best_releases_by_channel_uses_published_at_before_semver_in_published_at_mode():
     releases = [
         Release(
             tracker_name="sample_canary",
@@ -3031,11 +3031,131 @@ def test_select_best_releases_by_channel_prefers_semver_over_published_at_even_w
         use_immutable_identity=True,
     )
 
-    assert winners["stable"].version == "0.1.7"
+    assert winners["stable"].version == "0.1.6"
+
+
+def test_release_order_mode_distinguishes_published_time_from_semver():
+    stable = Release(
+        tracker_name="dev-order",
+        tracker_type="gitea",
+        version="3.6.0",
+        name="3.6.0",
+        tag_name="3.6.0",
+        url="https://example.com/3.6.0",
+        published_at=datetime.fromisoformat("2026-09-10T05:01:51+00:00"),
+        prerelease=False,
+    )
+    latest_dev = Release(
+        tracker_name="dev-order",
+        tracker_type="gitea",
+        version="3.6.0-dev-0b0d27d3f61c",
+        name="3.6.0-dev-0b0d27d3f61c",
+        tag_name="3.6.0-dev-0b0d27d3f61c",
+        url="https://example.com/3.6.0-dev-0b0d27d3f61c",
+        published_at=datetime.fromisoformat("2026-09-15T04:01:04+00:00"),
+        prerelease=True,
+    )
+
+    assert (
+        max(
+            [stable, latest_dev],
+            key=lambda item: SQLiteStorage._release_order_key(item, "published_at"),
+        )
+        is latest_dev
+    )
+    assert (
+        max([stable, latest_dev], key=lambda item: SQLiteStorage._release_order_key(item, "semver"))
+        is stable
+    )
 
 
 @pytest.mark.asyncio
-async def test_latest_current_summary_prefers_highest_stable_semver_before_published_at_for_multi_source_tracker(
+async def test_latest_current_summary_uses_newest_release_across_channels_in_published_at_mode(
+    storage,
+    authed_client,
+):
+    name = "published-dev-summary"
+    aggregate_tracker = await storage.create_aggregate_tracker(
+        AggregateTracker(
+            name=name,
+            primary_changelog_source_key="repo",
+            sources=[
+                TrackerSource(
+                    source_key="repo",
+                    source_type="gitea",
+                    source_rank=0,
+                    source_config={"repo": "owner/published-dev-summary"},
+                    release_channels=[
+                        ReleaseChannel(
+                            release_channel_key="repo-stable", name="stable", type="release"
+                        ),
+                        ReleaseChannel(
+                            release_channel_key="repo-dev",
+                            name="prerelease",
+                            type="prerelease",
+                            include_pattern=".*dev.*",
+                        ),
+                    ],
+                )
+            ],
+        )
+    )
+    await storage.save_tracker_runtime_config(
+        TrackerConfig(
+            name=name,
+            type="gitea",
+            enabled=True,
+            repo="owner/published-dev-summary",
+            interval=60,
+            version_sort_mode="published_at",
+            channels=[
+                Channel(name="stable", type="release"),
+                Channel(name="prerelease", type="prerelease", include_pattern=".*dev.*"),
+            ],
+        )
+    )
+    stable = Release(
+        tracker_name=name,
+        tracker_type="gitea",
+        version="3.6.0",
+        name="3.6.0",
+        tag_name="3.6.0",
+        url="https://example.com/3.6.0",
+        published_at=datetime.fromisoformat("2026-09-10T05:01:51+00:00"),
+        prerelease=False,
+    )
+    latest_dev = Release(
+        tracker_name=name,
+        tracker_type="gitea",
+        version="3.6.0-dev-0b0d27d3f61c",
+        name="3.6.0-dev-0b0d27d3f61c",
+        tag_name="3.6.0-dev-0b0d27d3f61c",
+        url="https://example.com/3.6.0-dev-0b0d27d3f61c",
+        published_at=datetime.fromisoformat("2026-09-15T04:01:04+00:00"),
+        prerelease=True,
+    )
+    await _materialize_aggregate_truth_and_projection(
+        storage,
+        aggregate_tracker,
+        {"repo": [stable, latest_dev]},
+        projection_releases=[stable, latest_dev],
+    )
+
+    latest_summary = await storage.get_tracker_latest_current_release_summary(name)
+    assert latest_summary is not None
+    assert latest_summary["version"] == "3.6.0-dev-0b0d27d3f61c"
+
+    detail_response = authed_client.get(f"/api/trackers/{name}")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["status"]["last_version"] == "3.6.0-dev-0b0d27d3f61c"
+    current_response = authed_client.get(f"/api/trackers/{name}/current")
+    assert current_response.status_code == 200
+    assert current_response.json()["status"]["last_version"] == "3.6.0-dev-0b0d27d3f61c"
+    assert current_response.json()["latest_release"]["version"] == "3.6.0-dev-0b0d27d3f61c"
+
+
+@pytest.mark.asyncio
+async def test_latest_current_summary_prefers_newest_stable_release_in_published_at_mode(
     storage,
 ):
     aggregate_tracker = await storage.create_aggregate_tracker(
@@ -3187,8 +3307,8 @@ async def test_latest_current_summary_prefers_highest_stable_semver_before_publi
     )
 
     assert latest_summary is not None
-    assert latest_summary["version"] == "0.6.3"
-    assert latest_summary["release"].version == "0.6.3"
+    assert latest_summary["version"] == "0.1.6"
+    assert latest_summary["release"].version == "0.1.6"
 
 
 def test_select_best_releases_for_tracker_channel_keeps_duplicate_names_distinct_when_ownership_differs():

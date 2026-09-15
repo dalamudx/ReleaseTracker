@@ -678,4 +678,53 @@ describe("tracker current matrix presentation model", () => {
         expect(model.rows.map((row) => row.displayVersion)).toEqual(["0.26.4", "0.26.3", "0.26.6"])
         expect(model.rows.map((row) => row.sourceTypeBadges.length)).toEqual([2, 2, 1])
     })
+
+    it("orders tracker history strictly by published time when configured", () => {
+        const sources = [
+            {
+                id: 1, channel_key: "repo", channel_type: "gitea", enabled: true,
+                channel_config: { repo: "owner/project" }, channel_rank: 0,
+                source_key: "repo", source_type: "gitea", source_config: { repo: "owner/project" }, source_rank: 0,
+                release_channels: [
+                    { release_channel_key: "repo-stable", name: "stable", type: "release", enabled: true },
+                    { release_channel_key: "repo-dev", name: "prerelease", type: "prerelease", include_pattern: ".*dev.*", enabled: true },
+                ],
+            },
+            {
+                id: 2, channel_key: "container", channel_type: "container", enabled: true,
+                channel_config: { image: "canvas/nginx_frontend" }, channel_rank: 1,
+                source_key: "container", source_type: "container", source_config: { image: "canvas/nginx_frontend" }, source_rank: 1,
+                release_channels: [
+                    { release_channel_key: "image-stable", name: "stable", exclude_pattern: ".*dev.*", enabled: true },
+                    { release_channel_key: "image-dev", name: "prerelease", include_pattern: ".*dev.*", enabled: true },
+                ],
+            },
+        ] satisfies AggregateTracker["sources"]
+        const item = (
+            id: number, sourceKey: "repo" | "container", version: string,
+            publishedAt: string, prerelease: boolean,
+        ): ReleaseHistoryItem => ({
+            tracker_name: "nginx_frontend", tracker_release_history_id: id,
+            identity_key: `${version}-${sourceKey}`, version, digest: `digest-${id}`,
+            name: version, tag_name: version, published_at: publishedAt,
+            url: `https://example.com/${version}`, changelog_url: null, prerelease,
+            body: null, channel_name: prerelease ? "prerelease" : "stable",
+            app_version: null, chart_version: null, commit_sha: null,
+            primary_source: { source_key: sourceKey, source_type: sourceKey === "repo" ? "gitea" : "container", source_release_history_id: id },
+            created_at: publishedAt,
+        })
+        const items = [
+            item(1, "repo", "3.6.0", "2026-09-10T05:01:51Z", false),
+            item(2, "container", "3.6.0", "2026-09-10T05:01:31Z", false),
+            item(3, "repo", "3.6.0-dev-ce40a02fc70b", "2026-09-10T10:38:55Z", true),
+            item(4, "container", "3.6.0-dev-ce40a02fc70b", "2026-09-10T10:38:30Z", false),
+            item(5, "repo", "3.6.0-dev-0b0d27d3f61c", "2026-09-15T04:01:04Z", true),
+            item(6, "container", "3.6.0-dev", "2026-09-15T04:00:43Z", false),
+        ]
+
+        const model = buildTrackerHistoryMatrixPresentationModel(sources, items, "published_at")
+        expect(model.rows.map((row) => row.displayVersion)).toEqual([
+            "3.6.0-dev-0b0d27d3f61c", "3.6.0-dev", "3.6.0-dev-ce40a02fc70b", "3.6.0",
+        ])
+    })
 })

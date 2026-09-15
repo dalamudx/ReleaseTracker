@@ -131,6 +131,7 @@ function matchesReleaseChannel(
 export function buildTrackerHistoryMatrixPresentationModel(
     sources: AggregateTracker["sources"],
     items: ReleaseHistoryItem[],
+    sortMode?: AggregateTracker["version_sort_mode"],
 ): TrackerCurrentMatrixPresentationModel {
     const columns = sources.flatMap((source, sourceIndex) =>
         (source.release_channels ?? [])
@@ -203,7 +204,7 @@ export function buildTrackerHistoryMatrixPresentationModel(
             } satisfies TrackerCurrentMatrixRow]
         })
 
-    return buildTrackerCurrentMatrixPresentationModel({ columns, rows })
+    return buildTrackerCurrentMatrixPresentationModel({ columns, rows }, sortMode)
 }
 
 function parseVersionParts(version: string): {
@@ -383,6 +384,7 @@ export function getPreferredTrackerCurrentContributionForRow(
 
 export function buildTrackerCurrentMatrixPresentationModel(
     matrix: TrackerCurrentView["matrix"],
+    sortMode?: AggregateTracker["version_sort_mode"],
 ): TrackerCurrentMatrixPresentationModel {
     const columns: TrackerCurrentMatrixPresentationColumn[] = matrix.columns.map((column) => ({
         channelKey: column.channel_key,
@@ -426,16 +428,19 @@ export function buildTrackerCurrentMatrixPresentationModel(
     }
 
     const rows = Array.from(groupedRows.values()).sort((left, right) => {
-            if (left.sourceTypeBadges.length !== right.sourceTypeBadges.length) {
-                return right.sourceTypeBadges.length - left.sourceTypeBadges.length
-            }
+        const publishedAtComparison = compareIsoDescending(left.publishedAt, right.publishedAt)
+        const versionComparison = compareVersionDescending(left.displayVersion, right.displayVersion)
+        const sourceCountComparison = right.sourceTypeBadges.length - left.sourceTypeBadges.length
 
-            const versionComparison = compareVersionDescending(left.displayVersion, right.displayVersion)
-            if (versionComparison !== 0) {
-                return versionComparison
-            }
+        if (sortMode === "published_at") {
+            return publishedAtComparison || versionComparison || sourceCountComparison
+        }
+        if (sortMode === "semver") {
+            return versionComparison || publishedAtComparison || sourceCountComparison
+        }
 
-            return compareIsoDescending(left.publishedAt, right.publishedAt)
+        // Keep the legacy presentation order for callers that do not specify a mode.
+        return sourceCountComparison || versionComparison || publishedAtComparison
     })
 
     return {

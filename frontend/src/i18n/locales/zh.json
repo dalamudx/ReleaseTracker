@@ -712,6 +712,7 @@
       "versionChanges": "版本变更",
       "targetVersion": "目标版本",
       "targetImageDeferred": "执行时解析目标镜像",
+      "targetVersionUnavailable": "无法确定目标版本：所选来源与渠道暂无当前版本。",
       "maintenanceSummary": "维护窗口：{{timezone}}，{{start}}–{{end}}。",
       "ready": "执行器配置已完成，可以保存。"
     },

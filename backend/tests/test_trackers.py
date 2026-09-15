@@ -550,6 +550,126 @@ async def test_tracker_response_exposes_source_channel_current_digest(authed_cli
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("empty_projection", [False, True])
+@pytest.mark.parametrize("container_channel_type", [None, "prerelease"])
+async def test_source_channel_versions_are_independent_of_aggregate_winners(
+    authed_client, storage, empty_projection, container_channel_type
+):
+    name = "source-scoped-dev"
+    tracker = await storage.create_aggregate_tracker(
+        AggregateTracker(
+            name=name,
+            primary_changelog_source_key="repo",
+            sources=[
+                TrackerSource(
+                    source_key="repo",
+                    source_type="gitea",
+                    source_rank=0,
+                    source_config={"repo": "owner/project"},
+                    release_channels=[
+                        ReleaseChannel(
+                            release_channel_key="repo-stable", name="stable", type="release"
+                        )
+                    ],
+                ),
+                TrackerSource(
+                    source_key="image",
+                    source_type="container",
+                    source_rank=1,
+                    source_config={"image": "owner/project", "registry": "ghcr.io"},
+                    release_channels=[
+                        ReleaseChannel(
+                            release_channel_key="image-stable",
+                            name="stable",
+                            exclude_pattern=".*dev.*",
+                        ),
+                        ReleaseChannel(
+                            release_channel_key="image-dev",
+                            name="prerelease",
+                            type=container_channel_type,
+                            include_pattern=".*dev.*",
+                        ),
+                        ReleaseChannel(
+                            release_channel_key="image-beta",
+                            name="beta",
+                            include_pattern=".*beta.*",
+                        ),
+                        ReleaseChannel(
+                            release_channel_key="image-disabled",
+                            name="canary",
+                            include_pattern=".*dev.*",
+                            enabled=False,
+                        ),
+                    ],
+                ),
+                TrackerSource(
+                    source_key="other-image",
+                    source_type="container",
+                    source_rank=2,
+                    source_config={"image": "owner/other", "registry": "ghcr.io"},
+                    release_channels=[
+                        ReleaseChannel(
+                            release_channel_key="other-dev",
+                            name="prerelease",
+                            include_pattern=".*dev.*",
+                        )
+                    ],
+                ),
+            ],
+        )
+    )
+
+    def release(source_type, tag, day, identity):
+        return Release(
+            tracker_name=name,
+            tracker_type=source_type,
+            version=tag,
+            name=tag,
+            tag_name=tag,
+            url="https://example.com/releases/" + tag,
+            published_at=datetime(2026, 5, day),
+            prerelease=False,
+            commit_sha=identity,
+        )
+
+    stable_digest, dev_digest = "sha256:" + "a" * 64, "sha256:" + "b" * 64
+    repo = release("gitea", "3.6.0", 5, "commit-stable")
+    await _materialize_projection_rows(
+        storage,
+        tracker,
+        {
+            "repo": [repo],
+            "image": [
+                release("container", "3.6.0", 4, stable_digest),
+                release("container", "3.6.0-dev-old", 1, "sha256:" + "c" * 64),
+                release("container", "3.6.0-dev", 3, dev_digest),
+            ],
+            "other-image": [release("container", "9.0.0-dev", 6, "sha256:" + "d" * 64)],
+        },
+        projection_releases=[] if empty_projection else [repo],
+    )
+    current = await storage.get_tracker_current_release_rows(name)
+    assert [row["version"] for row in current] == ([] if empty_projection else ["3.6.0"])
+
+    for endpoint in ("/api/trackers", f"/api/trackers/{name}", f"/api/trackers/{name}/config"):
+        response = authed_client.get(endpoint)
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        if endpoint == "/api/trackers":
+            payload = next(item for item in payload["items"] if item["name"] == name)
+        sources = {source["source_key"]: source for source in payload["sources"]}
+        channels = {channel["name"]: channel for channel in sources["image"]["release_channels"]}
+        assert channels["stable"]["last_version"] == "3.6.0"
+        assert channels["stable"]["digest"] == stable_digest
+        assert channels["prerelease"]["last_version"] == "3.6.0-dev"
+        assert channels["prerelease"]["digest"] == dev_digest
+        for channel_name in ("beta", "canary"):
+            assert "last_version" not in channels[channel_name]
+            assert "digest" not in channels[channel_name]
+        assert sources["other-image"]["release_channels"][0]["last_version"] == "9.0.0-dev"
+
+
+@pytest.mark.asyncio
 async def test_tracker_response_handles_helm_source_channel_without_app_version_error(
     authed_client, storage
 ):

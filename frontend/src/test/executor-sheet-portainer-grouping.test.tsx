@@ -86,7 +86,7 @@ function createTracker(): TrackerStatus {
         channel_type: "container",
         enabled: true,
         channel_config: { image: "ghcr.io/acme/api" },
-        release_channels: [{ release_channel_key: "stable", name: "stable", type: "release", enabled: true }],
+        release_channels: [{ release_channel_key: "stable", name: "stable", type: "release", enabled: true, last_version: "1.2.3" }],
         channel_rank: 0,
         source_key: "image",
         source_type: "container",
@@ -450,6 +450,36 @@ describe("ExecutorSheet Portainer grouping", () => {
     expect(screen.queryByText("worker")).not.toBeInTheDocument()
     expect(screen.queryByText("ghcr.io/acme/api:1.0")).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "executors.binding.addServiceBinding" })).toBeEnabled()
+  })
+
+  it.each(["docker", "portainer"] as const)("shows an unavailable target instead of a stable fallback for %s", (runtimeType) => {
+    const tracker = createTracker()
+    tracker.sources[0].release_channels = [
+      ...(tracker.sources[0].release_channels ?? []),
+      { release_channel_key: "image-dev", name: "prerelease", enabled: true, include_pattern: ".*dev.*" },
+    ]
+    const binding = { service: "frontend", tracker_name: tracker.name, tracker_source_id: "9", channel_name: "prerelease" }
+    const currentImage = "ghcr.io/acme/api:3.6.0-dev-abc123"
+    render(
+      <ExecutorSheetReviewSection
+        reviewItems={[]}
+        trackers={[tracker]}
+        serviceBindings={runtimeType === "portainer" ? [binding] : []}
+        singleContainerBinding={binding}
+        singleContainerCurrentImage={currentImage}
+        runtimeType={runtimeType}
+        selectedTargetRef={runtimeType === "docker"
+          ? { mode: "container", container_name: "frontend" }
+          : { mode: "portainer_stack", endpoint_id: 2, stack_id: 11, stack_name: "stack", stack_type: "standalone", services: [{ service: "frontend", image: currentImage }], service_count: 1 }}
+        imageSelectionMode="replace_tag_on_current_image"
+        imageReferenceMode="tag"
+        validationMessage={null}
+      />,
+    )
+    expect(screen.getByText("executors.review.targetVersionUnavailable")).toBeInTheDocument()
+    expect(screen.getByText(currentImage)).toBeInTheDocument()
+    expect(screen.queryByText("ghcr.io/acme/api:1.2.3")).not.toBeInTheDocument()
+    expect(screen.queryByText("executors.review.targetImageDeferred")).not.toBeInTheDocument()
   })
 
   it("renders review service bindings, image changes, and global timezone summary", () => {
