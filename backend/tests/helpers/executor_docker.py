@@ -1,6 +1,7 @@
 class FakeDockerImage:
-    def __init__(self, tags=None):
+    def __init__(self, tags=None, attrs=None):
         self.tags = tags or []
+        self.attrs = attrs or {}
 
 
 class FakeDockerContainer:

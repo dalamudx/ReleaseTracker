@@ -7,10 +7,21 @@ from typing import TYPE_CHECKING, Any
 
 import aiosqlite
 
-from ..models import Release, TrackerSource
+from ..models import Release, ReleaseAliasReference, TrackerSource
+from . import sqlite_release_aliases
 
 if TYPE_CHECKING:
     from .sqlite import SQLiteStorage
+
+
+def _normalize_digest(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower()
+    return normalized or None
+
+
+def _digest_algorithm(value: str) -> str | None:
+    algorithm, separator, _ = value.partition(":")
+    return algorithm if separator and algorithm else None
 
 
 async def create_source_fetch_run(
@@ -82,7 +93,8 @@ async def append_source_history_for_run(
 
     db = await storage._get_connection()
     db.row_factory = aiosqlite.Row
-    timestamp = (observed_at or datetime.now()).isoformat()
+    observation_time = observed_at or datetime.now()
+    timestamp = observation_time.isoformat()
     source_history_ids_by_identity: dict[str, int] = {}
 
     for release in releases:
@@ -136,6 +148,15 @@ async def append_source_history_for_run(
                         timestamp,
                         timestamp,
                     ),
+                )
+                await sqlite_release_aliases.upsert_source_release_alias(
+                    storage,
+                    db,
+                    source_fetch_run_id=source_fetch_run_id,
+                    tracker_source=tracker_source,
+                    source_release_history_id=int(prior_digest_row["id"]),
+                    release=release,
+                    observed_at=observation_time,
                 )
                 continue
 
@@ -196,6 +217,15 @@ async def append_source_history_for_run(
             raise ValueError("Failed to read source release history row")
         source_history_id = source_row["id"]
         source_history_ids_by_identity[identity_key] = source_history_id
+        await sqlite_release_aliases.upsert_source_release_alias(
+            storage,
+            db,
+            source_fetch_run_id=source_fetch_run_id,
+            tracker_source=tracker_source,
+            source_release_history_id=int(source_history_id),
+            release=release,
+            observed_at=observation_time,
+        )
 
         normalized_existing_commit = storage._normalize_release_value(source_row["commit_sha"])
         normalized_new_commit = storage._normalize_release_value(release.commit_sha)
@@ -309,11 +339,15 @@ async def get_source_release_history_releases_by_source(
         )
     ).fetchall()
 
+    aliases_by_history_id = await sqlite_release_aliases.get_source_release_aliases_by_history_ids(
+        storage, [int(row["id"]) for row in rows]
+    )
     releases: list[Release] = []
     for row in rows:
         raw_payload = storage._load_json(row["raw_payload"])
         releases.append(
             Release(
+                id=int(row["id"]),
                 tracker_name="",
                 tracker_type=row["source_type"],
                 name=row["name"],
@@ -328,6 +362,8 @@ async def get_source_release_history_releases_by_source(
                 body=row["body"],
                 channel_name=raw_payload.get("channel_name"),
                 commit_sha=row["commit_sha"],
+                artifact_digest=_normalize_digest(row["digest"]),
+                aliases=[alias["alias"] for alias in aliases_by_history_id.get(int(row["id"]), [])],
                 created_at=datetime.fromisoformat(row["created_at"]),
             )
         )
@@ -386,6 +422,203 @@ async def get_source_release_history_digests(
     ).fetchall()
 
     return {row["tag_name"]: row["commit_sha"] for row in rows}
+
+
+async def get_correlated_release_candidates(
+    storage: "SQLiteStorage", aggregate_tracker_id: int
+) -> list[dict[str, Any]]:
+    db = await storage._get_connection()
+    db.row_factory = aiosqlite.Row
+    rows = await (
+        await db.execute(
+            """
+            SELECT cr.*, cro.contribution_kind, sro.tracker_source_id,
+                   sro.source_release_key AS observation_source_release_key,
+                   sro.commit_sha AS observation_commit_sha,
+                   sro.raw_payload AS observation_raw_payload,
+                   ats.source_type, ats.source_rank,
+                   srh.id AS source_release_history_id,
+                   srh.digest AS source_digest
+            FROM canonical_releases cr
+            JOIN canonical_release_observations cro
+              ON cro.canonical_release_id = cr.id
+            JOIN source_release_observations sro
+              ON sro.id = cro.source_release_observation_id
+            JOIN aggregate_tracker_sources ats
+              ON ats.id = sro.tracker_source_id
+            LEFT JOIN source_release_history srh
+              ON srh.id = (
+                    SELECT candidate.id
+                    FROM source_release_history candidate
+                    WHERE candidate.tracker_source_id = sro.tracker_source_id
+                      AND (
+                            candidate.digest = sro.commit_sha
+                         OR candidate.source_release_key = sro.source_release_key
+                      )
+                    ORDER BY
+                        CASE WHEN candidate.digest = sro.commit_sha THEN 0 ELSE 1 END,
+                        candidate.id DESC
+                    LIMIT 1
+             )
+            WHERE cr.aggregate_tracker_id = ?
+            ORDER BY cr.id ASC,
+                     CASE cro.contribution_kind WHEN 'primary' THEN 0 ELSE 1 END,
+                     ats.source_rank ASC,
+                     sro.id ASC
+            """,
+            (aggregate_tracker_id,),
+        )
+    ).fetchall()
+    grouped: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        canonical_id = int(row["id"])
+        candidate = grouped.setdefault(
+            canonical_id,
+            {
+                "canonical_key": row["canonical_key"],
+                "release": Release(
+                    tracker_name="",
+                    tracker_type=row["source_type"],
+                    version=row["version"],
+                    name=row["name"],
+                    tag_name=row["tag_name"],
+                    channel_name=storage._load_json(row["observation_raw_payload"]).get(
+                        "channel_name"
+                    ),
+                    url=row["url"],
+                    published_at=datetime.fromisoformat(row["published_at"]),
+                    prerelease=bool(row["prerelease"]),
+                    body=row["body"],
+                    commit_sha=row["observation_commit_sha"],
+                ),
+                "primary_source_history_id": None,
+                "source_history_ids": [],
+                "tracker_source_ids": [],
+                "artifact_digests": [],
+            },
+        )
+        tracker_source_id = int(row["tracker_source_id"])
+        if tracker_source_id not in candidate["tracker_source_ids"]:
+            candidate["tracker_source_ids"].append(tracker_source_id)
+        source_history_id = row["source_release_history_id"]
+        if source_history_id is None:
+            continue
+        source_history_id = int(source_history_id)
+        if source_history_id not in candidate["source_history_ids"]:
+            candidate["source_history_ids"].append(source_history_id)
+        if row["contribution_kind"] == "primary":
+            candidate["primary_source_history_id"] = source_history_id
+        digest = _normalize_digest(row["source_digest"])
+        if digest is not None and digest not in candidate["artifact_digests"]:
+            candidate["artifact_digests"].append(digest)
+    result: list[dict[str, Any]] = []
+    for candidate in grouped.values():
+        primary_source_history_id = candidate["primary_source_history_id"]
+        source_history_ids = candidate["source_history_ids"]
+        if primary_source_history_id is None and source_history_ids:
+            primary_source_history_id = source_history_ids[0]
+        if primary_source_history_id is None:
+            continue
+        release = candidate["release"]
+        release.tracker_name = str(aggregate_tracker_id)
+        digests = candidate.pop("artifact_digests")
+        if len(digests) == 1:
+            release.artifact_digest = digests[0]
+        aliases_by_history_id = (
+            await sqlite_release_aliases.get_source_release_aliases_by_history_ids(
+                storage, source_history_ids
+            )
+        )
+        release.aliases = sorted(
+            {alias["alias"] for aliases in aliases_by_history_id.values() for alias in aliases}
+        )
+        candidate["primary_source_history_id"] = primary_source_history_id
+        result.append(candidate)
+    return result
+
+
+async def merge_tracker_release_history_sources(
+    storage: "SQLiteStorage",
+    *,
+    aggregate_tracker_id: int,
+    canonical_tracker_release_history_id: int,
+    source_history_ids: list[int],
+    artifact_digest: str | None,
+) -> None:
+    if not source_history_ids:
+        return
+    db = await storage._get_connection()
+    db.row_factory = aiosqlite.Row
+    placeholders = ", ".join("?" for _ in source_history_ids)
+    async with storage._transaction_lock:
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            rows = await (
+                await db.execute(
+                    f"""
+                    SELECT DISTINCT tracker_release_history_id
+                    FROM tracker_release_history_sources
+                    WHERE source_release_history_id IN ({placeholders})
+                    """,
+                    tuple(source_history_ids),
+                )
+            ).fetchall()
+            for row in rows:
+                member_id = int(row["tracker_release_history_id"])
+                if member_id == canonical_tracker_release_history_id:
+                    continue
+                await db.execute(
+                    """
+                    INSERT OR IGNORE INTO tracker_release_history_sources
+                    (tracker_release_history_id, source_release_history_id, contribution_kind, created_at)
+                    SELECT ?, source_release_history_id, 'supporting', created_at
+                    FROM tracker_release_history_sources
+                    WHERE tracker_release_history_id = ?
+                    """,
+                    (canonical_tracker_release_history_id, member_id),
+                )
+                await db.execute(
+                    """
+                    UPDATE tracker_release_history
+                    SET merged_into_tracker_release_history_id = ?
+                    WHERE id = ? AND aggregate_tracker_id = ?
+                    """,
+                    (
+                        canonical_tracker_release_history_id,
+                        member_id,
+                        aggregate_tracker_id,
+                    ),
+                )
+            for source_history_id in source_history_ids:
+                await db.execute(
+                    """
+                    INSERT OR IGNORE INTO tracker_release_history_sources
+                    (tracker_release_history_id, source_release_history_id, contribution_kind, created_at)
+                    VALUES (?, ?, 'supporting', ?)
+                    """,
+                    (
+                        canonical_tracker_release_history_id,
+                        source_history_id,
+                        datetime.now().isoformat(),
+                    ),
+                )
+            if artifact_digest is not None:
+                await db.execute(
+                    """
+                    UPDATE tracker_release_history
+                    SET digest = ?, digest_algorithm = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        artifact_digest,
+                        _digest_algorithm(artifact_digest),
+                        canonical_tracker_release_history_id,
+                    ),
+                )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
 
 
 async def upsert_tracker_release_history(
@@ -534,11 +767,50 @@ async def get_tracker_release_history_releases(
             FROM tracker_release_history trh
             JOIN source_release_history srh ON srh.id = trh.primary_source_release_history_id
             WHERE trh.aggregate_tracker_id = ?
+              AND trh.merged_into_tracker_release_history_id IS NULL
             ORDER BY trh.created_at DESC, trh.id DESC
             """,
             (aggregate_tracker_id,),
         )
     ).fetchall()
+
+    aliases_by_tracker_history_id: dict[int, list[str]] = {}
+    alias_references_by_tracker_history_id: dict[int, list[ReleaseAliasReference]] = {}
+    if rows:
+        tracker_history_ids = [int(row["tracker_release_history_id"]) for row in rows]
+        placeholders = ", ".join("?" for _ in tracker_history_ids)
+        alias_rows = await (
+            await db.execute(
+                f"""
+                SELECT trhs.tracker_release_history_id, sra.alias,
+                       sra.tracker_source_id, srh.source_type, srh.prerelease,
+                       srh.published_at, srh.digest
+                FROM tracker_release_history_sources trhs
+                JOIN source_release_aliases sra
+                  ON sra.source_release_history_id = trhs.source_release_history_id
+                JOIN source_release_history srh
+                  ON srh.id = sra.source_release_history_id
+                WHERE trhs.tracker_release_history_id IN ({placeholders})
+                ORDER BY sra.last_observed_at DESC, sra.normalized_alias ASC
+                """,
+                tuple(tracker_history_ids),
+            )
+        ).fetchall()
+        for alias_row in alias_rows:
+            tracker_history_id = int(alias_row["tracker_release_history_id"])
+            aliases_by_tracker_history_id.setdefault(tracker_history_id, []).append(
+                alias_row["alias"]
+            )
+            alias_references_by_tracker_history_id.setdefault(tracker_history_id, []).append(
+                ReleaseAliasReference(
+                    tracker_source_id=int(alias_row["tracker_source_id"]),
+                    source_type=alias_row["source_type"],
+                    alias=alias_row["alias"],
+                    prerelease=bool(alias_row["prerelease"]),
+                    published_at=datetime.fromisoformat(alias_row["published_at"]),
+                    digest=_normalize_digest(alias_row["digest"]),
+                )
+            )
 
     releases: list[Release] = []
     for row in rows:
@@ -560,6 +832,17 @@ async def get_tracker_release_history_releases(
                 body=row["body"],
                 channel_name=raw_payload.get("channel_name"),
                 commit_sha=row["commit_sha"],
+                artifact_digest=_normalize_digest(row["digest"]),
+                aliases=list(
+                    dict.fromkeys(
+                        aliases_by_tracker_history_id.get(
+                            int(row["tracker_release_history_id"]), []
+                        )
+                    )
+                ),
+                alias_references=alias_references_by_tracker_history_id.get(
+                    int(row["tracker_release_history_id"]), []
+                ),
                 created_at=datetime.fromisoformat(row["tracker_created_at"]),
             )
         )

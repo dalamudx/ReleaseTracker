@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
@@ -10,6 +11,9 @@ from ..config import Channel, TrackerConfig
 from ..dependencies import get_current_admin_user, get_scheduler, get_storage
 from ..models import AggregateTracker, Release, TrackerReleaseNotesConfig, TrackerSource
 from ..scheduler import ReleaseScheduler
+from ..executor_scheduler_target_resolution import (
+    _resolve_tracker_latest_target_details_from_storage,
+)
 from ..storage.sqlite import SQLiteStorage
 
 router = APIRouter(prefix="/api/trackers", tags=["trackers"])
@@ -156,12 +160,16 @@ async def _load_tracker_history_items(
             JOIN source_release_history srh ON srh.id = trh.primary_source_release_history_id
             LEFT JOIN aggregate_tracker_sources ats ON ats.id = srh.tracker_source_id
             WHERE trh.aggregate_tracker_id = ?
+              AND trh.merged_into_tracker_release_history_id IS NULL
             ORDER BY srh.published_at DESC, trh.id DESC
             """,
             (aggregate_tracker.id,),
         )
     ).fetchall()
 
+    contributions_by_history_id = await _load_current_source_contributions(
+        storage, [int(row["tracker_release_history_id"]) for row in rows]
+    )
     items: list[dict[str, Any]] = []
     normalized_search = search.strip().lower() if search else None
     for row in rows:
@@ -197,7 +205,18 @@ async def _load_tracker_history_items(
                 else None
             ),
             "created_at": row["tracker_created_at"],
+            "source_contributions": contributions_by_history_id.get(
+                int(row["tracker_release_history_id"]), []
+            ),
         }
+        item["aliases"] = list(
+            dict.fromkeys(
+                alias
+                for contribution in item["source_contributions"]
+                for alias in contribution.get("aliases", [])
+            )
+        )
+        item["artifacts"] = _build_artifact_summaries(item["source_contributions"])
 
         matched_channel_name: str | None = item["channel_name"]
         if not item["channel_name"] and enabled_channels:
@@ -241,6 +260,32 @@ async def _load_tracker_history_items(
         items.append(item)
 
     return items
+
+
+def _source_published_at_provenance(
+    *,
+    source_type: str,
+    raw_payload: dict[str, Any],
+    published_at: str | None,
+    observed_at: str | None,
+) -> str:
+    explicit = raw_payload.get("published_at_source")
+    if explicit in {"source", "artifact_created", "first_observed"}:
+        return explicit
+    if source_type != "container":
+        return "source"
+
+    # Older container observations predate explicit provenance. Registry fallbacks
+    # were generated close to the collection time; real OCI creation times are
+    # normally materially older. Keep the heuristic API-only for compatibility.
+    try:
+        published = datetime.fromisoformat(str(published_at).replace("Z", "+00:00"))
+        observed = datetime.fromisoformat(str(observed_at).replace("Z", "+00:00"))
+        if abs((published - observed).total_seconds()) <= 3600:
+            return "first_observed"
+    except (TypeError, ValueError):
+        return "first_observed"
+    return "artifact_created"
 
 
 async def _load_current_source_contributions(
@@ -287,6 +332,9 @@ async def _load_current_source_contributions(
         )
     ).fetchall()
 
+    aliases_by_source_history_id = await storage.get_source_release_aliases_by_history_ids(
+        [int(row["source_release_history_id"]) for row in rows]
+    )
     contributions_by_history_id: dict[int, list[dict[str, Any]]] = {
         tracker_release_history_id: [] for tracker_release_history_id in tracker_release_history_ids
     }
@@ -301,6 +349,12 @@ async def _load_current_source_contributions(
                 "version": row["version"],
                 "tag_name": row["tag_name"],
                 "published_at": row["published_at"],
+                "published_at_source": _source_published_at_provenance(
+                    source_type=row["source_type"],
+                    raw_payload=raw_payload,
+                    published_at=row["published_at"],
+                    observed_at=row["first_observed_at"],
+                ),
                 "url": row["url"],
                 "changelog_url": row["changelog_url"],
                 "prerelease": bool(row["prerelease"]),
@@ -310,10 +364,55 @@ async def _load_current_source_contributions(
                 "app_version": raw_payload.get("appVersion"),
                 "chart_version": raw_payload.get("chartVersion"),
                 "observed_at": row["first_observed_at"],
+                "aliases": [
+                    alias["alias"]
+                    for alias in aliases_by_source_history_id.get(
+                        int(row["source_release_history_id"]), []
+                    )
+                ],
             }
         )
 
     return contributions_by_history_id
+
+
+def _build_artifact_summaries(
+    contributions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    artifacts_by_identity: dict[tuple[str, str], dict[str, Any]] = {}
+    for contribution in contributions:
+        source_type = str(contribution.get("source_type") or "").strip().lower()
+        if source_type not in {"container", "helm"}:
+            continue
+        digest = str(contribution.get("digest") or "").strip().lower()
+        if not digest:
+            continue
+        if source_type == "helm" and re.fullmatch(r"[0-9a-f]{64}", digest):
+            digest = f"sha256:{digest}"
+        artifact_type = "container_image" if source_type == "container" else "helm_chart"
+        identity = (artifact_type, digest)
+        artifact = artifacts_by_identity.setdefault(
+            identity,
+            {
+                "artifact_type": artifact_type,
+                "digest": digest,
+                "version": (
+                    contribution.get("chart_version")
+                    if source_type == "helm"
+                    else contribution.get("version")
+                ),
+                "published_at": contribution.get("published_at"),
+                "aliases": [],
+                "source_keys": [],
+            },
+        )
+        artifact["aliases"] = list(
+            dict.fromkeys([*artifact["aliases"], *contribution.get("aliases", [])])
+        )
+        source_key = contribution.get("source_key")
+        if source_key and source_key not in artifact["source_keys"]:
+            artifact["source_keys"].append(source_key)
+    return list(artifacts_by_identity.values())
 
 
 def _serialize_current_summary(summary: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -349,33 +448,41 @@ async def _build_container_source_release_channel_current_values(
     storage: SQLiteStorage,
     tracker: AggregateTracker,
     runtime_config: TrackerConfig | None,
-) -> dict[str, dict[str, dict[str, str | None]]]:
-    sort_mode = runtime_config.version_sort_mode if runtime_config is not None else "published_at"
+) -> dict[str, dict[str, dict[str, Any]]]:
     values = {}
     for source in tracker.sources:
         if source.source_type != "container" or not source.release_channels:
             continue
-        # Aggregate winners can all belong to a different source. A bound
-        # source/channel must resolve independently, even with no current projection.
-        releases = (
-            await storage.get_source_release_history_releases_by_source(source.id)
-            if source.id is not None
-            else []
-        )
-        winners = storage.select_best_releases_for_tracker_channel(
-            releases, source, sort_mode=sort_mode, use_immutable_identity=True
-        )
-        values[source.source_key] = {
-            channel_key: {"last_version": release.version, "digest": release.commit_sha}
-            for channel_key, release in winners.items()
-        }
+        # Resolve through the same backend path as execution so UI previews cannot
+        # substitute an aggregate or representative alias.
+        source_values: dict[str, dict[str, Any]] = {}
+        for channel_rank, channel in enumerate(source.release_channels):
+            if not channel.enabled or source.id is None:
+                continue
+            target = await _resolve_tracker_latest_target_details_from_storage(
+                storage,
+                tracker.name,
+                channel.name,
+                tracker_source_id=source.id,
+                tracker_source_type=source.source_type,
+            )
+            if target is None:
+                continue
+            source_values[storage._channel_selection_key(channel, channel_rank)] = {
+                "last_version": target.deploy_alias,
+                "display_version": target.display_version,
+                "deploy_alias": target.deploy_alias,
+                "digest": target.digest,
+                "aliases": list(target.aliases),
+            }
+        values[source.source_key] = source_values
     return values
 
 
 def _augment_release_channels_with_current_values(
     storage: SQLiteStorage,
     channels: list[Any],
-    values_by_key: dict[str, dict[str, str | None]],
+    values_by_key: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for channel_rank, channel in enumerate(channels):
@@ -409,11 +516,27 @@ async def _build_tracker_current_view(
     ]
     enabled_columns = [column for column in columns if column["enabled"]]
 
+    history_releases = await storage.get_tracker_release_history_releases(tracker.id)
+    history_by_id = {release.id: release for release in history_releases}
+    projection_releases = []
+    for row in current_rows:
+        release = row["release"]
+        history_release = history_by_id.get(row["tracker_release_history_id"])
+        if history_release is not None:
+            release = release.model_copy(
+                update={
+                    "aliases": history_release.aliases,
+                    "alias_references": history_release.alias_references,
+                }
+            )
+        projection_releases.append(release.model_copy(update={"tracker_name": tracker.name}))
+
     channel_winners = storage.select_best_releases_by_channel(
-        [row["release"].model_copy(update={"tracker_name": tracker.name}) for row in current_rows],
+        projection_releases,
         runtime_channels,
         sort_mode=sort_mode,
         use_immutable_identity=True,
+        use_source_aliases=True,
     )
     channel_keys_by_identity: dict[str, list[str]] = {}
     for column in enabled_columns:
@@ -454,6 +577,18 @@ async def _build_tracker_current_view(
                 ),
                 "source_contributions": contributions_by_history_id.get(
                     row["tracker_release_history_id"], []
+                ),
+                "artifacts": _build_artifact_summaries(
+                    contributions_by_history_id.get(row["tracker_release_history_id"], [])
+                ),
+                "aliases": list(
+                    dict.fromkeys(
+                        alias
+                        for contribution in contributions_by_history_id.get(
+                            row["tracker_release_history_id"], []
+                        )
+                        for alias in contribution.get("aliases", [])
+                    )
                 ),
                 "cells": {
                     column["channel_key"]: (

@@ -111,6 +111,11 @@ class BaseRuntimeAdapter(ABC):
     async def get_current_image(self, target_ref: dict[str, Any]) -> str:
         raise NotImplementedError
 
+    async def get_current_image_digest(self, target_ref: dict[str, Any]) -> str | None:
+        """Return a repository manifest digest when the runtime exposes one."""
+        del target_ref
+        return None
+
     @abstractmethod
     async def capture_snapshot(
         self, target_ref: dict[str, Any], current_image: str

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import type { AggregateTracker, TrackerCurrentView, ReleaseHistoryItem } from "@/api/types"
 import {
+    buildTrackerAliasTableRows,
     buildTrackerCurrentMatrixPresentationModel,
     buildTrackerHistoryMatrixPresentationModel,
 } from "@/components/trackers/canonicalReleaseMatrixModel"
@@ -725,6 +726,194 @@ describe("tracker current matrix presentation model", () => {
         const model = buildTrackerHistoryMatrixPresentationModel(sources, items, "published_at")
         expect(model.rows.map((row) => row.displayVersion)).toEqual([
             "3.6.0-dev-0b0d27d3f61c", "3.6.0-dev", "3.6.0-dev-ce40a02fc70b", "3.6.0",
+        ])
+    })
+
+    it("uses authoritative contribution times so correlated rows stay in published order", () => {
+        const sources = [
+            {
+                id: 1, channel_key: "repo", channel_type: "github", enabled: true,
+                channel_config: { repo: "toeverything/AFFiNE" }, channel_rank: 0,
+                source_key: "repo", source_type: "github",
+                source_config: { repo: "toeverything/AFFiNE" }, source_rank: 0,
+                release_channels: [
+                    { release_channel_key: "repo-stable", name: "stable", type: "release", enabled: true },
+                ],
+            },
+            {
+                id: 2, channel_key: "container", channel_type: "container", enabled: true,
+                channel_config: { image: "toeverything/affine" }, channel_rank: 1,
+                source_key: "container", source_type: "container",
+                source_config: { image: "toeverything/affine" }, source_rank: 1,
+                release_channels: [
+                    { release_channel_key: "image-stable", name: "stable", enabled: true },
+                ],
+            },
+        ] satisfies AggregateTracker["sources"]
+        const contribution = (
+            id: number, sourceKey: "repo" | "container", publishedAt: string,
+        ) => ({
+            source_release_history_id: id, tracker_name: "affine", source_key: sourceKey,
+            source_type: sourceKey === "repo" ? "github" as const : "container" as const,
+            contribution_kind: sourceKey === "repo" ? "primary" as const : "supporting" as const,
+            version: "0.27.4", name: "0.27.4", tag_name: "0.27.4",
+            published_at: publishedAt, url: "https://example.com/0.27.4",
+            changelog_url: null, prerelease: false, body: null,
+            digest: sourceKey === "container" ? `sha256:${"b".repeat(64)}` : null,
+            published_at_source: sourceKey === "container" ? "first_observed" as const : "source" as const,
+            app_version: null, chart_version: null, observed_at: publishedAt,
+            aliases: sourceKey === "container" ? ["0.27.4"] : [],
+        })
+        const items = [
+            {
+                tracker_name: "affine", tracker_release_history_id: 4, identity_key: "0.27.4",
+                version: "0.27.4", digest: `sha256:${"b".repeat(64)}`,
+                name: "0.27.4", tag_name: "v0.27.4", published_at: "2026-08-18T16:51:39Z",
+                url: "https://example.com/v0.27.4", changelog_url: null, prerelease: false,
+                body: null, channel_name: "stable", primary_source: {
+                    source_key: "repo", source_type: "github", source_release_history_id: 40,
+                },
+                source_contributions: [
+                    contribution(40, "repo", "2026-08-18T16:51:39Z"),
+                    contribution(41, "container", "2026-09-15T19:29:42Z"),
+                ],
+                artifacts: [{
+                    artifact_type: "container_image", digest: `sha256:${"b".repeat(64)}`,
+                    version: "0.27.4", published_at: "2026-09-15T19:29:42Z",
+                    aliases: ["0.27.4"], source_keys: ["container"],
+                }],
+                created_at: "2026-08-18T16:51:39Z",
+            },
+            {
+                tracker_name: "affine", tracker_release_history_id: 1, identity_key: "0.27.1",
+                version: "0.27.1", digest: `sha256:${"a".repeat(64)}`,
+                name: "0.27.1", tag_name: "0.27.1", published_at: "2026-09-15T19:29:31Z",
+                url: "https://example.com/0.27.1", changelog_url: null, prerelease: false,
+                body: null, channel_name: "stable", primary_source: {
+                    source_key: "container", source_type: "container", source_release_history_id: 10,
+                },
+                created_at: "2026-09-15T19:29:31Z",
+            },
+            {
+                tracker_name: "affine", tracker_release_history_id: 26, identity_key: "0.26.0",
+                version: "0.26.0", digest: "repo-0260", name: "0.26.0", tag_name: "v0.26.0",
+                published_at: "2026-03-05T14:28:07Z", url: "https://example.com/v0.26.0",
+                changelog_url: null, prerelease: false, body: null, channel_name: "stable",
+                primary_source: { source_key: "repo", source_type: "github", source_release_history_id: 26 },
+                created_at: "2026-03-05T14:28:07Z",
+            },
+            {
+                tracker_name: "affine", tracker_release_history_id: 25, identity_key: "0.25.8",
+                version: "0.25.8", digest: `sha256:${"c".repeat(64)}`, name: "0.25.8", tag_name: "0.25.8",
+                published_at: "2026-09-15T19:20:11Z", url: "https://example.com/0.25.8",
+                changelog_url: null, prerelease: false, body: null, channel_name: "stable",
+                primary_source: { source_key: "container", source_type: "container", source_release_history_id: 25 },
+                source_contributions: [{
+                    ...contribution(25, "container", "2026-09-15T19:20:11Z"),
+                    version: "0.25.8", name: "0.25.8", tag_name: "0.25.8",
+                    aliases: ["0.25.8"],
+                }],
+                created_at: "2026-09-15T19:20:11Z",
+            },
+        ] satisfies ReleaseHistoryItem[]
+
+        const model = buildTrackerHistoryMatrixPresentationModel(sources, items, "published_at")
+
+        expect(model.rows.map((row) => row.displayVersion)).toEqual([
+            "0.27.4", "0.27.1", "0.26.0", "0.25.8",
+        ])
+        expect(model.rows[0]?.publishedAt).toBe("2026-09-15T19:29:42Z")
+        expect(model.rows[0]?.sourceTypeBadges).toEqual(["github", "container"])
+        expect(model.rows[0]?.artifacts).toEqual(items[0]?.artifacts)
+    })
+
+    it("keeps exact release tag as display version and exposes same-artifact aliases", () => {
+        const version = "3.6.0-dev-0b0d27d3f61c"
+        const aliases = [version, "3.6.0-dev", "3.6-dev", "dev"]
+        const model = buildTrackerCurrentMatrixPresentationModel({
+            columns: [],
+            rows: [{
+                tracker_release_history_id: 1,
+                identity_key: version,
+                version,
+                digest: "sha256:ec114",
+                published_at: "2026-09-15T04:01:04Z",
+                matched_channel_count: 1,
+                channel_keys: ["prerelease"],
+                primary_source: null,
+                aliases,
+                artifacts: [
+                    {
+                        artifact_type: "container_image", digest: "sha256:ec114",
+                        version, published_at: "2026-09-15T04:01:04Z",
+                        aliases, source_keys: ["container"],
+                    },
+                    {
+                        artifact_type: "container_image", digest: "sha256:previous",
+                        version, published_at: "2026-09-14T04:01:04Z",
+                        aliases: [version], source_keys: ["container"],
+                    },
+                ],
+                source_contributions: [{
+                    source_release_history_id: 2,
+                    tracker_name: "nginx_frontend",
+                    source_key: "container",
+                    source_type: "container",
+                    contribution_kind: "supporting",
+                    version: "3.6.0-dev",
+                    name: "3.6.0-dev",
+                    tag_name: "3.6.0-dev",
+                    published_at: "2026-09-15T04:00:43Z",
+                    url: "https://registry.example.com/3.6.0-dev",
+                    changelog_url: null,
+                    prerelease: true,
+                    body: null,
+                    digest: "sha256:ec114",
+                    app_version: null,
+                    chart_version: null,
+                    observed_at: "2026-09-15T04:02:00Z",
+                    aliases,
+                }],
+                cells: { prerelease: { channel_key: "prerelease", channel_type: "prerelease", selected: true } },
+            }],
+        } satisfies TrackerCurrentView["matrix"], "published_at")
+
+        expect(model.rows).toHaveLength(1)
+        expect(model.rows[0]?.displayVersion).toBe(version)
+        expect(model.rows[0]?.aliases).toEqual(aliases)
+        expect(model.rows[0]?.artifacts).toEqual([
+            {
+                artifact_type: "container_image", digest: "sha256:ec114",
+                version, published_at: "2026-09-15T04:01:04Z",
+                aliases, source_keys: ["container"],
+            },
+            {
+                artifact_type: "container_image", digest: "sha256:previous",
+                version, published_at: "2026-09-14T04:01:04Z",
+                aliases: [version], source_keys: ["container"],
+            },
+        ])
+        expect(model.rows[0]?.sourceTypeBadges).toEqual(["container"])
+
+        const aliasRows = buildTrackerAliasTableRows(model.rows[0]!)
+        expect(aliasRows.map((row) => ({
+            alias: row.alias,
+            sourceKey: row.sourceKey,
+            artifactType: row.artifactType,
+            artifactDigest: row.artifactDigest,
+        }))).toEqual([
+            {
+                alias: "3.6-dev", sourceKey: "container",
+                artifactType: "container_image", artifactDigest: "sha256:ec114",
+            },
+            {
+                alias: "3.6.0-dev", sourceKey: "container",
+                artifactType: "container_image", artifactDigest: "sha256:ec114",
+            },
+            {
+                alias: "dev", sourceKey: "container",
+                artifactType: "container_image", artifactDigest: "sha256:ec114",
+            },
         ])
     })
 })

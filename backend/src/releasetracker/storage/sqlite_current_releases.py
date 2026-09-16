@@ -30,19 +30,23 @@ async def refresh_tracker_current_releases(
 
     for release in storage.dedupe_releases_by_immutable_identity(projection_releases):
         identity_key = storage.release_identity_key_for_source(release, source_type=source_type)
-        digest = storage._release_digest_value(release, source_type=source_type)
+        digest = release.artifact_digest or storage._release_digest_value(
+            release, source_type=source_type
+        )
         history_row = await (
             await db.execute(
                 """
-                SELECT id
+                SELECT id, digest
                 FROM tracker_release_history
                 WHERE aggregate_tracker_id = ? AND immutable_key = ?
+                  AND merged_into_tracker_release_history_id IS NULL
                 """,
                 (aggregate_tracker_id, identity_key),
             )
         ).fetchone()
         if history_row is None:
             continue
+        digest = digest or history_row["digest"]
 
         await db.execute(
             """
@@ -148,6 +152,7 @@ async def _get_tracker_current_projection_rows_by_aggregate_tracker_id(
                     body=row["body"],
                     channel_name=raw_payload.get("channel_name"),
                     commit_sha=row["commit_sha"],
+                    artifact_digest=row["digest"],
                     created_at=datetime.fromisoformat(row["tracker_created_at"]),
                 ),
             }
@@ -231,6 +236,7 @@ async def _get_tracker_current_projection_rows(
                     body=row["body"],
                     channel_name=raw_payload.get("channel_name"),
                     commit_sha=row["commit_sha"],
+                    artifact_digest=row["digest"],
                     created_at=datetime.fromisoformat(row["tracker_created_at"]),
                 ),
             }

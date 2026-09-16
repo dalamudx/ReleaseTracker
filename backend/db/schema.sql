@@ -259,8 +259,37 @@ CREATE TABLE source_release_run_observations (
     FOREIGN KEY (source_release_history_id) REFERENCES source_release_history(id) ON DELETE CASCADE,
     UNIQUE(source_fetch_run_id, source_release_history_id)
 );
+CREATE TABLE source_release_aliases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_release_history_id INTEGER NOT NULL,
+    tracker_source_id INTEGER NOT NULL,
+    alias TEXT NOT NULL,
+    normalized_alias TEXT NOT NULL,
+    channel_name TEXT,
+    first_source_fetch_run_id INTEGER NOT NULL,
+    last_source_fetch_run_id INTEGER NOT NULL,
+    first_observed_at TEXT NOT NULL,
+    last_observed_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (source_release_history_id) REFERENCES source_release_history(id) ON DELETE CASCADE,
+    FOREIGN KEY (tracker_source_id) REFERENCES aggregate_tracker_sources(id) ON DELETE CASCADE,
+    FOREIGN KEY (first_source_fetch_run_id) REFERENCES source_fetch_runs(id) ON DELETE RESTRICT,
+    FOREIGN KEY (last_source_fetch_run_id) REFERENCES source_fetch_runs(id) ON DELETE RESTRICT,
+    UNIQUE(tracker_source_id, source_release_history_id, normalized_alias)
+);
+CREATE TABLE source_release_alias_run_observations (
+    source_fetch_run_id INTEGER NOT NULL,
+    source_release_alias_id INTEGER NOT NULL,
+    observed_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (source_fetch_run_id, source_release_alias_id),
+    FOREIGN KEY (source_fetch_run_id) REFERENCES source_fetch_runs(id) ON DELETE CASCADE,
+    FOREIGN KEY (source_release_alias_id) REFERENCES source_release_aliases(id) ON DELETE CASCADE
+);
 CREATE TABLE tracker_release_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    merged_into_tracker_release_history_id INTEGER,
     aggregate_tracker_id INTEGER NOT NULL,
     identity_key TEXT NOT NULL,
     version TEXT NOT NULL,
@@ -272,6 +301,7 @@ CREATE TABLE tracker_release_history (
     created_at TEXT NOT NULL, immutable_key TEXT,
     FOREIGN KEY (aggregate_tracker_id) REFERENCES aggregate_trackers(id) ON DELETE CASCADE,
     FOREIGN KEY (primary_source_release_history_id) REFERENCES source_release_history(id) ON DELETE RESTRICT,
+    FOREIGN KEY (merged_into_tracker_release_history_id) REFERENCES tracker_release_history(id) ON DELETE SET NULL,
     UNIQUE(aggregate_tracker_id, identity_key)
 );
 CREATE TABLE tracker_release_history_sources (
@@ -363,6 +393,16 @@ CREATE INDEX idx_source_release_history_digest
     ON source_release_history(digest);
 CREATE INDEX idx_source_release_run_observations_history_observed_at
     ON source_release_run_observations(source_release_history_id, observed_at DESC);
+CREATE INDEX idx_source_release_aliases_history_id
+    ON source_release_aliases(source_release_history_id);
+CREATE INDEX idx_source_release_aliases_source_normalized
+    ON source_release_aliases(tracker_source_id, normalized_alias);
+CREATE INDEX idx_source_release_aliases_last_run
+    ON source_release_aliases(last_source_fetch_run_id);
+CREATE INDEX idx_source_release_alias_run_observations_alias
+    ON source_release_alias_run_observations(source_release_alias_id, observed_at DESC);
+CREATE INDEX idx_tracker_release_history_merged_into
+    ON tracker_release_history(merged_into_tracker_release_history_id);
 CREATE INDEX idx_tracker_release_history_tracker_created_at
     ON tracker_release_history(aggregate_tracker_id, created_at DESC);
 CREATE INDEX idx_tracker_release_history_tracker_version
@@ -439,4 +479,5 @@ INSERT INTO "schema_migrations" (version) VALUES
   ('20260517000001'),
   ('20260808000001'),
   ('20260809000001'),
-  ('20260906000001');
+  ('20260906000001'),
+  ('20260916000001');

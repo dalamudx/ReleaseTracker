@@ -28,6 +28,15 @@ export interface ReleaseHistoryPrimarySource {
     source_release_history_id: number
 }
 
+export interface ReleaseArtifactRevision {
+    artifact_type?: "container_image" | "helm_chart"
+    digest: string
+    version?: string | null
+    published_at?: string | null
+    aliases: string[]
+    source_keys: string[]
+}
+
 export interface ReleaseHistoryItem extends ReleaseNotesSubject {
     tracker_release_history_id: number
     identity_key: string
@@ -36,6 +45,9 @@ export interface ReleaseHistoryItem extends ReleaseNotesSubject {
     chart_version?: string | null
     commit_sha?: string | null
     primary_source: ReleaseHistoryPrimarySource | null
+    aliases?: string[]
+    artifacts?: ReleaseArtifactRevision[]
+    source_contributions?: TrackerCurrentSourceContribution[]
     created_at: string
 }
 
@@ -53,10 +65,12 @@ export interface TrackerCurrentSourceContribution extends ReleaseNotesSubject {
     source_key: string
     source_type: TrackerSourceType
     contribution_kind: 'primary' | 'supporting'
-    digest: string
+    digest: string | null
+    published_at_source?: 'source' | 'artifact_created' | 'first_observed'
     app_version?: string | null
     chart_version?: string | null
     observed_at: string
+    aliases?: string[]
 }
 
 export interface TrackerCurrentMatrixColumn {
@@ -81,6 +95,8 @@ export interface TrackerCurrentMatrixRow {
     matched_channel_count: number
     channel_keys: string[]
     primary_source: ReleaseHistoryPrimarySource | null
+    aliases?: string[]
+    artifacts?: ReleaseArtifactRevision[]
     source_contributions: TrackerCurrentSourceContribution[]
     cells: Record<string, TrackerCurrentMatrixCell | null>
 }
@@ -218,6 +234,9 @@ export interface ReleaseChannelInput {
     exclude_pattern?: string | null
     enabled?: boolean
     last_version?: string | null
+    display_version?: string | null
+    deploy_alias?: string | null
+    aliases?: string[]
     digest?: string | null
 }
 

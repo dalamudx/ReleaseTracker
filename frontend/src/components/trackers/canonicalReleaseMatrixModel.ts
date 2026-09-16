@@ -4,6 +4,7 @@ import type {
     TrackerCurrentMatrixRow,
     TrackerCurrentSourceContribution,
     TrackerSourceType,
+    ReleaseArtifactRevision,
     ReleaseHistoryItem,
     TrackerCurrentView,
 } from "@/api/types"
@@ -21,11 +22,14 @@ export interface TrackerCurrentMatrixPresentationRow {
     identityKey: string
     displayVersion: string
     publishedAt: string
+    publishedAtIsEstimated: boolean
     digest: string
     matchedChannelCount: number
     selectedChannelKeys: string[]
     sourceTypeBadges: NonNullable<TrackerCurrentSourceContribution["source_type"]>[]
     helmChartVersion: string | null
+    aliases: string[]
+    artifacts: ReleaseArtifactRevision[]
     sourceContributions: TrackerCurrentSourceContribution[]
 }
 
@@ -68,6 +72,120 @@ function normalizeDisplayVersion(version: string): string {
     return /^v\d/.test(version) ? version.slice(1) : version
 }
 
+function mergeArtifactRevisions(
+    ...groups: Array<ReleaseArtifactRevision[] | undefined>
+): ReleaseArtifactRevision[] {
+    const artifacts = new Map<string, ReleaseArtifactRevision>()
+    for (const artifact of groups.flatMap((group) => group ?? [])) {
+        const digest = artifact.digest.trim().toLowerCase()
+        if (!digest) continue
+        const artifactType = artifact.artifact_type ?? "container_image"
+        const identity = `${artifactType}:${digest}`
+        const existing = artifacts.get(identity)
+        const artifactIsNewer = existing
+            ? compareIsoDescending(artifact.published_at, existing.published_at) < 0
+            : true
+        artifacts.set(identity, {
+            artifact_type: artifactType,
+            digest,
+            version: artifactIsNewer ? artifact.version : existing?.version,
+            published_at: artifactIsNewer ? artifact.published_at : existing?.published_at,
+            aliases: [...new Set([...(existing?.aliases ?? []), ...artifact.aliases])],
+            source_keys: [...new Set([...(existing?.source_keys ?? []), ...artifact.source_keys])],
+        })
+    }
+    return [...artifacts.values()]
+}
+
+export interface TrackerAliasTableRow {
+    key: string
+    alias: string
+    sourceKey: string | null
+    sourceType: TrackerSourceType | null
+    artifactType: ReleaseArtifactRevision["artifact_type"] | null
+    artifactVersion: string | null
+    artifactDigest: string | null
+}
+
+export function buildTrackerAliasTableRows(
+    row: Pick<
+        TrackerCurrentMatrixPresentationRow,
+        "displayVersion" | "aliases" | "artifacts" | "sourceContributions"
+    >,
+): TrackerAliasTableRow[] {
+    const sourceTypesByKey = new Map(
+        row.sourceContributions.map((contribution) => [
+            contribution.source_key,
+            contribution.source_type,
+        ]),
+    )
+    const aliasRows = new Map<string, TrackerAliasTableRow>()
+    const addAlias = (
+        alias: string,
+        sourceKey: string | null,
+        sourceType: TrackerSourceType | null,
+        artifactType: ReleaseArtifactRevision["artifact_type"] | null,
+        artifactVersion: string | null,
+        artifactDigest: string | null,
+    ) => {
+        if (!alias || alias === row.displayVersion) return
+        const key = [alias, sourceKey ?? "", artifactType ?? "", artifactDigest ?? ""].join("\u0000")
+        if (!aliasRows.has(key)) {
+            aliasRows.set(key, {
+                key, alias, sourceKey, sourceType, artifactType, artifactVersion, artifactDigest,
+            })
+        }
+    }
+
+    for (const artifact of row.artifacts) {
+        const sourceKeys = artifact.source_keys.length > 0 ? artifact.source_keys : [null]
+        for (const alias of artifact.aliases) {
+            for (const sourceKey of sourceKeys) {
+                addAlias(
+                    alias,
+                    sourceKey,
+                    sourceKey ? sourceTypesByKey.get(sourceKey) ?? null : null,
+                    artifact.artifact_type ?? "container_image",
+                    artifact.version ?? null,
+                    artifact.digest,
+                )
+            }
+        }
+    }
+
+    for (const contribution of row.sourceContributions) {
+        for (const alias of contribution.aliases ?? []) {
+            const artifactType = contribution.source_type === "container"
+                ? "container_image" as const
+                : contribution.source_type === "helm"
+                    ? "helm_chart" as const
+                    : null
+            addAlias(
+                alias,
+                contribution.source_key,
+                contribution.source_type,
+                artifactType,
+                contribution.source_type === "helm"
+                    ? contribution.chart_version ?? contribution.version
+                    : contribution.version,
+                artifactType ? contribution.digest : null,
+            )
+        }
+    }
+
+    for (const alias of row.aliases) {
+        if (![...aliasRows.values()].some((candidate) => candidate.alias === alias)) {
+            addAlias(alias, null, null, null, null, null)
+        }
+    }
+
+    return [...aliasRows.values()].sort((left, right) =>
+        left.alias.localeCompare(right.alias, undefined, { numeric: true }) ||
+        (left.sourceKey ?? "").localeCompare(right.sourceKey ?? "") ||
+        (left.artifactDigest ?? "").localeCompare(right.artifactDigest ?? "")
+    )
+}
+
 function compareIsoDescending(left?: string | null, right?: string | null): number {
     const leftTime = left ? Date.parse(left) : Number.NEGATIVE_INFINITY
     const rightTime = right ? Date.parse(right) : Number.NEGATIVE_INFINITY
@@ -94,15 +212,23 @@ function getReleaseChannelSelectionKey(channel: NonNullable<AggregateTracker["so
 function matchesReleaseChannel(
     release: Pick<ReleaseHistoryItem, "tag_name" | "prerelease">,
     channel: NonNullable<AggregateTracker["sources"][number]["release_channels"]>[number],
+    sourceType?: TrackerSourceType,
 ): boolean {
     if (channel.enabled === false) {
         return false
     }
-    if (channel.type === "release" && release.prerelease) {
-        return false
-    }
-    if (channel.type === "prerelease" && !release.prerelease) {
-        return false
+    const supportsReleaseType =
+        sourceType === undefined ||
+        sourceType === "github" ||
+        sourceType === "gitlab" ||
+        sourceType === "gitea"
+    if (supportsReleaseType) {
+        if (channel.type === "release" && release.prerelease) {
+            return false
+        }
+        if (channel.type === "prerelease" && !release.prerelease) {
+            return false
+        }
     }
 
     if (channel.include_pattern) {
@@ -147,19 +273,13 @@ export function buildTrackerHistoryMatrixPresentationModel(
     const rows = items
         .flatMap((item) => {
             const primarySourceKey = item.primary_source?.source_key ?? null
-            const source = sources.find((candidate) => candidate.source_key === primarySourceKey) ?? null
-            const releaseChannels = source?.release_channels ?? []
-            const matchedChannelKeys = releaseChannels
-                .filter((channel) => matchesReleaseChannel(item, channel))
-                .map((channel, index) => getReleaseChannelSelectionKey(channel, index))
-
-            if (matchedChannelKeys.length === 0) {
-                return []
-            }
-
-            const primarySourceType: TrackerSourceType = item.primary_source?.source_type ?? source?.source_type ?? "github"
-            const contribution: TrackerCurrentSourceContribution = {
-                source_release_history_id: item.primary_source?.source_release_history_id ?? item.tracker_release_history_id,
+            const primarySource =
+                sources.find((candidate) => candidate.source_key === primarySourceKey) ?? null
+            const primarySourceType: TrackerSourceType =
+                item.primary_source?.source_type ?? primarySource?.source_type ?? "github"
+            const fallbackContribution: TrackerCurrentSourceContribution = {
+                source_release_history_id:
+                    item.primary_source?.source_release_history_id ?? item.tracker_release_history_id,
                 tracker_name: item.tracker_name,
                 tracker_type: primarySourceType,
                 source_key: item.primary_source?.source_key ?? primarySourceKey ?? "",
@@ -173,22 +293,60 @@ export function buildTrackerHistoryMatrixPresentationModel(
                 changelog_url: item.changelog_url,
                 prerelease: item.prerelease,
                 body: item.body ?? null,
-                digest: item.digest ?? item.identity_key,
+                digest:
+                    primarySourceType === "container" || primarySourceType === "helm"
+                        ? item.digest
+                        : null,
                 app_version: item.app_version ?? null,
                 chart_version: item.chart_version ?? null,
                 observed_at: item.created_at,
+                aliases: item.aliases ?? [],
             }
+            const sourceContributions =
+                item.source_contributions && item.source_contributions.length > 0
+                    ? item.source_contributions
+                    : [fallbackContribution]
+            const matchedChannelKeys = [
+                ...new Set(
+                    sourceContributions.flatMap((contribution) => {
+                        const source = sources.find(
+                            (candidate) => candidate.source_key === contribution.source_key,
+                        )
+                        return (source?.release_channels ?? [])
+                            .filter((channel) =>
+                                matchesReleaseChannel(contribution, channel, contribution.source_type),
+                            )
+                            .map((channel, index) =>
+                                getReleaseChannelSelectionKey(channel, index),
+                            )
+                    }),
+                ),
+            ]
+
+            if (matchedChannelKeys.length === 0) {
+                return []
+            }
+
+            const latestPublishedAt = sourceContributions.reduce(
+                (latest, contribution) =>
+                    compareIsoDescending(contribution.published_at, latest) < 0
+                        ? contribution.published_at
+                        : latest,
+                item.published_at,
+            )
 
             return [{
                 tracker_release_history_id: item.tracker_release_history_id,
                 identity_key: item.identity_key,
                 version: item.version,
                 digest: item.digest ?? item.identity_key,
-                published_at: item.published_at,
+                published_at: latestPublishedAt,
                 matched_channel_count: matchedChannelKeys.length,
                 channel_keys: matchedChannelKeys,
                 primary_source: item.primary_source,
-                source_contributions: [contribution],
+                source_contributions: sourceContributions,
+                aliases: item.aliases ?? [],
+                artifacts: item.artifacts ?? [],
                 cells: Object.fromEntries(
                     columns.map((column) => [
                         column.channel_key,
@@ -404,7 +562,37 @@ export function buildTrackerCurrentMatrixPresentationModel(
         const selectedChannelKeys = existingRow
             ? [...new Set([...existingRow.selectedChannelKeys, ...row.channel_keys])]
             : [...row.channel_keys]
+        const aliases = [...new Set([
+            ...(existingRow?.aliases ?? []),
+            ...(row.aliases ?? []),
+            ...sourceContributions.flatMap((contribution) => contribution.aliases ?? []),
+        ])]
         const sourceTypeBadges = [...new Set(sourceContributions.map((contribution) => contribution.source_type))]
+        const contributionArtifacts = (row.artifacts?.length ?? 0) > 0
+            ? []
+            : sourceContributions
+                .filter(
+                    (contribution): contribution is TrackerCurrentSourceContribution & { digest: string } =>
+                        Boolean(contribution.digest) &&
+                        (contribution.source_type === "container" || contribution.source_type === "helm"),
+                )
+                .map((contribution) => ({
+                    artifact_type: contribution.source_type === "helm"
+                        ? "helm_chart" as const
+                        : "container_image" as const,
+                    digest: contribution.digest,
+                    version: contribution.source_type === "helm"
+                        ? contribution.chart_version
+                        : contribution.version,
+                    published_at: contribution.published_at,
+                    aliases: contribution.aliases ?? [],
+                    source_keys: [contribution.source_key],
+                }))
+        const artifacts = mergeArtifactRevisions(
+            existingRow?.artifacts,
+            row.artifacts,
+            contributionArtifacts,
+        )
         const latestHelmChartContribution = sourceContributions
             .filter((contribution) => Boolean(contribution.chart_version))
             .sort((left, right) => compareIsoDescending(left.published_at, right.published_at))[0]
@@ -416,24 +604,37 @@ export function buildTrackerCurrentMatrixPresentationModel(
             publishedAt: existingRow
                 ? (compareIsoDescending(row.published_at, existingRow.publishedAt) < 0 ? row.published_at : existingRow.publishedAt)
                 : row.published_at,
+            publishedAtIsEstimated: sourceContributions.some(
+                (contribution) => contribution.published_at_source === "first_observed",
+            ),
             digest: existingRow?.digest ?? row.digest,
             matchedChannelCount: selectedChannelKeys.length,
             selectedChannelKeys,
             sourceTypeBadges,
             helmChartVersion: latestHelmChartContribution?.chart_version ?? null,
+            aliases,
+            artifacts,
             sourceContributions,
         }
 
         groupedRows.set(groupingKey, nextRow)
     }
 
-    const rows = Array.from(groupedRows.values()).sort((left, right) => {
+    const ungroupedRows = Array.from(groupedRows.values())
+    const shouldFallbackToVersionOrder =
+        sortMode === "published_at" &&
+        ungroupedRows.length > 0 &&
+        ungroupedRows.every((row) => /^\d+(?:\.\d+)+$/.test(row.displayVersion)) &&
+        ungroupedRows.some((row) => row.publishedAtIsEstimated)
+    const rows = ungroupedRows.sort((left, right) => {
         const publishedAtComparison = compareIsoDescending(left.publishedAt, right.publishedAt)
         const versionComparison = compareVersionDescending(left.displayVersion, right.displayVersion)
         const sourceCountComparison = right.sourceTypeBadges.length - left.sourceTypeBadges.length
 
         if (sortMode === "published_at") {
-            return publishedAtComparison || versionComparison || sourceCountComparison
+            return shouldFallbackToVersionOrder
+                ? versionComparison || publishedAtComparison || sourceCountComparison
+                : publishedAtComparison || versionComparison || sourceCountComparison
         }
         if (sortMode === "semver") {
             return versionComparison || publishedAtComparison || sourceCountComparison

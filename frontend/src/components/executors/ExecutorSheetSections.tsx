@@ -401,6 +401,12 @@ function renderReviewImageChanges(
                             </div>
                             <div className="mt-2 text-xs text-muted-foreground">
                                 {t("executors.review.targetVersion")}: <span className="font-mono text-foreground">{change.targetVersion ?? "-"}</span>
+                                {change.deployAlias && change.deployAlias !== change.targetVersion ? (
+                                    <>
+                                        <span className="px-1.5">·</span>
+                                        {t("executors.review.deployAlias")}: <span className="font-mono text-foreground">{change.deployAlias}</span>
+                                    </>
+                                ) : null}
                             </div>
                         </div>
                     )

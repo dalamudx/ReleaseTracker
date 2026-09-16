@@ -94,6 +94,9 @@ def flatten_runtime_release_channels(
             payload["release_channel_key"] = str(release_channel_key)
             payload["channel_key"] = str(release_channel_key)
         payload["source_type"] = selected_source.source_type
+        payload["source_key"] = selected_source.source_key
+        if selected_source.id is not None:
+            payload["tracker_source_id"] = selected_source.id
         channels.append(payload)
     return channels
 

@@ -348,6 +348,7 @@
     "description": "配置和管理版本追踪器",
     "addNew": "添加追踪器",
     "searchPlaceholder": "按名称、描述或源搜索",
+    "resizePanels": "调整追踪器列表与详情面板宽度",
     "table": {
       "name": "名称",
       "type": "类型",
@@ -491,8 +492,20 @@
         "releaseViewsDescription": "查看聚合版本在各子渠道中的映射情况。",
         "canonicalDiagramDescription": "",
         "canonicalDiagramVersionLabel": "对比版本（合并）",
-        "helmChartVersion": "Chart 版本：{{version}}",
-        "helmChartVersionLabel": "Chart",
+        "versionDetailsSummary": "{{artifacts}} 个关联制品 · {{aliases}} 个标签 / 别名",
+        "expandVersion": "展开该版本的制品",
+        "collapseVersion": "折叠该版本的制品",
+        "copyDigest": "复制完整 Digest",
+        "digestCopied": "Digest 已复制",
+        "showMoreAliases": "显示另外 {{count}} 个标签或别名",
+        "showFewerAliases": "收起标签和别名",
+        "noArtifactRevisions": "该版本暂未关联制品。",
+        "artifactTable": {
+          "version": "制品版本",
+          "digest": "Digest",
+          "publishedAt": "发布时间",
+          "source": "制品来源"
+        },
         "emptyCanonical": "当前还没有可用的聚合版本。",
         "channelType": {
           "github": "GitHub",
@@ -711,6 +724,7 @@
       "imageChanges": "镜像变更",
       "versionChanges": "版本变更",
       "targetVersion": "目标版本",
+      "deployAlias": "部署标签",
       "targetImageDeferred": "执行时解析目标镜像",
       "targetVersionUnavailable": "无法确定目标版本：所选来源与渠道暂无当前版本。",
       "maintenanceSummary": "维护窗口：{{timezone}}，{{start}}–{{end}}。",

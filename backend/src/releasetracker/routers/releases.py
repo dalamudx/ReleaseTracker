@@ -110,11 +110,27 @@ async def _get_tracker_channel_summary(
     if not current_rows:
         return None
 
+    history_releases = await storage.get_tracker_release_history_releases(aggregate_tracker.id)
+    history_by_id = {release.id: release for release in history_releases}
+    projection_releases = []
+    for row in current_rows:
+        release = row["release"]
+        history_release = history_by_id.get(row["tracker_release_history_id"])
+        if history_release is not None:
+            release = release.model_copy(
+                update={
+                    "aliases": history_release.aliases,
+                    "alias_references": history_release.alias_references,
+                }
+            )
+        projection_releases.append(release.model_copy(update={"tracker_name": tracker_name}))
+
     winners = storage.select_best_releases_by_channel(
-        [row["release"].model_copy(update={"tracker_name": tracker_name}) for row in current_rows],
+        projection_releases,
         [matched_channel],
         sort_mode=sort_mode,
         use_immutable_identity=True,
+        use_source_aliases=True,
     )
     winner = next(iter(winners.values()), None)
     if winner is None:

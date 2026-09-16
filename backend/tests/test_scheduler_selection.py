@@ -21,6 +21,18 @@ from releasetracker.models import (
     TrackerStatus,
 )
 from releasetracker.scheduler import ReleaseScheduler
+from releasetracker.notifiers.base import NotificationEvent
+from releasetracker.routers.trackers import (
+    _build_artifact_summaries,
+    _build_container_source_release_channel_current_values,
+    _build_tracker_current_view,
+    _source_published_at_provenance,
+)
+from releasetracker.executor_scheduler_target_resolution import (
+    ResolvedTrackerTarget,
+    _resolve_tracker_latest_target_details_from_storage,
+    _target_identity_key,
+)
 from releasetracker.services.system_keys import SystemKeyManager
 from releasetracker.storage.sqlite import (
     SQLiteStorage,
@@ -339,10 +351,12 @@ async def test_projection_change_enqueues_grouped_executor_for_non_primary_servi
     )
 
     async def _fake_resolve_target(_storage, tracker_name, *_args, **_kwargs):
-        return ("2.0.0" if tracker_name == "compose-worker-trigger" else "1.0.0", None)
+        version = "2.0.0" if tracker_name == "compose-worker-trigger" else "1.0.0"
+        digest = "sha256:" + ("b" if tracker_name == "compose-worker-trigger" else "a") * 64
+        return ResolvedTrackerTarget(display_version=version, deploy_alias=version, digest=digest)
 
     monkeypatch.setattr(
-        "releasetracker.executor_trigger._resolve_tracker_latest_target_from_storage",
+        "releasetracker.executor_trigger._resolve_tracker_latest_target_details_from_storage",
         _fake_resolve_target,
     )
     scheduler = ReleaseScheduler(storage)
@@ -359,6 +373,31 @@ async def test_projection_change_enqueues_grouped_executor_for_non_primary_servi
     assert desired_state is not None
     assert desired_state.pending is True
     assert desired_state.desired_target["tracker_name"] == "compose-worker-trigger"
+
+    async def _fake_alias_metadata_change(_storage, tracker_name, *_args, **_kwargs):
+        version = "2.0.0" if tracker_name == "compose-worker-trigger" else "1.0.0"
+        digest = "sha256:" + ("b" if tracker_name == "compose-worker-trigger" else "a") * 64
+        return ResolvedTrackerTarget(
+            display_version=f"{version}-build-2",
+            deploy_alias=version,
+            digest=digest,
+            aliases=(version, "stable"),
+        )
+
+    monkeypatch.setattr(
+        "releasetracker.executor_trigger._resolve_tracker_latest_target_details_from_storage",
+        _fake_alias_metadata_change,
+    )
+    assert (
+        await scheduler._emit_executor_trigger_work_for_projection_change(
+            tracker_name="compose-worker-trigger",
+            previous_version="2.0.0",
+            current_version="2.0.0-build-2",
+            previous_identity_key="old",
+            current_identity_key="new",
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -2044,5 +2083,388 @@ async def test_fetch_tracker_releases_uses_separate_provider_buckets(tmp_path):
         assert gitlab_counters["max_seen"] == 2
         gate.set()
         await batch
+    finally:
+        await _close_storage(storage)
+
+
+def test_source_published_at_provenance_infers_legacy_container_fallback():
+    assert (
+        _source_published_at_provenance(
+            source_type="container",
+            raw_payload={},
+            published_at="2026-09-15T19:29:42+00:00",
+            observed_at="2026-09-15T19:27:31+00:00",
+        )
+        == "first_observed"
+    )
+    assert (
+        _source_published_at_provenance(
+            source_type="container",
+            raw_payload={},
+            published_at="2026-08-18T19:29:42+00:00",
+            observed_at="2026-09-15T19:27:31+00:00",
+        )
+        == "artifact_created"
+    )
+    assert (
+        _source_published_at_provenance(
+            source_type="container",
+            raw_payload={"published_at_source": "artifact_created"},
+            published_at="2026-09-15T19:29:42+00:00",
+            observed_at="2026-09-15T19:27:31+00:00",
+        )
+        == "artifact_created"
+    )
+
+
+def test_artifact_summaries_distinguish_image_and_chart_and_ignore_repo_commit():
+    helm_digest = "a" * 64
+    artifacts = _build_artifact_summaries(
+        [
+            {
+                "source_key": "repo",
+                "source_type": "github",
+                "version": "0.27.4",
+                "published_at": "2026-08-18T16:51:39+00:00",
+                "digest": "b4c8548c09da21b28984435526b4251fd8dfb0ac",
+                "aliases": [],
+            },
+            {
+                "source_key": "container",
+                "source_type": "container",
+                "version": "0.27.4",
+                "published_at": "2026-08-18T18:42:00+00:00",
+                "digest": "sha256:" + "b" * 64,
+                "aliases": ["0.27.4"],
+            },
+            {
+                "source_key": "helm",
+                "source_type": "helm",
+                "version": "1.0.11",
+                "chart_version": "1.0.11",
+                "published_at": "2026-08-18T18:41:50+00:00",
+                "digest": helm_digest,
+                "aliases": ["1.0.11"],
+            },
+        ]
+    )
+
+    assert artifacts == [
+        {
+            "artifact_type": "container_image",
+            "digest": "sha256:" + "b" * 64,
+            "version": "0.27.4",
+            "published_at": "2026-08-18T18:42:00+00:00",
+            "aliases": ["0.27.4"],
+            "source_keys": ["container"],
+        },
+        {
+            "artifact_type": "helm_chart",
+            "digest": "sha256:" + helm_digest,
+            "version": "1.0.11",
+            "published_at": "2026-08-18T18:41:50+00:00",
+            "aliases": ["1.0.11"],
+            "source_keys": ["helm"],
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_aggregate_check_correlates_exact_repo_tag_with_same_digest_container_aliases(
+    tmp_path, monkeypatch
+):
+    tracker_name = "nginx-frontend-aliases"
+    storage = await _create_test_storage(tmp_path / "nginx-frontend-aliases.db")
+    await initialize_storage_with_schema(storage)
+    try:
+        aggregate = await storage.create_aggregate_tracker(
+            AggregateTracker(
+                name=tracker_name,
+                primary_changelog_source_key="repo",
+                sources=[
+                    TrackerSource(
+                        source_key="repo",
+                        source_type="gitea",
+                        source_rank=0,
+                        source_config={
+                            "repo": "canvas/nginx_frontend",
+                            "instance": "https://git.example.com",
+                        },
+                        release_channels=[
+                            ReleaseChannel(
+                                release_channel_key="prerelease",
+                                name="prerelease",
+                                type="prerelease",
+                                include_pattern=r".*dev.*",
+                            )
+                        ],
+                    ),
+                    TrackerSource(
+                        source_key="image",
+                        source_type="container",
+                        source_rank=1,
+                        source_config={
+                            "image": "canvas/nginx_frontend",
+                            "registry": "registry.example.com",
+                        },
+                        release_channels=[
+                            ReleaseChannel(
+                                release_channel_key="prerelease",
+                                name="prerelease",
+                                type="prerelease",
+                                include_pattern=r".*dev.*",
+                            )
+                        ],
+                    ),
+                ],
+            )
+        )
+        version = "3.6.0-dev-0b0d27d3f61c"
+        digest = "sha256:ec114d9401b25777ea3583cf0cff081417ba4a283bf99975c2c3836fe49bc2e7"
+        published_at = datetime.fromisoformat("2026-09-15T04:01:04+00:00")
+        repo_release = Release(
+            tracker_name=tracker_name,
+            tracker_type="gitea",
+            version=version,
+            name=version,
+            tag_name=version,
+            url=f"https://git.example.com/{version}",
+            published_at=published_at,
+            prerelease=True,
+            commit_sha="0b0d27d3f61c",
+        )
+        image_releases = [
+            Release(
+                tracker_name=tracker_name,
+                tracker_type="container",
+                version=alias,
+                name=alias,
+                tag_name=alias,
+                url=f"https://registry.example.com/{alias}",
+                published_at=published_at,
+                prerelease=True,
+                commit_sha=digest,
+            )
+            for alias in [version, "3.6.0-dev", "3.6-dev", "dev"]
+        ]
+        scheduler = ReleaseScheduler(storage)
+        notification_events: list[str] = []
+
+        async def _capture_notification(event: str, release: Release):
+            del release
+            notification_events.append(event)
+
+        monkeypatch.setattr(scheduler, "_send_notifications", _capture_notification)
+
+        async def _fake_create_tracker(config: TrackerConfig):
+            if config.type == "gitea":
+                return FakeTracker(tracker_name, [repo_release], config.channels)
+            if config.type == "container":
+                return FakeTracker(tracker_name, image_releases, config.channels)
+            raise AssertionError(f"unexpected tracker config: {config}")
+
+        monkeypatch.setattr(scheduler, "_create_tracker", _fake_create_tracker)
+        status = await scheduler.check_tracker_now_v2(tracker_name)
+        history = await storage.get_tracker_release_history_releases(aggregate.id)
+        current = await storage.get_tracker_current_releases(aggregate.id)
+
+        assert status.last_version == version
+        assert len(history) == 1
+        assert history[0].version == version
+        assert history[0].artifact_digest == digest
+        assert set(history[0].aliases) == {version, "3.6.0-dev", "3.6-dev", "dev"}
+        assert len(current) == 1
+        assert current[0].version == version
+        assert current[0].artifact_digest == digest
+        alias_release = current[0].model_copy(
+            update={"version": "3.6.0-dev", "tag_name": "3.6.0-dev"}
+        )
+        assert scheduler._projection_release_identity(
+            current[0]
+        ) == scheduler._projection_release_identity(alias_release)
+        reused_artifact_release = current[0].model_copy(
+            update={"id": (current[0].id or 0) + 1, "version": "3.6.1-dev"}
+        )
+        assert scheduler._projection_release_identity(
+            current[0]
+        ) != scheduler._projection_release_identity(reused_artifact_release)
+        assert scheduler._projection_release_changed(current[0], alias_release) is False
+        assert scheduler._projection_release_changed(current[0], reused_artifact_release) is True
+        republished_release = current[0].model_copy(
+            update={"artifact_digest": "sha256:" + "f" * 64}
+        )
+        assert scheduler._projection_release_changed(current[0], republished_release) is True
+        unlinked_release = current[0].model_copy(update={"artifact_digest": None})
+        assert scheduler._projection_release_changed(unlinked_release, current[0]) is False
+        target = await _resolve_tracker_latest_target_details_from_storage(
+            storage,
+            tracker_name,
+            "prerelease",
+            tracker_source_id=aggregate.sources[1].id,
+            tracker_source_type="container",
+        )
+        assert target is not None
+        assert target.display_version == version
+        assert target.deploy_alias == version
+        assert set(target.aliases) == {version, "3.6.0-dev", "3.6-dev", "dev"}
+        assert _target_identity_key(version, digest) == _target_identity_key("3.6.0-dev", digest)
+        channel_values = await _build_container_source_release_channel_current_values(
+            storage, aggregate, None
+        )
+        prerelease = channel_values["image"]["prerelease"]
+        assert prerelease["last_version"] == version
+        assert prerelease["display_version"] == version
+        assert prerelease["deploy_alias"] == version
+        assert set(prerelease["aliases"]) == {version, "3.6.0-dev", "3.6-dev", "dev"}
+        assert prerelease["digest"] == digest
+        current_view = await _build_tracker_current_view(storage, aggregate)
+        artifacts = current_view["matrix"]["rows"][0]["artifacts"]
+        assert len(artifacts) == 1
+        assert artifacts[0]["artifact_type"] == "container_image"
+        assert artifacts[0]["digest"] == digest
+        assert artifacts[0]["version"] in {version, "3.6.0-dev", "3.6-dev", "dev"}
+        assert artifacts[0]["published_at"] == published_at.isoformat()
+        assert artifacts[0]["aliases"] == ["3.6-dev", "3.6.0-dev", version, "dev"]
+        assert artifacts[0]["source_keys"] == ["image"]
+        assert notification_events == [NotificationEvent.NEW_RELEASE]
+
+        republished_digest = "sha256:" + "f" * 64
+        image_releases[:] = [
+            release.model_copy(
+                update={
+                    "commit_sha": republished_digest,
+                    "published_at": published_at + timedelta(minutes=1),
+                }
+            )
+            for release in image_releases
+        ]
+        await storage.update_tracker_status(
+            TrackerStatus(
+                name=tracker_name,
+                type="gitea",
+                last_check=datetime.now() - timedelta(seconds=31),
+                last_version=status.last_version,
+            )
+        )
+        republished_status = await scheduler.check_tracker_now_v2(tracker_name)
+        republished_history = await storage.get_tracker_release_history_releases(aggregate.id)
+        republished_current = await storage.get_tracker_current_releases(aggregate.id)
+        republished_view = await _build_tracker_current_view(storage, aggregate)
+
+        assert republished_status.last_version == version
+        assert len(republished_history) == 1
+        assert republished_history[0].artifact_digest == republished_digest
+        assert republished_current[0].artifact_digest == republished_digest
+        assert [
+            artifact["digest"] for artifact in republished_view["matrix"]["rows"][0]["artifacts"]
+        ] == [republished_digest, digest]
+        assert notification_events == [
+            NotificationEvent.NEW_RELEASE,
+            NotificationEvent.REPUBLISH,
+        ]
+    finally:
+        await _close_storage(storage)
+
+
+@pytest.mark.asyncio
+async def test_container_targets_share_logical_version_but_keep_bound_source_artifacts(tmp_path):
+    storage = await _create_test_storage(tmp_path / "multi-artifact-logical-release.db")
+    await initialize_storage_with_schema(storage)
+    try:
+        version = "3.6.0-dev-0b0d27d3f61c"
+        channel = ReleaseChannel(
+            release_channel_key="prerelease",
+            name="prerelease",
+            type="prerelease",
+            include_pattern=".*dev.*",
+        )
+        aggregate = await storage.create_aggregate_tracker(
+            AggregateTracker(
+                name="multi-artifact-logical-release",
+                primary_changelog_source_key="repo",
+                sources=[
+                    TrackerSource(
+                        source_key="repo",
+                        source_type="gitea",
+                        source_rank=0,
+                        source_config={"repo": "owner/repo"},
+                        release_channels=[channel],
+                    ),
+                    TrackerSource(
+                        source_key="image-a",
+                        source_type="container",
+                        source_rank=1,
+                        source_config={
+                            "image": "owner/image-a",
+                            "registry": "registry.example.com",
+                        },
+                        release_channels=[channel.model_copy()],
+                    ),
+                    TrackerSource(
+                        source_key="image-b",
+                        source_type="container",
+                        source_rank=2,
+                        source_config={
+                            "image": "owner/image-b",
+                            "registry": "registry.example.com",
+                        },
+                        release_channels=[channel.model_copy()],
+                    ),
+                ],
+            )
+        )
+        now = datetime.fromisoformat("2026-09-15T04:01:04+00:00")
+        await storage.save_source_observations(
+            aggregate.id,
+            aggregate.sources[0],
+            [
+                Release(
+                    tracker_name=aggregate.name,
+                    tracker_type="gitea",
+                    version=version,
+                    name=version,
+                    tag_name=version,
+                    url=f"https://git.example.com/{version}",
+                    published_at=now,
+                    prerelease=True,
+                )
+            ],
+            observed_at=now,
+        )
+        digests = ["sha256:" + "a" * 64, "sha256:" + "b" * 64]
+        for source, digest in zip(aggregate.sources[1:], digests, strict=True):
+            await storage.save_source_observations(
+                aggregate.id,
+                source,
+                [
+                    Release(
+                        tracker_name=aggregate.name,
+                        tracker_type="container",
+                        version=alias,
+                        name=alias,
+                        tag_name=alias,
+                        url=f"https://registry.example.com/{source.source_key}:{alias}",
+                        published_at=now,
+                        prerelease=True,
+                        commit_sha=digest,
+                    )
+                    for alias in [version, "3.6.0-dev"]
+                ],
+                observed_at=now,
+            )
+
+        for source, digest in zip(aggregate.sources[1:], digests, strict=True):
+            target = await _resolve_tracker_latest_target_details_from_storage(
+                storage,
+                aggregate.name,
+                "prerelease",
+                tracker_source_id=source.id,
+                tracker_source_type="container",
+            )
+            assert target is not None
+            assert target.display_version == version
+            assert target.deploy_alias == version
+            assert target.digest == digest
+            assert set(target.aliases) == {version, "3.6.0-dev"}
     finally:
         await _close_storage(storage)

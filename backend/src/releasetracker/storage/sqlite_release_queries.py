@@ -469,6 +469,48 @@ def _channel_selection_key(channel, index: int) -> str:
     return str(channel_name or f"legacy-channel-{index}")
 
 
+def _release_matches_source_aliases(
+    storage_cls: type["SQLiteStorage"],
+    release: Release,
+    channel,
+    *,
+    channel_source_type: str | None = None,
+) -> bool:
+    tracker_source_id = (
+        channel.get("tracker_source_id")
+        if isinstance(channel, dict)
+        else getattr(channel, "tracker_source_id", None)
+    )
+    references = [
+        reference
+        for reference in release.alias_references
+        if tracker_source_id is None or reference.tracker_source_id == int(tracker_source_id)
+    ]
+    if tracker_source_id is not None and not references:
+        return False
+    if not references:
+        return storage_cls._release_matches_channel(
+            release, channel, channel_source_type=channel_source_type
+        )
+    return any(
+        storage_cls._release_matches_channel(
+            release.model_copy(
+                update={
+                    "version": reference.alias,
+                    "name": reference.alias,
+                    "tag_name": reference.alias,
+                    "prerelease": reference.prerelease,
+                    "published_at": reference.published_at,
+                    "artifact_digest": reference.digest,
+                }
+            ),
+            channel,
+            channel_source_type=reference.source_type,
+        )
+        for reference in references
+    )
+
+
 def _copy_release_with_channel_name(release: Release, channel_name: str) -> Release:
     return release.model_copy(update={"channel_name": channel_name})
 
@@ -481,6 +523,7 @@ def select_best_releases_by_channel(
     *,
     channel_source_type: str | None = None,
     use_immutable_identity: bool = False,
+    use_source_aliases: bool = False,
 ) -> dict[str, Release]:
     if not releases or not channels:
         return {}
@@ -510,8 +553,14 @@ def select_best_releases_by_channel(
         channel_candidates = [
             release
             for release in unique_releases
-            if storage_cls._release_matches_channel(
-                release, channel, channel_source_type=channel_source_type
+            if (
+                storage_cls._release_matches_source_aliases(
+                    release, channel, channel_source_type=channel_source_type
+                )
+                if use_source_aliases
+                else storage_cls._release_matches_channel(
+                    release, channel, channel_source_type=channel_source_type
+                )
             )
         ]
 

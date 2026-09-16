@@ -128,7 +128,9 @@ class ReleaseSchedulerAggregateChecks:
                 eligible_releases_for_history = self.storage.dedupe_releases_by_immutable_identity(
                     eligible_source_history_releases + filtered_releases
                 )
-                releases_for_source_projection = self.storage.dedupe_releases_by_immutable_identity(
+                # Canonical correlation needs every source alias. Immutable artifact
+                # dedupe remains in tracker history selection, not observation truth.
+                releases_for_source_projection = (
                     eligible_source_history_releases + filtered_releases
                 )
 
@@ -219,6 +221,34 @@ class ReleaseSchedulerAggregateChecks:
                 primary_source_release_history_id=primary_source_history_id,
                 supporting_source_release_history_ids=supporting_source_history_ids,
                 source_type=primary_source.source_type,
+            )
+
+        correlated_candidates = await self.storage.get_correlated_release_candidates(
+            aggregate_tracker.id
+        )
+        for candidate in correlated_candidates:
+            source_history_ids = candidate["source_history_ids"]
+            if len(candidate["tracker_source_ids"]) < 2:
+                continue
+            release = candidate["release"]
+            release.tracker_name = tracker_name
+            primary_source_history_id = candidate["primary_source_history_id"]
+            tracker_release_history_id, _ = await self.storage.upsert_tracker_release_history(
+                aggregate_tracker.id,
+                release,
+                primary_source_release_history_id=primary_source_history_id,
+                supporting_source_release_history_ids=[
+                    source_history_id
+                    for source_history_id in source_history_ids
+                    if source_history_id != primary_source_history_id
+                ],
+                source_type=release.tracker_type,
+            )
+            await self.storage.merge_tracker_release_history_sources(
+                aggregate_tracker_id=aggregate_tracker.id,
+                canonical_tracker_release_history_id=tracker_release_history_id,
+                source_history_ids=source_history_ids,
+                artifact_digest=release.artifact_digest,
             )
 
         projection_releases, latest_version = await self._refresh_tracker_projection_and_notify(

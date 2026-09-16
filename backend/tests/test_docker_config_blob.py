@@ -210,6 +210,15 @@ async def test_config_blob_upgrades_published_at_for_ghcr_anonymous(monkeypatch)
     # published_at was upgraded to the real creation time
     expected = datetime.fromisoformat(REAL_CREATED.replace("Z", "+00:00"))
     assert release.published_at == expected
+    assert release.published_at_source == "artifact_created"
+
+
+def test_tag_without_created_time_marks_published_at_as_first_observed():
+    tracker = DockerTracker(name="sample", image="owner/sample")
+
+    release = tracker._tag_to_release("v1.0.0")
+
+    assert release.published_at_source == "first_observed"
 
 
 @pytest.mark.asyncio

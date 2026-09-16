@@ -249,9 +249,7 @@ class ReleaseScheduler(
 
         releases_to_persist = self.storage.dedupe_releases_by_immutable_identity(filtered_releases)
 
-        releases_for_source_projection = self.storage.dedupe_releases_by_immutable_identity(
-            history_releases + releases_to_persist
-        )
+        releases_for_source_projection = history_releases + filtered_releases
         await self.storage.save_source_observations(
             aggregate_tracker.id,
             runtime_source,

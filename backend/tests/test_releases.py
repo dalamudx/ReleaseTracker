@@ -7,6 +7,7 @@ from releasetracker.config import Channel, TrackerConfig
 from releasetracker.models import (
     AggregateTracker,
     Release,
+    ReleaseAliasReference,
     ReleaseChannel,
     TrackerSource,
     TrackerSourceType,
@@ -1315,7 +1316,7 @@ async def test_docker_different_tags_with_same_digest_share_one_immutable_identi
         db.row_factory = aiosqlite.Row
         history_rows = await (
             await db.execute(
-                "SELECT identity_key, immutable_key, digest FROM source_release_history WHERE tracker_source_id = ?",
+                "SELECT id, identity_key, immutable_key, digest FROM source_release_history WHERE tracker_source_id = ?",
                 (image_source.id,),
             )
         ).fetchall()
@@ -1324,6 +1325,23 @@ async def test_docker_different_tags_with_same_digest_share_one_immutable_identi
     assert history_rows[0]["identity_key"] == digest
     assert history_rows[0]["immutable_key"] == digest
     assert history_rows[0]["digest"] == digest
+    aliases_by_history_id = await storage.get_source_release_aliases_for_source(image_source.id)
+    assert set(aliases_by_history_id) == {history_rows[0]["id"]}
+    assert {alias["alias"] for aliases in aliases_by_history_id.values() for alias in aliases} == {
+        "latest",
+        "alpine",
+        "trixie",
+    }
+    assert (
+        len(
+            {
+                alias["last_source_fetch_run_id"]
+                for aliases in aliases_by_history_id.values()
+                for alias in aliases
+            }
+        )
+        == 1
+    )
     assert len(storage.dedupe_releases_by_immutable_identity(releases)) == 1
 
 
@@ -3451,6 +3469,70 @@ def test_select_best_releases_by_channel_excludes_docker_alias_when_folded_versi
 
     assert winners["stable"].tag_name == "trixie"
     assert winners["stable"].version == "3256.3258.v858f3c9a_f69d"
+
+
+def test_select_best_releases_by_channel_matches_only_bound_source_aliases():
+    published_at = datetime(2026, 9, 15, 4, 1, 4)
+    logical_version = "3.6.0-dev-0b0d27d3f61c"
+    release = Release(
+        tracker_name="nginx-frontend",
+        tracker_type="gitea",
+        version=logical_version,
+        name=logical_version,
+        tag_name=logical_version,
+        url="https://git.example.com/nginx-frontend/releases/dev",
+        published_at=published_at,
+        prerelease=True,
+        aliases=[logical_version, "3.6.0", "3.6.0-dev"],
+        alias_references=[
+            ReleaseAliasReference(
+                tracker_source_id=7,
+                source_type="container",
+                alias=alias,
+                prerelease=False,
+                published_at=published_at,
+                digest="sha256:" + "a" * 64,
+            )
+            for alias in [logical_version, "3.6.0", "3.6.0-dev"]
+        ],
+    )
+
+    winners = SQLiteStorage.select_best_releases_by_channel(
+        [release],
+        [
+            Channel(
+                name="stable",
+                exclude_pattern=r".*dev.*",
+                tracker_source_id=7,
+                source_type="container",
+            ),
+            Channel(
+                name="prerelease",
+                include_pattern=r".*dev.*",
+                tracker_source_id=7,
+                source_type="container",
+            ),
+        ],
+        use_source_aliases=True,
+    )
+
+    assert set(winners) == {"stable", "prerelease"}
+    assert winners["stable"].version == logical_version
+    assert winners["prerelease"].version == logical_version
+    assert (
+        SQLiteStorage.select_best_releases_by_channel(
+            [release],
+            [
+                Channel(
+                    name="stable",
+                    tracker_source_id=8,
+                    source_type="container",
+                )
+            ],
+            use_source_aliases=True,
+        )
+        == {}
+    )
 
 
 @pytest.mark.asyncio

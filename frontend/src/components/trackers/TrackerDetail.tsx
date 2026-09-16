@@ -1,18 +1,21 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { FileText, Inbox } from "lucide-react"
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
+import { ChevronDown, Copy, FileText, Inbox } from "lucide-react"
 import { useTranslation } from "react-i18next"
+import { toast } from "sonner"
 
 import type {
     AggregateTracker,
     ReleaseNotesSubject,
     TrackerCurrentSourceContribution,
 } from "@/api/types"
+import { useDateFormatter } from "@/hooks/use-date-formatter"
 import {
     useTracker,
     useTrackerCurrentView,
     useTrackerReleaseHistory,
 } from "@/hooks/queries"
 import {
+    buildTrackerAliasTableRows,
     buildTrackerHistoryMatrixPresentationModel,
     getPreferredTrackerCurrentContributionForRow,
 } from "@/components/trackers/canonicalReleaseMatrixModel"
@@ -27,6 +30,13 @@ import {
     CardTitle,
 } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableRow,
+} from "@/components/ui/table"
 import { getTrackerChannelConfigValueLabel } from "./trackerDetailHelpers"
 
 function getTrackerChannelTypeLabel(
@@ -75,10 +85,26 @@ interface TrackerDetailProps {
     refreshKey: number
 }
 
+function normalizeArtifactDigest(digest: string): string {
+    return /^[0-9a-f]{64}$/i.test(digest) ? `sha256:${digest}` : digest
+}
+
+function formatArtifactDigestPreview(digest: string): string {
+    const normalized = normalizeArtifactDigest(digest)
+    const separatorIndex = normalized.indexOf(":")
+    const prefix = separatorIndex >= 0 ? normalized.slice(0, separatorIndex + 1) : ""
+    const value = separatorIndex >= 0 ? normalized.slice(separatorIndex + 1) : normalized
+    if (value.length <= 18) return normalized
+    return `${prefix}${value.slice(0, 8)}…${value.slice(-6)}`
+}
+
 export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
     const { t } = useTranslation()
+    const formatDate = useDateFormatter()
     const [selectedRelease, setSelectedRelease] = useState<ReleaseNotesSubject | null>(null)
     const [releaseNotesOpen, setReleaseNotesOpen] = useState(false)
+    const [expandedVersionIdentity, setExpandedVersionIdentity] = useState<string | null | undefined>(undefined)
+    const [expandedArtifactAliases, setExpandedArtifactAliases] = useState<Set<string>>(() => new Set())
     const trackerQuery = useTracker(trackerName)
     const trackerCurrentViewQuery = useTrackerCurrentView(trackerName)
     const trackerReleaseHistoryQuery = useTrackerReleaseHistory(trackerName, { limit: 100 })
@@ -101,6 +127,28 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
         refetchTrackerReleaseHistory(),
     ]), [refetchTracker, refetchTrackerCurrentView, refetchTrackerReleaseHistory])
 
+
+    const copyArtifactDigest = useCallback(async (digest: string) => {
+        try {
+            await navigator.clipboard.writeText(digest)
+            toast.success(t("trackers.aggregate.detail.digestCopied"))
+        } catch {
+            toast.error(t("common.unexpectedError"))
+        }
+    }, [t])
+
+    const toggleArtifactAliases = useCallback((artifactKey: string) => {
+        setExpandedArtifactAliases((current) => {
+            const next = new Set(current)
+            if (next.has(artifactKey)) {
+                next.delete(artifactKey)
+            } else {
+                next.add(artifactKey)
+            }
+            return next
+        })
+    }, [])
+
     useEffect(() => {
         if (!trackerName) return
         void refetchDetailQueries()
@@ -117,6 +165,11 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
                 : null,
         [tracker, trackerReleaseHistoryQuery.data],
     )
+    const effectiveExpandedVersionIdentity = expandedVersionIdentity === null
+        ? null
+        : versionViewMatrixModel?.rows.some((row) => row.identityKey === expandedVersionIdentity)
+            ? expandedVersionIdentity
+            : versionViewMatrixModel?.rows[0]?.identityKey ?? null
 
     if (!trackerName) {
         return (
@@ -321,80 +374,304 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
                             {t("trackers.aggregate.detail.emptyCanonical")}
                         </div>
                     ) : (
-                        <ul className="space-y-1.5">
-                            {versionViewMatrixModel.rows.map((row) => {
-                                const preferredContribution = getPreferredTrackerCurrentContributionForRow({
-                                    source_contributions: row.sourceContributions,
-                                })
-                                const releaseForNotes = preferredContribution
-                                    ? mapContributionToReleaseNotesSubject(
-                                        preferredContribution,
-                                        tracker.name,
-                                        row.selectedChannelKeys,
-                                    )
-                                    : null
-                                const canViewReleaseNotes = Boolean(releaseForNotes?.body?.trim())
+                        <div className="overflow-hidden rounded-lg border border-border/60">
+                            <Table className="table-fixed" containerClassName="overflow-hidden">
+                                <TableBody>
+                                    {versionViewMatrixModel.rows.map((row) => {
+                                        const preferredContribution = getPreferredTrackerCurrentContributionForRow({
+                                            source_contributions: row.sourceContributions,
+                                        })
+                                        const releaseForNotes = preferredContribution
+                                            ? mapContributionToReleaseNotesSubject(
+                                                preferredContribution,
+                                                tracker.name,
+                                                row.selectedChannelKeys,
+                                            )
+                                            : null
+                                        const canViewReleaseNotes = Boolean(releaseForNotes?.body?.trim())
+                                        const isExpanded = effectiveExpandedVersionIdentity === row.identityKey
+                                        const aliasRows = buildTrackerAliasTableRows(row)
+                                        const artifacts = [...row.artifacts].sort((left, right) => {
+                                            const typeComparison =
+                                                (left.artifact_type === "container_image" ? 0 : 1) -
+                                                (right.artifact_type === "container_image" ? 0 : 1)
+                                            if (typeComparison !== 0) return typeComparison
+                                            const leftTime = left.published_at
+                                                ? Date.parse(left.published_at)
+                                                : Number.NEGATIVE_INFINITY
+                                            const rightTime = right.published_at
+                                                ? Date.parse(right.published_at)
+                                                : Number.NEGATIVE_INFINITY
+                                            return rightTime - leftTime
+                                        })
+                                        const sourceTypesByKey = new Map(
+                                            row.sourceContributions.map((contribution) => [
+                                                contribution.source_key,
+                                                contribution.source_type,
+                                            ]),
+                                        )
 
-                                return (
-                                    <li
-                                        key={row.identityKey}
-                                        className="group flex items-center gap-3 rounded-lg border border-border/60 bg-muted/10 px-3 py-2 transition-colors hover:bg-muted/30"
-                                    >
-                                        {/* Canonical version. */}
-                                        <div className="flex min-w-0 flex-1 items-center gap-2">
-                                            <span
-                                                className="truncate font-mono text-sm font-semibold text-foreground"
-                                                title={row.displayVersion}
-                                            >
-                                                {row.displayVersion}
-                                            </span>
-                                            {row.helmChartVersion ? (
-                                                <Badge
-                                                    variant="outline"
-                                                    className="h-5 shrink-0 gap-1 border-border/60 bg-background/80 px-1.5 text-[10px] font-normal"
-                                                >
-                                                    <span className="font-medium uppercase tracking-wide text-muted-foreground">
-                                                        {t("trackers.aggregate.detail.helmChartVersionLabel")}
-                                                    </span>
-                                                    <span className="font-mono text-foreground/80">
-                                                        {row.helmChartVersion}
-                                                    </span>
-                                                </Badge>
-                                            ) : null}
-                                        </div>
+                                        return (
+                                            <Fragment key={row.identityKey}>
+                                                <TableRow className="bg-muted/30 hover:bg-muted/40">
+                                                    <TableCell colSpan={4} className="whitespace-normal p-0">
+                                                        <div className="flex min-w-0 items-center gap-2 px-3 py-2">
+                                                            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                                                                <span
+                                                                    className="max-w-full truncate font-mono text-sm font-semibold text-foreground"
+                                                                >
+                                                                    {row.displayVersion}
+                                                                </span>
+                                                                <span className="text-[10px] text-muted-foreground">
+                                                                    {t("trackers.aggregate.detail.versionDetailsSummary", {
+                                                                        artifacts: artifacts.length,
+                                                                        aliases: aliasRows.length,
+                                                                    })}
+                                                                </span>
+                                                            </div>
+                                                            <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1">
+                                                                {row.sourceTypeBadges.map((sourceType) => (
+                                                                    <Badge
+                                                                        key={`${row.identityKey}-${sourceType}`}
+                                                                        variant="outline"
+                                                                        className="h-5 border-border/60 bg-background/80 text-[10px] uppercase tracking-wide"
+                                                                    >
+                                                                        {getTrackerChannelTypeLabel(sourceType, t)}
+                                                                    </Badge>
+                                                                ))}
+                                                            </div>
+                                                            <Button
+                                                                type="button"
+                                                                variant="ghost"
+                                                                size="icon"
+                                                                onClick={() => setExpandedVersionIdentity(
+                                                                    isExpanded ? null : row.identityKey,
+                                                                )}
+                                                                aria-expanded={isExpanded}
+                                                                aria-label={isExpanded
+                                                                    ? t("trackers.aggregate.detail.collapseVersion")
+                                                                    : t("trackers.aggregate.detail.expandVersion")}
+                                                                title={isExpanded
+                                                                    ? t("trackers.aggregate.detail.collapseVersion")
+                                                                    : t("trackers.aggregate.detail.expandVersion")}
+                                                                className="h-9 w-9 shrink-0"
+                                                            >
+                                                                <ChevronDown
+                                                                    className={`h-4 w-4 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                                                                    aria-hidden="true"
+                                                                />
+                                                            </Button>
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="icon"
+                                                                disabled={!canViewReleaseNotes}
+                                                                onClick={() => {
+                                                                    if (!releaseForNotes) return
+                                                                    setSelectedRelease(releaseForNotes)
+                                                                    setReleaseNotesOpen(true)
+                                                                }}
+                                                                title={t("dashboard.recentReleases.viewNotes")}
+                                                                aria-label={t("dashboard.recentReleases.viewNotes")}
+                                                                className="h-9 w-9 shrink-0"
+                                                            >
+                                                                <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+                                                            </Button>
+                                                        </div>
+                                                    </TableCell>
+                                                </TableRow>
+                                                {isExpanded ? (
+                                                    <TableRow className="bg-muted/20 hover:bg-muted/20">
+                                                        <TableHead
+                                                            scope="col"
+                                                            className="h-8 w-[28%] whitespace-normal text-[10px] md:w-[20%] xl:w-[18%]"
+                                                        >
+                                                            {t("trackers.aggregate.detail.artifactTable.source")}
+                                                        </TableHead>
+                                                        <TableHead
+                                                            scope="col"
+                                                            className="h-8 w-[72%] whitespace-normal text-[10px] md:w-[50%] xl:w-[42%]"
+                                                        >
+                                                            {t("trackers.aggregate.detail.artifactTable.version")}
+                                                        </TableHead>
+                                                        <TableHead
+                                                            scope="col"
+                                                            className="hidden h-8 whitespace-normal text-[10px] md:table-cell md:w-[30%] xl:w-[25%]"
+                                                        >
+                                                            {t("trackers.aggregate.detail.artifactTable.digest")}
+                                                        </TableHead>
+                                                        <TableHead
+                                                            scope="col"
+                                                            className="hidden h-8 whitespace-normal text-[10px] xl:table-cell xl:w-[15%]"
+                                                        >
+                                                            {t("trackers.aggregate.detail.artifactTable.publishedAt")}
+                                                        </TableHead>
+                                                    </TableRow>
+                                                ) : null}
 
-                                        {/* Source type badges showing where this canonical
-                                            version came from. */}
-                                        <div className="flex shrink flex-wrap items-center justify-end gap-1">
-                                            {row.sourceTypeBadges.map((sourceType, index) => (
-                                                <Badge
-                                                    key={`${row.identityKey}-${sourceType}-${index}`}
-                                                    variant="outline"
-                                                    className="h-5 border-border/60 bg-background/80 text-[10px] uppercase tracking-wide"
-                                                >
-                                                    {getTrackerChannelTypeLabel(sourceType, t)}
-                                                </Badge>
-                                            ))}
-                                        </div>
+                                                {isExpanded && (artifacts.length === 0 ? (
+                                                    <TableRow>
+                                                        <TableCell
+                                                            colSpan={4}
+                                                            className="whitespace-normal py-4 text-center text-xs text-muted-foreground"
+                                                        >
+                                                            {t("trackers.aggregate.detail.noArtifactRevisions")}
+                                                        </TableCell>
+                                                    </TableRow>
+                                                ) : artifacts.map((artifact, artifactIndex) => {
+                                                    const digest = normalizeArtifactDigest(artifact.digest)
+                                                    const artifactKey = [
+                                                        row.identityKey,
+                                                        artifact.artifact_type ?? "container_image",
+                                                        digest,
+                                                        artifactIndex,
+                                                    ].join(":")
+                                                    const artifactVersion = artifact.version ?? row.displayVersion
+                                                    const aliases = [...new Set([
+                                                        ...artifact.aliases,
+                                                        ...aliasRows
+                                                            .filter((aliasRow) =>
+                                                                aliasRow.artifactDigest
+                                                                && normalizeArtifactDigest(aliasRow.artifactDigest) === digest,
+                                                            )
+                                                            .map((aliasRow) => aliasRow.alias),
+                                                    ])]
+                                                        .filter((alias) => alias !== artifactVersion)
+                                                        .sort((left, right) =>
+                                                            left.localeCompare(right, undefined, { numeric: true }),
+                                                        )
+                                                    const aliasesExpanded = expandedArtifactAliases.has(artifactKey)
+                                                    const visibleAliases = aliasesExpanded ? aliases : aliases.slice(0, 2)
+                                                    const hiddenAliasCount = Math.max(aliases.length - visibleAliases.length, 0)
+                                                    const fallbackSourceType = artifact.artifact_type === "helm_chart"
+                                                        ? "helm"
+                                                        : "container"
+                                                    const artifactSourceTypes = [...new Set(
+                                                        artifact.source_keys.length > 0
+                                                            ? artifact.source_keys.map((sourceKey) =>
+                                                                sourceTypesByKey.get(sourceKey) ?? fallbackSourceType,
+                                                            )
+                                                            : [fallbackSourceType],
+                                                    )]
 
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            disabled={!canViewReleaseNotes}
-                                            onClick={() => {
-                                                if (!releaseForNotes) return
-                                                setSelectedRelease(releaseForNotes)
-                                                setReleaseNotesOpen(true)
-                                            }}
-                                            title={t("dashboard.recentReleases.viewNotes")}
-                                            className="h-7 w-7 shrink-0"
-                                        >
-                                            <FileText className="h-3.5 w-3.5" />
-                                        </Button>
-                                    </li>
-                                )
-                            })}
-                        </ul>
+                                                    return (
+                                                        <TableRow key={artifactKey}>
+                                                            <TableCell className="whitespace-normal align-middle">
+                                                                <ul className="space-y-1.5">
+                                                                    {artifactSourceTypes.map((sourceType) => (
+                                                                        <li key={`${artifactKey}-${sourceType}`} className="min-w-0">
+                                                                            <Badge
+                                                                                variant="secondary"
+                                                                                className="max-w-full font-normal"
+                                                                            >
+                                                                                <span className="truncate">
+                                                                                    {getTrackerChannelTypeLabel(sourceType, t)}
+                                                                                </span>
+                                                                            </Badge>
+                                                                        </li>
+                                                                    ))}
+                                                                </ul>
+                                                            </TableCell>
+                                                            <TableCell className="whitespace-normal align-middle">
+                                                                <ul className="min-w-0 space-y-1.5">
+                                                                    <li className="min-w-0">
+                                                                        <code
+                                                                            className="block truncate font-mono text-xs font-medium"
+                                                                        >
+                                                                            {artifactVersion}
+                                                                        </code>
+                                                                    </li>
+                                                                    {visibleAliases.map((alias) => (
+                                                                        <li key={alias} className="min-w-0">
+                                                                            <code className="block truncate font-mono text-xs text-muted-foreground">
+                                                                                {alias}
+                                                                            </code>
+                                                                        </li>
+                                                                    ))}
+                                                                    {aliases.length > 2 ? (
+                                                                        <li>
+                                                                            <Button
+                                                                                type="button"
+                                                                                variant="ghost"
+                                                                                className="h-8 px-2 text-[10px] text-muted-foreground"
+                                                                                onClick={() => toggleArtifactAliases(artifactKey)}
+                                                                                aria-expanded={aliasesExpanded}
+                                                                                aria-label={aliasesExpanded
+                                                                                    ? t("trackers.aggregate.detail.showFewerAliases")
+                                                                                    : t("trackers.aggregate.detail.showMoreAliases", {
+                                                                                        count: hiddenAliasCount,
+                                                                                    })}
+                                                                            >
+                                                                                {aliasesExpanded
+                                                                                    ? t("trackers.aggregate.detail.showFewerAliases")
+                                                                                    : `+${hiddenAliasCount}`}
+                                                                            </Button>
+                                                                        </li>
+                                                                    ) : null}
+                                                                </ul>
+                                                                <span
+                                                                    className="mt-1 block truncate text-[10px] text-muted-foreground xl:hidden"
+                                                                >
+                                                                    {artifact.published_at
+                                                                        ? formatDate(artifact.published_at)
+                                                                        : "—"}
+                                                                </span>
+                                                                <div className="mt-1 flex min-w-0 items-center gap-1 md:hidden">
+                                                                    <code
+                                                                        className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-foreground"
+                                                                        title={digest}
+                                                                    >
+                                                                        {formatArtifactDigestPreview(digest)}
+                                                                    </code>
+                                                                    <Button
+                                                                        type="button"
+                                                                        variant="ghost"
+                                                                        size="icon"
+                                                                        className="h-8 w-8 shrink-0"
+                                                                        onClick={() => void copyArtifactDigest(digest)}
+                                                                        aria-label={t("trackers.aggregate.detail.copyDigest")}
+                                                                        title={t("trackers.aggregate.detail.copyDigest")}
+                                                                    >
+                                                                        <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                                                                    </Button>
+                                                                </div>
+                                                            </TableCell>
+                                                            <TableCell className="hidden whitespace-normal align-middle md:table-cell">
+                                                                <div className="flex min-w-0 items-center gap-1">
+                                                                    <code
+                                                                        className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/80"
+                                                                        title={digest}
+                                                                    >
+                                                                        {formatArtifactDigestPreview(digest)}
+                                                                    </code>
+                                                                    <Button
+                                                                        type="button"
+                                                                        variant="ghost"
+                                                                        size="icon"
+                                                                        className="h-9 w-9 shrink-0"
+                                                                        onClick={() => void copyArtifactDigest(digest)}
+                                                                        aria-label={t("trackers.aggregate.detail.copyDigest")}
+                                                                        title={t("trackers.aggregate.detail.copyDigest")}
+                                                                    >
+                                                                        <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                                                                    </Button>
+                                                                </div>
+                                                            </TableCell>
+                                                            <TableCell
+                                                                className="hidden whitespace-normal align-middle text-xs text-muted-foreground xl:table-cell"
+                                                            >
+                                                                {artifact.published_at
+                                                                    ? formatDate(artifact.published_at)
+                                                                    : "—"}
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    )
+                                                }))}
+                                            </Fragment>
+                                        )
+                                    })}
+                                </TableBody>
+                            </Table>
+                        </div>
                     )}
                 </CardContent>
             </Card>

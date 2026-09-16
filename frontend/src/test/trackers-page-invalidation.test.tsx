@@ -85,6 +85,52 @@ describe("TrackersPage tracker invalidation", () => {
     localStorage.clear()
   })
 
+  it("restores and manually resizes the tracker master-detail panes", () => {
+    localStorage.setItem("settings.trackers.listWidthPercent", "44")
+    const queryClient = new QueryClient()
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <TrackersPage />
+      </QueryClientProvider>,
+    )
+
+    const separator = screen.getByRole("separator", { name: "trackers.resizePanels" })
+    expect(separator).toHaveAttribute("aria-valuenow", "44")
+
+    const splitPane = separator.parentElement as HTMLDivElement
+    vi.spyOn(splitPane, "getBoundingClientRect").mockReturnValue({
+      bottom: 600,
+      height: 600,
+      left: 0,
+      right: 1000,
+      top: 0,
+      width: 1000,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    let pointerCaptured = false
+    Object.defineProperties(separator, {
+      setPointerCapture: { value: () => { pointerCaptured = true } },
+      hasPointerCapture: { value: () => pointerCaptured },
+      releasePointerCapture: { value: () => { pointerCaptured = false } },
+    })
+
+    fireEvent.pointerDown(separator, { pointerId: 1, clientX: 440 })
+    fireEvent.pointerMove(separator, { pointerId: 1, clientX: 500 })
+    expect(separator).toHaveAttribute("aria-valuenow", "50")
+    fireEvent.pointerUp(separator, { pointerId: 1, clientX: 500 })
+    expect(localStorage.getItem("settings.trackers.listWidthPercent")).toBe("50")
+
+    fireEvent.keyDown(separator, { key: "ArrowRight" })
+    expect(separator).toHaveAttribute("aria-valuenow", "52")
+    expect(localStorage.getItem("settings.trackers.listWidthPercent")).toBe("52")
+
+    fireEvent.doubleClick(separator)
+    expect(separator).toHaveAttribute("aria-valuenow", "60")
+  })
+
   it("invalidates the full trackers query family after dialog success", async () => {
     const queryClient = new QueryClient()
     vi.spyOn(queryClient, "invalidateQueries").mockImplementation(invalidateQueries)

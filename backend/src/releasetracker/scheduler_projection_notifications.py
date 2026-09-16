@@ -67,6 +67,7 @@ class ReleaseSchedulerProjectionNotifications:
                     channels,
                     sort_mode=sort_mode,
                     use_immutable_identity=True,
+                    use_source_aliases=True,
                 ).values()
             )
         else:
@@ -86,17 +87,13 @@ class ReleaseSchedulerProjectionNotifications:
             sort_mode,
         )
         current_best_identity = (
-            self.storage.release_identity_key_for_source(current_best)
-            if current_best is not None
-            else None
+            self._projection_release_identity(current_best) if current_best is not None else None
         )
         previous_best_identity = (
-            self.storage.release_identity_key_for_source(previous_best)
-            if previous_best is not None
-            else None
+            self._projection_release_identity(previous_best) if previous_best is not None else None
         )
 
-        winner_changed = current_best_identity != previous_best_identity
+        winner_changed = self._projection_release_changed(previous_best, current_best)
 
         # Always reconcile bound executor targets. A stable or canary change can
         # be masked by a newer prerelease in the tracker-wide winner.
@@ -122,6 +119,31 @@ class ReleaseSchedulerProjectionNotifications:
                 await self._send_notifications(NotificationEvent.NEW_RELEASE, current_best)
 
         return projection_winners, current_best.version if current_best is not None else None
+
+    def _projection_release_identity(self, release: Release) -> str:
+        # Notifications describe logical releases, not deployment artifacts. A new
+        # repository release may intentionally reuse an existing image digest.
+        if release.id is not None:
+            return f"history:{release.id}"
+        return self.storage.release_identity_key_for_source(release)
+
+    def _projection_release_changed(
+        self, previous: Release | None, current: Release | None
+    ) -> bool:
+        if previous is None or current is None:
+            return previous is not current
+        if self._projection_release_identity(previous) != self._projection_release_identity(
+            current
+        ):
+            return True
+        previous_digest = str(previous.artifact_digest or "").strip().lower() or None
+        current_digest = str(current.artifact_digest or "").strip().lower() or None
+        # None -> digest is metadata enrichment after alias discovery, not a republish.
+        return (
+            previous_digest is not None
+            and current_digest is not None
+            and previous_digest != current_digest
+        )
 
     async def _send_notifications(self, event: str, release):
         """Send a notification with fresh notifiers from the database each time."""

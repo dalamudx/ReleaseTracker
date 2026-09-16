@@ -37,6 +37,11 @@ class Channel(BaseModel):
     # Whether this channel is enabled
     enabled: bool = True
 
+    # Runtime-only source identity retained when aggregate channels are flattened.
+    source_type: str | None = Field(default=None, exclude=True)
+    source_key: str | None = Field(default=None, exclude=True)
+    tracker_source_id: int | None = Field(default=None, exclude=True)
+
 
 def flatten_release_channels(release_channels: list[ReleaseChannel]) -> list[Channel]:
     return [

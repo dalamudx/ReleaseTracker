@@ -60,7 +60,9 @@ class FakeAdapter(MutableFakeRuntimeAdapter):
         invalid_snapshot: bool = False,
         fail_after_destructive_update: bool = False,
         recovery_should_fail: bool = False,
+        current_digest: str | None = None,
     ):
+        self.current_digest = current_digest
         super().__init__(
             runtime_connection,
             current_image=current_image,
@@ -76,6 +78,10 @@ class FakeAdapter(MutableFakeRuntimeAdapter):
             recovery_old_image="broken:partial",
             recovery_message="runtime recovered from snapshot",
         )
+
+    async def get_current_image_digest(self, target_ref):
+        del target_ref
+        return self.current_digest
 
 
 class SlowFakeAdapter(FakeAdapter):
@@ -2946,6 +2952,83 @@ async def test_noop_when_runtime_image_matches_target(storage):
     assert history[0].message == "runtime already at target image"
     assert history[0].from_version == "ghcr.io/acme/worker:3.2.1"
     assert history[0].to_version == "ghcr.io/acme/worker:3.2.1"
+
+
+@pytest.mark.asyncio
+async def test_docker_adapter_reads_repository_manifest_digest():
+    digest = "sha256:" + "d" * 64
+    container = FakeDockerContainer("digest-container", "digest-container", "app:dev")
+    container.image.attrs["RepoDigests"] = [f"registry.example.com/app@{digest}"]
+    adapter = DockerRuntimeAdapter(
+        RuntimeConnectionConfig(
+            name="prod-docker",
+            type="docker",
+            config={"socket": "unix:///var/run/docker.sock"},
+            secrets={},
+        ),
+        client=FakeDockerClient([container]),
+    )
+
+    assert (
+        await adapter.get_current_image_digest(
+            {"mode": "container", "container_id": "digest-container"}
+        )
+        == digest
+    )
+
+
+@pytest.mark.asyncio
+async def test_noop_when_runtime_tag_differs_but_manifest_digest_matches(storage):
+    runtime_id = await _create_runtime_connection(storage)
+    tracker_name = "worker-artifact"
+    await save_docker_tracker_config(
+        storage,
+        name=tracker_name,
+        enabled=True,
+        image="worker",
+        registry="registry-1.docker.io",
+        channels=[config_module.Channel(name="stable", enabled=True, type="release")],
+    )
+    await _create_tracker_release(storage, tracker_name, "3.2.1")
+    executor_id = await storage.save_executor_config(
+        ExecutorConfig(
+            name="docker-worker-artifact",
+            runtime_type="docker",
+            runtime_connection_id=runtime_id,
+            tracker_name=tracker_name,
+            tracker_source_id=await _get_tracker_source_id(storage, tracker_name),
+            channel_name="stable",
+            enabled=True,
+            update_mode="immediate",
+            target_ref={
+                "mode": "container",
+                "container_id": "container-artifact",
+                "image": "worker",
+            },
+        )
+    )
+    digest = "sha256:" + "a" * 64
+    scheduler = ExecutorScheduler(storage)
+    _mock_scheduler_target(scheduler, ("3.2.1", digest))
+    adapter = FakeAdapter(
+        RuntimeConnectionConfig(
+            name="prod-docker",
+            type="docker",
+            config={"socket": "unix:///var/run/docker.sock"},
+            secrets={},
+        ),
+        current_image="ghcr.io/acme/worker:stable",
+        current_digest=digest,
+    )
+    scheduler._adapters[executor_id] = adapter
+
+    outcome = await scheduler._execute_executor(
+        await storage.get_executor_config(executor_id), manual=False
+    )
+
+    assert outcome.status == "skipped"
+    assert outcome.message == "runtime already at target artifact"
+    assert adapter.update_calls == []
 
 
 @pytest.mark.asyncio

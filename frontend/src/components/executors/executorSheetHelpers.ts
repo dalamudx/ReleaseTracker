@@ -105,6 +105,7 @@ export interface ExecutorReviewImageChange {
     sourceImage: string
     targetImage: string
     targetVersion: string | null
+    deployAlias?: string | null
 }
 
 export type ExecutorDiscoveryTargetGroup = ExecutorDiscoverySingleTargetGroup
@@ -523,11 +524,19 @@ function getReleaseChannelStoredVersion(channel: ReleaseChannelInput | undefined
         return null
     }
 
-    const version = (channel as { last_version?: unknown; latest_version?: unknown; current_version?: unknown }).last_version
+    const version = channel.deploy_alias
+        ?? (channel as { last_version?: unknown; latest_version?: unknown; current_version?: unknown }).last_version
         ?? (channel as { last_version?: unknown; latest_version?: unknown; current_version?: unknown }).latest_version
         ?? (channel as { last_version?: unknown; latest_version?: unknown; current_version?: unknown }).current_version
 
     return typeof version === "string" && version.trim().length > 0 ? version.trim() : null
+}
+
+function getReleaseChannelDisplayVersion(channel: ReleaseChannelInput | undefined): string | null {
+    const displayVersion = channel?.display_version
+    return typeof displayVersion === "string" && displayVersion.trim().length > 0
+        ? displayVersion.trim()
+        : getReleaseChannelStoredVersion(channel)
 }
 
 function getReleaseChannelStoredDigest(channel: ReleaseChannelInput | undefined): string | null {
@@ -646,12 +655,15 @@ export function buildExecutorReviewImageChanges({
         return serviceBindings.map((binding) => {
             const sourceImage = targetDisplay.groupedServices?.find((item) => normalizeExecutorServiceKey(item.service) === normalizeExecutorServiceKey(binding.service))?.image ?? "-"
             const { selectedBindableSource } = resolveExecutorServiceBinding(binding, trackers)
-            const targetVersion = resolveExecutorBindingTargetVersion(binding, trackers)
+            const deployAlias = resolveExecutorBindingTargetVersion(binding, trackers)
+            const targetVersion = getReleaseChannelDisplayVersion((selectedBindableSource?.release_channels ?? []).find(
+                (channel) => channel.name === binding.channel_name && channel.enabled,
+            ))
             const targetDigest = resolveExecutorBindingTargetDigest(binding, trackers)
             const trackerImage = buildExecutorTrackerImageBase(selectedBindableSource?.source_config)
             const targetBaseImage = imageSelectionMode === "use_tracker_image_and_tag" ? trackerImage : sourceImage
-            const targetImage = targetVersion && targetBaseImage && targetBaseImage !== "-"
-                ? buildExecutorImageTargetPreviewValue(targetBaseImage, targetVersion, targetDigest, imageReferenceMode)
+            const targetImage = deployAlias && targetBaseImage && targetBaseImage !== "-"
+                ? buildExecutorImageTargetPreviewValue(targetBaseImage, deployAlias, targetDigest, imageReferenceMode)
                 : ""
 
             return {
@@ -659,6 +671,7 @@ export function buildExecutorReviewImageChanges({
                 sourceImage,
                 targetImage,
                 targetVersion,
+                ...(deployAlias !== targetVersion ? { deployAlias } : {}),
             }
         })
     }
@@ -669,12 +682,15 @@ export function buildExecutorReviewImageChanges({
     }
 
     const { selectedBindableSource } = resolveExecutorServiceBinding(singleContainerBinding, trackers)
-    const targetVersion = resolveExecutorBindingTargetVersion(singleContainerBinding, trackers)
+    const deployAlias = resolveExecutorBindingTargetVersion(singleContainerBinding, trackers)
+    const targetVersion = getReleaseChannelDisplayVersion((selectedBindableSource?.release_channels ?? []).find(
+        (channel) => channel.name === singleContainerBinding.channel_name && channel.enabled,
+    ))
     const targetDigest = resolveExecutorBindingTargetDigest(singleContainerBinding, trackers)
     const trackerImage = buildExecutorTrackerImageBase(selectedBindableSource?.source_config)
     const targetBaseImage = imageSelectionMode === "use_tracker_image_and_tag" ? trackerImage : sourceImage
-    const targetImage = targetVersion && targetBaseImage
-        ? buildExecutorImageTargetPreviewValue(targetBaseImage, targetVersion, targetDigest, imageReferenceMode)
+    const targetImage = deployAlias && targetBaseImage
+        ? buildExecutorImageTargetPreviewValue(targetBaseImage, deployAlias, targetDigest, imageReferenceMode)
         : ""
 
     return [
@@ -683,6 +699,7 @@ export function buildExecutorReviewImageChanges({
             sourceImage,
             targetImage,
             targetVersion,
+            ...(deployAlias !== targetVersion ? { deployAlias } : {}),
         },
     ]
 }

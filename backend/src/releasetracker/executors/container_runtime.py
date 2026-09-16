@@ -64,6 +64,21 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
             raise ValueError("Unable to resolve container image")
         return image
 
+    async def get_current_image_digest(self, target_ref: dict[str, Any]) -> str | None:
+        container = self._get_container(target_ref)
+        attrs = getattr(container, "attrs", None) or {}
+        candidates: list[Any] = [attrs.get("ImageDigest"), attrs.get("Digest")]
+        image = getattr(container, "image", None)
+        image_attrs = getattr(image, "attrs", None) or {}
+        candidates.extend(image_attrs.get("RepoDigests") or [])
+        for candidate in candidates:
+            value = str(candidate or "").strip().lower()
+            if "@" in value:
+                value = value.rsplit("@", 1)[1]
+            if value.startswith("sha256:") and len(value) == 71:
+                return value
+        return None
+
     async def capture_snapshot(
         self, target_ref: dict[str, Any], current_image: str
     ) -> dict[str, Any]:

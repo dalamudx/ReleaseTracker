@@ -194,6 +194,7 @@ class ReleaseSchedulerAggregateSupport:
                     tracker_config.channels,
                     sort_mode=sort_mode,
                     use_immutable_identity=True,
+                    use_source_aliases=True,
                 ).values()
             )
         else:

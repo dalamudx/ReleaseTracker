@@ -44,6 +44,8 @@ def test_apply_dbmate_migrations_builds_full_schema(tmp_path):
         assert "executor_snapshots" in tables
         assert "executor_service_bindings" in tables
         assert "executor_desired_state" in tables
+        assert "source_release_aliases" in tables
+        assert "source_release_alias_run_observations" in tables
         assert "schema_migrations" in tables
 
         oauth_state_info = conn.execute("PRAGMA table_info(oauth_states)").fetchall()
@@ -102,6 +104,7 @@ def test_apply_dbmate_migrations_builds_full_schema(tmp_path):
         }
         assert "immutable_key" in source_history_columns
         assert "immutable_key" in tracker_history_columns
+        assert "merged_into_tracker_release_history_id" in tracker_history_columns
         assert "immutable_key" in current_release_columns
 
         unique_indexes_by_table = {

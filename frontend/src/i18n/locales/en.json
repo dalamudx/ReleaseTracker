@@ -348,6 +348,7 @@
     "description": "Configure and manage release trackers",
     "addNew": "Add Tracker",
     "searchPlaceholder": "Search by name, description, or source",
+    "resizePanels": "Resize tracker list and detail panels",
     "table": {
       "name": "Name",
       "type": "Type",
@@ -491,8 +492,20 @@
         "releaseViewsDescription": "See how aggregated versions map across child channels.",
         "canonicalDiagramDescription": "",
         "canonicalDiagramVersionLabel": "Comparison version (merged)",
-        "helmChartVersion": "Chart version: {{version}}",
-        "helmChartVersionLabel": "Chart",
+        "versionDetailsSummary": "{{artifacts}} associated artifact(s) · {{aliases}} tag(s) / alias(es)",
+        "expandVersion": "Expand artifacts for this version",
+        "collapseVersion": "Collapse artifacts for this version",
+        "copyDigest": "Copy full digest",
+        "digestCopied": "Digest copied",
+        "showMoreAliases": "Show {{count}} more tags or aliases",
+        "showFewerAliases": "Collapse tags and aliases",
+        "noArtifactRevisions": "No artifacts are associated with this version.",
+        "artifactTable": {
+          "version": "Artifact version",
+          "digest": "Digest",
+          "publishedAt": "Published at",
+          "source": "Artifact source"
+        },
         "emptyCanonical": "No aggregated versions are available yet.",
         "channelType": {
           "github": "GitHub",
@@ -711,6 +724,7 @@
       "imageChanges": "Image changes",
       "versionChanges": "Version changes",
       "targetVersion": "Target version",
+      "deployAlias": "Deployment tag",
       "targetImageDeferred": "Resolved at run time",
       "targetVersionUnavailable": "Cannot determine the target version: no current version is available for the selected source and channel.",
       "maintenanceSummary": "Maintenance window: {{timezone}}, {{start}}–{{end}}.",

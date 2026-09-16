@@ -16,6 +16,15 @@ from pydantic import (
 from .services.secure_urls import require_https_url
 
 
+class ReleaseAliasReference(BaseModel):
+    tracker_source_id: int
+    source_type: str
+    alias: str
+    prerelease: bool = False
+    published_at: datetime
+    digest: str | None = None
+
+
 class Release(BaseModel):
     """Release model"""
 
@@ -28,12 +37,16 @@ class Release(BaseModel):
     app_version: str | None = None
     chart_version: str | None = None
     published_at: datetime
+    published_at_source: str | None = None
     url: str
     changelog_url: str | None = None
     prerelease: bool = False
     body: str | None = None  # Release notes content
     channel_name: str | None = None  # Channel name (stable/prerelease/beta/canary)
-    commit_sha: str | None = None  # Git commit SHA
+    commit_sha: str | None = None  # Git commit SHA or container manifest digest
+    artifact_digest: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+    alias_references: list[ReleaseAliasReference] = Field(default_factory=list)
     republish_count: int = 0  # Republish count
     created_at: datetime = Field(default_factory=datetime.now)
 
@@ -330,6 +343,28 @@ class SourceReleaseRunObservation(BaseModel):
     id: int | None = None
     source_fetch_run_id: int
     source_release_history_id: int
+    observed_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class SourceReleaseAlias(BaseModel):
+    id: int | None = None
+    source_release_history_id: int
+    tracker_source_id: int
+    alias: str
+    normalized_alias: str
+    channel_name: str | None = None
+    first_source_fetch_run_id: int
+    last_source_fetch_run_id: int
+    first_observed_at: datetime
+    last_observed_at: datetime
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class SourceReleaseAliasRunObservation(BaseModel):
+    source_fetch_run_id: int
+    source_release_alias_id: int
     observed_at: datetime = Field(default_factory=datetime.now)
     created_at: datetime = Field(default_factory=datetime.now)
 

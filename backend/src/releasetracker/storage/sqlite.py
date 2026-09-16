@@ -21,6 +21,7 @@ from . import (
     sqlite_credentials,
     sqlite_runtime_executors,
     sqlite_release_history,
+    sqlite_release_aliases,
     sqlite_current_releases,
     sqlite_source_observations,
     sqlite_release_queries,
@@ -805,6 +806,72 @@ class SQLiteStorage:
             (aggregate_tracker_id,),
         )
 
+    @staticmethod
+    def _is_floating_release_alias(value: str) -> bool:
+        return value.strip().lower() in {
+            "latest",
+            "stable",
+            "dev",
+            "main",
+            "master",
+            "edge",
+            "nightly",
+        }
+
+    def _group_canonical_observation_rows(
+        self,
+        observation_rows: list[aiosqlite.Row],
+    ) -> dict[str, list[aiosqlite.Row]]:
+        """Correlate container aliases with authoritative release tags.
+
+        Digest remains the immutable artifact identity. An exact, non-floating
+        alias may associate that artifact with one logical repository release.
+        Ambiguous matches deliberately remain separate.
+        """
+        repository_types = {"github", "gitlab", "gitea"}
+        release_rows_by_key: dict[str, list[aiosqlite.Row]] = {}
+        artifact_rows_by_key: dict[str, list[aiosqlite.Row]] = {}
+        other_rows: list[aiosqlite.Row] = []
+
+        for row in observation_rows:
+            source_type = row["source_type"]
+            version = self._normalize_release_value(
+                row["tag_name"]
+            ) or self._normalize_release_value(row["version"])
+            if source_type in repository_types and version is not None:
+                key = self._canonical_key_for_version(version).lower()
+                release_rows_by_key.setdefault(key, []).append(row)
+            elif source_type == "container":
+                artifact_rows_by_key.setdefault(
+                    self._source_observation_identity_key(row), []
+                ).append(row)
+            else:
+                other_rows.append(row)
+
+        groups: dict[str, list[aiosqlite.Row]] = {
+            key: list(rows) for key, rows in release_rows_by_key.items()
+        }
+        for artifact_key, artifact_rows in artifact_rows_by_key.items():
+            matched_keys = {
+                self._canonical_key_for_version(alias).lower()
+                for row in artifact_rows
+                if (
+                    alias := (
+                        self._normalize_release_value(row["tag_name"])
+                        or self._normalize_release_value(row["version"])
+                    )
+                )
+                is not None
+                and not self._is_floating_release_alias(alias)
+                and self._canonical_key_for_version(alias).lower() in release_rows_by_key
+            }
+            group_key = next(iter(matched_keys)) if len(matched_keys) == 1 else artifact_key
+            groups.setdefault(group_key, []).extend(artifact_rows)
+
+        for row in other_rows:
+            groups.setdefault(self._source_observation_identity_key(row), []).append(row)
+        return groups
+
     async def _rebuild_canonical_releases_for_tracker(
         self,
         db: aiosqlite.Connection,
@@ -813,7 +880,7 @@ class SQLiteStorage:
         observation_rows = await (
             await db.execute(
                 """
-                SELECT sro.*, ats.source_type
+                SELECT sro.*, ats.source_type, ats.source_rank
                 FROM source_release_observations sro
                 JOIN aggregate_tracker_sources ats ON ats.id = sro.tracker_source_id
                 WHERE ats.aggregate_tracker_id = ?
@@ -822,9 +889,8 @@ class SQLiteStorage:
                 (aggregate_tracker_id,),
             )
         ).fetchall()
-        current_canonical_keys = {
-            self._source_observation_identity_key(row) for row in observation_rows
-        }
+        observation_groups = self._group_canonical_observation_rows(observation_rows)
+        current_canonical_keys = set(observation_groups)
         existing_canonical_rows = await (
             await db.execute(
                 "SELECT id, canonical_key FROM canonical_releases WHERE aggregate_tracker_id = ?",
@@ -853,6 +919,7 @@ class SQLiteStorage:
                 aggregate_tracker_id,
                 canonical_key,
                 rebuilt_at,
+                observation_groups[canonical_key],
             )
 
     async def initialize(self):
@@ -951,6 +1018,8 @@ class SQLiteStorage:
             "source_fetch_runs",
             "source_release_history",
             "source_release_run_observations",
+            "source_release_aliases",
+            "source_release_alias_run_observations",
             "tracker_release_history",
             "tracker_release_history_sources",
             "tracker_current_releases",
@@ -1503,13 +1572,30 @@ class SQLiteStorage:
         aggregate_tracker_id: int,
         immutable_key: str,
         created_at: str,
+        observation_rows: list[aiosqlite.Row] | None = None,
     ) -> int:
-        primary_observation = await self._select_primary_canonical_observation(
-            db, aggregate_tracker_id, immutable_key
-        )
-        observation_rows = await self._list_canonical_version_observations(
-            db, aggregate_tracker_id, immutable_key
-        )
+        if observation_rows is None:
+            primary_observation = await self._select_primary_canonical_observation(
+                db, aggregate_tracker_id, immutable_key
+            )
+            observation_rows = await self._list_canonical_version_observations(
+                db, aggregate_tracker_id, immutable_key
+            )
+        else:
+            observation_rows = sorted(
+                observation_rows,
+                key=lambda row: (
+                    0 if row["source_type"] in {"github", "gitlab", "gitea"} else 1,
+                    row["source_rank"],
+                    -(
+                        datetime.fromisoformat(row["published_at"]).timestamp()
+                        if row["published_at"]
+                        else 0
+                    ),
+                    row["id"],
+                ),
+            )
+            primary_observation = observation_rows[0]
         display_version = primary_observation["version"]
         if self._canonical_key_for_version(display_version) == immutable_key:
             display_version = immutable_key
@@ -1784,6 +1870,20 @@ class SQLiteStorage:
             observed_at=observed_at,
         )
 
+    async def get_source_release_aliases_by_history_ids(
+        self, source_release_history_ids: list[int]
+    ) -> dict[int, list[dict[str, Any]]]:
+        return await sqlite_release_aliases.get_source_release_aliases_by_history_ids(
+            self, source_release_history_ids
+        )
+
+    async def get_source_release_aliases_for_source(
+        self, tracker_source_id: int
+    ) -> dict[int, list[dict[str, Any]]]:
+        return await sqlite_release_aliases.get_source_release_aliases_for_source(
+            self, tracker_source_id
+        )
+
     async def get_source_release_history_releases_by_source(
         self,
         tracker_source_id: int,
@@ -1808,6 +1908,29 @@ class SQLiteStorage:
     ) -> dict[str, str | None]:
         return await sqlite_release_history.get_source_release_history_digests(
             self, tracker_source_id, tag_names
+        )
+
+    async def get_correlated_release_candidates(
+        self, aggregate_tracker_id: int
+    ) -> list[dict[str, Any]]:
+        return await sqlite_release_history.get_correlated_release_candidates(
+            self, aggregate_tracker_id
+        )
+
+    async def merge_tracker_release_history_sources(
+        self,
+        *,
+        aggregate_tracker_id: int,
+        canonical_tracker_release_history_id: int,
+        source_history_ids: list[int],
+        artifact_digest: str | None,
+    ) -> None:
+        await sqlite_release_history.merge_tracker_release_history_sources(
+            self,
+            aggregate_tracker_id=aggregate_tracker_id,
+            canonical_tracker_release_history_id=canonical_tracker_release_history_id,
+            source_history_ids=source_history_ids,
+            artifact_digest=artifact_digest,
         )
 
     async def upsert_tracker_release_history(
@@ -2537,6 +2660,14 @@ class SQLiteStorage:
         return sqlite_release_queries._channel_selection_key(channel, index)
 
     @staticmethod
+    def _release_matches_source_aliases(
+        release: Release, channel, *, channel_source_type: str | None = None
+    ) -> bool:
+        return sqlite_release_queries._release_matches_source_aliases(
+            SQLiteStorage, release, channel, channel_source_type=channel_source_type
+        )
+
+    @staticmethod
     def _copy_release_with_channel_name(release: Release, channel_name: str) -> Release:
         return sqlite_release_queries._copy_release_with_channel_name(release, channel_name)
 
@@ -2548,6 +2679,7 @@ class SQLiteStorage:
         *,
         channel_source_type: str | None = None,
         use_immutable_identity: bool = False,
+        use_source_aliases: bool = False,
     ) -> dict[str, Release]:
         return sqlite_release_queries.select_best_releases_by_channel(
             SQLiteStorage,
@@ -2556,6 +2688,7 @@ class SQLiteStorage:
             sort_mode,
             channel_source_type=channel_source_type,
             use_immutable_identity=use_immutable_identity,
+            use_source_aliases=use_source_aliases,
         )
 
     @staticmethod

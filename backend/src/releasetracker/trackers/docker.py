@@ -662,6 +662,7 @@ class DockerTracker(BaseTracker):
             tag_name=tag,
             version=tag,
             published_at=created_at or datetime.now(),
+            published_at_source=("artifact_created" if created_at else "first_observed"),
             url=f"https://{self.registry}/{self.image}:{tag}",
             prerelease=False,
         )
@@ -747,6 +748,7 @@ class DockerTracker(BaseTracker):
                         )
                         if real_created is not None:
                             candidate.published_at = real_created
+                            candidate.published_at_source = "artifact_created"
 
                     continue
 

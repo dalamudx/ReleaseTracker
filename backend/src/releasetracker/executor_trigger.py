@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from .executor_scheduler_grouped_runtime_support import _ExecutorBindingRunContext
 from .executor_scheduler_target_resolution import (
-    _resolve_tracker_latest_target_from_storage,
+    _resolve_tracker_latest_target_details_from_storage,
     _target_identity_key,
 )
 
@@ -65,7 +65,7 @@ async def enqueue_executor_binding_targets(
             source_type = source.source_type
         if tracker_name is not None and bound_tracker_name != tracker_name:
             continue
-        target = await _resolve_tracker_latest_target_from_storage(
+        target = await _resolve_tracker_latest_target_details_from_storage(
             storage,
             bound_tracker_name,
             context.channel_name,
@@ -74,7 +74,8 @@ async def enqueue_executor_binding_targets(
         )
         if target is None:
             continue
-        version, digest = target
+        version = target.deploy_alias
+        digest = target.digest
         targets.append(
             {
                 "service": context.service,
@@ -82,6 +83,9 @@ async def enqueue_executor_binding_targets(
                 "tracker_source_id": context.tracker_source_id,
                 "channel_name": context.channel_name,
                 "version": version,
+                "display_version": target.display_version,
+                "deploy_alias": target.deploy_alias,
+                "aliases": list(target.aliases),
                 "digest": digest,
                 "identity_key": _target_identity_key(version, digest),
             }
@@ -98,8 +102,20 @@ async def enqueue_executor_binding_targets(
             str(target["channel_name"]),
         )
     )
-    serialized_targets = json.dumps(targets, sort_keys=True, separators=(",", ":"))
-    revision_identity = "bindings:" + hashlib.sha256(serialized_targets.encode("utf-8")).hexdigest()
+    revision_targets = [
+        {
+            "service": target["service"],
+            "tracker_name": target["tracker_name"],
+            "tracker_source_id": target["tracker_source_id"],
+            "channel_name": target["channel_name"],
+            "identity_key": target["identity_key"],
+        }
+        for target in targets
+    ]
+    serialized_identity = json.dumps(revision_targets, sort_keys=True, separators=(",", ":"))
+    revision_identity = (
+        "bindings:" + hashlib.sha256(serialized_identity.encode("utf-8")).hexdigest()
+    )
     primary_target = targets[0]
     queued_tracker_name = tracker_name or str(primary_target["tracker_name"])
     existing_state = await storage.get_executor_desired_state(executor_config.id)
@@ -114,7 +130,7 @@ async def enqueue_executor_binding_targets(
         executor_id=executor_config.id,
         tracker_name=queued_tracker_name,
         previous_version=previous_target.get("current_version"),
-        current_version=str(primary_target["version"]),
+        current_version=str(primary_target["display_version"]),
         previous_identity_key=previous_target.get("current_identity_key"),
         current_identity_key=revision_identity,
         binding_targets=targets,

@@ -1,4 +1,5 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react"
 import { Plus, Search, X } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
@@ -32,6 +33,23 @@ import {
 } from "@/hooks/queries"
 import { useQueryClient } from "@tanstack/react-query"
 
+const TRACKER_LIST_WIDTH_STORAGE_KEY = "settings.trackers.listWidthPercent"
+const DEFAULT_TRACKER_LIST_WIDTH = 60
+const MIN_TRACKER_LIST_WIDTH = 35
+const MAX_TRACKER_LIST_WIDTH = 70
+
+function clampTrackerListWidth(value: number): number {
+    return Math.min(MAX_TRACKER_LIST_WIDTH, Math.max(MIN_TRACKER_LIST_WIDTH, value))
+}
+
+function getInitialTrackerListWidth(): number {
+    if (typeof window === "undefined") return DEFAULT_TRACKER_LIST_WIDTH
+    const storedValue = Number.parseFloat(window.localStorage.getItem(TRACKER_LIST_WIDTH_STORAGE_KEY) ?? "")
+    return Number.isFinite(storedValue)
+        ? clampTrackerListWidth(storedValue)
+        : DEFAULT_TRACKER_LIST_WIDTH
+}
+
 export default function TrackersPage() {
     const { t } = useTranslation()
     const queryClient = useQueryClient()
@@ -42,6 +60,10 @@ export default function TrackersPage() {
     const [detailRefreshKey, setDetailRefreshKey] = useState(0)
     const [deleteName, setDeleteName] = useState<string | null>(null)
     const [search, setSearch] = useState("")
+    const [trackerListWidth, setTrackerListWidth] = useState(getInitialTrackerListWidth)
+    const [resizingPanels, setResizingPanels] = useState(false)
+    const splitPaneRef = useRef<HTMLDivElement>(null)
+    const trackerListWidthRef = useRef(trackerListWidth)
 
     // Pagination state
     const [page, setPage] = useState(1)
@@ -127,6 +149,49 @@ export default function TrackersPage() {
         }
     }
 
+    const updateTrackerListWidth = (value: number, persist = false) => {
+        const nextWidth = clampTrackerListWidth(value)
+        trackerListWidthRef.current = nextWidth
+        setTrackerListWidth(nextWidth)
+        if (persist) {
+            window.localStorage.setItem(TRACKER_LIST_WIDTH_STORAGE_KEY, String(nextWidth))
+        }
+    }
+
+    const updateTrackerListWidthFromPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+        if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+        const bounds = splitPaneRef.current?.getBoundingClientRect()
+        if (!bounds || bounds.width <= 0) return
+        updateTrackerListWidth(((event.clientX - bounds.left) / bounds.width) * 100)
+    }
+
+    const finishPanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId)
+        }
+        setResizingPanels(false)
+        window.localStorage.setItem(
+            TRACKER_LIST_WIDTH_STORAGE_KEY,
+            String(trackerListWidthRef.current),
+        )
+    }
+
+    const handlePanelResizeKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+        const keyboardStep = event.shiftKey ? 5 : 2
+        let nextWidth: number | null = null
+        if (event.key === "ArrowLeft") nextWidth = trackerListWidthRef.current - keyboardStep
+        if (event.key === "ArrowRight") nextWidth = trackerListWidthRef.current + keyboardStep
+        if (event.key === "Home") nextWidth = MIN_TRACKER_LIST_WIDTH
+        if (event.key === "End") nextWidth = MAX_TRACKER_LIST_WIDTH
+        if (nextWidth === null) return
+        event.preventDefault()
+        updateTrackerListWidth(nextWidth, true)
+    }
+
+    const splitPaneStyle = {
+        "--tracker-list-width": `${trackerListWidth}%`,
+    } as CSSProperties
+
     return (
         <div className="flex h-full min-h-0 flex-col gap-4">
             {/* Toolbar — search on the left, primary action on the right. */}
@@ -169,11 +234,17 @@ export default function TrackersPage() {
                 </Button>
             </div>
 
-            {/* Two-pane master-detail area. On xl+ the detail sits to the right
-                of the list; on smaller screens they stack. The list scrolls
-                internally, the detail pane has its own scroll. */}
-            <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(360px,2fr)]">
-                <div className="flex min-h-0 flex-col gap-3">
+            {/* Two-pane master-detail area. On xl+ the separator resizes both panes;
+                smaller screens retain the stacked layout. */}
+            <div
+                ref={splitPaneRef}
+                className={`flex min-h-0 flex-1 flex-col gap-4 xl:flex-row xl:gap-0 ${resizingPanels ? "select-none" : ""}`}
+                style={splitPaneStyle}
+            >
+                <div
+                    id="tracker-list-pane"
+                    className="flex min-h-0 w-full flex-col gap-3 xl:w-[var(--tracker-list-width)] xl:min-w-0 xl:flex-none xl:pr-2"
+                >
                     <TrackerList
                         trackers={trackers}
                         loading={loading}
@@ -193,7 +264,38 @@ export default function TrackersPage() {
                     />
                 </div>
 
-                <div className="min-h-0 overflow-y-auto">
+                <div
+                    role="separator"
+                    aria-label={t("trackers.resizePanels")}
+                    aria-orientation="vertical"
+                    aria-controls="tracker-list-pane tracker-detail-pane"
+                    aria-valuemin={MIN_TRACKER_LIST_WIDTH}
+                    aria-valuemax={MAX_TRACKER_LIST_WIDTH}
+                    aria-valuenow={Math.round(trackerListWidth)}
+                    tabIndex={0}
+                    className="group hidden w-4 shrink-0 touch-none cursor-col-resize items-stretch justify-center rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring xl:flex"
+                    onPointerDown={(event) => {
+                        event.currentTarget.setPointerCapture(event.pointerId)
+                        setResizingPanels(true)
+                    }}
+                    onPointerMove={updateTrackerListWidthFromPointer}
+                    onPointerUp={finishPanelResize}
+                    onPointerCancel={finishPanelResize}
+                    onKeyDown={handlePanelResizeKeyDown}
+                    onDoubleClick={() => updateTrackerListWidth(DEFAULT_TRACKER_LIST_WIDTH, true)}
+                >
+                    <span
+                        className={`w-px transition-colors ${resizingPanels
+                            ? "bg-primary"
+                            : "bg-border group-hover:bg-primary/70"}`}
+                        aria-hidden="true"
+                    />
+                </div>
+
+                <div
+                    id="tracker-detail-pane"
+                    className="min-h-0 w-full min-w-0 overflow-y-auto xl:flex-1 xl:pl-2"
+                >
                     <TrackerDetail
                         trackerName={visibleSelectedTrackerName}
                         refreshKey={detailRefreshKey}

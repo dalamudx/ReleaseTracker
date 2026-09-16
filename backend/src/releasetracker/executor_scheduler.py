@@ -31,7 +31,10 @@ from .executor_scheduler_maintenance import (
 from .executor_scheduler_run_queue import (
     ExecutorSchedulerRunQueue,
 )
-from .executor_scheduler_target_resolution import ExecutorSchedulerTargetResolution
+from .executor_scheduler_target_resolution import (
+    ExecutorSchedulerTargetResolution,
+    _normalize_docker_digest,
+)
 from .executor_trigger import enqueue_executor_binding_targets
 from .scheduler_host import SchedulerHost
 from .services.runtime_credentials import materialize_runtime_connection_credentials
@@ -309,7 +312,23 @@ class ExecutorScheduler(
                     run_id=_run_id,
                 )
 
-            if current_image == target_image:
+            runtime_digest_matches = False
+            if target_digest is not None:
+                try:
+                    current_digest = await adapter.get_current_image_digest(
+                        executor_config.target_ref
+                    )
+                    runtime_digest_matches = _normalize_docker_digest(
+                        current_digest
+                    ) == _normalize_docker_digest(target_digest)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to resolve current image digest for executor %s: %s",
+                        executor_config.id,
+                        exc,
+                    )
+
+            if current_image == target_image or runtime_digest_matches:
                 run_id = (
                     _run_id
                     if _run_id is not None
@@ -324,7 +343,11 @@ class ExecutorScheduler(
                     run_id,
                     status="skipped",
                     to_version=target_image,
-                    message="runtime already at target image",
+                    message=(
+                        "runtime already at target artifact"
+                        if runtime_digest_matches and current_image != target_image
+                        else "runtime already at target image"
+                    ),
                     last_error=None,
                     from_version=current_image,
                 )

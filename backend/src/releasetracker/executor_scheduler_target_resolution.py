@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from .config import EXECUTOR_BINDABLE_SOURCE_TYPES, ExecutorConfig
@@ -8,6 +9,14 @@ from .models import Release, TrackerSource
 from .storage.sqlite import SQLiteStorage
 
 _DOCKER_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True)
+class ResolvedTrackerTarget:
+    display_version: str
+    deploy_alias: str
+    digest: str | None
+    aliases: tuple[str, ...] = ()
 
 
 async def _resolve_tracker_binding_by_source_id_from_storage(
@@ -41,10 +50,41 @@ async def _load_bound_releases_from_storage(
     tracker_source_type: str | None,
 ) -> list[Release]:
     if tracker_source_id is not None:
+        expanded_releases: list[Release] = []
+        history_releases = await storage.get_source_release_history_releases_by_source(
+            tracker_source_id
+        )
+        aliases_by_history_id = await storage.get_source_release_aliases_for_source(
+            tracker_source_id
+        )
+        for release in history_releases:
+            alias_rows = aliases_by_history_id.get(release.id or -1, [])
+            if not alias_rows:
+                expanded_releases.append(release.model_copy(update={"tracker_name": tracker_name}))
+                continue
+            aliases = tuple(alias["alias"] for alias in alias_rows)
+            for alias in alias_rows:
+                expanded_releases.append(
+                    release.model_copy(
+                        update={
+                            "tracker_name": tracker_name,
+                            "version": alias["alias"],
+                            "name": alias["alias"],
+                            "tag_name": alias["alias"],
+                            "channel_name": alias["channel_name"],
+                            "aliases": list(aliases),
+                        }
+                    )
+                )
+
+        seen = {(release.tag_name, release.commit_sha) for release in expanded_releases}
         observations = await storage.get_source_release_observations_by_source(tracker_source_id)
-        if observations:
-            return [
+        for observation in observations:
+            if (observation.tag_name, observation.commit_sha) in seen:
+                continue
+            expanded_releases.append(
                 Release(
+                    id=observation.id,
                     tracker_name=tracker_name,
                     tracker_type=tracker_source_type or "container",
                     name=observation.name,
@@ -58,8 +98,9 @@ async def _load_bound_releases_from_storage(
                     body=observation.body,
                     commit_sha=observation.commit_sha,
                 )
-                for observation in observations
-            ]
+            )
+        if expanded_releases:
+            return expanded_releases
 
     # Older installations can have an executor/source binding before source
     # observations were backfilled. Preserve its aggregate projection behavior
@@ -95,14 +136,54 @@ async def _resolve_tracker_latest_version_from_storage(
     return version
 
 
-async def _resolve_tracker_latest_target_from_storage(
+async def _resolve_correlated_container_alias(
+    storage: SQLiteStorage,
+    tracker_name: str,
+    artifact_releases: list[Release],
+) -> tuple[str, str] | None:
+    source_history_ids = {release.id for release in artifact_releases if release.id is not None}
+    aggregate_tracker = await storage.get_aggregate_tracker(tracker_name)
+    if not source_history_ids or aggregate_tracker is None or aggregate_tracker.id is None:
+        return None
+    matching_targets: list[tuple[float, str, str]] = []
+    for candidate in await storage.get_correlated_release_candidates(aggregate_tracker.id):
+        if len(candidate["tracker_source_ids"]) < 2:
+            continue
+        candidate_release = candidate["release"]
+        if not source_history_ids.intersection(candidate["source_history_ids"]):
+            continue
+        canonical_key = storage._canonical_key_for_version(candidate_release.tag_name).lower()
+        alias_release = next(
+            (
+                release
+                for release in artifact_releases
+                if storage._canonical_key_for_version(release.tag_name).lower() == canonical_key
+                and not storage._is_floating_release_alias(release.tag_name)
+            ),
+            None,
+        )
+        if alias_release is not None:
+            matching_targets.append(
+                (
+                    candidate_release.published_at.timestamp(),
+                    candidate_release.version,
+                    alias_release.tag_name,
+                )
+            )
+    if not matching_targets:
+        return None
+    _, display_version, deploy_alias = max(matching_targets)
+    return display_version, deploy_alias
+
+
+async def _resolve_tracker_latest_target_details_from_storage(
     storage: SQLiteStorage,
     tracker_name: str,
     channel_name: str | None,
     *,
     tracker_source_id: int | None = None,
     tracker_source_type: str | None = None,
-) -> tuple[str, str | None] | None:
+) -> ResolvedTrackerTarget | None:
     releases = await _load_bound_releases_from_storage(
         storage,
         tracker_name,
@@ -116,6 +197,7 @@ async def _resolve_tracker_latest_target_from_storage(
     sort_mode = tracker_config.version_sort_mode if tracker_config else "published_at"
 
     scoped_channels = tracker_config.channels if tracker_config else []
+    bound_source = None
     if tracker_source_id is not None:
         bound_source = await storage.get_tracker_source(tracker_source_id)
         if bound_source is not None and bound_source.release_channels:
@@ -127,36 +209,79 @@ async def _resolve_tracker_latest_target_from_storage(
         if not bound_channels:
             return None
 
-    best_release = storage.select_best_release(releases, bound_channels, sort_mode=sort_mode)
+    best_release = None
+    explicit_pattern = any(
+        channel.include_pattern or channel.exclude_pattern for channel in bound_channels
+    )
+    if bound_source is not None and channel_name and explicit_pattern:
+        winners = storage.select_best_releases_for_tracker_channel(
+            releases, bound_source, sort_mode=sort_mode
+        )
+        for channel_rank, channel in enumerate(bound_source.release_channels):
+            if channel.name == channel_name and channel.enabled:
+                best_release = winners.get(storage._channel_selection_key(channel, channel_rank))
+                break
+    else:
+        best_release = storage.select_best_release(releases, bound_channels, sort_mode=sort_mode)
     if best_release is None:
         return None
 
-    if tracker_source_type == "container":
-        same_version_releases = [
-            release for release in releases if release.version == best_release.version
-        ]
-        if bound_channels:
-            same_version_releases = [
-                release
-                for release in same_version_releases
-                if any(
-                    SQLiteStorage._release_matches_channel(release, channel)
+    display_version = best_release.version
+    digest = _normalize_docker_digest(best_release.commit_sha)
+    aliases: tuple[str, ...] = ()
+    if tracker_source_type == "container" and digest is not None:
+        artifact_releases = [
+            release
+            for release in releases
+            if _normalize_docker_digest(release.commit_sha) == digest
+            and (
+                not bound_channels
+                or any(
+                    SQLiteStorage._release_matches_channel(
+                        release,
+                        channel,
+                        channel_source_type=tracker_source_type if explicit_pattern else None,
+                    )
                     for channel in bound_channels
                 )
-            ]
-
-        digest_candidates = [
-            release
-            for release in same_version_releases
-            if _normalize_docker_digest(release.commit_sha) is not None
+            )
         ]
-        if digest_candidates:
-            best_release = max(
-                digest_candidates,
-                key=lambda release: SQLiteStorage._release_order_key(release, sort_mode),
+        aliases = tuple(dict.fromkeys(release.tag_name for release in artifact_releases))
+        correlated_alias = await _resolve_correlated_container_alias(
+            storage, tracker_name, artifact_releases
+        )
+        if correlated_alias is not None:
+            display_version, deploy_alias = correlated_alias
+            best_release = next(
+                release for release in artifact_releases if release.tag_name == deploy_alias
             )
 
-    return best_release.version, _normalize_docker_digest(best_release.commit_sha)
+    return ResolvedTrackerTarget(
+        display_version=display_version,
+        deploy_alias=best_release.version,
+        digest=digest,
+        aliases=aliases,
+    )
+
+
+async def _resolve_tracker_latest_target_from_storage(
+    storage: SQLiteStorage,
+    tracker_name: str,
+    channel_name: str | None,
+    *,
+    tracker_source_id: int | None = None,
+    tracker_source_type: str | None = None,
+) -> tuple[str, str | None] | None:
+    target = await _resolve_tracker_latest_target_details_from_storage(
+        storage,
+        tracker_name,
+        channel_name,
+        tracker_source_id=tracker_source_id,
+        tracker_source_type=tracker_source_type,
+    )
+    if target is None:
+        return None
+    return target.deploy_alias, target.digest
 
 
 def _normalize_docker_digest(value: str | None) -> str | None:
@@ -171,7 +296,10 @@ def _normalize_docker_digest(value: str | None) -> str | None:
 
 
 def _target_identity_key(target_version: str, target_digest: str | None) -> str:
-    return f"{target_version}@{_normalize_docker_digest(target_digest) or 'no_digest'}"
+    normalized_digest = _normalize_docker_digest(target_digest)
+    if normalized_digest is not None:
+        return f"artifact@{normalized_digest}"
+    return f"{target_version}@no_digest"
 
 
 def _replace_image_tag_value(image: str, target_version: str) -> str:

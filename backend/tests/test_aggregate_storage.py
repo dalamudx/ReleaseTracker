@@ -2222,3 +2222,253 @@ async def test_backfill_existing_helm_observations_rebuilds_canonicals_idempoten
 
     assert stale_canonical_rows is not None and stale_canonical_rows["count"] == 0
     assert len(provenance_rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_canonical_projection_correlates_exact_repository_tag_with_all_artifact_aliases(
+    storage,
+):
+    aggregate = await storage.create_aggregate_tracker(
+        AggregateTracker(
+            name="alias-correlation",
+            primary_changelog_source_key="repo",
+            sources=[
+                TrackerSource(
+                    source_key="repo",
+                    source_type="gitea",
+                    source_rank=0,
+                    source_config={"repo": "canvas/nginx_frontend"},
+                ),
+                TrackerSource(
+                    source_key="image",
+                    source_type="container",
+                    source_rank=1,
+                    source_config={
+                        "image": "canvas/nginx_frontend",
+                        "registry": "registry.example.com",
+                    },
+                ),
+            ],
+        )
+    )
+    repo_source, image_source = aggregate.sources
+    version = "3.6.0-dev-0b0d27d3f61c"
+    digest = "sha256:ec114d9401b25777ea3583cf0cff081417ba4a283bf99975c2c3836fe49bc2e7"
+    published_at = datetime.fromisoformat("2026-09-15T04:01:04+00:00")
+    await storage.save_source_observations(
+        aggregate.id,
+        repo_source,
+        [
+            Release(
+                tracker_name=aggregate.name,
+                tracker_type="gitea",
+                version=version,
+                name=version,
+                tag_name=version,
+                url=f"https://git.example.com/releases/{version}",
+                published_at=published_at,
+                prerelease=True,
+                commit_sha="0b0d27d3f61c",
+            )
+        ],
+        observed_at=published_at,
+    )
+    await storage.save_source_observations(
+        aggregate.id,
+        image_source,
+        [
+            Release(
+                tracker_name=aggregate.name,
+                tracker_type="container",
+                version=alias,
+                name=alias,
+                tag_name=alias,
+                channel_name="prerelease",
+                url=f"https://registry.example.com/{alias}",
+                published_at=published_at,
+                prerelease=True,
+                commit_sha=digest,
+            )
+            for alias in [version, "3.6.0-dev", "3.6-dev", "dev"]
+        ],
+        observed_at=published_at,
+    )
+
+    canonical = await storage.get_canonical_releases(aggregate.name)
+
+    assert len(canonical) == 1
+    assert canonical[0].version == version
+    assert len(canonical[0].observations) == 5
+    assert {observation.contribution_kind for observation in canonical[0].observations} == {
+        "primary",
+        "supporting",
+    }
+
+
+@pytest.mark.asyncio
+async def test_canonical_projection_does_not_guess_ambiguous_or_floating_tag_matches(storage):
+    aggregate = await storage.create_aggregate_tracker(
+        AggregateTracker(
+            name="safe-alias-correlation",
+            primary_changelog_source_key="repo",
+            sources=[
+                TrackerSource(
+                    source_key="repo",
+                    source_type="gitea",
+                    source_rank=0,
+                    source_config={"repo": "owner/repo"},
+                ),
+                TrackerSource(
+                    source_key="repo-secondary",
+                    source_type="github",
+                    source_rank=1,
+                    source_config={"repo": "owner/secondary"},
+                ),
+                TrackerSource(
+                    source_key="image",
+                    source_type="container",
+                    source_rank=2,
+                    source_config={"image": "owner/image", "registry": "registry.example.com"},
+                ),
+            ],
+        )
+    )
+    repo_source, secondary_repo_source, image_source = aggregate.sources
+    now = datetime.fromisoformat("2026-09-15T04:01:04+00:00")
+    await storage.save_source_observations(
+        aggregate.id,
+        repo_source,
+        [
+            Release(
+                tracker_name=aggregate.name,
+                tracker_type="gitea",
+                version=version,
+                name=version,
+                tag_name=version,
+                url=f"https://git.example.com/{version}",
+                published_at=now,
+                prerelease=False,
+            )
+            for version in ["1.0.0", "dev"]
+        ],
+        observed_at=now,
+    )
+    await storage.save_source_observations(
+        aggregate.id,
+        secondary_repo_source,
+        [
+            Release(
+                tracker_name=aggregate.name,
+                tracker_type="github",
+                version="1.1.0",
+                name="1.1.0",
+                tag_name="1.1.0",
+                url="https://git.example.com/secondary/1.1.0",
+                published_at=now,
+                prerelease=False,
+            )
+        ],
+        observed_at=now,
+    )
+    await storage.save_source_observations(
+        aggregate.id,
+        image_source,
+        [
+            Release(
+                tracker_name=aggregate.name,
+                tracker_type="container",
+                version=alias,
+                name=alias,
+                tag_name=alias,
+                url=f"https://registry.example.com/{alias}",
+                published_at=now,
+                prerelease=False,
+                commit_sha="sha256:shared",
+            )
+            for alias in ["1.0.0", "1.1.0", "dev"]
+        ],
+        observed_at=now,
+    )
+
+    canonical = await storage.get_canonical_releases(aggregate.name)
+
+    assert len(canonical) == 4
+    assert {row.canonical_key for row in canonical} == {
+        "1.0.0",
+        "1.1.0",
+        "dev",
+        "sha256:shared",
+    }
+
+
+@pytest.mark.asyncio
+async def test_correlated_candidate_uses_current_digest_when_same_tag_is_republished(storage):
+    aggregate = await storage.create_aggregate_tracker(
+        AggregateTracker(
+            name="republished-alias-correlation",
+            primary_changelog_source_key="repo",
+            sources=[
+                TrackerSource(
+                    source_key="repo",
+                    source_type="gitea",
+                    source_rank=0,
+                    source_config={"repo": "owner/repo"},
+                ),
+                TrackerSource(
+                    source_key="image",
+                    source_type="container",
+                    source_rank=1,
+                    source_config={"image": "owner/image", "registry": "registry.example.com"},
+                ),
+            ],
+        )
+    )
+    repo_source, image_source = aggregate.sources
+    now = datetime.fromisoformat("2026-09-15T04:01:04+00:00")
+    tag = "1.0.0"
+    old_digest = "sha256:" + "1" * 64
+    new_digest = "sha256:" + "2" * 64
+
+    def release(source_type: str, digest: str | None) -> Release:
+        return Release(
+            tracker_name=aggregate.name,
+            tracker_type=source_type,
+            version=tag,
+            name=tag,
+            tag_name=tag,
+            url=f"https://example.com/{source_type}/{tag}",
+            published_at=now,
+            prerelease=False,
+            commit_sha=digest,
+        )
+
+    await storage.save_source_observations(
+        aggregate.id, repo_source, [release("gitea", "repo-commit")], observed_at=now
+    )
+    await storage.save_source_observations(
+        aggregate.id, image_source, [release("container", old_digest)], observed_at=now
+    )
+    await storage.save_source_observations(
+        aggregate.id, image_source, [release("container", new_digest)], observed_at=now
+    )
+
+    candidates = await storage.get_correlated_release_candidates(aggregate.id)
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate["release"].artifact_digest == new_digest
+    assert len(candidate["tracker_source_ids"]) == 2
+
+    async with aiosqlite.connect(storage.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        image_rows = list(
+            await (
+                await db.execute(
+                    "SELECT id, digest FROM source_release_history "
+                    "WHERE tracker_source_id = ? ORDER BY id ASC",
+                    (image_source.id,),
+                )
+            ).fetchall()
+        )
+    assert [row["digest"] for row in image_rows] == [old_digest, new_digest]
+    assert int(image_rows[0]["id"]) not in candidate["source_history_ids"]
+    assert int(image_rows[1]["id"]) in candidate["source_history_ids"]

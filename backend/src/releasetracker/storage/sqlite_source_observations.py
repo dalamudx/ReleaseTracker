@@ -191,6 +191,7 @@ async def save_source_observations(
                 "source_key": tracker_source.source_key,
                 "source_type": tracker_source.source_type,
                 "channel_name": release.channel_name,
+                "published_at_source": release.published_at_source,
             },
             changelog_url=getattr(release, "changelog_url", None),
             source_type=tracker_source.source_type,

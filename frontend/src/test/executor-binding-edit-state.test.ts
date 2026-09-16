@@ -1617,6 +1617,35 @@ describe("executor binding edit state helpers", () => {
         })
     })
 
+    it("shows the logical release while building the image from the source-valid deployment alias", () => {
+        const t = ((key: string) => key) as unknown as TFunction
+        const currentImage = "registry.example.com/canvas/nginx_frontend:old"
+        const targetDisplay = buildExecutorTargetDisplay("docker", { mode: "container", container_name: "frontend" }, t)
+        const tracker = createTracker({
+            sources: [createTrackerSource({
+                id: 9,
+                release_channels: [{
+                    name: "prerelease", enabled: true,
+                    last_version: "3.6.0-dev", deploy_alias: "3.6.0-dev",
+                    display_version: "3.6.0-dev-0b0d27d3f61c",
+                }],
+            })],
+        })
+        const binding = createServiceBinding({ service: "frontend", tracker_source_id: "9", channel_name: "prerelease" })
+
+        expect(buildExecutorReviewImageChanges({
+            targetDisplay, trackers: [tracker], serviceBindings: [],
+            singleContainerBinding: binding, singleContainerCurrentImage: currentImage,
+            imageSelectionMode: "replace_tag_on_current_image", imageReferenceMode: "tag",
+        })).toEqual([{
+            service: "frontend",
+            sourceImage: currentImage,
+            targetImage: "registry.example.com/canvas/nginx_frontend:3.6.0-dev",
+            targetVersion: "3.6.0-dev-0b0d27d3f61c",
+            deployAlias: "3.6.0-dev",
+        }])
+    })
+
     it("builds actual target image changes from stored binding versions", () => {
         const t = ((key: string, options?: Record<string, unknown>) => options?.count ? `${options.count} ${key}` : key) as unknown as TFunction
         const targetDisplay = buildExecutorTargetDisplay("portainer", {
