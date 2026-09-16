@@ -1004,6 +1004,170 @@ async def test_tracker_current_endpoint_exposes_projection_rows_with_truth_contr
 
 
 @pytest.mark.asyncio
+async def test_history_endpoint_hides_container_revisions_after_all_aliases_move(
+    authed_client, storage
+):
+    aggregate_tracker = await storage.create_aggregate_tracker(
+        AggregateTracker(
+            name="active-artifact-aliases",
+            primary_changelog_source_key="repo",
+            sources=[
+                TrackerSource(
+                    source_key="repo",
+                    source_type="github",
+                    source_rank=0,
+                    source_config={"repo": "owner/project"},
+                ),
+                TrackerSource(
+                    source_key="image",
+                    source_type="container",
+                    source_rank=1,
+                    source_config={"image": "owner/project", "registry": "ghcr.io"},
+                ),
+            ],
+        )
+    )
+    assert aggregate_tracker.id is not None
+    repo_source, image_source = aggregate_tracker.sources
+    assert repo_source.id is not None
+    assert image_source.id is not None
+
+    exact_tag = "3.6.0-dev-0b0d27d3f61c"
+    old_floating_digest = "sha256:" + "a" * 64
+    replaced_digest = "sha256:" + "b" * 64
+    current_digest = "sha256:" + "c" * 64
+    base_time = datetime(2026, 9, 16, 4, 0, 0)
+    repo_release = Release(
+        tracker_name=aggregate_tracker.name,
+        tracker_type="github",
+        version=exact_tag,
+        name=exact_tag,
+        tag_name=exact_tag,
+        url=f"https://example.com/releases/{exact_tag}",
+        published_at=base_time,
+        prerelease=True,
+    )
+    old_floating = Release(
+        tracker_name=aggregate_tracker.name,
+        tracker_type="container",
+        version="3.6.0-dev",
+        name="3.6.0-dev",
+        tag_name="3.6.0-dev",
+        url="https://ghcr.io/owner/project:3.6.0-dev",
+        published_at=base_time,
+        prerelease=True,
+        commit_sha=old_floating_digest,
+    )
+    replaced_alias_releases = [
+        Release(
+            tracker_name=aggregate_tracker.name,
+            tracker_type="container",
+            version=tag,
+            name=tag,
+            tag_name=tag,
+            url=f"https://ghcr.io/owner/project:{tag}",
+            published_at=base_time + timedelta(minutes=1),
+            prerelease=True,
+            commit_sha=replaced_digest,
+        )
+        for tag in (exact_tag, "3.6-dev")
+    ]
+    current_alias_releases = [
+        Release(
+            tracker_name=aggregate_tracker.name,
+            tracker_type="container",
+            version=tag,
+            name=tag,
+            tag_name=tag,
+            url=f"https://ghcr.io/owner/project:{tag}",
+            published_at=base_time + timedelta(minutes=2),
+            prerelease=True,
+            commit_sha=current_digest,
+        )
+        for tag in ("3.6.0-dev", exact_tag, "3.6-dev", "dev")
+    ]
+
+    await storage.save_source_observations(
+        aggregate_tracker.id, repo_source, [repo_release], observed_at=base_time
+    )
+    await storage.save_source_observations(
+        aggregate_tracker.id, image_source, [old_floating], observed_at=base_time
+    )
+    await storage.save_source_observations(
+        aggregate_tracker.id,
+        image_source,
+        replaced_alias_releases,
+        observed_at=base_time + timedelta(minutes=1),
+    )
+    repo_history_id = await storage.get_source_release_history_id(
+        repo_source.id,
+        storage.release_identity_key_for_source(repo_release, source_type="github"),
+    )
+    old_floating_history_id = await storage.get_source_release_history_id(
+        image_source.id, old_floating_digest
+    )
+    replaced_history_id = await storage.get_source_release_history_id(
+        image_source.id, replaced_digest
+    )
+    assert repo_history_id is not None
+    assert old_floating_history_id is not None
+    assert replaced_history_id is not None
+
+    await storage.upsert_tracker_release_history(
+        aggregate_tracker.id,
+        old_floating,
+        primary_source_release_history_id=old_floating_history_id,
+        source_type="container",
+    )
+    await storage.upsert_tracker_release_history(
+        aggregate_tracker.id,
+        repo_release,
+        primary_source_release_history_id=repo_history_id,
+        supporting_source_release_history_ids=[replaced_history_id],
+        source_type="github",
+    )
+
+    await storage.save_source_observations(
+        aggregate_tracker.id,
+        image_source,
+        current_alias_releases,
+        observed_at=base_time + timedelta(minutes=2),
+    )
+    current_history_id = await storage.get_source_release_history_id(
+        image_source.id, current_digest
+    )
+    assert current_history_id is not None
+    await storage.upsert_tracker_release_history(
+        aggregate_tracker.id,
+        repo_release,
+        primary_source_release_history_id=repo_history_id,
+        supporting_source_release_history_ids=[current_history_id],
+        source_type="github",
+    )
+
+    response = authed_client.get(f"/api/trackers/{aggregate_tracker.name}/releases/history")
+
+    assert response.status_code == 200, response.text
+    items = response.json()["items"]
+    assert [item["version"] for item in items] == [exact_tag]
+    container_contributions = [
+        contribution
+        for contribution in items[0]["source_contributions"]
+        if contribution["source_type"] == "container"
+    ]
+    assert len(container_contributions) == 1
+    assert container_contributions[0]["digest"] == current_digest
+    assert set(container_contributions[0]["aliases"]) == {
+        "3.6.0-dev",
+        exact_tag,
+        "3.6-dev",
+        "dev",
+    }
+    assert len(items[0]["artifacts"]) == 1
+    assert items[0]["artifacts"][0]["digest"] == current_digest
+
+
+@pytest.mark.asyncio
 async def test_latest_current_summary_prefers_newer_folded_stable_version_over_older_numeric_tag(
     storage,
 ):
@@ -1343,6 +1507,43 @@ async def test_docker_different_tags_with_same_digest_share_one_immutable_identi
         == 1
     )
     assert len(storage.dedupe_releases_by_immutable_identity(releases)) == 1
+    alias_last_observed = await storage.get_source_alias_last_observed(image_source.id)
+    assert alias_last_observed == {
+        "latest": datetime(2026, 4, 22, 7, 30, 0),
+        "alpine": datetime(2026, 4, 22, 7, 30, 0),
+        "trixie": datetime(2026, 4, 22, 7, 30, 0),
+    }
+    assert await storage.get_source_alias_latest_digests(image_source.id) == {
+        "latest": digest,
+        "alpine": digest,
+        "trixie": digest,
+    }
+
+    republished_digest = "sha256:" + "b" * 64
+    await storage.save_source_observations(
+        aggregate_tracker.id,
+        image_source,
+        [releases[0].model_copy(update={"commit_sha": republished_digest})],
+        observed_at=datetime(2026, 4, 22, 8, 30, 0),
+    )
+    latest_digests = await storage.get_source_alias_latest_digests(image_source.id)
+    assert latest_digests["latest"] == republished_digest
+    assert latest_digests["alpine"] == digest
+    assert latest_digests["trixie"] == digest
+
+    original_history_id = int(history_rows[0]["id"])
+    republished_history_id = await storage.get_source_release_history_id(
+        image_source.id, republished_digest
+    )
+    assert republished_history_id is not None
+    current_aliases = await storage.get_current_source_release_aliases_by_history_ids(
+        [original_history_id, republished_history_id]
+    )
+    assert {alias["alias"] for alias in current_aliases[original_history_id]} == {
+        "alpine",
+        "trixie",
+    }
+    assert {alias["alias"] for alias in current_aliases[republished_history_id]} == {"latest"}
 
 
 @pytest.mark.asyncio

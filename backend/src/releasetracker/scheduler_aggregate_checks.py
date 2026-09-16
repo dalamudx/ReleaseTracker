@@ -20,14 +20,20 @@ class ReleaseSchedulerAggregateChecks:
         *,
         log_prefix: str = "",
         trigger_mode: str = "scheduled",
+        source_ids: set[int] | None = None,
     ) -> dict[str, Any]:
-        enabled_sources = [source for source in aggregate_tracker.sources if source.enabled]
+        enabled_sources = [
+            source
+            for source in aggregate_tracker.sources
+            if source.enabled and (source_ids is None or source.id in source_ids)
+        ]
         if not enabled_sources:
             raise ValueError("Aggregate tracker has no enabled data sources")
         if aggregate_tracker.id is None:
             raise ValueError("Aggregate tracker is missing a persisted ID")
 
         source_errors: list[str] = []
+        source_fetch_run_ids: dict[int, int] = {}
         selection_candidates: list[Release] = []
         candidate_sources: dict[str, list[tuple[TrackerSource, Release]]] = {}
         sort_mode = tracker_config.version_sort_mode if tracker_config else "published_at"
@@ -53,10 +59,14 @@ class ReleaseSchedulerAggregateChecks:
                 source.id,
                 trigger_mode=trigger_mode,
             )
+            source_fetch_run_ids[source.id] = source_fetch_run_id
             source_history_ids_by_identity: dict[str, int] = {}
 
             try:
                 source_tracker = await self._create_tracker(source_config)
+                await self._configure_container_tracker_fetch_state(
+                    source.id, source_tracker, source_history_releases
+                )
                 if source_config.channels:
                     source_history_releases = self._assign_first_matching_channel(
                         self.storage,
@@ -269,4 +279,5 @@ class ReleaseSchedulerAggregateChecks:
             "releases": projection_releases,
             "latest_version": latest_version,
             "error": error,
+            "source_fetch_run_ids": source_fetch_run_ids,
         }

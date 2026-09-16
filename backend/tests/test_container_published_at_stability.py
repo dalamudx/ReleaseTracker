@@ -51,6 +51,10 @@ def _make_container_release(
     *,
     digest: str | None,
     published_at: datetime,
+    published_at_source: str = "first_observed",
+    oci_version: str | None = None,
+    oci_revision: str | None = None,
+    oci_source: str | None = None,
 ) -> Release:
     return Release(
         tracker_name=tracker_name,
@@ -59,9 +63,13 @@ def _make_container_release(
         tag_name=tag,
         version=tag,
         published_at=published_at,
+        published_at_source=published_at_source,
         url=f"https://registry-1.docker.io/library/sample-web:{tag}",
         prerelease=False,
         commit_sha=digest,
+        oci_version=oci_version,
+        oci_revision=oci_revision,
+        oci_source=oci_source,
     )
 
 
@@ -126,6 +134,63 @@ async def test_container_published_at_stays_put_when_digest_unchanged(storage):
 
     recorded_after = await _query_published_at(storage, source_id, "v1.2.3")
     assert recorded_after == recorded_first
+
+
+@pytest.mark.asyncio
+async def test_container_published_at_upgrades_once_to_real_artifact_created(storage):
+    aggregate_tracker = await _fresh_container_tracker(storage, "container-created-upgrade")
+    source = aggregate_tracker.sources[0]
+    digest = "sha256:" + "a" * 64
+    first_observed = datetime.fromisoformat("2026-05-01T10:00:00+00:00")
+    artifact_created = first_observed - timedelta(days=1)
+
+    await _append(
+        storage,
+        aggregate_tracker,
+        _make_container_release(
+            aggregate_tracker.name,
+            "v1.2.3",
+            digest=digest,
+            published_at=first_observed,
+        ),
+    )
+    await _append(
+        storage,
+        aggregate_tracker,
+        _make_container_release(
+            aggregate_tracker.name,
+            "v1.2.3",
+            digest=digest,
+            published_at=artifact_created,
+            published_at_source="artifact_created",
+        ),
+    )
+
+    releases = await storage.get_source_release_history_releases_by_source(source.id)
+    assert len(releases) == 1
+    assert releases[0].published_at == artifact_created
+    assert releases[0].published_at_source == "artifact_created"
+
+    await _append(
+        storage,
+        aggregate_tracker,
+        _make_container_release(
+            aggregate_tracker.name,
+            "v1.2.3",
+            digest=digest,
+            published_at=artifact_created + timedelta(hours=2),
+            published_at_source="artifact_created",
+            oci_version="v1.2.3-build123",
+            oci_revision="build123",
+            oci_source="https://example.com/owner/sample",
+        ),
+    )
+    enriched = await storage.get_source_release_history_releases_by_source(source.id)
+    assert len(enriched) == 1
+    assert enriched[0].published_at == artifact_created
+    assert enriched[0].oci_version == "v1.2.3-build123"
+    assert enriched[0].oci_revision == "build123"
+    assert enriched[0].oci_source == "https://example.com/owner/sample"
 
 
 @pytest.mark.asyncio

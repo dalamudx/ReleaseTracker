@@ -67,6 +67,10 @@ PublishedAtMode = Literal["auto", "prefer_real", "first_observed"]
 _VERSION_TAG_RE = re.compile(r"^v?(\d+)\.(\d+)(?:\.(\d+))?(?:[.\-](.*))?$")
 _NATURAL_TOKEN = tuple[int, int, str]
 _VERSION_KEY = tuple[int, int, int, int, tuple[_NATURAL_TOKEN, ...]]
+_FLOATING_ALIAS_NAMES = frozenset(
+    {"latest", "stable", "nightly", "edge", "main", "dev", "canary", "beta", "alpha"}
+)
+_COMMIT_SUFFIX_RE = re.compile(r"(?:^|[._-])[0-9a-f]{7,64}$", re.IGNORECASE)
 
 _MANIFEST_ACCEPT = ", ".join(
     [
@@ -114,6 +118,37 @@ class DockerTracker(BaseTracker):
         self.token = token
         self.published_at_mode: PublishedAtMode = published_at_mode
         self.allow_registry_redirects = bool(allow_registry_redirects)
+        self._alias_last_observed: dict[str, datetime] | None = None
+        self._alias_digest_by_name: dict[str, str] = {}
+        self._artifact_created_by_digest: dict[str, datetime] = {}
+        self._artifact_metadata_by_digest: dict[str, dict[str, str]] = {}
+        self._oci_metadata_by_tag: dict[str, dict[str, str]] = {}
+
+    def configure_incremental_fetch(
+        self,
+        *,
+        alias_last_observed: dict[str, datetime],
+        artifact_created_by_digest: dict[str, datetime],
+        alias_digest_by_name: dict[str, str] | None = None,
+        artifact_metadata_by_digest: dict[str, dict[str, str]] | None = None,
+    ) -> None:
+        """Configure persisted state used for bounded alias reconciliation."""
+        self._alias_last_observed = dict(alias_last_observed)
+        self._alias_digest_by_name = {
+            alias: digest.lower()
+            for alias, digest in (alias_digest_by_name or {}).items()
+            if alias and digest
+        }
+        self._artifact_created_by_digest = {
+            digest.lower(): created_at
+            for digest, created_at in artifact_created_by_digest.items()
+            if digest and created_at
+        }
+        self._artifact_metadata_by_digest = {
+            digest.lower(): {key: value for key, value in metadata.items() if value}
+            for digest, metadata in (artifact_metadata_by_digest or {}).items()
+            if digest and metadata
+        }
 
     def _registry_url(self) -> str:
         return f"https://{self.registry}"
@@ -635,6 +670,23 @@ class DockerTracker(BaseTracker):
         except ValueError:
             return None, current_token
 
+        image_config = config_json.get("config")
+        labels = image_config.get("Labels") if isinstance(image_config, dict) else None
+        if isinstance(labels, dict):
+            metadata = {
+                field: value.strip()
+                for field, label in {
+                    "version": "org.opencontainers.image.version",
+                    "revision": "org.opencontainers.image.revision",
+                    "source": "org.opencontainers.image.source",
+                }.items()
+                if isinstance((value := labels.get(label)), str)
+                and value.strip()
+                and len(value.strip()) <= 1024
+            }
+            if metadata:
+                self._oci_metadata_by_tag[tag] = metadata
+
         created_str = config_json.get("created")
         if not isinstance(created_str, str) or not created_str.strip():
             return None, current_token
@@ -668,10 +720,18 @@ class DockerTracker(BaseTracker):
         )
 
     async def fetch_latest(self, fallback_tags: bool = False) -> Release | None:
-        releases = await self.fetch_all(limit=1, fallback_tags=fallback_tags)
+        releases = await self.fetch_all(
+            limit=1, fallback_tags=fallback_tags, incremental_alias_scan=False
+        )
         return releases[0] if releases else None
 
-    async def fetch_all(self, limit: int = 10, fallback_tags: bool = False) -> list[Release]:
+    async def fetch_all(
+        self,
+        limit: int = 10,
+        fallback_tags: bool = False,
+        *,
+        incremental_alias_scan: bool = True,
+    ) -> list[Release]:
         """Fetch the first `limit` tags matching filter rules.
 
         The `published_at` handling works in two layers:
@@ -723,10 +783,47 @@ class DockerTracker(BaseTracker):
             releases = [release for release in releases if self._should_include(release)]
             _apply_semver_published_at(releases)
 
-            candidate_window = releases[:limit]
+            candidate_window = _select_incremental_probe_window(
+                releases,
+                limit,
+                self._alias_last_observed if incremental_alias_scan else None,
+            )
+            candidates_by_tag = {release.tag_name: release for release in releases}
+            candidate_tags = [release.tag_name for release in candidate_window]
+            priority_tags: list[str] = []
+            processed_tags: set[str] = set()
+            selected_releases: list[Release] = []
             allow_config_blob = self._should_fetch_config_blob()
+            artifact_created_by_digest = dict(self._artifact_created_by_digest)
+            artifact_metadata_by_digest = {
+                digest: dict(metadata)
+                for digest, metadata in self._artifact_metadata_by_digest.items()
+            }
+            metadata_attempted_digests: set[str] = set()
+            self._oci_metadata_by_tag = {}
 
-            for candidate in candidate_window:
+            def prioritize_tag(tag: str | None) -> None:
+                if (
+                    tag
+                    and tag in candidates_by_tag
+                    and tag not in processed_tags
+                    and tag not in priority_tags
+                ):
+                    priority_tags.insert(0, tag)
+
+            def apply_metadata(candidate: Release, metadata: dict[str, str]) -> None:
+                candidate.oci_version = metadata.get("version")
+                candidate.oci_revision = metadata.get("revision")
+                candidate.oci_source = metadata.get("source")
+
+            while len(selected_releases) < limit and (priority_tags or candidate_tags):
+                candidate_tag = priority_tags.pop(0) if priority_tags else candidate_tags.pop(0)
+                if candidate_tag in processed_tags:
+                    continue
+                candidate = candidates_by_tag[candidate_tag]
+                processed_tags.add(candidate_tag)
+                selected_releases.append(candidate)
+
                 digest, _, error_reason, bearer_token = await self._resolve_manifest_digest(
                     client,
                     candidate.tag_name,
@@ -735,11 +832,34 @@ class DockerTracker(BaseTracker):
                 )
                 if digest:
                     candidate.commit_sha = digest
+                    normalized_digest = digest.lower()
+                    previous_digest = self._alias_digest_by_name.get(candidate.tag_name)
+                    if previous_digest and previous_digest != normalized_digest:
+                        sibling_tags = [
+                            alias
+                            for alias, sibling_digest in self._alias_digest_by_name.items()
+                            if sibling_digest == previous_digest and alias != candidate.tag_name
+                        ]
+                        for sibling_tag in reversed(sibling_tags):
+                            prioritize_tag(sibling_tag)
 
-                    # Try to upgrade the placeholder published_at to the real
-                    # image build time, but only when the registry policy
-                    # allows it and we haven't been rate-limited recently.
-                    if allow_config_blob and not _is_registry_cooling_down(self.registry):
+                    cached_created = artifact_created_by_digest.get(normalized_digest)
+                    if cached_created is not None:
+                        candidate.published_at = cached_created
+                        candidate.published_at_source = "artifact_created"
+
+                    metadata = artifact_metadata_by_digest.get(normalized_digest)
+                    if metadata:
+                        apply_metadata(candidate, metadata)
+                    elif (
+                        normalized_digest not in metadata_attempted_digests
+                        and allow_config_blob
+                        and not _is_registry_cooling_down(self.registry)
+                    ):
+                        # OCI config metadata is immutable for a manifest digest. Fetch it
+                        # once per unique artifact, not once per alias, then persist it
+                        # through source history for future runs.
+                        metadata_attempted_digests.add(normalized_digest)
                         real_created, bearer_token = await self._fetch_image_created(
                             client,
                             candidate.tag_name,
@@ -747,9 +867,18 @@ class DockerTracker(BaseTracker):
                             scope,
                         )
                         if real_created is not None:
+                            artifact_created_by_digest[normalized_digest] = real_created
                             candidate.published_at = real_created
                             candidate.published_at_source = "artifact_created"
+                        metadata = self._oci_metadata_by_tag.get(candidate.tag_name)
+                        if metadata:
+                            artifact_metadata_by_digest[normalized_digest] = metadata
+                            apply_metadata(candidate, metadata)
 
+                    # A build's immutable OCI version label is a bounded discovery hint,
+                    # not correlation evidence: probe that exact repository tag next and
+                    # still require the manifest digest to match before storage associates it.
+                    prioritize_tag(candidate.oci_version)
                     continue
 
                 # Digest resolution failed. We still emit the candidate so
@@ -764,7 +893,7 @@ class DockerTracker(BaseTracker):
                     error_reason or "unknown",
                 )
 
-            return candidate_window
+            return selected_releases
 
 
 # ============================================================
@@ -895,6 +1024,82 @@ def _sort_tags(tags: list[str]) -> list[str]:
     other.sort(key=_natural_suffix_key, reverse=True)
 
     return special + semver + other
+
+
+def _is_likely_floating_alias(tag: str) -> bool:
+    if tag.lower() in _FLOATING_ALIAS_NAMES:
+        return True
+    version_parts = _version_parts(tag)
+    if version_parts is None:
+        return False
+    suffix = version_parts[4]
+    return not suffix or _COMMIT_SUFFIX_RE.search(suffix) is None
+
+
+def _select_incremental_probe_window(
+    releases: list[Release],
+    limit: int,
+    alias_last_observed: dict[str, datetime] | None,
+) -> list[Release]:
+    """Select at most ``limit`` aliases while eventually reconciling the full tag set.
+
+    A missing state means the tracker is being used outside the scheduler and preserves
+    the historical ranked-window behaviour. With persisted state, never-observed tags
+    are visited first. Once all tags have been seen, common floating aliases receive a
+    small reserved slice and the remaining budget rotates through the least recently
+    observed aliases.
+    """
+    if limit <= 0:
+        return []
+    if alias_last_observed is None:
+        return releases[:limit]
+
+    ranked = list(releases)
+    rank_by_tag = {release.tag_name: rank for rank, release in enumerate(ranked)}
+    unseen = [release for release in ranked if release.tag_name not in alias_last_observed]
+    observed = [release for release in ranked if release.tag_name in alias_last_observed]
+
+    def by_oldest_observation(release: Release) -> tuple[str, int]:
+        return (
+            alias_last_observed[release.tag_name].isoformat(),
+            rank_by_tag[release.tag_name],
+        )
+
+    selected: list[Release] = []
+    selected_tags: set[str] = set()
+    if unseen:
+        # Keep one slot for the stalest mutable-looking alias so a republished
+        # floating tag cannot be starved by a large backlog of unseen history.
+        rotating_floating = sorted(
+            (release for release in observed if _is_likely_floating_alias(release.tag_name)),
+            key=by_oldest_observation,
+        )
+        if rotating_floating:
+            selected.append(rotating_floating[0])
+            selected_tags.add(rotating_floating[0].tag_name)
+        for release in unseen:
+            if len(selected) >= limit:
+                return selected
+            selected.append(release)
+            selected_tags.add(release.tag_name)
+
+    floating_budget = min(3, max(1, limit // 3))
+    named_floating = [
+        release
+        for release in observed
+        if release.tag_name.lower() in _FLOATING_ALIAS_NAMES
+        and release.tag_name not in selected_tags
+    ]
+    for release in named_floating[:floating_budget]:
+        if len(selected) >= limit:
+            return selected
+        selected.append(release)
+        selected_tags.add(release.tag_name)
+
+    remaining = [release for release in observed if release.tag_name not in selected_tags]
+    remaining.sort(key=by_oldest_observation)
+    selected.extend(remaining[: limit - len(selected)])
+    return selected
 
 
 def _apply_semver_published_at(releases: list[Release]) -> None:

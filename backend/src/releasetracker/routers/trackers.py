@@ -209,6 +209,8 @@ async def _load_tracker_history_items(
                 int(row["tracker_release_history_id"]), []
             ),
         }
+        if not item["source_contributions"]:
+            continue
         item["aliases"] = list(
             dict.fromkeys(
                 alias
@@ -332,13 +334,25 @@ async def _load_current_source_contributions(
         )
     ).fetchall()
 
+    source_history_ids = [int(row["source_release_history_id"]) for row in rows]
     aliases_by_source_history_id = await storage.get_source_release_aliases_by_history_ids(
-        [int(row["source_release_history_id"]) for row in rows]
+        source_history_ids
+    )
+    current_aliases_by_source_history_id = (
+        await storage.get_current_source_release_aliases_by_history_ids(source_history_ids)
     )
     contributions_by_history_id: dict[int, list[dict[str, Any]]] = {
         tracker_release_history_id: [] for tracker_release_history_id in tracker_release_history_ids
     }
     for row in rows:
+        source_history_id = int(row["source_release_history_id"])
+        aliases = (
+            current_aliases_by_source_history_id.get(source_history_id, [])
+            if row["source_type"] == "container"
+            else aliases_by_source_history_id.get(source_history_id, [])
+        )
+        if row["source_type"] == "container" and not aliases:
+            continue
         raw_payload = storage._load_json(row["raw_payload"])
         contributions_by_history_id[row["tracker_release_history_id"]].append(
             {
@@ -364,12 +378,7 @@ async def _load_current_source_contributions(
                 "app_version": raw_payload.get("appVersion"),
                 "chart_version": raw_payload.get("chartVersion"),
                 "observed_at": row["first_observed_at"],
-                "aliases": [
-                    alias["alias"]
-                    for alias in aliases_by_source_history_id.get(
-                        int(row["source_release_history_id"]), []
-                    )
-                ],
+                "aliases": [alias["alias"] for alias in aliases],
             }
         )
 

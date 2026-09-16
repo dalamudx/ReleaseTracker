@@ -2357,7 +2357,11 @@ async def test_aggregate_check_correlates_exact_repo_tag_with_same_digest_contai
         assert republished_current[0].artifact_digest == republished_digest
         assert [
             artifact["digest"] for artifact in republished_view["matrix"]["rows"][0]["artifacts"]
-        ] == [republished_digest, digest]
+        ] == [republished_digest]
+        image_source = next(source for source in aggregate.sources if source.source_key == "image")
+        assert image_source.id is not None
+        historical_aliases = await storage.get_source_release_aliases_for_source(image_source.id)
+        assert sum(len(aliases) for aliases in historical_aliases.values()) == 8
         assert notification_events == [
             NotificationEvent.NEW_RELEASE,
             NotificationEvent.REPUBLISH,

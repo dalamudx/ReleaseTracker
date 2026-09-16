@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from . import __version__
 from .scheduler import ReleaseScheduler
 from .scheduler_host import SchedulerHost
+from .webhook_scheduler import RepositoryWebhookScheduler
 from .executor_scheduler import ExecutorScheduler
 from .services.auth import AuthService
 from .services.system_keys import (
@@ -23,7 +24,7 @@ from .services.system_keys import (
 )
 from .storage.sqlite import SQLiteStorage
 from .logger import LogConfig
-from .routers import auth, notifiers, settings, trackers, credentials, releases, system
+from .routers import auth, notifiers, settings, trackers, credentials, releases, system, webhooks
 from .routers import runtime_connections
 from .routers import executors
 from .routers import oidc as oidc_router
@@ -87,14 +88,17 @@ async def lifespan(app: FastAPI):
     scheduler_host = SchedulerHost()
     scheduler = ReleaseScheduler(storage, scheduler_host=scheduler_host)
     executor_scheduler = ExecutorScheduler(storage, scheduler_host=scheduler_host)
+    repository_webhook_scheduler = RepositoryWebhookScheduler(storage, scheduler, scheduler_host)
 
     # Bind schedulers to app.state
     app.state.scheduler_host = scheduler_host
     app.state.scheduler = scheduler
     app.state.executor_scheduler = executor_scheduler
+    app.state.repository_webhook_scheduler = repository_webhook_scheduler
 
     await scheduler.initialize()
     await executor_scheduler.initialize()
+    await repository_webhook_scheduler.initialize()
     await scheduler_host.start()
     await scheduler.start()
     await executor_scheduler.start()
@@ -133,6 +137,7 @@ app.add_middleware(StorageConnectionCleanupMiddleware)
 
 app.include_router(auth.router)
 app.include_router(notifiers.router)
+app.include_router(webhooks.router)
 app.include_router(settings.router)
 app.include_router(trackers.router)
 app.include_router(credentials.router)

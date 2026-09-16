@@ -117,7 +117,9 @@
     "enabled": "已启用",
     "disabled": "已禁用",
     "actions": "操作",
-    "switchLanguage": "切换语言"
+    "switchLanguage": "切换语言",
+    "copy": "复制",
+    "copied": "已复制"
   },
   "systemSettings": {
     "system": {
@@ -290,7 +292,75 @@
     "runtimeConnections": "运行时连接",
     "credentials": "凭证",
     "notifications": "消息通知",
+    "webhooks": "Webhook",
     "settings": "系统设置"
+  },
+  "webhooks": {
+    "tabs": {
+      "outgoing": "通知 Webhook",
+      "repository": "仓库 Webhook"
+    },
+    "repository": {
+      "title": "仓库 Webhook",
+      "description": "接收版本发布或 Actions 成功事件，并按既有追踪规则安排来源拉取。",
+      "add": "添加仓库 Webhook",
+      "edit": "编辑仓库 Webhook",
+      "formDescription": "在 Git 平台配置生成的接收地址和同一密钥。请求只会触发拉取，不会直接创建版本或部署。",
+      "source": "仓库来源",
+      "selectSource": "选择 Git 来源",
+      "provider": "平台协议",
+      "authMode": "认证方式",
+      "signingToken": "Signing Token（推荐）",
+      "secretToken": "Secret Token（兼容旧实例）",
+      "events": "触发事件",
+      "endpoint": "接收地址",
+      "status": "状态",
+      "release": "版本发布",
+      "workflow": "Actions 运行成功",
+      "secret": "验证密钥",
+      "secretPlaceholder": "至少 16 个字符",
+      "secretUnchanged": "留空保持现有密钥",
+      "hmacSecretHelp": "GitHub、Gitea 和 Forgejo 使用请求体 HMAC-SHA256 签名。",
+      "gitlabSigningHelp": "填写 GitLab 生成的 whsec_ Signing Token；接收端校验请求体签名和时间戳。",
+      "gitlabSecretHelp": "填写 GitLab Webhook 的 Secret Token；它通过请求头明文传递，仅用于旧实例兼容。",
+      "branches": "分支过滤",
+      "branchesHelp": "可选，逗号分隔；只应用于 Actions 事件，不应用于 Release。",
+      "workflows": "工作流过滤",
+      "workflowsHelp": "可选，逗号分隔；平台请求未包含工作流名称时将拒绝匹配。",
+      "linkedSources": "联动制品来源",
+      "linkedSourcesHelp": "Actions 成功后同时刷新选中的容器或 Helm 来源。Release 只刷新仓库来源。",
+      "empty": "尚未配置仓库 Webhook。",
+      "created": "仓库 Webhook 已创建",
+      "updated": "仓库 Webhook 已更新",
+      "saveFailed": "仓库 Webhook 保存失败",
+      "deleteConfirm": "删除后该接收地址将立即失效，确定继续吗？",
+      "deliveries": "投递记录",
+      "noDeliveries": "尚未收到投递。",
+      "duplicates": "重复投递 {{count}} 次",
+      "copyEndpoint": "复制接收地址",
+      "fetchRun": "抓取运行",
+      "attempts_one": "已尝试 {{count}} 次",
+      "attempts_other": "已尝试 {{count}} 次",
+      "eventKinds": {
+        "release": "版本发布",
+        "workflow": "Actions 运行成功",
+        "ping": "连接测试",
+        "ignored": "不支持的事件"
+      }
+    },
+    "states": {
+      "queued": "已排队",
+      "pending": "待处理",
+      "deferred": "等待重试",
+      "waiting": "等待中",
+      "running": "拉取中",
+      "completed": "已完成",
+      "no_change": "无新版本",
+      "failed": "失败",
+      "cancelled": "已取消",
+      "ignored": "已忽略",
+      "duplicate": "重复投递"
+    }
   },
   "dashboard": {
     "title": "仪表盘",

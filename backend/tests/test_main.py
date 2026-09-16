@@ -5,10 +5,19 @@ import pytest
 from releasetracker import main as main_module
 
 
+class FakeWebhookStore:
+    def __init__(self, storage):
+        self.storage = storage
+
+    async def cleanup(self):
+        self.storage.events.append("repository_webhooks.cleanup")
+
+
 class FakeStorage:
     def __init__(self, _db_path: str):
         self.closed = False
         self.events: list[str] = []
+        self.webhooks = FakeWebhookStore(self)
 
     async def initialize(self):
         self.events.append("storage.initialize")
@@ -42,6 +51,11 @@ class FakeSchedulerHost:
         self.start_called = False
         self.shutdown_called = False
         self.schedulers: list[object] = []
+        self.interval_jobs: list[tuple[str, str, int]] = []
+
+    def add_interval_job(self, namespace, job_id, func, *, seconds):
+        del func
+        self.interval_jobs.append((namespace, job_id, seconds))
 
     async def start(self):
         self.start_called = True
@@ -149,6 +163,10 @@ async def test_lifespan_starts_without_identity_drift_repair(monkeypatch):
         assert main_module.app.state.scheduler_host is scheduler_host
         assert auth.ensure_admin_called is True
         assert scheduler_host.start_called is True
+        assert scheduler_host.interval_jobs == [
+            ("repository_webhooks", "worker", 2),
+            ("repository_webhooks", "cleanup", 86400),
+        ]
         assert scheduler.scheduler_host is scheduler_host
         assert executor.scheduler_host is scheduler_host
         assert scheduler.initialize_called is True
@@ -161,6 +179,7 @@ async def test_lifespan_starts_without_identity_drift_repair(monkeypatch):
             "storage.reconcile_snapshot_claims",
             "scheduler.initialize",
             "executor.initialize",
+            "repository_webhooks.cleanup",
             "scheduler_host.start",
             "scheduler.start",
             "executor.start",

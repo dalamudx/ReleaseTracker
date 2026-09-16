@@ -23,6 +23,7 @@ import type {
   UpdateRuntimeConnectionRequest,
   CreateExecutorRequest,
   UpdateExecutorRequest,
+  RepositoryWebhookInput,
 } from "@/api/types"
 
 // ==================== Query Keys ====================
@@ -65,6 +66,10 @@ export const queryKeys = {
   notifiers: (params?: { skip?: number; limit?: number; search?: string }) =>
     ["notifiers", params] as const,
   notifier: (id: number) => ["notifiers", id] as const,
+
+  // Repository webhooks
+  repositoryWebhooks: ["webhooks", "repositories"] as const,
+  repositoryWebhookDeliveries: (id: string) => ["webhooks", "repositories", id, "deliveries"] as const,
 
   // Settings
   settings: ["settings"] as const,
@@ -333,6 +338,50 @@ export function useDeleteNotifier() {
 export function useTestNotifier() {
   return useMutation({
     mutationFn: (id: number) => api.testNotifier(id),
+  })
+}
+
+// ==================== Repository Webhooks ====================
+
+export function useRepositoryWebhooks() {
+  return useQuery({
+    queryKey: queryKeys.repositoryWebhooks,
+    queryFn: api.getRepositoryWebhooks,
+    refetchInterval: 15_000,
+  })
+}
+
+export function useRepositoryWebhookDeliveries(id: string | null) {
+  return useQuery({
+    queryKey: queryKeys.repositoryWebhookDeliveries(id ?? ""),
+    queryFn: () => api.getRepositoryWebhookDeliveries(id!),
+    enabled: Boolean(id),
+    refetchInterval: 5_000,
+  })
+}
+
+export function useCreateRepositoryWebhook() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (data: RepositoryWebhookInput) => api.createRepositoryWebhook(data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.repositoryWebhooks }),
+  })
+}
+
+export function useUpdateRepositoryWebhook() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: RepositoryWebhookInput }) =>
+      api.updateRepositoryWebhook(id, data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.repositoryWebhooks }),
+  })
+}
+
+export function useDeleteRepositoryWebhook() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: api.deleteRepositoryWebhook,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.repositoryWebhooks }),
   })
 }
 

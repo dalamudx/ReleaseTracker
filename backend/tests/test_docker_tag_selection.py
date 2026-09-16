@@ -1,6 +1,7 @@
 import importlib.util
 import logging
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -20,6 +21,7 @@ spec.loader.exec_module(docker_module)
 
 DockerTracker = docker_module.DockerTracker
 _apply_semver_published_at = docker_module._apply_semver_published_at
+_select_incremental_probe_window = docker_module._select_incremental_probe_window
 _sort_tags = docker_module._sort_tags
 
 
@@ -29,6 +31,89 @@ def _build_filtered_releases(tracker: DockerTracker, tags: list[str]):
     releases = [release for release in releases if tracker._should_include(release)]
     _apply_semver_published_at(releases)
     return releases
+
+
+def test_incremental_probe_window_reconciles_all_tags_without_expanding_budget():
+    tracker = DockerTracker(name="docker-test", image="library/sample-web")
+    tags = [
+        "latest",
+        "3.6",
+        "3.6.0",
+        "3.6.0-dev-ce40a02fc70b",
+        "3.6.0-dev-be098011c46b",
+        "3.6.0-dev-66bf52caecad",
+        "3.6.0-dev-7b83bb5ce6c3",
+        "3.6.0-dev-7a2a65d97ed3",
+        "3.6.0-dev-0b0d27d3f61c",
+        "3.6-dev",
+        "3.6.0-dev",
+        "3.5.1",
+        "3.5.1-hotfix-a94fd1773bad",
+        "3.5.1-hotfix-74e3f992a950",
+        "3.5.1-hotfix",
+        "3.5.1-dev-74e3f992a950",
+        "3.5.1-dev",
+        "3.5",
+        "3.5-hotfix",
+        "3.5.0-dev-4997f3cfa8a5",
+        "3.5.0-dev-595a0242aa0d",
+        "3.5.0-dev-40b1fd11771b",
+        "3.5.0-dev-02a50461aeec",
+        "3.5-dev",
+        "3.5.0-dev",
+        "hotfix",
+        "dev",
+    ]
+    releases = _build_filtered_releases(tracker, tags)
+    observed: dict[str, datetime] = {}
+    seen: set[str] = set()
+    base = datetime(2026, 9, 16, tzinfo=timezone.utc)
+
+    for run in range(3):
+        selected = _select_incremental_probe_window(releases, 10, observed)
+        assert len(selected) <= 10
+        seen.update(release.tag_name for release in selected)
+        for index, release in enumerate(selected):
+            observed[release.tag_name] = base + timedelta(minutes=run, seconds=index)
+
+    assert seen == set(tags)
+
+
+def test_incremental_probe_window_rechecks_stale_version_alias_during_backlog():
+    tracker = DockerTracker(name="docker-test", image="library/sample-web")
+    releases = _build_filtered_releases(
+        tracker, ["latest", "3.6.0-dev", "new-build-a", "new-build-b"]
+    )
+    base = datetime(2026, 9, 16, tzinfo=timezone.utc)
+    observed = {
+        "latest": base,
+        "3.6.0-dev": base - timedelta(days=1),
+    }
+
+    selected = _select_incremental_probe_window(releases, 2, observed)
+
+    assert selected[0].tag_name == "3.6.0-dev"
+    assert len(selected) == 2
+    assert selected[1].tag_name in {"new-build-a", "new-build-b"}
+
+
+def test_incremental_probe_window_prioritizes_floating_then_oldest_observed():
+    tracker = DockerTracker(name="docker-test", image="library/sample-web")
+    releases = _build_filtered_releases(
+        tracker, ["latest", *[f"1.0.{index}" for index in range(10)], "dev"]
+    )
+    base = datetime(2026, 9, 16, tzinfo=timezone.utc)
+    observed = {
+        release.tag_name: base + timedelta(minutes=index) for index, release in enumerate(releases)
+    }
+
+    selected = _select_incremental_probe_window(releases, 10, observed)
+    selected_tags = [release.tag_name for release in selected]
+
+    assert len(selected_tags) == 10
+    assert "latest" in selected_tags
+    assert "dev" in selected_tags
+    assert releases[1].tag_name in selected_tags
 
 
 def test_docker_semver_beats_older_after_exclude_filter():
@@ -440,6 +525,37 @@ async def test_fetch_all_keeps_candidates_when_digest_lookup_fails(monkeypatch):
     assert [release.tag_name for release in releases] == ["latest", "24.04.1", "24.04"]
     assert [release.version for release in releases] == ["latest", "24.04.1", "24.04"]
     assert all(release.commit_sha is None for release in releases)
+
+
+@pytest.mark.asyncio
+async def test_fetch_latest_ignores_incremental_alias_rotation(monkeypatch):
+    tracker = DockerTracker(
+        name="docker-test",
+        image="library/sample-web",
+        published_at_mode="first_observed",
+    )
+    tracker.configure_incremental_fetch(
+        alias_last_observed={"latest": datetime(2026, 9, 16, tzinfo=timezone.utc)},
+        artifact_created_by_digest={},
+    )
+
+    async def fake_get_bearer_token(self, client, scope):
+        return None
+
+    async def fake_fetch_tags(self, client, bearer_token):
+        return ["latest", "2.0.0"]
+
+    async def fake_resolve_manifest_digest(self, client, tag, bearer_token, scope):
+        return "sha256:" + "a" * 64, None, None, bearer_token
+
+    monkeypatch.setattr(DockerTracker, "_get_bearer_token", fake_get_bearer_token)
+    monkeypatch.setattr(DockerTracker, "_fetch_tags", fake_fetch_tags)
+    monkeypatch.setattr(DockerTracker, "_resolve_manifest_digest", fake_resolve_manifest_digest)
+
+    release = await tracker.fetch_latest()
+
+    assert release is not None
+    assert release.tag_name == "latest"
 
 
 @pytest.mark.asyncio

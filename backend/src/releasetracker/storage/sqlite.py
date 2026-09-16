@@ -25,6 +25,7 @@ from . import (
     sqlite_current_releases,
     sqlite_source_observations,
     sqlite_release_queries,
+    sqlite_webhooks,
 )
 from ..models import (
     Release,
@@ -108,6 +109,7 @@ class SQLiteStorage:
 
         # Notifier in-memory cache, invalidated after CRUD operations
         self._notifiers_cache: list | None = None
+        self.webhooks = sqlite_webhooks.WebhookStore(self)
 
         if system_key_manager is None:
             raise RuntimeError("SQLiteStorage requires SystemKeyManager")
@@ -393,6 +395,7 @@ class SQLiteStorage:
             "credentials_secrets": 0,
             "oauth_provider_client_secret": 0,
             "runtime_connection_secrets": 0,
+            "repository_webhook_secret": 0,
         }
         undecryptable_count = 0
 
@@ -427,6 +430,15 @@ class SQLiteStorage:
                     secrets_payload, self.fernet
                 )
 
+        if await self._table_exists("repository_webhooks"):
+            cursor = await db.execute("SELECT secret FROM repository_webhooks")
+            for row in await cursor.fetchall():
+                if row["secret"]:
+                    inventory["repository_webhook_secret"] += 1
+                    undecryptable_count += self._count_undecryptable_string(
+                        row["secret"], self.fernet
+                    )
+
         return {"inventory": inventory, "undecryptable_count": undecryptable_count}
 
     async def rotate_encrypted_data(self, new_key: str) -> dict[str, Any]:
@@ -444,12 +456,14 @@ class SQLiteStorage:
                 "credentials_secrets": 0,
                 "oauth_provider_client_secret": 0,
                 "runtime_connection_secrets": 0,
+                "repository_webhook_secret": 0,
             },
             "rotated": {
                 "credentials_token": 0,
                 "credentials_secrets": 0,
                 "oauth_provider_client_secret": 0,
                 "runtime_connection_secrets": 0,
+                "repository_webhook_secret": 0,
             },
             "plaintext_reencrypted": 0,
             "undecryptable_count": 0,
@@ -457,6 +471,7 @@ class SQLiteStorage:
         credential_updates: list[tuple[str, str, int]] = []
         oauth_provider_updates: list[tuple[str, int]] = []
         runtime_connection_updates: list[tuple[str, int]] = []
+        repository_webhook_updates: list[tuple[str, str]] = []
 
         try:
             cursor = await db.execute("SELECT id, token, secrets FROM credentials")
@@ -523,6 +538,20 @@ class SQLiteStorage:
                 )
                 stats["plaintext_reencrypted"] += nested_stats["plaintext"]
                 runtime_connection_updates.append((self._dump_json(rotated_secrets), row["id"]))
+
+            if await self._table_exists("repository_webhooks"):
+                cursor = await db.execute("SELECT id, secret FROM repository_webhooks")
+                for row in await cursor.fetchall():
+                    if not row["secret"]:
+                        continue
+                    stats["inventory"]["repository_webhook_secret"] += 1
+                    rotated_secret, was_encrypted = self._rotate_string_for_encryption_key(
+                        row["secret"], old_fernet, new_fernet
+                    )
+                    stats["rotated"]["repository_webhook_secret"] += 1
+                    if not was_encrypted:
+                        stats["plaintext_reencrypted"] += 1
+                    repository_webhook_updates.append((rotated_secret, row["id"]))
         except ValueError:
             stats["undecryptable_count"] = (await self.get_encryption_key_inventory())[
                 "undecryptable_count"
@@ -542,6 +571,10 @@ class SQLiteStorage:
             await db.executemany(
                 "UPDATE runtime_connections SET secrets = ? WHERE id = ?",
                 runtime_connection_updates,
+            )
+            await db.executemany(
+                "UPDATE repository_webhooks SET secret = ? WHERE id = ?",
+                repository_webhook_updates,
             )
             await db.commit()
         except BaseException:
@@ -1020,6 +1053,9 @@ class SQLiteStorage:
             "source_release_run_observations",
             "source_release_aliases",
             "source_release_alias_run_observations",
+            "repository_webhooks",
+            "webhook_deliveries",
+            "source_refresh_requests",
             "tracker_release_history",
             "tracker_release_history_sources",
             "tracker_current_releases",
@@ -1877,12 +1913,25 @@ class SQLiteStorage:
             self, source_release_history_ids
         )
 
+    async def get_current_source_release_aliases_by_history_ids(
+        self, source_release_history_ids: list[int]
+    ) -> dict[int, list[dict[str, Any]]]:
+        return await sqlite_release_aliases.get_current_source_release_aliases_by_history_ids(
+            self, source_release_history_ids
+        )
+
     async def get_source_release_aliases_for_source(
         self, tracker_source_id: int
     ) -> dict[int, list[dict[str, Any]]]:
         return await sqlite_release_aliases.get_source_release_aliases_for_source(
             self, tracker_source_id
         )
+
+    async def get_source_alias_last_observed(self, tracker_source_id: int) -> dict[str, datetime]:
+        return await sqlite_release_aliases.get_source_alias_last_observed(self, tracker_source_id)
+
+    async def get_source_alias_latest_digests(self, tracker_source_id: int) -> dict[str, str]:
+        return await sqlite_release_aliases.get_source_alias_latest_digests(self, tracker_source_id)
 
     async def get_source_release_history_releases_by_source(
         self,

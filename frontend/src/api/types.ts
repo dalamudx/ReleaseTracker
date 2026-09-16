@@ -433,6 +433,61 @@ export interface Notifier {
     created_at: string
 }
 
+export type RepositoryWebhookProvider = 'github' | 'gitlab' | 'gitea' | 'forgejo'
+export type RepositoryWebhookAuthMode = 'hmac' | 'gitlab_signing' | 'gitlab_token'
+
+export interface RepositoryWebhook {
+    id: string
+    tracker_source_id: number
+    tracker_name: string
+    source_key: string
+    provider: RepositoryWebhookProvider
+    enabled: boolean
+    auth_mode: RepositoryWebhookAuthMode
+    secret_configured: boolean
+    endpoint_url: string
+    release_published: boolean
+    workflow_success: boolean
+    linked_source_ids: number[]
+    branches: string[]
+    workflows: string[]
+    created_at: number
+    updated_at: number
+}
+
+export interface RepositoryWebhookInput {
+    tracker_source_id: number
+    provider: RepositoryWebhookProvider
+    enabled: boolean
+    auth_mode: RepositoryWebhookAuthMode
+    secret?: string
+    release_published: boolean
+    workflow_success: boolean
+    linked_source_ids: number[]
+    branches: string[]
+    workflows: string[]
+}
+
+export interface RepositoryWebhookRefreshRequest {
+    tracker_source_id: number
+    source_key: string
+    state: string
+    reason: string
+    due_at: number
+    attempts: number
+    source_fetch_run_id?: number | null
+}
+
+export interface RepositoryWebhookDelivery {
+    id: number
+    state: string
+    reason: string
+    duplicates: number
+    received_at: number
+    summary: Record<string, string>
+    requests: RepositoryWebhookRefreshRequest[]
+}
+
 export interface SettingItem {
     key: string
     value: unknown

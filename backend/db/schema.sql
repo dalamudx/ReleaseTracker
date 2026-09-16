@@ -207,21 +207,6 @@ CREATE TABLE canonical_release_observations (
     FOREIGN KEY (canonical_release_id) REFERENCES canonical_releases(id) ON DELETE CASCADE,
     FOREIGN KEY (source_release_observation_id) REFERENCES source_release_observations(id) ON DELETE CASCADE
 );
-CREATE TABLE source_fetch_runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tracker_source_id INTEGER NOT NULL,
-    trigger_mode TEXT NOT NULL,
-    started_at TEXT NOT NULL,
-    finished_at TEXT,
-    status TEXT NOT NULL,
-    error_message TEXT,
-    fetched_count INTEGER NOT NULL DEFAULT 0,
-    filtered_in_count INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (tracker_source_id) REFERENCES aggregate_tracker_sources(id) ON DELETE CASCADE,
-    CHECK (trigger_mode IN ('scheduled', 'manual', 'bootstrap')),
-    CHECK (status IN ('running', 'success', 'partial', 'failed'))
-);
 CREATE TABLE source_release_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tracker_source_id INTEGER NOT NULL,
@@ -259,37 +244,8 @@ CREATE TABLE source_release_run_observations (
     FOREIGN KEY (source_release_history_id) REFERENCES source_release_history(id) ON DELETE CASCADE,
     UNIQUE(source_fetch_run_id, source_release_history_id)
 );
-CREATE TABLE source_release_aliases (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_release_history_id INTEGER NOT NULL,
-    tracker_source_id INTEGER NOT NULL,
-    alias TEXT NOT NULL,
-    normalized_alias TEXT NOT NULL,
-    channel_name TEXT,
-    first_source_fetch_run_id INTEGER NOT NULL,
-    last_source_fetch_run_id INTEGER NOT NULL,
-    first_observed_at TEXT NOT NULL,
-    last_observed_at TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY (source_release_history_id) REFERENCES source_release_history(id) ON DELETE CASCADE,
-    FOREIGN KEY (tracker_source_id) REFERENCES aggregate_tracker_sources(id) ON DELETE CASCADE,
-    FOREIGN KEY (first_source_fetch_run_id) REFERENCES source_fetch_runs(id) ON DELETE RESTRICT,
-    FOREIGN KEY (last_source_fetch_run_id) REFERENCES source_fetch_runs(id) ON DELETE RESTRICT,
-    UNIQUE(tracker_source_id, source_release_history_id, normalized_alias)
-);
-CREATE TABLE source_release_alias_run_observations (
-    source_fetch_run_id INTEGER NOT NULL,
-    source_release_alias_id INTEGER NOT NULL,
-    observed_at TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (source_fetch_run_id, source_release_alias_id),
-    FOREIGN KEY (source_fetch_run_id) REFERENCES source_fetch_runs(id) ON DELETE CASCADE,
-    FOREIGN KEY (source_release_alias_id) REFERENCES source_release_aliases(id) ON DELETE CASCADE
-);
 CREATE TABLE tracker_release_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    merged_into_tracker_release_history_id INTEGER,
     aggregate_tracker_id INTEGER NOT NULL,
     identity_key TEXT NOT NULL,
     version TEXT NOT NULL,
@@ -298,10 +254,10 @@ CREATE TABLE tracker_release_history (
     digest_media_type TEXT,
     digest_platform TEXT,
     primary_source_release_history_id INTEGER NOT NULL,
-    created_at TEXT NOT NULL, immutable_key TEXT,
+    created_at TEXT NOT NULL, immutable_key TEXT, merged_into_tracker_release_history_id INTEGER
+    REFERENCES tracker_release_history(id) ON DELETE SET NULL,
     FOREIGN KEY (aggregate_tracker_id) REFERENCES aggregate_trackers(id) ON DELETE CASCADE,
     FOREIGN KEY (primary_source_release_history_id) REFERENCES source_release_history(id) ON DELETE RESTRICT,
-    FOREIGN KEY (merged_into_tracker_release_history_id) REFERENCES tracker_release_history(id) ON DELETE SET NULL,
     UNIQUE(aggregate_tracker_id, identity_key)
 );
 CREATE TABLE tracker_release_history_sources (
@@ -383,26 +339,12 @@ CREATE INDEX idx_canonical_releases_primary_observation_id
 CREATE INDEX idx_canonical_release_observations_source_observation_id
     ON canonical_release_observations(source_release_observation_id);
 CREATE INDEX idx_executors_tracker_source_id ON executors(tracker_source_id);
-CREATE INDEX idx_source_fetch_runs_tracker_source_id
-    ON source_fetch_runs(tracker_source_id);
-CREATE INDEX idx_source_fetch_runs_tracker_source_started_at
-    ON source_fetch_runs(tracker_source_id, started_at DESC);
 CREATE INDEX idx_source_release_history_source_published_at
     ON source_release_history(tracker_source_id, published_at DESC);
 CREATE INDEX idx_source_release_history_digest
     ON source_release_history(digest);
 CREATE INDEX idx_source_release_run_observations_history_observed_at
     ON source_release_run_observations(source_release_history_id, observed_at DESC);
-CREATE INDEX idx_source_release_aliases_history_id
-    ON source_release_aliases(source_release_history_id);
-CREATE INDEX idx_source_release_aliases_source_normalized
-    ON source_release_aliases(tracker_source_id, normalized_alias);
-CREATE INDEX idx_source_release_aliases_last_run
-    ON source_release_aliases(last_source_fetch_run_id);
-CREATE INDEX idx_source_release_alias_run_observations_alias
-    ON source_release_alias_run_observations(source_release_alias_id, observed_at DESC);
-CREATE INDEX idx_tracker_release_history_merged_into
-    ON tracker_release_history(merged_into_tracker_release_history_id);
 CREATE INDEX idx_tracker_release_history_tracker_created_at
     ON tracker_release_history(aggregate_tracker_id, created_at DESC);
 CREATE INDEX idx_tracker_release_history_tracker_version
@@ -470,6 +412,102 @@ CREATE INDEX idx_executor_snapshot_claims_executor_id
     ON executor_snapshot_claims(executor_id);
 CREATE INDEX idx_executor_snapshot_claims_claimed_at
     ON executor_snapshot_claims(claimed_at);
+CREATE TABLE source_release_aliases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_release_history_id INTEGER NOT NULL,
+    tracker_source_id INTEGER NOT NULL,
+    alias TEXT NOT NULL,
+    normalized_alias TEXT NOT NULL,
+    channel_name TEXT,
+    first_source_fetch_run_id INTEGER NOT NULL,
+    last_source_fetch_run_id INTEGER NOT NULL,
+    first_observed_at TEXT NOT NULL,
+    last_observed_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (source_release_history_id) REFERENCES source_release_history(id) ON DELETE CASCADE,
+    FOREIGN KEY (tracker_source_id) REFERENCES aggregate_tracker_sources(id) ON DELETE CASCADE,
+    FOREIGN KEY (first_source_fetch_run_id) REFERENCES source_fetch_runs(id) ON DELETE RESTRICT,
+    FOREIGN KEY (last_source_fetch_run_id) REFERENCES source_fetch_runs(id) ON DELETE RESTRICT,
+    UNIQUE(tracker_source_id, source_release_history_id, normalized_alias)
+);
+CREATE TABLE source_release_alias_run_observations (
+    source_fetch_run_id INTEGER NOT NULL,
+    source_release_alias_id INTEGER NOT NULL,
+    observed_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (source_fetch_run_id, source_release_alias_id),
+    FOREIGN KEY (source_fetch_run_id) REFERENCES source_fetch_runs(id) ON DELETE CASCADE,
+    FOREIGN KEY (source_release_alias_id) REFERENCES source_release_aliases(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_source_release_aliases_history_id
+    ON source_release_aliases(source_release_history_id);
+CREATE INDEX idx_source_release_aliases_source_normalized
+    ON source_release_aliases(tracker_source_id, normalized_alias);
+CREATE INDEX idx_source_release_aliases_last_run
+    ON source_release_aliases(last_source_fetch_run_id);
+CREATE INDEX idx_source_release_alias_run_observations_alias
+    ON source_release_alias_run_observations(source_release_alias_id, observed_at DESC);
+CREATE INDEX idx_tracker_release_history_merged_into
+    ON tracker_release_history(merged_into_tracker_release_history_id);
+CREATE TABLE IF NOT EXISTS "source_fetch_runs" (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tracker_source_id INTEGER NOT NULL,
+    trigger_mode TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    status TEXT NOT NULL,
+    error_message TEXT,
+    fetched_count INTEGER NOT NULL DEFAULT 0,
+    filtered_in_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (tracker_source_id) REFERENCES aggregate_tracker_sources(id) ON DELETE CASCADE,
+    CHECK (trigger_mode IN ('scheduled', 'manual', 'bootstrap', 'webhook')),
+    CHECK (status IN ('running', 'success', 'partial', 'failed'))
+);
+CREATE INDEX idx_source_fetch_runs_tracker_source_id ON source_fetch_runs(tracker_source_id);
+CREATE INDEX idx_source_fetch_runs_tracker_source_started_at ON source_fetch_runs(tracker_source_id, started_at DESC);
+CREATE TABLE repository_webhooks (
+    id TEXT PRIMARY KEY,
+    tracker_source_id INTEGER NOT NULL UNIQUE REFERENCES aggregate_tracker_sources(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    auth_mode TEXT NOT NULL,
+    secret TEXT NOT NULL,
+    config TEXT NOT NULL,
+    source_identity TEXT NOT NULL,
+    generation INTEGER NOT NULL DEFAULT 1,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE TABLE webhook_deliveries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    webhook_id TEXT NOT NULL REFERENCES repository_webhooks(id) ON DELETE CASCADE,
+    delivery_key TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    state TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    duplicates INTEGER NOT NULL DEFAULT 0,
+    received_at REAL NOT NULL,
+    UNIQUE(webhook_id, delivery_key)
+);
+CREATE INDEX idx_webhook_deliveries_received ON webhook_deliveries(webhook_id, received_at DESC);
+CREATE TABLE source_refresh_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    delivery_id INTEGER NOT NULL REFERENCES webhook_deliveries(id) ON DELETE CASCADE,
+    tracker_source_id INTEGER NOT NULL REFERENCES aggregate_tracker_sources(id) ON DELETE CASCADE,
+    webhook_generation INTEGER NOT NULL,
+    source_identity TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending',
+    due_at REAL NOT NULL,
+    lease_until REAL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    reason TEXT NOT NULL DEFAULT '',
+    source_fetch_run_id INTEGER REFERENCES source_fetch_runs(id) ON DELETE SET NULL,
+    UNIQUE(delivery_id, tracker_source_id)
+);
+CREATE INDEX idx_source_refresh_due ON source_refresh_requests(state, due_at);
 -- Dbmate schema migrations
 INSERT INTO "schema_migrations" (version) VALUES
   ('20000101000001'),
@@ -480,4 +518,5 @@ INSERT INTO "schema_migrations" (version) VALUES
   ('20260808000001'),
   ('20260809000001'),
   ('20260906000001'),
-  ('20260916000001');
+  ('20260916000001'),
+  ('20260916000002');

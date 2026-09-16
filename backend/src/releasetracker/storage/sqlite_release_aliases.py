@@ -125,6 +125,67 @@ async def get_source_release_aliases_by_history_ids(
     return result
 
 
+async def get_current_source_release_aliases_by_history_ids(
+    storage: "SQLiteStorage", source_release_history_ids: list[int]
+) -> dict[int, list[dict[str, Any]]]:
+    """Return aliases whose latest source-local observation points at each history row."""
+    if not source_release_history_ids:
+        return {}
+    db = await storage._get_connection()
+    db.row_factory = aiosqlite.Row
+    placeholders = ", ".join("?" for _ in source_release_history_ids)
+    rows = await (
+        await db.execute(
+            f"""
+            WITH requested_history AS (
+                SELECT id, tracker_source_id
+                FROM source_release_history
+                WHERE id IN ({placeholders})
+            ),
+            relevant_sources AS (
+                SELECT DISTINCT tracker_source_id
+                FROM requested_history
+            ),
+            ranked_aliases AS (
+                SELECT sra.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY sra.tracker_source_id, sra.normalized_alias
+                           ORDER BY sra.last_observed_at DESC, sra.id DESC
+                       ) AS alias_rank
+                FROM source_release_aliases sra
+                JOIN relevant_sources rs
+                  ON rs.tracker_source_id = sra.tracker_source_id
+            )
+            SELECT ranked_aliases.*
+            FROM ranked_aliases
+            JOIN requested_history rh
+              ON rh.id = ranked_aliases.source_release_history_id
+            WHERE ranked_aliases.alias_rank = 1
+            ORDER BY ranked_aliases.source_release_history_id ASC,
+                     ranked_aliases.normalized_alias ASC
+            """,
+            tuple(source_release_history_ids),
+        )
+    ).fetchall()
+    result: dict[int, list[dict[str, Any]]] = {
+        history_id: [] for history_id in source_release_history_ids
+    }
+    for row in rows:
+        result[int(row["source_release_history_id"])].append(
+            {
+                "id": int(row["id"]),
+                "alias": row["alias"],
+                "normalized_alias": row["normalized_alias"],
+                "channel_name": row["channel_name"],
+                "first_observed_at": row["first_observed_at"],
+                "last_observed_at": row["last_observed_at"],
+                "first_source_fetch_run_id": int(row["first_source_fetch_run_id"]),
+                "last_source_fetch_run_id": int(row["last_source_fetch_run_id"]),
+            }
+        )
+    return result
+
+
 async def get_source_release_aliases_for_source(
     storage: "SQLiteStorage", tracker_source_id: int
 ) -> dict[int, list[dict[str, Any]]]:
@@ -144,3 +205,59 @@ async def get_source_release_aliases_for_source(
     return await get_source_release_aliases_by_history_ids(
         storage, [int(row["source_release_history_id"]) for row in rows]
     )
+
+
+async def get_source_alias_last_observed(
+    storage: "SQLiteStorage", tracker_source_id: int
+) -> dict[str, datetime]:
+    """Return the latest persisted observation time for each concrete source alias."""
+    db = await storage._get_connection()
+    db.row_factory = aiosqlite.Row
+    rows = await (
+        await db.execute(
+            """
+            SELECT alias, MAX(last_observed_at) AS last_observed_at
+            FROM source_release_aliases
+            WHERE tracker_source_id = ?
+            GROUP BY alias
+            """,
+            (tracker_source_id,),
+        )
+    ).fetchall()
+    return {
+        str(row["alias"]): datetime.fromisoformat(row["last_observed_at"])
+        for row in rows
+        if row["alias"] and row["last_observed_at"]
+    }
+
+
+async def get_source_alias_latest_digests(
+    storage: "SQLiteStorage", tracker_source_id: int
+) -> dict[str, str]:
+    """Return each alias's most recently observed immutable artifact digest."""
+    db = await storage._get_connection()
+    db.row_factory = aiosqlite.Row
+    rows = await (
+        await db.execute(
+            """
+            WITH ranked_aliases AS (
+                SELECT sra.alias, srh.digest,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY sra.normalized_alias
+                           ORDER BY sra.last_observed_at DESC, sra.id DESC
+                       ) AS rank
+                FROM source_release_aliases sra
+                JOIN source_release_history srh
+                  ON srh.id = sra.source_release_history_id
+                WHERE sra.tracker_source_id = ?
+                  AND srh.digest IS NOT NULL
+                  AND srh.digest != ''
+            )
+            SELECT alias, digest
+            FROM ranked_aliases
+            WHERE rank = 1
+            """,
+            (tracker_source_id,),
+        )
+    ).fetchall()
+    return {str(row["alias"]): str(row["digest"]) for row in rows}

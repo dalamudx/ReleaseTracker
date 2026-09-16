@@ -6,6 +6,9 @@ import type {
     ApiCredential,
     CredentialReferencesResponse,
     Notifier,
+    RepositoryWebhook,
+    RepositoryWebhookInput,
+    RepositoryWebhookDelivery,
     SettingItem,
     PaginatedResponse,
     User,
@@ -293,6 +296,13 @@ export const api = {
     updateNotifier: (id: number, data: Partial<Notifier>) => apiClient.put<Notifier>(`/api/notifiers/${id}`, data).then(res => res.data),
     deleteNotifier: (id: number) => apiClient.delete(`/api/notifiers/${id}`).then(res => res.data),
     testNotifier: (id: number) => apiClient.post<boolean>(`/api/notifiers/${id}/test`).then(res => res.data),
+
+    // Repository webhooks
+    getRepositoryWebhooks: () => apiClient.get<RepositoryWebhook[]>('/api/webhooks/repositories').then(res => res.data),
+    createRepositoryWebhook: (data: RepositoryWebhookInput) => apiClient.post<RepositoryWebhook>('/api/webhooks/repositories', data).then(res => res.data),
+    updateRepositoryWebhook: (id: string, data: RepositoryWebhookInput) => apiClient.put<RepositoryWebhook>(`/api/webhooks/repositories/${id}`, data).then(res => res.data),
+    deleteRepositoryWebhook: (id: string) => apiClient.delete(`/api/webhooks/repositories/${id}`),
+    getRepositoryWebhookDeliveries: (id: string) => apiClient.get<RepositoryWebhookDelivery[]>(`/api/webhooks/repositories/${id}/deliveries`).then(res => res.data),
 
     // Auth
     login: (data: AuthLoginRequest) => apiClient.post('/api/auth/login', data).then(res => res.data),

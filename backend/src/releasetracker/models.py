@@ -45,6 +45,9 @@ class Release(BaseModel):
     channel_name: str | None = None  # Channel name (stable/prerelease/beta/canary)
     commit_sha: str | None = None  # Git commit SHA or container manifest digest
     artifact_digest: str | None = None
+    oci_version: str | None = None
+    oci_revision: str | None = None
+    oci_source: str | None = None
     aliases: list[str] = Field(default_factory=list)
     alias_references: list[ReleaseAliasReference] = Field(default_factory=list)
     republish_count: int = 0  # Republish count

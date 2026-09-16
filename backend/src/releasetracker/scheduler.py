@@ -2,9 +2,11 @@
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import Any
 
 from .config import TrackerConfig
+from .models import Release
 from .notifiers import WebhookNotifier
 from .notifiers.base import BaseNotifier
 from .scheduler_host import SchedulerHost
@@ -50,11 +52,55 @@ class ReleaseScheduler(
         self.trackers: dict[str, BaseTracker] = {}
         self.notifiers: list[BaseNotifier] = []
         self._check_all_semaphore = asyncio.Semaphore(MAX_CONCURRENT_TRACKER_CHECKS)
+        # Shared by manual, scheduled and repository-webhook checks.
         self._manual_checks_in_progress: set[str] = set()
         self._provider_fetch_semaphores = {
             provider: asyncio.Semaphore(limit)
             for provider, limit in MAX_CONCURRENT_FETCHES_PER_PROVIDER.items()
         }
+
+    async def _configure_container_tracker_fetch_state(
+        self,
+        tracker_source_id: int,
+        tracker: BaseTracker,
+        history_releases: list[Release] | None = None,
+    ) -> None:
+        if not isinstance(tracker, DockerTracker):
+            return
+        if history_releases is None:
+            history_releases = await self.storage.get_source_release_history_releases_by_source(
+                tracker_source_id
+            )
+        alias_last_observed = await self.storage.get_source_alias_last_observed(tracker_source_id)
+        alias_digest_by_name = await self.storage.get_source_alias_latest_digests(tracker_source_id)
+        artifact_created_by_digest: dict[str, datetime] = {}
+        artifact_metadata_by_digest: dict[str, dict[str, str]] = {}
+        for release in history_releases:
+            digest = release.artifact_digest or release.commit_sha
+            if (
+                isinstance(digest, str)
+                and digest
+                and release.published_at_source == "artifact_created"
+            ):
+                artifact_created_by_digest[digest] = release.published_at
+            if isinstance(digest, str) and digest:
+                metadata = {
+                    key: value
+                    for key, value in {
+                        "version": release.oci_version,
+                        "revision": release.oci_revision,
+                        "source": release.oci_source,
+                    }.items()
+                    if value
+                }
+                if metadata:
+                    artifact_metadata_by_digest[digest] = metadata
+        tracker.configure_incremental_fetch(
+            alias_last_observed=alias_last_observed,
+            alias_digest_by_name=alias_digest_by_name,
+            artifact_created_by_digest=artifact_created_by_digest,
+            artifact_metadata_by_digest=artifact_metadata_by_digest,
+        )
 
     async def initialize(self):
         """Initialize schedulers"""
@@ -157,6 +203,14 @@ class ReleaseScheduler(
         log_prefix: str = "",
         trigger_mode: str = "scheduled",
     ) -> dict[str, Any]:
+        aggregate_for_fetch = await self.storage.get_aggregate_tracker(tracker_name)
+        if aggregate_for_fetch is not None:
+            runtime_source_for_fetch = self.storage._select_runtime_source(aggregate_for_fetch)
+            if runtime_source_for_fetch is not None and runtime_source_for_fetch.id is not None:
+                await self._configure_container_tracker_fetch_state(
+                    runtime_source_for_fetch.id, tracker
+                )
+
         releases = await self._fetch_tracker_releases(
             tracker_name,
             tracker,

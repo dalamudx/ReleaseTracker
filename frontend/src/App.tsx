@@ -15,7 +15,7 @@ const ExecutorsPage = lazy(() => import("@/pages/Executors"))
 const RuntimeConnectionsPage = lazy(() => import("@/pages/RuntimeConnections"))
 const HistoryPage = lazy(() => import("@/pages/History"))
 const CredentialsPage = lazy(() => import("@/pages/Credentials"))
-const NotificationsPage = lazy(() => import("@/pages/Notifications"))
+const WebhooksPage = lazy(() => import("@/pages/Webhooks"))
 const SystemSettingsPage = lazy(() => import("@/pages/SystemSettings").then(m => ({ default: m.SystemSettingsPage })))
 const LoginPage = lazy(() => import("@/pages/Login").then(module => ({ default: module.LoginPage })))
 
@@ -63,7 +63,8 @@ function App() {
               <Route path="/runtime-connections" element={<RuntimeConnectionsPage />} />
               <Route path="/history" element={<HistoryPage />} />
               <Route path="/credentials" element={<CredentialsPage />} />
-              <Route path="/notifications" element={<NotificationsPage />} />
+              <Route path="/webhooks" element={<WebhooksPage />} />
+              <Route path="/notifications" element={<Navigate to="/webhooks" replace />} />
               <Route path="/settings" element={<SystemSettingsPage />} />
             </Route>
           </Route>

@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router"
-import { LayoutDashboard, Boxes, Key, Package, Bell, Settings, Waypoints, Plug2 } from "lucide-react"
+import { LayoutDashboard, Boxes, Key, Package, Webhook, Settings, Waypoints, Plug2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
 import { Badge } from "@/components/ui/badge"
@@ -31,7 +31,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         { title: t('sidebar.runtimeConnections'), url: "/runtime-connections", icon: Plug2 },
         { title: t('sidebar.history'), url: "/history", icon: Package },
         { title: t('sidebar.credentials'), url: "/credentials", icon: Key },
-        { title: t('sidebar.notifications'), url: "/notifications", icon: Bell },
+        { title: t('sidebar.webhooks'), url: "/webhooks", icon: Webhook },
         { title: t('sidebar.settings'), url: "/settings", icon: Settings },
     ]
 

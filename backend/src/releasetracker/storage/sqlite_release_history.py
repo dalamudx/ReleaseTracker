@@ -165,11 +165,19 @@ async def append_source_history_for_run(
             "source_key": tracker_source.source_key,
             "source_type": tracker_source.source_type,
             "channel_name": release.channel_name,
+            "published_at_source": release.published_at_source,
         }
         if app_version is not None:
             raw_payload["appVersion"] = app_version
         if chart_version is not None:
             raw_payload["chartVersion"] = chart_version
+        for key, value in {
+            "oci_version": release.oci_version,
+            "oci_revision": release.oci_revision,
+            "oci_source": release.oci_source,
+        }.items():
+            if value is not None:
+                raw_payload[key] = value
 
         await db.execute(
             """
@@ -206,7 +214,7 @@ async def append_source_history_for_run(
         source_row = await (
             await db.execute(
                 """
-                SELECT id, version, tag_name, published_at, commit_sha
+                SELECT id, version, tag_name, published_at, commit_sha, raw_payload
                 FROM source_release_history
                 WHERE tracker_source_id = ? AND immutable_key = ?
                 """,
@@ -229,6 +237,27 @@ async def append_source_history_for_run(
 
         normalized_existing_commit = storage._normalize_release_value(source_row["commit_sha"])
         normalized_new_commit = storage._normalize_release_value(release.commit_sha)
+        existing_raw_payload = storage._load_json(source_row["raw_payload"])
+        for key in ("oci_version", "oci_revision", "oci_source"):
+            if key not in raw_payload and existing_raw_payload.get(key) is not None:
+                raw_payload[key] = existing_raw_payload[key]
+        upgrades_artifact_created = (
+            tracker_source.source_type == "container"
+            and release.published_at_source == "artifact_created"
+            and existing_raw_payload.get("published_at_source") != "artifact_created"
+        )
+        oci_metadata = {
+            key: value
+            for key, value in {
+                "oci_version": release.oci_version,
+                "oci_revision": release.oci_revision,
+                "oci_source": release.oci_source,
+            }.items()
+            if value is not None
+        }
+        enriches_oci_metadata = any(
+            existing_raw_payload.get(key) != value for key, value in oci_metadata.items()
+        )
         preserved_published_at = release.published_at.isoformat()
 
         # Decide whether the existing published_at should be preserved.
@@ -257,7 +286,7 @@ async def append_source_history_for_run(
                     or normalized_existing_commit is None
                     or normalized_existing_commit == normalized_new_commit
                 )
-                if digest_matches_or_absent:
+                if digest_matches_or_absent and not upgrades_artifact_created:
                     preserved_published_at = source_row["published_at"]
             elif (
                 normalized_existing_commit is not None
@@ -265,13 +294,14 @@ async def append_source_history_for_run(
             ):
                 preserved_published_at = source_row["published_at"]
 
-        if storage._should_replace_source_history_display(
+        replaces_display = storage._should_replace_source_history_display(
             source_type=tracker_source.source_type,
             version=version,
             tag_name=tag_name,
             existing_version=source_row["version"],
             existing_tag_name=source_row["tag_name"],
-        ):
+        )
+        if replaces_display:
             await db.execute(
                 """
                 UPDATE source_release_history
@@ -304,6 +334,26 @@ async def append_source_history_for_run(
                     release.body,
                     release.commit_sha,
                     storage._dump_json(raw_payload),
+                    source_history_id,
+                ),
+            )
+        elif upgrades_artifact_created or enriches_oci_metadata:
+            if upgrades_artifact_created:
+                existing_raw_payload["published_at_source"] = "artifact_created"
+            existing_raw_payload.update(oci_metadata)
+            await db.execute(
+                """
+                UPDATE source_release_history
+                SET published_at = ?, raw_payload = ?
+                WHERE id = ?
+                """,
+                (
+                    (
+                        preserved_published_at
+                        if upgrades_artifact_created
+                        else source_row["published_at"]
+                    ),
+                    storage._dump_json(existing_raw_payload),
                     source_history_id,
                 ),
             )
@@ -356,6 +406,7 @@ async def get_source_release_history_releases_by_source(
                 app_version=raw_payload.get("appVersion"),
                 chart_version=raw_payload.get("chartVersion"),
                 published_at=datetime.fromisoformat(row["published_at"]),
+                published_at_source=raw_payload.get("published_at_source"),
                 url=row["url"],
                 changelog_url=row["changelog_url"],
                 prerelease=bool(row["prerelease"]),
@@ -363,6 +414,9 @@ async def get_source_release_history_releases_by_source(
                 channel_name=raw_payload.get("channel_name"),
                 commit_sha=row["commit_sha"],
                 artifact_digest=_normalize_digest(row["digest"]),
+                oci_version=raw_payload.get("oci_version"),
+                oci_revision=raw_payload.get("oci_revision"),
+                oci_source=raw_payload.get("oci_source"),
                 aliases=[alias["alias"] for alias in aliases_by_history_id.get(int(row["id"]), [])],
                 created_at=datetime.fromisoformat(row["created_at"]),
             )

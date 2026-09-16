@@ -79,7 +79,9 @@ def _build_index_manifest(amd64_digest: str) -> dict:
     }
 
 
-def _build_config_blob(created: str | None = REAL_CREATED) -> dict:
+def _build_config_blob(
+    created: str | None = REAL_CREATED, *, labels: dict[str, str] | None = None
+) -> dict:
     body: dict = {
         "architecture": "amd64",
         "os": "linux",
@@ -87,6 +89,8 @@ def _build_config_blob(created: str | None = REAL_CREATED) -> dict:
     }
     if created is not None:
         body["created"] = created
+    if labels is not None:
+        body["config"] = {"Labels": labels}
     return body
 
 
@@ -198,7 +202,19 @@ async def test_config_blob_upgrades_published_at_for_ghcr_anonymous(monkeypatch)
             ("HEAD", "/manifests/v1.0.0", _head_response(MANIFEST_DIGEST)),
             # config blob path: GET manifest → GET blob
             ("GET", "/manifests/v1.0.0", _json_response(_build_single_arch_manifest())),
-            ("GET", f"/blobs/{CONFIG_DIGEST}", _json_response(_build_config_blob())),
+            (
+                "GET",
+                f"/blobs/{CONFIG_DIGEST}",
+                _json_response(
+                    _build_config_blob(
+                        labels={
+                            "org.opencontainers.image.version": "v1.0.0-build123",
+                            "org.opencontainers.image.revision": "build123",
+                            "org.opencontainers.image.source": "https://example.com/owner/sample",
+                        }
+                    )
+                ),
+            ),
         ],
     )
 
@@ -211,6 +227,9 @@ async def test_config_blob_upgrades_published_at_for_ghcr_anonymous(monkeypatch)
     expected = datetime.fromisoformat(REAL_CREATED.replace("Z", "+00:00"))
     assert release.published_at == expected
     assert release.published_at_source == "artifact_created"
+    assert release.oci_version == "v1.0.0-build123"
+    assert release.oci_revision == "build123"
+    assert release.oci_source == "https://example.com/owner/sample"
 
 
 def test_tag_without_created_time_marks_published_at_as_first_observed():
@@ -769,3 +788,152 @@ async def test_missing_config_in_blob_leaves_placeholder(monkeypatch):
     releases = await tracker.fetch_all(limit=1)
     # Placeholder preserved (tracker's local 'now' value, not epoch-ish).
     assert releases[0].published_at.year >= datetime.now(tz=timezone.utc).year
+
+
+@pytest.mark.asyncio
+async def test_same_digest_aliases_fetch_config_metadata_once(monkeypatch):
+    tracker = DockerTracker(
+        name="sample",
+        image="owner/sample",
+        registry="ghcr.io",
+        published_at_mode="prefer_real",
+    )
+    created = datetime.fromisoformat(REAL_CREATED.replace("Z", "+00:00"))
+    metadata_calls: list[str] = []
+
+    async def fake_bearer(self, client, scope):
+        return None
+
+    async def fake_tags(self, client, bearer_token):
+        return ["1.0.0", "latest"]
+
+    async def fake_digest(self, client, tag, bearer_token, scope):
+        return MANIFEST_DIGEST, "application/vnd.oci.image.manifest.v1+json", None, bearer_token
+
+    async def fake_created(self, client, tag, bearer_token, scope):
+        metadata_calls.append(tag)
+        return created, bearer_token
+
+    monkeypatch.setattr(DockerTracker, "_get_bearer_token", fake_bearer)
+    monkeypatch.setattr(DockerTracker, "_fetch_tags", fake_tags)
+    monkeypatch.setattr(DockerTracker, "_resolve_manifest_digest", fake_digest)
+    monkeypatch.setattr(DockerTracker, "_fetch_image_created", fake_created)
+
+    releases = await tracker.fetch_all(limit=2)
+
+    assert len(releases) == 2
+    assert metadata_calls == ["latest"]
+    assert {release.published_at for release in releases} == {created}
+    assert {release.published_at_source for release in releases} == {"artifact_created"}
+
+
+@pytest.mark.asyncio
+async def test_persisted_digest_metadata_cache_skips_config_lookup(monkeypatch):
+    tracker = DockerTracker(
+        name="sample",
+        image="owner/sample",
+        registry="ghcr.io",
+        published_at_mode="prefer_real",
+    )
+    created = datetime.fromisoformat(REAL_CREATED.replace("Z", "+00:00"))
+    tracker.configure_incremental_fetch(
+        alias_last_observed={},
+        artifact_created_by_digest={MANIFEST_DIGEST: created},
+        artifact_metadata_by_digest={
+            MANIFEST_DIGEST: {
+                "version": "1.0.0",
+                "revision": "abc123",
+                "source": "https://example.com/owner/sample",
+            }
+        },
+    )
+
+    async def fake_bearer(self, client, scope):
+        return None
+
+    async def fake_tags(self, client, bearer_token):
+        return ["1.0.0", "latest"]
+
+    async def fake_digest(self, client, tag, bearer_token, scope):
+        return MANIFEST_DIGEST, "application/vnd.oci.image.manifest.v1+json", None, bearer_token
+
+    async def fail_created(self, client, tag, bearer_token, scope):
+        raise AssertionError("cached digest must not fetch config metadata")
+
+    monkeypatch.setattr(DockerTracker, "_get_bearer_token", fake_bearer)
+    monkeypatch.setattr(DockerTracker, "_fetch_tags", fake_tags)
+    monkeypatch.setattr(DockerTracker, "_resolve_manifest_digest", fake_digest)
+    monkeypatch.setattr(DockerTracker, "_fetch_image_created", fail_created)
+
+    releases = await tracker.fetch_all(limit=2)
+
+    assert len(releases) == 2
+    assert {release.published_at for release in releases} == {created}
+    assert {release.published_at_source for release in releases} == {"artifact_created"}
+    assert {release.oci_version for release in releases} == {"1.0.0"}
+
+
+@pytest.mark.asyncio
+async def test_digest_change_prioritizes_oci_version_and_previous_digest_siblings(monkeypatch):
+    tracker = DockerTracker(
+        name="sample",
+        image="owner/sample",
+        registry="ghcr.io",
+        published_at_mode="prefer_real",
+    )
+    exact_tag = "3.6.0-dev-0b0d27d3f61c"
+    floating_tag = "3.6.0-dev"
+    sibling_tag = "3.6-dev"
+    old_floating_digest = "sha256:" + "1" * 64
+    old_exact_digest = "sha256:" + "2" * 64
+    new_digest = "sha256:" + "3" * 64
+    observed_at = datetime(2026, 9, 16, tzinfo=timezone.utc)
+    tracker.configure_incremental_fetch(
+        alias_last_observed={
+            floating_tag: observed_at.replace(day=15),
+            exact_tag: observed_at,
+            sibling_tag: observed_at,
+        },
+        alias_digest_by_name={
+            floating_tag: old_floating_digest,
+            exact_tag: old_exact_digest,
+            sibling_tag: old_exact_digest,
+        },
+        artifact_created_by_digest={},
+    )
+    resolved_tags: list[str] = []
+    metadata_tags: list[str] = []
+    created = datetime.fromisoformat(REAL_CREATED.replace("Z", "+00:00"))
+
+    async def fake_bearer(self, client, scope):
+        return None
+
+    async def fake_tags(self, client, bearer_token):
+        return [floating_tag, exact_tag, sibling_tag, "old-build-a", "old-build-b"]
+
+    async def fake_digest(self, client, tag, bearer_token, scope):
+        resolved_tags.append(tag)
+        digest = new_digest if tag in {floating_tag, exact_tag, sibling_tag} else MANIFEST_DIGEST
+        return digest, "application/vnd.oci.image.manifest.v1+json", None, bearer_token
+
+    async def fake_created(self, client, tag, bearer_token, scope):
+        metadata_tags.append(tag)
+        self._oci_metadata_by_tag[tag] = {
+            "version": exact_tag,
+            "revision": "0b0d27d3f61cbdabb1466549610a87f21978ba6a",
+            "source": "https://git.example.com/canvas/nginx_frontend",
+        }
+        return created, bearer_token
+
+    monkeypatch.setattr(DockerTracker, "_get_bearer_token", fake_bearer)
+    monkeypatch.setattr(DockerTracker, "_fetch_tags", fake_tags)
+    monkeypatch.setattr(DockerTracker, "_resolve_manifest_digest", fake_digest)
+    monkeypatch.setattr(DockerTracker, "_fetch_image_created", fake_created)
+
+    releases = await tracker.fetch_all(limit=3)
+
+    assert resolved_tags == [floating_tag, exact_tag, sibling_tag]
+    assert [release.tag_name for release in releases] == resolved_tags
+    assert {release.commit_sha for release in releases} == {new_digest}
+    assert {release.oci_version for release in releases} == {exact_tag}
+    assert metadata_tags == [floating_tag]
