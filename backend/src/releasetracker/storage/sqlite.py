@@ -1888,6 +1888,13 @@ class SQLiteStorage:
             finished_at=finished_at,
         )
 
+    async def reconcile_interrupted_source_fetch_runs(
+        self, *, finished_at: datetime | None = None
+    ) -> int:
+        return await sqlite_release_history.reconcile_interrupted_source_fetch_runs(
+            self, finished_at=finished_at
+        )
+
     async def append_source_history_for_run(
         self,
         source_fetch_run_id: int,

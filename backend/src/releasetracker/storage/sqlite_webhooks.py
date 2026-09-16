@@ -348,6 +348,18 @@ class WebhookStore:
             result[source_id] = (history[0], tuple(tuple(row) for row in aliases))
         return result
 
+    async def recover_interrupted_requests(self, now=None):
+        """Release work owned by the previous single-instance process."""
+        now = time.time() if now is None else now
+        async with self.transaction() as db:
+            cursor = await db.execute(
+                """UPDATE source_refresh_requests
+                SET state='deferred',due_at=?,lease_until=NULL,reason='worker_restarted'
+                WHERE state='running'""",
+                (now,),
+            )
+        return max(cursor.rowcount, 0)
+
     async def claim(self, now=None):
         now = time.time() if now is None else now
         async with self.transaction() as db:

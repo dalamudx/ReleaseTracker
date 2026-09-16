@@ -137,7 +137,12 @@ def normalize_event(provider: str, headers, payload: dict) -> RepositoryEvent:
         if name == "ping":
             return RepositoryEvent("ping", action, repo)
         release = obj(payload.get("release"))
-        if name == "release" and action == "published" and release.get("draft") is not True:
+        release_actions = {"published"}
+        if provider in {"forgejo", "gitea"}:
+            # Forgejo/Gitea can report a newly created non-draft release as
+            # `updated`, especially after release assets are attached.
+            release_actions.update({"created", "updated"})
+        if name == "release" and action in release_actions and release.get("draft") is not True:
             return RepositoryEvent("release", action, repo, ref=str(release.get("tag_name", "")))
         if provider in {"forgejo", "gitea"} and name in {
             "action_run",

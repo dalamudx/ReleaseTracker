@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 from .config import ExecutorConfig
 from .models import ExecutorRunHistory, ExecutorStatus
-from .notifiers import WebhookNotifier
+from .notifiers import SUPPORTED_NOTIFIER_TYPES, build_notifier
 from .notifiers.base import NotificationEvent
 
 logger = logging.getLogger(__name__)
@@ -174,14 +174,15 @@ class ExecutorSchedulerRunLifecycle:
             return
 
         active_notifiers = [
-            WebhookNotifier(
+            build_notifier(
+                notifier_type=item.type,
                 name=item.name,
                 url=item.url,
                 events=item.events,
                 language=item.language,
             )
             for item in db_notifiers
-            if item.enabled and item.type == "webhook"
+            if (item.enabled and item.type in SUPPORTED_NOTIFIER_TYPES and event in item.events)
         ]
         if not active_notifiers:
             return
@@ -220,10 +221,19 @@ class ExecutorSchedulerRunLifecycle:
             if isinstance(recovery_outcome, str):
                 payload["recovery_outcome"] = recovery_outcome
 
-        await asyncio.gather(
+        results = await asyncio.gather(
             *(notifier.notify(event, payload) for notifier in active_notifiers),
             return_exceptions=True,
         )
+        for notifier, result in zip(active_notifiers, results, strict=True):
+            if isinstance(result, BaseException):
+                logger.error(
+                    "Executor notifier delivery raised for %s: %s",
+                    notifier.name,
+                    result,
+                )
+            elif result is not True:
+                logger.error("Executor notifier delivery failed: %s", notifier.name)
 
 
 def _notification_timestamp(value: datetime, timezone_name: str) -> str:

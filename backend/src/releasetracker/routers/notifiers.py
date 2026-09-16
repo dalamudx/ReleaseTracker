@@ -5,7 +5,7 @@ from typing import Annotated
 from datetime import datetime
 
 from ..models import Notifier, User
-from ..notifiers.webhook import WebhookNotifier
+from ..notifiers import SUPPORTED_NOTIFIER_TYPES, build_notifier
 
 # ...
 
@@ -13,6 +13,13 @@ from ..storage.sqlite import SQLiteStorage
 from ..dependencies import get_current_admin_user
 
 router = APIRouter(prefix="/api/notifiers", tags=["notifiers"])
+
+
+def _normalize_notifier_type(value: object) -> str:
+    notifier_type = str(value or "webhook").strip().lower()
+    if notifier_type not in SUPPORTED_NOTIFIER_TYPES:
+        raise HTTPException(status_code=400, detail="Unsupported notifier type")
+    return notifier_type
 
 
 def get_storage(request):
@@ -74,6 +81,7 @@ async def create_notifier(
         raise HTTPException(status_code=400, detail="Name is required")
     if "url" not in notifier_data or not notifier_data["url"]:
         raise HTTPException(status_code=400, detail="URL is required")
+    notifier_data["type"] = _normalize_notifier_type(notifier_data.get("type"))
 
     try:
         return await storage.create_notifier(notifier_data)
@@ -92,6 +100,8 @@ async def update_notifier(
 ):
     """Update a notifier"""
     storage: SQLiteStorage = get_storage(request)
+    if "type" in notifier_data:
+        notifier_data["type"] = _normalize_notifier_type(notifier_data["type"])
     try:
         return await storage.update_notifier(notifier_id, notifier_data)
     except ValueError as e:
@@ -143,12 +153,13 @@ async def test_notifier(
     if not notifier.url:
         raise HTTPException(status_code=400, detail="Webhook URL is missing")
 
-    delivered = await WebhookNotifier(
-        notifier.name,
-        notifier.url,
+    delivered = await build_notifier(
+        notifier_type=notifier.type,
+        name=notifier.name,
+        url=notifier.url,
         events=["test"],
         language=notifier.language,
-    ).send_payload(payload)
+    ).notify("test", payload)
     if not delivered:
         raise HTTPException(status_code=400, detail="Webhook test failed")
     return {"message": "Test notification sent successfully"}

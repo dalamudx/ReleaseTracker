@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -63,6 +65,38 @@ async def test_worker_registers_polling_and_daily_cleanup(storage, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_tick_dispatches_long_refresh_without_occupying_interval_job():
+    started = asyncio.Event()
+    release = asyncio.Event()
+    storage = MagicMock()
+    storage.webhooks.claim = AsyncMock(return_value=[{"id": 1}])
+    worker = RepositoryWebhookScheduler(storage, fake_scheduler({}), MagicMock())
+
+    async def process(_requests):
+        started.set()
+        await release.wait()
+
+    worker._process = process
+
+    await worker.tick()
+    await asyncio.wait_for(started.wait(), timeout=0.1)
+    assert worker._worker_task is not None
+
+    await worker.tick()
+    storage.webhooks.claim.assert_awaited_once()
+
+    shutdown = asyncio.create_task(worker.shutdown())
+    await asyncio.sleep(0)
+    assert not shutdown.done()
+    release.set()
+    await asyncio.wait_for(shutdown, timeout=0.1)
+    assert worker._worker_task is None
+
+    await worker.tick()
+    storage.webhooks.claim.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_failed_refresh_is_retried_with_bounded_backoff(storage):
     source, hook, event = await setup_hook(storage, "retry-app")
     await storage.webhooks.receive(hook, "id:first", "hash-one", event, "", now=1000)
@@ -81,7 +115,7 @@ async def test_failed_refresh_is_retried_with_bounded_backoff(storage):
     assert request["state"] == "deferred"
     assert request["attempts"] == 1
     assert request["reason"] == "upstream unavailable"
-    assert request["source_fetch_run_id"] is None
+    assert request["source_fetch_run_id"] == 21
 
 
 @pytest.mark.asyncio
@@ -111,6 +145,70 @@ async def test_expired_running_lease_is_recovered_after_restart(storage):
     await db.commit()
     recovered = await storage.webhooks.claim(now=1008)
     assert [request["id"] for request in recovered] == [claimed[0]["id"]]
+
+
+@pytest.mark.asyncio
+async def test_interrupted_source_fetch_runs_are_failed_on_startup(storage):
+    source, _hook, _event = await setup_hook(storage, "interrupted-run-app")
+    run_id = await storage.create_source_fetch_run(source.id, trigger_mode="webhook")
+    finished_at = datetime(2026, 9, 16, 18, 50, tzinfo=timezone.utc)
+
+    assert await storage.reconcile_interrupted_source_fetch_runs(finished_at=finished_at) == 1
+    assert await storage.reconcile_interrupted_source_fetch_runs() == 0
+
+    db = await storage._get_connection()
+    run = await (
+        await db.execute(
+            "SELECT status,error_message,finished_at FROM source_fetch_runs WHERE id=?",
+            (run_id,),
+        )
+    ).fetchone()
+    assert dict(run) == {
+        "status": "failed",
+        "error_message": "Source fetch interrupted by application restart",
+        "finished_at": finished_at.isoformat(),
+    }
+
+
+@pytest.mark.asyncio
+async def test_restart_immediately_releases_running_webhook_requests(storage):
+    _source, hook, event = await setup_hook(storage, "restart-request-app")
+    await storage.webhooks.receive(hook, "id:restart", "hash-restart", event, "", now=1000)
+    claimed = await storage.webhooks.claim(now=1006)
+
+    assert await storage.webhooks.recover_interrupted_requests(now=1007) == 1
+    deliveries = await storage.webhooks.deliveries(hook["id"])
+    request = deliveries[0]["requests"][0]
+    assert request["state"] == "deferred"
+    assert request["reason"] == "worker_restarted"
+    assert request["due_at"] == 1007
+
+    reclaimed = await storage.webhooks.claim(now=1007)
+    assert [request["id"] for request in reclaimed] == [claimed[0]["id"]]
+
+
+@pytest.mark.asyncio
+async def test_deliveries_remain_responsive_while_background_refresh_waits(storage):
+    _source, hook, event = await setup_hook(storage, "responsive-page-app")
+    await storage.webhooks.receive(hook, "id:responsive", "hash-responsive", event, "", now=1000)
+    requests = await storage.webhooks.claim(now=1006)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    worker = RepositoryWebhookScheduler(storage, fake_scheduler({}), MagicMock())
+
+    async def process(_requests):
+        started.set()
+        await release.wait()
+
+    worker._process = process
+    worker._worker_task = asyncio.create_task(worker._run_claimed(requests))
+    await asyncio.wait_for(started.wait(), timeout=0.1)
+
+    deliveries = await asyncio.wait_for(storage.webhooks.deliveries(hook["id"]), timeout=0.1)
+    assert deliveries[0]["state"] == "running"
+
+    release.set()
+    await asyncio.wait_for(worker.shutdown(), timeout=0.1)
 
 
 @pytest.mark.asyncio

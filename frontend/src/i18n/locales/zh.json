@@ -1360,6 +1360,10 @@
       "description": "配置 Webhook 以接收版本更新通知",
       "add": "添加通知渠道",
       "searchPlaceholder": "按名称、URL 或描述搜索",
+      "types": {
+        "webhook": "通用 Webhook",
+        "wecom": "企业微信"
+      },
       "table": {
         "name": "名称",
         "url": "Webhook URL",
@@ -1373,6 +1377,8 @@
         "addTitle": "添加通知渠道",
         "editTitle": "编辑通知渠道",
         "name": "名称",
+        "type": "渠道类型",
+        "typeDesc": "通用 Webhook 发送标准载荷；企业微信使用机器人 Markdown 协议。",
         "url": "Webhook URL",
         "language": "消息语言",
         "languageDesc": "控制 Webhook 消息字段和测试消息使用的语言。",

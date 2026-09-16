@@ -6,7 +6,7 @@ from typing import Any
 
 from .executor_trigger import enqueue_executor_binding_targets
 from .models import Release
-from .notifiers import WebhookNotifier
+from .notifiers import SUPPORTED_NOTIFIER_TYPES, build_notifier
 from .notifiers.base import NotificationEvent
 
 logger = logging.getLogger(__name__)
@@ -162,9 +162,10 @@ class ReleaseSchedulerProjectionNotifications:
                 logger.debug(
                     f"Checking notifier: {n.name}, enabled: {n.enabled}, type: {n.type}, events: {n.events}"
                 )
-                if n.enabled and n.type == "webhook":
+                if n.enabled and n.type in SUPPORTED_NOTIFIER_TYPES and event in n.events:
                     active_notifiers.append(
-                        WebhookNotifier(
+                        build_notifier(
+                            notifier_type=n.type,
                             name=n.name,
                             url=n.url,
                             events=n.events,
@@ -181,4 +182,9 @@ class ReleaseSchedulerProjectionNotifications:
             return
 
         tasks = [notifier.notify(event, release) for notifier in active_notifiers]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for notifier, result in zip(active_notifiers, results, strict=True):
+            if isinstance(result, BaseException):
+                logger.error("Notifier delivery raised for %s: %s", notifier.name, result)
+            elif result is not True:
+                logger.error("Notifier delivery failed: %s", notifier.name)

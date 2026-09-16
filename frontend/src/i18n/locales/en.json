@@ -1355,6 +1355,10 @@
       "description": "Configure webhooks to receive release update notifications",
       "add": "Add Notification Channel",
       "searchPlaceholder": "Search by name, URL, or description",
+      "types": {
+        "webhook": "Generic Webhook",
+        "wecom": "Enterprise WeChat"
+      },
       "table": {
         "name": "Name",
         "url": "Webhook URL",
@@ -1368,6 +1372,8 @@
         "addTitle": "Add Notification Channel",
         "editTitle": "Edit Notification Channel",
         "name": "Name",
+        "type": "Channel Type",
+        "typeDesc": "Generic Webhook sends the standard payload; Enterprise WeChat uses the robot markdown protocol.",
         "url": "Webhook URL",
         "language": "Message Language",
         "languageDesc": "Controls the language used in webhook message fields and test messages.",

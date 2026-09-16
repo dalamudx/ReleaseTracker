@@ -79,6 +79,26 @@ async def finalize_source_fetch_run(
     await db.commit()
 
 
+async def reconcile_interrupted_source_fetch_runs(
+    storage: "SQLiteStorage", *, finished_at: datetime | None = None
+) -> int:
+    """Fail runs left active by a previous single-instance process."""
+    db = await storage._get_connection()
+    finished_at_value = (finished_at or datetime.now()).isoformat()
+    cursor = await db.execute(
+        """
+        UPDATE source_fetch_runs
+        SET status = 'failed',
+            error_message = 'Source fetch interrupted by application restart',
+            finished_at = ?
+        WHERE status = 'running'
+        """,
+        (finished_at_value,),
+    )
+    await db.commit()
+    return max(cursor.rowcount, 0)
+
+
 async def append_source_history_for_run(
     storage: "SQLiteStorage",
     source_fetch_run_id: int,

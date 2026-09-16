@@ -6,6 +6,7 @@ import logging
 import random
 import re
 import time
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 from urllib.parse import urljoin
@@ -123,6 +124,7 @@ class DockerTracker(BaseTracker):
         self._artifact_created_by_digest: dict[str, datetime] = {}
         self._artifact_metadata_by_digest: dict[str, dict[str, str]] = {}
         self._oci_metadata_by_tag: dict[str, dict[str, str]] = {}
+        self._priority_aliases: tuple[str, ...] = ()
 
     def configure_incremental_fetch(
         self,
@@ -131,6 +133,7 @@ class DockerTracker(BaseTracker):
         artifact_created_by_digest: dict[str, datetime],
         alias_digest_by_name: dict[str, str] | None = None,
         artifact_metadata_by_digest: dict[str, dict[str, str]] | None = None,
+        priority_aliases: Iterable[str] | None = None,
     ) -> None:
         """Configure persisted state used for bounded alias reconciliation."""
         self._alias_last_observed = dict(alias_last_observed)
@@ -149,6 +152,9 @@ class DockerTracker(BaseTracker):
             for digest, metadata in (artifact_metadata_by_digest or {}).items()
             if digest and metadata
         }
+        self._priority_aliases = tuple(
+            dict.fromkeys(alias for alias in (priority_aliases or ()) if alias)
+        )
 
     def _registry_url(self) -> str:
         return f"https://{self.registry}"
@@ -787,6 +793,7 @@ class DockerTracker(BaseTracker):
                 releases,
                 limit,
                 self._alias_last_observed if incremental_alias_scan else None,
+                priority_aliases=self._priority_aliases if incremental_alias_scan else (),
             )
             candidates_by_tag = {release.tag_name: release for release in releases}
             candidate_tags = [release.tag_name for release in candidate_window]
@@ -1040,24 +1047,48 @@ def _select_incremental_probe_window(
     releases: list[Release],
     limit: int,
     alias_last_observed: dict[str, datetime] | None,
+    *,
+    priority_aliases: Iterable[str] = (),
 ) -> list[Release]:
     """Select at most ``limit`` aliases while eventually reconciling the full tag set.
 
-    A missing state means the tracker is being used outside the scheduler and preserves
-    the historical ranked-window behaviour. With persisted state, never-observed tags
-    are visited first. Once all tags have been seen, common floating aliases receive a
-    small reserved slice and the remaining budget rotates through the least recently
-    observed aliases.
+    Exact aliases supplied by an authenticated event are checked first but still consume
+    the same fixed budget. A missing observation state otherwise preserves the historical
+    ranked-window behaviour. With persisted state, never-observed tags are visited first.
+    Once all tags have been seen, common floating aliases receive a small reserved slice
+    and the remaining budget rotates through the least recently observed aliases.
     """
     if limit <= 0:
         return []
-    if alias_last_observed is None:
-        return releases[:limit]
 
     ranked = list(releases)
+    releases_by_tag = {release.tag_name: release for release in ranked}
+    selected: list[Release] = []
+    selected_tags: set[str] = set()
+    for alias in priority_aliases:
+        release = releases_by_tag.get(alias)
+        if release is None or release.tag_name in selected_tags:
+            continue
+        selected.append(release)
+        selected_tags.add(release.tag_name)
+        if len(selected) >= limit:
+            return selected
+
+    if alias_last_observed is None:
+        selected.extend(release for release in ranked if release.tag_name not in selected_tags)
+        return selected[:limit]
+
     rank_by_tag = {release.tag_name: rank for rank, release in enumerate(ranked)}
-    unseen = [release for release in ranked if release.tag_name not in alias_last_observed]
-    observed = [release for release in ranked if release.tag_name in alias_last_observed]
+    unseen = [
+        release
+        for release in ranked
+        if release.tag_name not in alias_last_observed and release.tag_name not in selected_tags
+    ]
+    observed = [
+        release
+        for release in ranked
+        if release.tag_name in alias_last_observed and release.tag_name not in selected_tags
+    ]
 
     def by_oldest_observation(release: Release) -> tuple[str, int]:
         return (
@@ -1065,8 +1096,6 @@ def _select_incremental_probe_window(
             rank_by_tag[release.tag_name],
         )
 
-    selected: list[Release] = []
-    selected_tags: set[str] = set()
     if unseen:
         # Keep one slot for the stalest mutable-looking alias so a republished
         # floating tag cannot be starved by a large backlog of unseen history.

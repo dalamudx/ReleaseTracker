@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+import re
 import time
 from datetime import datetime
 
@@ -12,15 +15,43 @@ from .storage.sqlite_webhooks import identity
 
 logger = logging.getLogger(__name__)
 
+_OCI_TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
+
+
+def _container_priority_aliases(requests) -> tuple[str, ...]:
+    aliases: list[str] = []
+    for request in requests:
+        try:
+            raw_summary = request.get("summary") or "{}"
+            summary = json.loads(raw_summary) if isinstance(raw_summary, str) else raw_summary
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(summary, dict) or summary.get("kind") != "workflow":
+            continue
+        ref = str(summary.get("ref") or "").strip()
+        for prefix in ("refs/heads/", "refs/tags/"):
+            if ref.startswith(prefix):
+                ref = ref.removeprefix(prefix)
+                break
+        if _OCI_TAG_RE.fullmatch(ref) and ref not in aliases:
+            aliases.append(ref)
+    return tuple(aliases)
+
 
 class RepositoryWebhookScheduler:
     def __init__(self, storage, release_scheduler, scheduler_host):
         self.storage = storage
         self.release_scheduler = release_scheduler
         self.scheduler_host = scheduler_host
-        self._running = False
+        self._worker_task: asyncio.Task[None] | None = None
+        self._stopping = False
 
     async def initialize(self):
+        recovered = await self.storage.webhooks.recover_interrupted_requests()
+        if recovered:
+            logger.warning(
+                "Recovered %s interrupted repository webhook refresh requests", recovered
+            )
         self.scheduler_host.add_interval_job("repository_webhooks", "worker", self.tick, seconds=2)
         self.scheduler_host.add_interval_job(
             "repository_webhooks", "cleanup", self.cleanup, seconds=86400
@@ -34,17 +65,49 @@ class RepositoryWebhookScheduler:
             logger.exception("Repository webhook delivery cleanup failed")
 
     async def tick(self):
-        if self._running:
+        """Claim work quickly and keep the APScheduler interval job non-blocking."""
+        if self._stopping:
             return
-        self._running = True
+        if self._worker_task is not None:
+            if not self._worker_task.done():
+                return
+            self._worker_task = None
         try:
             requests = await self.storage.webhooks.claim()
-            if requests:
-                await self._process(requests)
+        except Exception:
+            logger.exception("Repository webhook worker claim failed")
+            return
+        if not requests:
+            return
+        task = asyncio.create_task(self._run_claimed(requests), name="repository-webhook-refresh")
+        self._worker_task = task
+        task.add_done_callback(self._worker_done)
+
+    async def _run_claimed(self, requests):
+        try:
+            await self._process(requests)
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.exception("Repository webhook worker failed")
+
+    def _worker_done(self, task: asyncio.Task[None]) -> None:
+        if self._worker_task is task:
+            self._worker_task = None
+
+    async def shutdown(self) -> None:
+        """Stop dispatching and let the claimed persistent work finish before DB close."""
+        self._stopping = True
+        task = self._worker_task
+        if task is None:
+            return
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
         finally:
-            self._running = False
+            if self._worker_task is task:
+                self._worker_task = None
 
     async def _process(self, requests):
         valid = []
@@ -90,6 +153,8 @@ class RepositoryWebhookScheduler:
             return
 
         before = await self.storage.webhooks.source_revision_tokens(source_ids)
+        priority_aliases = _container_priority_aliases(valid)
+        result = {}
         self.release_scheduler._manual_checks_in_progress.add(tracker_name)
         try:
             result = await self.release_scheduler._process_aggregate_tracker_check(
@@ -99,6 +164,7 @@ class RepositoryWebhookScheduler:
                 log_prefix="Webhook ",
                 trigger_mode="webhook",
                 source_ids=source_ids,
+                container_priority_aliases=priority_aliases,
             )
             after = await self.storage.webhooks.source_revision_tokens(source_ids)
             changed = before != after
@@ -134,9 +200,16 @@ class RepositoryWebhookScheduler:
                     "deferred",
                     error,
                     time.time() + delay,
+                    run_ids=result.get("source_fetch_run_ids"),
                     attempt=True,
                 )
             else:
-                await self.storage.webhooks.finish(valid, "failed", error, attempt=True)
+                await self.storage.webhooks.finish(
+                    valid,
+                    "failed",
+                    error,
+                    run_ids=result.get("source_fetch_run_ids"),
+                    attempt=True,
+                )
         finally:
             self.release_scheduler._manual_checks_in_progress.discard(tracker_name)

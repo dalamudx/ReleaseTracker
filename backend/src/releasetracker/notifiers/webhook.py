@@ -8,6 +8,7 @@ import emoji
 from ..services.outbound_http import (
     OutboundHTTPClient,
     OutboundHTTPError,
+    OutboundResponse,
     OutboundRedirectRejected,
     OutboundURLRejected,
 )
@@ -78,6 +79,8 @@ def _translated_status(status: str, labels: dict[str, str]) -> str:
 
 
 class WebhookNotifier(BaseNotifier):
+    provider_name = "Webhook"
+
     def __init__(
         self,
         name: str,
@@ -147,8 +150,19 @@ class WebhookNotifier(BaseNotifier):
                     )
                     return False
 
-                logger.debug(
-                    "Webhook notification sent successfully: %s (attempt %s)",
+                accepted, rejection_reason = self._validate_success_response(response)
+                if not accepted:
+                    logger.error(
+                        "%s notification rejected for %s: %s",
+                        self.provider_name,
+                        self.name,
+                        rejection_reason or "unknown response",
+                    )
+                    return False
+
+                logger.info(
+                    "%s notification sent successfully: %s (attempt %s)",
+                    self.provider_name,
                     self.name,
                     attempt + 1,
                 )
@@ -171,6 +185,10 @@ class WebhookNotifier(BaseNotifier):
                 return False
         return False
 
+    def _validate_success_response(self, response: OutboundResponse) -> tuple[bool, str | None]:
+        del response
+        return True, None
+
 
 def _build_webhook_payload(
     event: str,
@@ -185,7 +203,12 @@ def _build_webhook_payload(
     if isinstance(payload, dict) and payload.get("entity") == "executor_run":
         return _build_executor_payload(event, payload, labels)
 
-    message = f"[{event}] {labels['notification_received']}"
+    supplied_message = payload.get("message") if isinstance(payload, dict) else None
+    message = (
+        str(supplied_message)
+        if supplied_message
+        else f"[{event}] {labels['notification_received']}"
+    )
     return {
         "event": event,
         "message": message,

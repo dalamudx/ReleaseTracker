@@ -610,7 +610,7 @@ class Notifier(BaseModel):
 
     id: int | None = None
     name: str
-    type: str = "webhook"  # Currently only webhook is supported
+    type: Literal["webhook", "wecom"] = "webhook"
     url: str
     events: list[str] = Field(default_factory=lambda: ["new_release"])
     enabled: bool = True

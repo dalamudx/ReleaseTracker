@@ -21,6 +21,7 @@ class ReleaseSchedulerAggregateChecks:
         log_prefix: str = "",
         trigger_mode: str = "scheduled",
         source_ids: set[int] | None = None,
+        container_priority_aliases: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         enabled_sources = [
             source
@@ -34,6 +35,8 @@ class ReleaseSchedulerAggregateChecks:
 
         source_errors: list[str] = []
         source_fetch_run_ids: dict[int, int] = {}
+        completed_source_checks = 0
+        incomplete_source_checks = 0
         selection_candidates: list[Release] = []
         candidate_sources: dict[str, list[tuple[TrackerSource, Release]]] = {}
         sort_mode = tracker_config.version_sort_mode if tracker_config else "published_at"
@@ -65,7 +68,10 @@ class ReleaseSchedulerAggregateChecks:
             try:
                 source_tracker = await self._create_tracker(source_config)
                 await self._configure_container_tracker_fetch_state(
-                    source.id, source_tracker, source_history_releases
+                    source.id,
+                    source_tracker,
+                    source_history_releases,
+                    priority_aliases=container_priority_aliases,
                 )
                 if source_config.channels:
                     source_history_releases = self._assign_first_matching_channel(
@@ -84,6 +90,7 @@ class ReleaseSchedulerAggregateChecks:
                     source_tracker,
                     source_config,
                     log_prefix=f"{log_prefix}[{source.source_key}] ",
+                    require_complete=trigger_mode == "webhook",
                 )
 
                 mapped_releases = [
@@ -119,6 +126,7 @@ class ReleaseSchedulerAggregateChecks:
 
                 fallback_hint = getattr(source_tracker, "last_fallback_hint", None)
                 if fallback_hint:
+                    incomplete_source_checks += 1
                     source_errors.append(f"{source.source_key}: {fallback_hint}")
 
                 source_history_ids_by_identity = await self.storage.append_source_history_for_run(
@@ -166,7 +174,9 @@ class ReleaseSchedulerAggregateChecks:
                     if source_history_id is None:
                         continue
                     candidate_sources.setdefault(identity_key, []).append((source, release))
+                completed_source_checks += 1
             except Exception as e:
+                incomplete_source_checks += 1
                 error_msg = str(e) or getattr(e, "__class__", Exception).__name__
                 logger.error(
                     f"{log_prefix}Aggregate source check failed for {tracker_name}/{source.source_key}: {error_msg}"
@@ -261,14 +271,30 @@ class ReleaseSchedulerAggregateChecks:
                 artifact_digest=release.artifact_digest,
             )
 
-        projection_releases, latest_version = await self._refresh_tracker_projection_and_notify(
-            aggregate_tracker_id=aggregate_tracker.id,
-            tracker_name=tracker_name,
-            channels=tracker_config.channels if tracker_config is not None else [],
-            sort_mode=sort_mode,
-        )
+        channels = tracker_config.channels if tracker_config is not None else []
+        if trigger_mode == "webhook" and incomplete_source_checks:
+            # Source history is durable evidence, but a partial multi-source view is
+            # not an atomic tracker result. Keep the existing current projection so
+            # notifications and executor desired state are emitted only by a later
+            # complete retry.
+            projection_releases = await self.storage.get_tracker_current_releases(
+                aggregate_tracker.id
+            )
+            for release in projection_releases:
+                release.tracker_name = tracker_name
+            current_best = self._best_release_from_candidates(
+                self.storage, projection_releases, channels, sort_mode
+            )
+            latest_version = current_best.version if current_best is not None else None
+        else:
+            projection_releases, latest_version = await self._refresh_tracker_projection_and_notify(
+                aggregate_tracker_id=aggregate_tracker.id,
+                tracker_name=tracker_name,
+                channels=channels,
+                sort_mode=sort_mode,
+            )
 
-        if source_errors and not projection_releases:
+        if source_errors and not projection_releases and completed_source_checks == 0:
             raise RuntimeError("; ".join(source_errors))
 
         error = None

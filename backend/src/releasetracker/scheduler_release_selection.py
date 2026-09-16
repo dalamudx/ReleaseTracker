@@ -31,6 +31,7 @@ class ReleaseSchedulerReleaseSelection:
         tracker_config: TrackerConfig | None,
         *,
         log_prefix: str,
+        require_complete: bool = False,
     ) -> list[Any]:
         releases: list[Any] = []
         provider = (
@@ -43,11 +44,13 @@ class ReleaseSchedulerReleaseSelection:
         async def _do_fetch() -> list[Any]:
             local_releases: list[Any] = []
             fallback_tags = tracker_config.fallback_tags if tracker_config else False
+            fetch_all_error: Exception | None = None
 
             try:
                 limit = tracker_config.fetch_limit if tracker_config else 30
                 local_releases = await tracker.fetch_all(limit=limit, fallback_tags=fallback_tags)
             except Exception as inner_e:
+                fetch_all_error = inner_e
                 logger.warning(
                     f"{log_prefix}fetch_all failed for {tracker_name} ({inner_e.__class__.__name__}: {inner_e}), trying fallback"
                 )
@@ -64,6 +67,21 @@ class ReleaseSchedulerReleaseSelection:
                     raise Exception(
                         f"Fallback fetch_latest failed: {str(fb_e) or getattr(fb_e, '__class__', Exception).__name__}"
                     )
+
+            if fetch_all_error is not None and require_complete:
+                message = str(fetch_all_error) or fetch_all_error.__class__.__name__
+                fallback_result = "one release" if local_releases else "no releases"
+                diagnostic = (
+                    f"complete fetch failed ({fetch_all_error.__class__.__name__}: {message}); "
+                    f"fetch_latest fallback returned {fallback_result} (diagnostic only)"
+                )
+                existing_hint = getattr(tracker, "last_fallback_hint", None)
+                tracker.last_fallback_hint = (
+                    f"{existing_hint}; {diagnostic}" if existing_hint else diagnostic
+                )
+                # A source-local latest value cannot prove complete alias ownership.
+                # Keep it diagnostic-only so a retry is the sole commit boundary.
+                return []
 
             return local_releases
 

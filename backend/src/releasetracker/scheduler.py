@@ -7,7 +7,7 @@ from typing import Any
 
 from .config import TrackerConfig
 from .models import Release
-from .notifiers import WebhookNotifier
+from .notifiers import SUPPORTED_NOTIFIER_TYPES, build_notifier
 from .notifiers.base import BaseNotifier
 from .scheduler_host import SchedulerHost
 from .scheduler_manual_checks import ReleaseSchedulerManualChecks
@@ -64,6 +64,8 @@ class ReleaseScheduler(
         tracker_source_id: int,
         tracker: BaseTracker,
         history_releases: list[Release] | None = None,
+        *,
+        priority_aliases: tuple[str, ...] = (),
     ) -> None:
         if not isinstance(tracker, DockerTracker):
             return
@@ -100,6 +102,7 @@ class ReleaseScheduler(
             alias_digest_by_name=alias_digest_by_name,
             artifact_created_by_digest=artifact_created_by_digest,
             artifact_metadata_by_digest=artifact_metadata_by_digest,
+            priority_aliases=priority_aliases,
         )
 
     async def initialize(self):
@@ -119,14 +122,16 @@ class ReleaseScheduler(
         try:
             db_notifiers = await self.storage.get_notifiers()
             for n in db_notifiers:
-                if n.enabled and n.type == "webhook":
-                    notifier = WebhookNotifier(
-                        name=n.name,
-                        url=n.url,
-                        events=n.events,
-                        language=n.language,
+                if n.enabled and n.type in SUPPORTED_NOTIFIER_TYPES:
+                    self.notifiers.append(
+                        build_notifier(
+                            notifier_type=n.type,
+                            name=n.name,
+                            url=n.url,
+                            events=n.events,
+                            language=n.language,
+                        )
                     )
-                    self.notifiers.append(notifier)
         except Exception as e:
             logger.error(f"Failed to load notifiers: {e}")
 

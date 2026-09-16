@@ -17,6 +17,23 @@ async def test_notifier_language_defaults_to_english(storage):
 
 
 @pytest.mark.asyncio
+async def test_wecom_notifier_type_persists(storage):
+    notifier = await storage.create_notifier(
+        {
+            "name": "enterprise-wechat",
+            "type": "wecom",
+            "url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=redacted",
+            "events": ["new_release", "republish"],
+            "enabled": True,
+            "language": "zh",
+        }
+    )
+
+    assert notifier.type == "wecom"
+    assert (await storage.get_notifier(notifier.id)).type == "wecom"
+
+
+@pytest.mark.asyncio
 async def test_notifiers_search_visible_metadata(storage):
     await storage.create_notifier(
         {

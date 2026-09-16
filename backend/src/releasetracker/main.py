@@ -76,6 +76,11 @@ async def lifespan(app: FastAPI):
     # Ensure an admin user exists
     auth_service = AuthService(storage, system_key_manager)
     await auth_service.ensure_admin_user()
+    interrupted_source_runs = await storage.reconcile_interrupted_source_fetch_runs()
+    if interrupted_source_runs:
+        logging.getLogger(__name__).warning(
+            "Reconciled %s interrupted source fetch runs", interrupted_source_runs
+        )
     reconciled_claims = await storage.reconcile_stale_executor_snapshot_claims(
         stale_before=datetime.now() - timedelta(minutes=30)
     )
@@ -106,6 +111,8 @@ async def lifespan(app: FastAPI):
     yield
 
     # Clean up on shutdown
+    if repository_webhook_scheduler:
+        await repository_webhook_scheduler.shutdown()
     if executor_scheduler:
         await executor_scheduler.shutdown()
     if scheduler_host:

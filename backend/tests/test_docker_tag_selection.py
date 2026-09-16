@@ -97,6 +97,20 @@ def test_incremental_probe_window_rechecks_stale_version_alias_during_backlog():
     assert selected[1].tag_name in {"new-build-a", "new-build-b"}
 
 
+def test_incremental_probe_window_puts_authenticated_event_alias_first():
+    tracker = DockerTracker(name="docker-test", image="library/sample-web")
+    releases = _build_filtered_releases(tracker, ["latest", "new-build-a", "new-build-b", "dev"])
+    base = datetime(2026, 9, 16, tzinfo=timezone.utc)
+    observed = {release.tag_name: base for release in releases}
+
+    selected = _select_incremental_probe_window(
+        releases, 2, observed, priority_aliases=("missing", "dev", "dev")
+    )
+
+    assert [release.tag_name for release in selected][:1] == ["dev"]
+    assert len(selected) == 2
+
+
 def test_incremental_probe_window_prioritizes_floating_then_oldest_observed():
     tracker = DockerTracker(name="docker-test", image="library/sample-web")
     releases = _build_filtered_releases(

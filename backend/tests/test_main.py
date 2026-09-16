@@ -9,6 +9,10 @@ class FakeWebhookStore:
     def __init__(self, storage):
         self.storage = storage
 
+    async def recover_interrupted_requests(self):
+        self.storage.events.append("repository_webhooks.recover")
+        return 0
+
     async def cleanup(self):
         self.storage.events.append("repository_webhooks.cleanup")
 
@@ -25,6 +29,10 @@ class FakeStorage:
 
     async def get_system_log_level(self):
         return "INFO"
+
+    async def reconcile_interrupted_source_fetch_runs(self):
+        self.events.append("storage.reconcile_source_fetch_runs")
+        return 0
 
     async def reconcile_stale_executor_snapshot_claims(self, *, stale_before):
         del stale_before
@@ -176,9 +184,11 @@ async def test_lifespan_starts_without_identity_drift_repair(monkeypatch):
         assert storage.events == [
             "storage.initialize",
             "auth.ensure_admin_user",
+            "storage.reconcile_source_fetch_runs",
             "storage.reconcile_snapshot_claims",
             "scheduler.initialize",
             "executor.initialize",
+            "repository_webhooks.recover",
             "repository_webhooks.cleanup",
             "scheduler_host.start",
             "scheduler.start",

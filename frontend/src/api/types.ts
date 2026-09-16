@@ -420,11 +420,12 @@ export interface LoginResponse {
 }
 
 export type NotifierLanguage = 'en' | 'zh'
+export type NotifierType = 'webhook' | 'wecom'
 
 export interface Notifier {
     id: number
     name: string
-    type: string
+    type: NotifierType
     url: string
     events: string[]
     enabled: boolean

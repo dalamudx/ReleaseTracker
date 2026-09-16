@@ -210,7 +210,14 @@ export function NotifierSettings() {
                                     <TableRow key={notifier.id} className="transition-colors hover:bg-muted/40">
                                         <TableCell className="py-3 align-middle font-medium">
                                             <div className="min-w-0 space-y-0.5">
-                                                <span className="truncate">{notifier.name}</span>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="truncate">{notifier.name}</span>
+                                                    <Badge variant="outline" className="h-5 shrink-0 text-[10px]">
+                                                        {t(`settings.notifications.types.${notifier.type}`, {
+                                                            defaultValue: notifier.type,
+                                                        })}
+                                                    </Badge>
+                                                </div>
                                                 {notifier.description ? (
                                                     <div
                                                         className="line-clamp-1 text-xs font-normal text-muted-foreground"
@@ -348,6 +355,7 @@ function NotifierDialog({ open, onOpenChange, notifier }: NotifierDialogProps) {
     const form = useForm<Partial<Notifier>>({
         defaultValues: {
             name: "",
+            type: "webhook",
             url: "",
             events: ["new_release"],
             enabled: true,
@@ -361,6 +369,7 @@ function NotifierDialog({ open, onOpenChange, notifier }: NotifierDialogProps) {
             form.reset(
                 notifier || {
                     name: "",
+                    type: "webhook",
                     url: "",
                     events: ["new_release"],
                     enabled: true,
@@ -375,6 +384,7 @@ function NotifierDialog({ open, onOpenChange, notifier }: NotifierDialogProps) {
         try {
             const payload = {
                 ...data,
+                type: data.type || "webhook",
                 language: data.language || "en",
                 description: data.description || "",
             }
@@ -429,6 +439,34 @@ function NotifierDialog({ open, onOpenChange, notifier }: NotifierDialogProps) {
                                             {...field}
                                         />
                                     </FormControl>
+                                    <FormMessage />
+                                </FormItem>
+                            )}
+                        />
+                        <FormField
+                            control={form.control}
+                            name="type"
+                            render={({ field }) => (
+                                <FormItem>
+                                    <FormLabel>{t("settings.notifications.dialog.type")}</FormLabel>
+                                    <Select onValueChange={field.onChange} value={field.value || "webhook"}>
+                                        <FormControl>
+                                            <SelectTrigger>
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                        </FormControl>
+                                        <SelectContent>
+                                            <SelectItem value="webhook">
+                                                {t("settings.notifications.types.webhook")}
+                                            </SelectItem>
+                                            <SelectItem value="wecom">
+                                                {t("settings.notifications.types.wecom")}
+                                            </SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    <FormDescription>
+                                        {t("settings.notifications.dialog.typeDesc")}
+                                    </FormDescription>
                                     <FormMessage />
                                 </FormItem>
                             )}
