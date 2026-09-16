@@ -2472,3 +2472,86 @@ async def test_correlated_candidate_uses_current_digest_when_same_tag_is_republi
     assert [row["digest"] for row in image_rows] == [old_digest, new_digest]
     assert int(image_rows[0]["id"]) not in candidate["source_history_ids"]
     assert int(image_rows[1]["id"]) in candidate["source_history_ids"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("observation_digest", "expected_digest"),
+    [
+        pytest.param("1", "1", id="exact-digest-beats-newer-tag-history"),
+        pytest.param("2", "2", id="current-digest"),
+        pytest.param(None, "2", id="missing-digest-falls-back-to-newest-tag"),
+        pytest.param("3", "2", id="unmatched-digest-falls-back-to-newest-tag"),
+    ],
+)
+async def test_correlated_history_matching_is_source_scoped(
+    storage, observation_digest, expected_digest
+):
+    now = datetime.fromisoformat("2026-09-15T04:01:04+00:00")
+
+    def release(tracker_name, digest):
+        return Release(
+            tracker_name=tracker_name,
+            tracker_type="container",
+            version="1.0.0",
+            name="1.0.0",
+            tag_name="1.0.0",
+            url="https://registry.example.com/1.0.0",
+            published_at=now,
+            prerelease=False,
+            commit_sha="sha256:" + digest * 64 if digest is not None else None,
+        )
+
+    trackers = []
+    # The unrelated source deliberately has newer history IDs with identical tags
+    # and digests. Neither the digest lookup nor the key fallback may select them.
+    for name in ["selected-image", "unrelated-image"]:
+        tracker = await storage.create_aggregate_tracker(
+            AggregateTracker(
+                name=name,
+                sources=[
+                    TrackerSource(
+                        source_key="image",
+                        source_type="container",
+                        source_config={
+                            "image": "owner/" + name,
+                            "registry": "registry.example.com",
+                        },
+                    )
+                ],
+            )
+        )
+        trackers.append(tracker)
+        for digest in ["1", "2"]:
+            await storage.save_source_observations(
+                tracker.id, tracker.sources[0], [release(name, digest)], observed_at=now
+            )
+
+    selected = trackers[0]
+    source = selected.sources[0]
+    # Model a canonical observation whose matching immutable history is older,
+    # or whose digest is absent; do not manufacture another history row.
+    await storage.save_source_observations(
+        selected.id,
+        source,
+        [release(selected.name, observation_digest)],
+        observed_at=now,
+        append_truth=False,
+    )
+    db = await storage._get_connection()
+    history = await (
+        await db.execute(
+            "SELECT id, digest FROM source_release_history WHERE tracker_source_id = ?",
+            (source.id,),
+        )
+    ).fetchall()
+    expected = "sha256:" + expected_digest * 64
+    expected_id = next(row["id"] for row in history if row["digest"] == expected)
+
+    candidates = await storage.get_correlated_release_candidates(selected.id)
+
+    assert len(candidates) == 1
+    assert candidates[0]["source_history_ids"] == [expected_id]
+    assert candidates[0]["primary_source_history_id"] == expected_id
+    assert candidates[0]["tracker_source_ids"] == [source.id]
+    assert candidates[0]["release"].artifact_digest == expected

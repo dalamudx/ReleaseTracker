@@ -521,18 +521,25 @@ async def get_correlated_release_candidates(
             JOIN aggregate_tracker_sources ats
               ON ats.id = sro.tracker_source_id
             LEFT JOIN source_release_history srh
-              ON srh.id = (
-                    SELECT candidate.id
-                    FROM source_release_history candidate
-                    WHERE candidate.tracker_source_id = sro.tracker_source_id
-                      AND (
-                            candidate.digest = sro.commit_sha
-                         OR candidate.source_release_key = sro.source_release_key
-                      )
-                    ORDER BY
-                        CASE WHEN candidate.digest = sro.commit_sha THEN 0 ELSE 1 END,
-                        candidate.id DESC
-                    LIMIT 1
+              ON srh.id = COALESCE(
+                    -- Keep outer references in WHERE: older SQLite versions cannot
+                    -- resolve them in a correlated subquery's ORDER BY clause.
+                    (
+                        SELECT candidate.id
+                        FROM source_release_history candidate
+                        WHERE candidate.tracker_source_id = sro.tracker_source_id
+                          AND candidate.digest = sro.commit_sha
+                        ORDER BY candidate.id DESC
+                        LIMIT 1
+                    ),
+                    (
+                        SELECT candidate.id
+                        FROM source_release_history candidate
+                        WHERE candidate.tracker_source_id = sro.tracker_source_id
+                          AND candidate.source_release_key = sro.source_release_key
+                        ORDER BY candidate.id DESC
+                        LIMIT 1
+                    )
              )
             WHERE cr.aggregate_tracker_id = ?
             ORDER BY cr.id ASC,
