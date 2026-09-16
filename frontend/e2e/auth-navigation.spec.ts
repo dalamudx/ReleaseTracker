@@ -13,7 +13,7 @@ const e2eUser = {
     is_admin: true,
 }
 
-async function installApiFixture(page: Page) {
+async function installApiFixture(page: Page, latestReleases: unknown[] = []) {
     const requests: ApiRequest[] = []
 
     await page.route(requestUrl => new URL(requestUrl).pathname.startsWith("/api/"), async route => {
@@ -55,7 +55,7 @@ async function installApiFixture(page: Page) {
         }
 
         if (path === "/api/releases/latest") {
-            return fulfill([])
+            return fulfill(latestReleases)
         }
 
         return fulfill({})
@@ -63,6 +63,42 @@ async function installApiFixture(page: Page) {
 
     return requests
 }
+
+test("renders lazy release notes from the production bundle", async ({ page }) => {
+    const pageErrors: string[] = []
+    page.on("pageerror", error => pageErrors.push(error.message))
+    await page.addInitScript(() => {
+        localStorage.setItem("token", "e2e-access-token")
+    })
+    await installApiFixture(page, [{
+        tracker_release_history_id: 101,
+        identity_key: "release:1.2.3",
+        digest: "sha256:e2e",
+        tracker_name: "production-markdown",
+        tracker_type: "gitea",
+        name: "Release 1.2.3",
+        tag_name: "v1.2.3",
+        version: "1.2.3",
+        published_at: "2026-09-16T12:00:00Z",
+        projected_at: "2026-09-16T12:00:01Z",
+        url: "https://git.example.test/acme/project/releases/tag/v1.2.3",
+        prerelease: false,
+        body: "## Production Markdown\n\n- lazy chunk loaded\n- **rendered successfully**",
+        primary_source: {
+            source_key: "repo",
+            source_type: "gitea",
+            source_release_history_id: 202,
+        },
+    }])
+
+    await page.goto("/")
+    await page.getByRole("button", { name: /View Release Notes|查看发布说明/ }).click()
+
+    await expect(page.getByRole("dialog")).toBeVisible()
+    await expect(page.getByRole("heading", { name: "Production Markdown" })).toBeVisible()
+    await expect(page.getByText("rendered successfully")).toBeVisible()
+    expect(pageErrors).toEqual([])
+})
 
 test("redirects anonymous tracker visits to the login form", async ({ page }) => {
     await installApiFixture(page)

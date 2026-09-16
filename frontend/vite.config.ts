@@ -40,6 +40,9 @@ export default defineConfig(({ command }) => ({
     },
   },
   build: {
+    // Release Notes intentionally loads one cohesive lazy Markdown chunk. The
+    // bundle checker enforces its separate 650 KiB ceiling and chunk count.
+    chunkSizeWarningLimit: 650,
     rollupOptions: {
       output: {
         // Priorities keep core dependencies out of feature-only Chart/Markdown
@@ -85,9 +88,10 @@ export default defineConfig(({ command }) => ({
               test: /node_modules[\\/](recharts|d3-|victory-vendor)([\\/]|$)/,
             },
             {
+              // Keep the lazy Markdown dependency graph cohesive. Splitting this
+              // group by size creates cross-chunk initialization cycles in Rolldown.
               name: "markdown-vendor",
               priority: 60,
-              maxSize: 300 * 1024,
               test: /node_modules[\\/](react-markdown|remark-|rehype-|micromark|mdast-|hast-|unist-|unified|parse5|node-emoji|emojilib)/,
             },
           ],

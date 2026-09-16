@@ -9,6 +9,7 @@ const indexPath = path.join(distDir, "index.html")
 const MAX_INITIAL_RAW_BYTES = readBudget("MAX_INITIAL_RAW_BYTES", 900 * 1024)
 const MAX_INITIAL_GZIP_BYTES = readBudget("MAX_INITIAL_GZIP_BYTES", 300 * 1024)
 const MAX_ASSET_RAW_BYTES = readBudget("MAX_ASSET_RAW_BYTES", 400 * 1024)
+const MAX_MARKDOWN_VENDOR_RAW_BYTES = readBudget("MAX_MARKDOWN_VENDOR_RAW_BYTES", 650 * 1024)
 
 function readBudget(name, fallback) {
     const value = process.env[name]
@@ -111,13 +112,28 @@ async function main() {
         )
     }
 
+    const markdownVendorAssets = []
     for (const assetPath of await listJavaScriptAssets(path.join(distDir, "assets"))) {
         const assetStats = await stat(assetPath)
-        if (assetStats.size > MAX_ASSET_RAW_BYTES) {
+        const relativePath = path.relative(distDir, assetPath)
+        const isMarkdownVendor = /^markdown-vendor-.*\.js$/i.test(path.basename(assetPath))
+        if (isMarkdownVendor) markdownVendorAssets.push(relativePath)
+
+        // Release Notes is lazy-loaded, so its cohesive dependency graph may be
+        // larger than an initial-route asset. Do not split it by size: Rolldown
+        // can otherwise create circular chunks that fail during initialization.
+        const rawBudget = isMarkdownVendor ? MAX_MARKDOWN_VENDOR_RAW_BYTES : MAX_ASSET_RAW_BYTES
+        if (assetStats.size > rawBudget) {
             failures.push(
-                `${path.relative(distDir, assetPath)} is ${formatBytes(assetStats.size)}; single-asset budget is ${formatBytes(MAX_ASSET_RAW_BYTES)}`,
+                `${relativePath} is ${formatBytes(assetStats.size)}; single-asset budget is ${formatBytes(rawBudget)}`,
             )
         }
+    }
+
+    if (markdownVendorAssets.length > 1) {
+        failures.push(
+            `Markdown vendor graph must remain cohesive; found ${markdownVendorAssets.length} chunks: ${markdownVendorAssets.join(", ")}`,
+        )
     }
 
     if (failures.length > 0) {
