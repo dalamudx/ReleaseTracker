@@ -164,7 +164,7 @@ describe("TrackerDetail grouped artifact table", () => {
     expect(screen.queryByText("trackers.aggregate.detail.artifactTable.source")).not.toBeInTheDocument()
     expect(within(versionGroupRow).getByText("container")).toBeInTheDocument()
     expect(screen.queryByText("stable")).not.toBeInTheDocument()
-    expect(screen.queryByText("sha256:01234567…abcdef")).not.toBeInTheDocument()
+    expect(screen.queryByText("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole("button", {
       name: "trackers.aggregate.detail.expandVersion",
@@ -176,8 +176,25 @@ describe("TrackerDetail grouped artifact table", () => {
       name: "trackers.aggregate.detail.showMoreAliases",
     }))
     expect(screen.getByText("zeta")).toBeInTheDocument()
-    expect(screen.getAllByText("sha256:01234567…abcdef")).not.toHaveLength(0)
-    expect(screen.queryByText("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")).not.toBeInTheDocument()
+    const digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    const digestNodes = screen.getAllByText(digest)
+    expect(digestNodes).toHaveLength(2) // Desktop column and narrow-screen inline value.
+    for (const node of digestNodes) {
+      expect(node.textContent).toBe(digest)
+      expect(node).toHaveAttribute("title", digest)
+      expect(node).toHaveClass("min-w-0", "flex-1", "truncate")
+    }
+    expect(screen.queryByText("sha256:01234567…abcdef")).not.toBeInTheDocument()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal("navigator", { clipboard: { writeText } })
+    try {
+      fireEvent.click(screen.getAllByRole("button", {
+        name: "trackers.aggregate.detail.copyDigest",
+      })[0])
+      expect(writeText).toHaveBeenCalledWith(digest)
+    } finally {
+      vi.unstubAllGlobals()
+    }
     expect(screen.getAllByRole("button", {
       name: "trackers.aggregate.detail.copyDigest",
     })).toHaveLength(2)

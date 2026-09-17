@@ -89,15 +89,6 @@ function normalizeArtifactDigest(digest: string): string {
     return /^[0-9a-f]{64}$/i.test(digest) ? `sha256:${digest}` : digest
 }
 
-function formatArtifactDigestPreview(digest: string): string {
-    const normalized = normalizeArtifactDigest(digest)
-    const separatorIndex = normalized.indexOf(":")
-    const prefix = separatorIndex >= 0 ? normalized.slice(0, separatorIndex + 1) : ""
-    const value = separatorIndex >= 0 ? normalized.slice(separatorIndex + 1) : normalized
-    if (value.length <= 18) return normalized
-    return `${prefix}${value.slice(0, 8)}…${value.slice(-6)}`
-}
-
 export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
     const { t } = useTranslation()
     const formatDate = useDateFormatter()
@@ -620,7 +611,7 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
                                                                         className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-foreground"
                                                                         title={digest}
                                                                     >
-                                                                        {formatArtifactDigestPreview(digest)}
+                                                                        {digest}
                                                                     </code>
                                                                     <Button
                                                                         type="button"
@@ -641,7 +632,7 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
                                                                         className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/80"
                                                                         title={digest}
                                                                     >
-                                                                        {formatArtifactDigestPreview(digest)}
+                                                                        {digest}
                                                                     </code>
                                                                     <Button
                                                                         type="button"
