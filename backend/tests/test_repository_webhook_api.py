@@ -133,3 +133,88 @@ async def test_public_receiver_rejects_bad_signature_and_wrong_repository(client
     )
     assert wrong.status_code == 403
     assert await storage.webhooks.deliveries(hook["id"]) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["forgejo", "gitea"])
+@pytest.mark.parametrize(
+    "trigger,extra,reason",
+    [
+        ({"ref": "refs/heads/dev"}, {}, ""),
+        ({"ref": "dev", "ref_type": "branch"}, {}, ""),
+        ({"ref": "refs/heads/main"}, {}, "branches_mismatch"),
+        ({"ref": "refs/tags/dev"}, {}, "branches_unavailable"),
+        ({"ref": "refs/heads/dev"}, {"event": "pull_request"}, "branches_unavailable"),
+        ({}, {}, "branches_unavailable"),
+        ({"ref": "refs/heads/dev"}, {"workflow_id": "ci.yml"}, "workflows_mismatch"),
+        ({"ref": "refs/heads/dev"}, {"workflow_id": ""}, "workflows_unavailable"),
+    ],
+)
+async def test_signed_action_run_filters_then_queues_repository_and_container(
+    client, storage, provider, trigger, extra, reason
+):
+    from test_repository_webhook_branches import action_payload
+    from releasetracker.webhook_scheduler import _container_priority_aliases
+
+    tracker = await storage.create_aggregate_tracker(
+        AggregateTracker(
+            name="forge-branch",
+            primary_changelog_source_key="repo",
+            sources=[
+                TrackerSource(
+                    source_key="repo",
+                    source_type="gitea",
+                    source_config={"repo": "acme/app", "instance": "https://code.example"},
+                ),
+                TrackerSource(
+                    source_key="image",
+                    source_type="container",
+                    source_config={"image": "acme/app", "registry": "registry.example"},
+                ),
+            ],
+        )
+    )
+    repo_id, image_id = [s.id for s in tracker.sources]
+    hook = await storage.webhooks.save(
+        RepositoryWebhookInput(
+            tracker_source_id=repo_id,
+            provider=provider,
+            enabled=True,
+            secret="0123456789abcdef",
+            linked_source_ids=[image_id],
+            branches=["dev"],
+            workflows=["Release.yml"],
+        )
+    )
+    payload = action_payload({"event": "push", "event_payload": json.dumps(trigger), **extra})
+    body = json.dumps(payload).encode()
+    headers = {
+        "content-type": "application/json",
+        f"x-{provider}-event": "action_run_success",
+        f"x-{provider}-delivery": "branch-regression-1738",
+        f"x-{provider}-signature": hmac.new(b"0123456789abcdef", body, hashlib.sha256).hexdigest(),
+    }
+    path = f"/api/webhooks/repository/{hook['id']}"
+    bad_headers = {**headers, f"x-{provider}-signature": "invalid"}
+    assert client.post(path, content=body, headers=bad_headers).status_code == 401
+    assert await storage.webhooks.deliveries(hook["id"]) == []
+    response = client.post(path, content=body, headers=headers)
+    assert response.status_code == (200 if reason else 202)
+    (delivery,) = await storage.webhooks.deliveries(hook["id"])
+    assert delivery["reason"] == reason
+    if reason:
+        assert delivery["state"] == "ignored"
+        assert delivery["requests"] == []
+    else:
+        assert {request["tracker_source_id"] for request in delivery["requests"]} == {
+            repo_id,
+            image_id,
+        }
+        assert delivery["summary"]["branch"] == "dev"
+        assert _container_priority_aliases([{"summary": json.dumps(delivery["summary"])}]) == (
+            "dev",
+        )
+        duplicate = client.post(path, content=body, headers=headers)
+        assert duplicate.status_code == 200 and duplicate.json()["state"] == "duplicate"
+        (delivery,) = await storage.webhooks.deliveries(hook["id"])
+        assert len(delivery["requests"]) == 2

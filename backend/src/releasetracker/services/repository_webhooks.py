@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import time
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
@@ -110,6 +111,51 @@ def verify_signature(
         raise ValueError("Invalid signature")
 
 
+def _action_run_reference(run: dict) -> tuple[str, str]:
+    """Resolve the Git ref, not Forgejo's display-only PrettyRef.
+
+    Forgejo ActionRun embeds the original trigger as JSON in event_payload.
+    Pushes can target tags as well as branches, so neither prettyref nor the
+    event name alone proves that a short name is a branch.
+    """
+
+    def text(value) -> str:
+        return value if isinstance(value, str) else ""
+
+    direct = text(run.get("ref"))
+    fallback = direct or text(run.get("prettyref"))
+    trigger = run.get("event_payload")
+    if isinstance(trigger, str):
+        try:
+            trigger = json.loads(trigger)
+        except (ValueError, RecursionError):
+            return fallback, ""
+    if trigger is not None and not isinstance(trigger, dict):
+        return fallback, ""
+    trigger = obj(trigger)
+    original = text(trigger.get("ref"))
+    ref_type = text(trigger.get("ref_type"))
+    # Prefer an explicitly typed original ref to an abbreviated API run.ref.
+    if original and not original.startswith("refs/") and ref_type in {"branch", "tag"}:
+        original = ("refs/heads/" if ref_type == "branch" else "refs/tags/") + original
+    ref = direct if direct.startswith("refs/") else original or fallback
+    if (
+        run.get("is_fork_pull_request") is True
+        or any(text(run.get(key)).startswith("pull_request") for key in ("event", "trigger_event"))
+        or "pull_request" in trigger
+        or ref_type == "tag"
+    ):
+        return ref, ""
+    candidates = [value for value in (direct, original) if value]
+    qualified = [value for value in candidates if value.startswith("refs/")]
+    if not qualified or any(not value.startswith("refs/heads/") for value in qualified):
+        return ref, ""
+    branch = qualified[0].removeprefix("refs/heads/")
+    if not branch or any(value.removeprefix("refs/heads/") != branch for value in candidates):
+        return ref, ""
+    return "refs/heads/" + branch, branch
+
+
 def normalize_event(provider: str, headers, payload: dict) -> RepositoryEvent:
     action = str(payload.get("action", ""))
     repo = obj(payload.get("repository"))
@@ -154,9 +200,7 @@ def normalize_event(provider: str, headers, payload: dict) -> RepositoryEvent:
                 None,
                 "success",
             }:
-                ref = str(run.get("ref") or run.get("prettyref") or "")
-                branch = ref.removeprefix("refs/heads/") if ref.startswith("refs/heads/") else ""
-                # Older Forgejo exposes prettyref only. Never guess its ref type.
+                ref, branch = _action_run_reference(run)
                 return RepositoryEvent(
                     "workflow",
                     "success",
