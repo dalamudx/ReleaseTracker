@@ -32,6 +32,7 @@ class ReleaseSchedulerReleaseSelection:
         *,
         log_prefix: str,
         require_complete: bool = False,
+        fail_fast: bool = False,
     ) -> list[Any]:
         releases: list[Any] = []
         provider = (
@@ -50,12 +51,14 @@ class ReleaseSchedulerReleaseSelection:
                 limit = tracker_config.fetch_limit if tracker_config else 30
                 local_releases = await tracker.fetch_all(limit=limit, fallback_tags=fallback_tags)
             except Exception as inner_e:
+                if fail_fast:
+                    raise
                 fetch_all_error = inner_e
                 logger.warning(
                     f"{log_prefix}fetch_all failed for {tracker_name} ({inner_e.__class__.__name__}: {inner_e}), trying fallback"
                 )
 
-            if not local_releases:
+            if not local_releases and not fail_fast:
                 try:
                     if _tracker_method_supports_argument(tracker.fetch_latest, "fallback_tags"):
                         single_latest = await tracker.fetch_latest(fallback_tags=fallback_tags)

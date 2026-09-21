@@ -371,7 +371,7 @@ class WebhookStore:
                 await db.execute(
                     """SELECT s.aggregate_tracker_id FROM source_refresh_requests r
                 JOIN aggregate_tracker_sources s ON s.id=r.tracker_source_id
-                WHERE r.state IN ('pending','deferred') AND r.due_at<=? ORDER BY r.due_at,r.id LIMIT 1""",
+                WHERE r.task_id IS NULL AND r.state IN ('pending','deferred') AND r.due_at<=? ORDER BY r.due_at,r.id LIMIT 1""",
                     (now,),
                 )
             ).fetchone()
@@ -384,7 +384,7 @@ class WebhookStore:
                 JOIN webhook_deliveries d ON d.id=r.delivery_id JOIN repository_webhooks h ON h.id=d.webhook_id
                 JOIN aggregate_tracker_sources s ON s.id=r.tracker_source_id
                 JOIN aggregate_trackers t ON t.id=s.aggregate_tracker_id
-                WHERE s.aggregate_tracker_id=? AND r.state IN ('pending','deferred') AND r.due_at<=?
+                WHERE s.aggregate_tracker_id=? AND r.task_id IS NULL AND r.state IN ('pending','deferred') AND r.due_at<=?
                 ORDER BY r.id LIMIT 1000""",
                     (row[0], now),
                 )

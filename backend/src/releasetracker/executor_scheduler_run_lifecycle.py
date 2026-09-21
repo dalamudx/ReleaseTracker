@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -9,8 +8,6 @@ from zoneinfo import ZoneInfo
 
 from .config import ExecutorConfig
 from .models import ExecutorRunHistory, ExecutorStatus
-from .notifiers import SUPPORTED_NOTIFIER_TYPES, build_notifier
-from .notifiers.base import NotificationEvent
 
 logger = logging.getLogger(__name__)
 
@@ -112,81 +109,23 @@ class ExecutorSchedulerRunLifecycle:
     ) -> ExecutorRunOutcome:
         if executor_config.id is None:
             raise ValueError("Executor config must have id")
-        finished_at = self._now_provider()
-        await self.storage.finalize_executor_run(
-            run_id,
-            status=status,
-            from_version=from_version,
-            finished_at=finished_at,
-            to_version=to_version,
-            message=message,
-            diagnostics=diagnostics,
-        )
-        await self.storage.update_executor_status(
-            ExecutorStatus(
-                executor_id=executor_config.id,
-                last_run_at=finished_at,
-                last_result=status,
+        from .services.deployment_readiness_context import READINESS_FINALIZER
+
+        handoff = READINESS_FINALIZER.get()
+        # Partial/failed mutations retain the conservative uncertainty lock.
+        changed = status == "success"
+        if handoff is not None and changed:
+            return await handoff(
+                executor_config,
+                run_id,
+                status=status,
+                from_version=from_version,
+                to_version=to_version,
+                message=message,
                 last_error=last_error,
-                last_version=to_version,
+                diagnostics=diagnostics,
             )
-        )
-        await self._send_run_notifications(
-            executor_config,
-            run_id=run_id,
-            status=status,
-            from_version=from_version,
-            to_version=to_version,
-            message=message,
-            finished_at=finished_at,
-        )
-        return ExecutorRunOutcome(
-            status=status,
-            from_version=from_version,
-            to_version=to_version,
-            message=message,
-        )
-
-    async def _send_run_notifications(
-        self,
-        executor_config: ExecutorConfig,
-        *,
-        run_id: int,
-        status: str,
-        from_version: str | None,
-        to_version: str | None,
-        message: str | None,
-        finished_at: datetime,
-    ) -> None:
-        event_map = {
-            "success": NotificationEvent.EXECUTOR_RUN_SUCCESS,
-            "failed": NotificationEvent.EXECUTOR_RUN_FAILED,
-            "skipped": NotificationEvent.EXECUTOR_RUN_SKIPPED,
-        }
-        event = event_map.get(status)
-        if event is None:
-            return
-
-        try:
-            db_notifiers = await self.storage.get_notifiers()
-        except Exception as exc:
-            logger.error(f"Failed to load executor notifiers from DB: {exc}")
-            return
-
-        active_notifiers = [
-            build_notifier(
-                notifier_type=item.type,
-                name=item.name,
-                url=item.url,
-                events=item.events,
-                language=item.language,
-            )
-            for item in db_notifiers
-            if (item.enabled and item.type in SUPPORTED_NOTIFIER_TYPES and event in item.events)
-        ]
-        if not active_notifiers:
-            return
-
+        finished_at = self._now_provider()
         payload = {
             "entity": "executor_run",
             "executor_id": executor_config.id,
@@ -197,43 +136,43 @@ class ExecutorSchedulerRunLifecycle:
             "target_mode": executor_config.target_ref.get("mode"),
             "run_id": run_id,
             "status": status,
-            "started_at": None,
             "finished_at": _notification_timestamp(finished_at, self._system_timezone),
             "from_version": from_version,
             "to_version": to_version,
-            "message": message,
+            "services": (diagnostics or {}).get("services", []),
         }
-
-        run_record = await self.storage.get_executor_run(run_id)
-        if run_record is not None:
-            payload["started_at"] = _notification_timestamp(
-                run_record.started_at, self._system_timezone
-            )
-            # Lift the persisted health_check and recovery_outcome
-            # diagnostics into the notification payload so webhook
-            # subscribers (Discord/Slack/plain HTTP) can show post-update
-            # readiness without calling the API.
-            diagnostics = run_record.diagnostics or {}
-            health_check = diagnostics.get("health_check")
-            if isinstance(health_check, dict):
-                payload["health_check"] = health_check
-            recovery_outcome = diagnostics.get("recovery_outcome")
-            if isinstance(recovery_outcome, str):
-                payload["recovery_outcome"] = recovery_outcome
-
-        results = await asyncio.gather(
-            *(notifier.notify(event, payload) for notifier in active_notifiers),
-            return_exceptions=True,
+        health = (diagnostics or {}).get("health_check")
+        if isinstance(health, dict):
+            payload["health_check"] = health
+        # No notifier lookup or network call on the deployment path. A committed
+        # result always has durable notification intent, even without a live worker.
+        await self.storage.finalize_executor_run(
+            run_id,
+            status=status,
+            from_version=from_version,
+            finished_at=finished_at,
+            to_version=to_version,
+            message=message,
+            diagnostics=diagnostics,
+            executor_status=ExecutorStatus(
+                executor_id=executor_config.id,
+                last_run_at=finished_at,
+                last_result=status,
+                last_error=last_error,
+                last_version=to_version,
+            ),
+            notification_intent={
+                "payload": payload,
+                "notify_health_result": executor_config.health_check.notify_result,
+                "timezone_name": self._system_timezone,
+            },
         )
-        for notifier, result in zip(active_notifiers, results, strict=True):
-            if isinstance(result, BaseException):
-                logger.error(
-                    "Executor notifier delivery raised for %s: %s",
-                    notifier.name,
-                    result,
-                )
-            elif result is not True:
-                logger.error("Executor notifier delivery failed: %s", notifier.name)
+        return ExecutorRunOutcome(
+            status=status,
+            from_version=from_version,
+            to_version=to_version,
+            message=message,
+        )
 
 
 def _notification_timestamp(value: datetime, timezone_name: str) -> str:

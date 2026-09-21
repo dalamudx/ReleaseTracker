@@ -13,6 +13,7 @@ _RUNTIME_CREDENTIAL_TYPES: dict[str, set[str]] = {
     "podman": {"podman_runtime", "docker_runtime"},
     "kubernetes": {"kubernetes_runtime"},
     "portainer": {"portainer_runtime"},
+    "ssh": {"ssh"},
 }
 
 

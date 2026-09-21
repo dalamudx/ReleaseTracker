@@ -24,9 +24,23 @@ from .services.system_keys import (
 )
 from .storage.sqlite import SQLiteStorage
 from .logger import LogConfig
-from .routers import auth, notifiers, settings, trackers, credentials, releases, system, webhooks
-from .routers import runtime_connections
-from .routers import executors
+from .routers import (
+    auth,
+    notifiers,
+    settings,
+    trackers,
+    credentials,
+    releases,
+    system,
+    webhooks,
+    notification_templates,
+)
+from .routers import runtime_connections, ssh_connections, ssh_compose
+from .routers import executors, tasks
+from .services.task_queue import TaskQueue
+from .services.fetch_tasks import FetchTasks
+from .services.deploy_tasks import DeployTasks
+from .services.recovery_tasks import RecoveryTasks
 from .routers import oidc as oidc_router
 from .routers import oidc_admin as oidc_admin_router
 
@@ -95,12 +109,37 @@ async def lifespan(app: FastAPI):
     executor_scheduler = ExecutorScheduler(storage, scheduler_host=scheduler_host)
     repository_webhook_scheduler = RepositoryWebhookScheduler(storage, scheduler, scheduler_host)
 
+    from .services.deployment_readiness import DeploymentReadiness
+    from .services.executor_notification_outbox import ExecutorNotificationOutbox
+
+    notification_outbox = ExecutorNotificationOutbox(storage, scheduler_host)
+    executor_scheduler.notification_outbox = notification_outbox
+
+    readiness = DeploymentReadiness(storage, executor_scheduler, scheduler_host)
+    executor_scheduler.readiness = readiness
+    task_queue = TaskQueue(storage.tasks, scheduler_host)
+    fetch_tasks = FetchTasks(storage, scheduler)
+    deploy_tasks = DeployTasks(storage, executor_scheduler)
+    recovery_tasks = RecoveryTasks(storage, executor_scheduler)
+    task_queue.register("fetch", fetch_tasks)
+    task_queue.register("deploy", deploy_tasks)
+    task_queue.register("recover", recovery_tasks)
+    scheduler.fetch_tasks = fetch_tasks
+    repository_webhook_scheduler.fetch_tasks = fetch_tasks
+    executor_scheduler.deploy_tasks = deploy_tasks
+    executor_scheduler.recovery_tasks = recovery_tasks
+    app.state.task_queue = task_queue
+    app.state.fetch_tasks = fetch_tasks
+
     # Bind schedulers to app.state
     app.state.scheduler_host = scheduler_host
     app.state.scheduler = scheduler
     app.state.executor_scheduler = executor_scheduler
     app.state.repository_webhook_scheduler = repository_webhook_scheduler
 
+    await task_queue.initialize()
+    await readiness.initialize()
+    await notification_outbox.initialize()
     await scheduler.initialize()
     await executor_scheduler.initialize()
     await repository_webhook_scheduler.initialize()
@@ -113,6 +152,9 @@ async def lifespan(app: FastAPI):
     # Clean up on shutdown
     if repository_webhook_scheduler:
         await repository_webhook_scheduler.shutdown()
+    await task_queue.shutdown()
+    await readiness.shutdown()
+    await notification_outbox.shutdown()
     if executor_scheduler:
         await executor_scheduler.shutdown()
     if scheduler_host:
@@ -144,12 +186,16 @@ app.add_middleware(StorageConnectionCleanupMiddleware)
 
 app.include_router(auth.router)
 app.include_router(notifiers.router)
+app.include_router(notification_templates.router)
 app.include_router(webhooks.router)
 app.include_router(settings.router)
 app.include_router(trackers.router)
 app.include_router(credentials.router)
 app.include_router(runtime_connections.router)
+app.include_router(ssh_connections.router)
+app.include_router(ssh_compose.router)
 app.include_router(executors.router)
+app.include_router(tasks.router)
 app.include_router(releases.router)
 app.include_router(system.router)
 app.include_router(oidc_router.router)

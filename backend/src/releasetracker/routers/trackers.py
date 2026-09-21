@@ -809,7 +809,12 @@ async def check_tracker(
     tracker_name: str, scheduler: Annotated[ReleaseScheduler, Depends(get_scheduler)]
 ):
     try:
-        return await scheduler.check_tracker_now_v2(tracker_name)
+        result = await scheduler.check_tracker_now_v2(tracker_name)
+        if isinstance(result, dict) and "task_id" in result:
+            from fastapi.responses import JSONResponse
+
+            return JSONResponse(status_code=202, content=result)
+        return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

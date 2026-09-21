@@ -38,17 +38,17 @@ export function RuntimeConnectionList({
     const { t } = useTranslation()
 
     return (
-        <div className="min-h-0 flex-1 overflow-auto rounded-md border">
+        <div className="min-h-0 overflow-auto rounded-md border sm:flex-1">
             <Table containerClassName="overflow-visible">
                 <TableHeader className="sticky top-0 z-10 bg-background">
                     <TableRow>
-                        <TableHead className="min-w-[14rem]">{t("runtimeConnections.table.name")}</TableHead>
-                        <TableHead>{t("runtimeConnections.table.type")}</TableHead>
-                        <TableHead className="min-w-[16rem]">{t("runtimeConnections.table.endpoint")}</TableHead>
+                        <TableHead className="min-w-[12rem]">{t("runtimeConnections.table.name")}</TableHead>
+                        <TableHead className="hidden sm:table-cell">{t("runtimeConnections.table.type")}</TableHead>
+                        <TableHead className="hidden min-w-[16rem] sm:table-cell">{t("runtimeConnections.table.endpoint")}</TableHead>
                         <TableHead className="hidden md:table-cell">
                             {t("runtimeConnections.table.secrets")}
                         </TableHead>
-                        <TableHead>{t("runtimeConnections.table.status")}</TableHead>
+                        <TableHead className="hidden sm:table-cell">{t("runtimeConnections.table.status")}</TableHead>
                         <TableHead className="w-[1%] text-right">
                             {t("runtimeConnections.table.actions")}
                         </TableHead>
@@ -93,11 +93,22 @@ export function RuntimeConnectionList({
                                                     {runtimeConnection.description}
                                                 </div>
                                             ) : null}
+                                            <div className="flex min-w-0 flex-wrap items-center gap-1.5 sm:hidden">
+                                                <Badge variant="outline" className="h-4 px-1.5 text-[9px] font-medium uppercase">
+                                                    {runtimeConnection.type}
+                                                </Badge>
+                                                <span className={cn("text-[10px]", runtimeConnection.enabled ? "text-success" : "text-muted-foreground")}>
+                                                    {runtimeConnection.enabled ? t("common.enabled") : t("common.disabled")}
+                                                </span>
+                                                <span className="max-w-full truncate font-mono text-[10px] text-muted-foreground" title={connectionSummary.primary}>
+                                                    {`${t("runtimeConnections.table.endpoint")}: ${connectionSummary.primary}`}
+                                                </span>
+                                            </div>
                                         </div>
                                     </TableCell>
 
                                     {/* Type — uppercase badge. */}
-                                    <TableCell className="py-3 align-middle">
+                                    <TableCell className="hidden py-3 align-middle sm:table-cell">
                                         <Badge
                                             variant="outline"
                                             className="border-border/60 bg-muted/30 px-1.5 text-[10px] font-medium uppercase"
@@ -107,7 +118,7 @@ export function RuntimeConnectionList({
                                     </TableCell>
 
                                     {/* Endpoint summary. */}
-                                    <TableCell className="py-3 align-middle">
+                                    <TableCell className="hidden py-3 align-middle sm:table-cell">
                                         <div className="min-w-0 space-y-0.5">
                                             <div
                                                 className="truncate text-sm text-foreground"
@@ -146,7 +157,7 @@ export function RuntimeConnectionList({
                                     </TableCell>
 
                                     {/* Enabled state. */}
-                                    <TableCell className="py-3 align-middle">
+                                    <TableCell className="hidden py-3 align-middle sm:table-cell">
                                         <div
                                             className={cn(
                                                 "flex items-center gap-1.5 text-xs",

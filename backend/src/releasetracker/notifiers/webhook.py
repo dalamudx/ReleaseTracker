@@ -75,6 +75,14 @@ def _translated_event(event: str, labels: dict[str, str]) -> str:
 
 
 def _translated_status(status: str, labels: dict[str, str]) -> str:
+    if status in {"readiness_recovered", "readiness_recheck_failed"}:
+        if labels.get("executor") == "执行器":
+            return "重新核验通过" if status == "readiness_recovered" else "重新核验未通过"
+        return (
+            "Readiness recheck passed"
+            if status == "readiness_recovered"
+            else "Readiness recheck did not pass"
+        )
     return labels.get(f"status_{status}", status)
 
 
@@ -93,13 +101,45 @@ class WebhookNotifier(BaseNotifier):
         self.url = url
         self.events = events or ["new_release"]
         self.language = language if language in WEBHOOK_TRANSLATIONS else "en"
+        self.template = kwargs.get("template")
+        self.detail_url = kwargs.get("detail_url")
 
     async def notify(self, event: str, payload: Any) -> bool:
         if event not in self.events:
             return False
 
-        webhook_payload = _build_webhook_payload(event, payload, language=self.language)
-        return await self.send_payload(webhook_payload)
+        webhook_payload = await self.prepare(event, payload)
+        return await self.send_payload(
+            {key: value for key, value in webhook_payload.items() if not key.startswith("_")}
+        )
+
+    async def prepare(self, event: str, payload: Any) -> dict:
+        if isinstance(payload, dict) and isinstance(payload.get("_prepared_notification"), dict):
+            return payload["_prepared_notification"]
+        generic = _build_webhook_payload(event, payload, language=self.language)
+        if self.template is None:
+            return generic
+        from .templates import render_notification
+
+        rendered = await render_notification(
+            event,
+            payload,
+            self.language,
+            self.template,
+            "wecom" if self.provider_name == "WeCom" else "webhook",
+            detail_url=self.detail_url,
+        )
+        generic.update(
+            content=rendered["content"], text=rendered["content"], message=rendered["content"]
+        )
+        embed = dict((generic.get("embeds") or [{}])[0])
+        embed.update(title=rendered["title"], description=rendered["body"], fields=[])
+        generic["embeds"] = [embed]
+        generic["template"] = {
+            key: rendered[key] for key in ("template_id", "revision", "locale", "fallback_error")
+        }
+        generic["_rendered_markdown"] = rendered["content"]
+        return generic
 
     async def send_payload(self, webhook_payload: dict[str, Any]) -> bool:
         """Deliver a prepared payload through the protected outbound policy."""
@@ -200,7 +240,10 @@ def _build_webhook_payload(
     if hasattr(payload, "tracker_name") and hasattr(payload, "version"):
         return _build_release_payload(event, payload, labels)
 
-    if isinstance(payload, dict) and payload.get("entity") == "executor_run":
+    if isinstance(payload, dict) and payload.get("entity") in {
+        "executor_run",
+        "executor_health_recheck",
+    }:
         return _build_executor_payload(event, payload, labels)
 
     supplied_message = payload.get("message") if isinstance(payload, dict) else None
@@ -275,7 +318,72 @@ def _build_executor_payload(
     runtime_type = str(payload.get("runtime_type") or "unknown")
     status = str(payload.get("status") or event.replace("executor_run_", ""))
     status_label = _translated_status(status, labels)
+    from ..services.executor_notification_outbox import sanitize_payload
+
+    health = sanitize_payload(payload).get("health_check")
+    health_text = ""
+    if health:
+        is_zh = labels["executor"] == "执行器"
+        outcome_labels = (
+            {
+                "healthy": "就绪",
+                "unhealthy": "不健康",
+                "timeout": "超时",
+                "error": "探测错误",
+                "unknown": "未知",
+                "unsupported": "不支持",
+                "superseded": "已被后续变更取代",
+            }
+            if is_zh
+            else {
+                "healthy": "ready",
+                "unhealthy": "unhealthy",
+                "timeout": "timeout",
+                "error": "probe error",
+                "unknown": "unknown",
+                "unsupported": "unsupported",
+                "superseded": "superseded",
+            }
+        )
+        health_label = "健康检查" if is_zh else "Readiness check"
+        scope = health["scope"]
+        if is_zh:
+            scope = (
+                "仅运行时就绪；未验证业务健康"
+                if health["strategy"] == "runtime_native"
+                else "已配置的就绪探测"
+            )
+        if health.get("native_health_absent"):
+            scope += "; " + ("未配置原生健康检查" if is_zh else "native health check absent")
+        details = [health["strategy"]]
+        if "attempt_count" in health:
+            details.append(f"{health['attempt_count']} attempts")
+        elapsed = health.get("elapsed_seconds", health.get("duration_seconds"))
+        if elapsed is not None:
+            details.append(("就绪 " if is_zh else "readiness ") + f"{elapsed}s")
+        if "update_duration_seconds" in health:
+            details.append(
+                ("更新 " if is_zh else "update ") + f"{health['update_duration_seconds']}s"
+            )
+        health_text = (
+            f"\n{health_label}: {outcome_labels[health['outcome']]} "
+            f"({', '.join(details)}); {scope}"
+        )
+        services = health.get("services", [])
+        if services:
+            # Keep chat notifications concise; the structured payload retains all rows.
+            service_text = "; ".join(
+                f"{row['service']}: {outcome_labels.get(row['status'], row['status'])} "
+                f"({row['method']})"
+                for row in services[:5]
+            )
+            if len(services) > 5:
+                service_text += f"; +{len(services) - 5}"
+            label = "服务" if is_zh else "Services"
+            health_text += f"\n{label} ({health['service_count']}): {service_text}"
     message = f"[Executor:{executor_name}]"
+    if health:
+        message += f" {status_label}{health_text}"
 
     fields: list[dict[str, Any]] = [
         {"name": labels["executor"], "value": executor_name, "inline": True},
@@ -323,13 +431,23 @@ def _build_executor_payload(
             "to_version": payload.get("to_version"),
             "message": payload.get("message"),
         },
+        "health_check": health,
         "message": message,
         "content": message,
         "text": message,
         "embeds": [
             {
-                "title": labels["executor_run_title"].format(status=status_label),
-                "description": str(payload.get("message") or labels["no_executor_message"]),
+                "title": (
+                    (
+                        "执行器健康检查结果"
+                        if labels["executor"] == "执行器"
+                        else "Executor readiness check result"
+                    )
+                    if event == "executor_health_check_result"
+                    else labels["executor_run_title"].format(status=status_label)
+                ),
+                "description": str(payload.get("message") or labels["no_executor_message"])
+                + health_text,
                 "color": color_map.get(status, 9807270),
                 "fields": fields,
                 "footer": {"text": labels["event_footer"].format(event=event)},

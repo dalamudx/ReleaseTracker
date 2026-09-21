@@ -58,6 +58,10 @@ async function installApiFixture(page: Page, latestReleases: unknown[] = []) {
             return fulfill(latestReleases)
         }
 
+        if (path === "/api/tasks") {
+            return fulfill([])
+        }
+
         return fulfill({})
     })
 

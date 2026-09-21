@@ -501,14 +501,14 @@ export function ReleaseNotesModal({ release, open, onOpenChange }: ReleaseNotesM
                         .markdown-content h2 { font-size: 1.25rem !important; border-bottom: 1px solid var(--border) !important; padding-bottom: 0.3rem !important; }
                         .markdown-content h3 { font-size: 1.1rem !important; }
                         .markdown-content p { display: block !important; margin-bottom: 1rem !important; line-height: 1.6 !important; }
-                        .markdown-content pre { display: block !important; background: var(--muted) !important; padding: 1rem !important; border-radius: 0.5rem !important; overflow-x: auto !important; margin: 1rem 0 !important; border: 1px solid var(--border)/30 !important; }
+                        .markdown-content pre { display: block !important; background: var(--muted) !important; padding: 1rem !important; border-radius: 0.5rem !important; overflow-x: auto !important; margin: 1rem 0 !important; border: 1px solid color-mix(in oklch, var(--border) 70%, transparent) !important; }
                         .markdown-content code { font-family: var(--font-mono) !important; font-size: 0.9em !important; }
                         /* Remove backticks added by prose by default */
                         .markdown-content code::before, .markdown-content code::after { content: none !important; }
-                        .markdown-content :not(pre) > code { background: var(--muted) !important; padding: 0.2rem 0.4rem !important; border-radius: 0.25rem !important; border: 1px solid var(--border)/50 !important; }
-                        .markdown-content a { color: #3b82f6 !important; text-decoration: none !important; font-weight: 500 !important; }
-                        .markdown-content a:hover { text-decoration: underline !important; }
-                        .markdown-content blockquote { border-left: 4px solid var(--border) !important; padding-left: 1rem !important; font-style: italic !important; color: var(--muted-foreground) !important; margin: 1rem 0 !important; }
+                        .markdown-content :not(pre) > code { background: var(--muted) !important; padding: 0.2rem 0.4rem !important; border-radius: 0.25rem !important; border: 1px solid color-mix(in oklch, var(--border) 85%, transparent) !important; }
+                        .markdown-content a { color: var(--primary) !important; text-decoration: underline !important; text-decoration-color: color-mix(in oklch, var(--primary) 45%, transparent) !important; text-underline-offset: 0.2em !important; font-weight: 600 !important; }
+                        .markdown-content a:hover { text-decoration-color: var(--primary) !important; }
+                        .markdown-content blockquote { border-left: 1px solid var(--border) !important; padding-left: 1rem !important; font-style: italic !important; color: var(--muted-foreground) !important; margin: 1rem 0 !important; }
                         .markdown-content img { max-width: 100% !important; border-radius: 0.375rem !important; margin: 1rem 0 !important; }
                         .markdown-content table { width: 100% !important; border-collapse: collapse !important; margin: 1rem 0 !important; font-size: 0.875rem !important; }
                         .markdown-content th, .markdown-content td { border: 1px solid var(--border) !important; padding: 0.5rem !important; text-align: left !important; }

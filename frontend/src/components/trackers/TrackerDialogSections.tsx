@@ -567,7 +567,7 @@ function TrackerDialogReleaseChannelPanel({
     ))
 
     return (
-        <div className="rounded-xl border-l-2 border-l-primary/35 bg-muted/20 p-3 shadow-sm shadow-transparent">
+        <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div className="flex flex-col gap-1">
                     <Button

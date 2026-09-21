@@ -53,6 +53,9 @@ interface CredentialFormData {
     client_certificate: string
     certificate_authority: string
     api_key: string
+    auth_method: 'password' | 'private_key'
+    private_key: string
+    passphrase: string
     description?: string
 }
 
@@ -75,6 +78,9 @@ export function CredentialDialog({ open, onOpenChange, credential }: CredentialD
             client_certificate: "",
             certificate_authority: "",
             api_key: "",
+            auth_method: 'private_key',
+            private_key: '',
+            passphrase: '',
             description: "",
         },
     })
@@ -95,6 +101,9 @@ export function CredentialDialog({ open, onOpenChange, credential }: CredentialD
                     client_certificate: "",
                     certificate_authority: "",
                     api_key: "",
+                    auth_method: credential.auth_method ?? 'private_key',
+                    private_key: '',
+                    passphrase: '',
                     description: credential.description || ""
                 })
             } else {
@@ -111,6 +120,9 @@ export function CredentialDialog({ open, onOpenChange, credential }: CredentialD
                     client_certificate: "",
                     certificate_authority: "",
                     api_key: "",
+                    auth_method: 'private_key',
+                    private_key: '',
+                    passphrase: '',
                     description: ""
                 })
             }
@@ -135,7 +147,8 @@ export function CredentialDialog({ open, onOpenChange, credential }: CredentialD
             toast.success(t('common.saved'))
             onOpenChange(false)
         } catch (error: unknown) {
-            console.error("Failed to save credential", error)
+            // Axios errors contain the request body (including credentials).
+            console.error("Failed to save credential")
             // Handle duplicate name error if we had it, or generic
             const err = error as { response?: { status?: number; data?: { detail?: string } } }
             if (err.response?.status === 400) {
@@ -264,13 +277,14 @@ function getCredentialTypeOptions(t: (key: string) => string): CredentialTypeOpt
         "podman_runtime",
         "kubernetes_runtime",
         "portainer_runtime",
+        "ssh",
     ]
 
     return types.map((type) => ({ value: type, label: getCredentialTypeLabel(t, type) }))
 }
 
 function getCredentialAuthDescription(t: (key: string) => string, selectedType: CredentialType): string {
-    if (selectedType.endsWith("_runtime")) {
+    if (selectedType === 'ssh' || selectedType.endsWith("_runtime")) {
         return t('credential.hints.connectionAuthentication')
     }
     return t('credential.hints.trackerAuthentication')
@@ -286,6 +300,8 @@ function CredentialSecretFields({
     form: UseFormReturn<CredentialFormData>
 }) {
     const { t } = useTranslation()
+
+    if (selectedType === 'ssh') return <SSHSecretFields form={form} />
 
     if (selectedType === "kubernetes_runtime") {
         return (
@@ -343,6 +359,26 @@ function CredentialSecretFields({
             placeholder={credential ? t('credential.fields.tokenUnchanged') : t(`credential.fields.tokenPlaceholder_${selectedType}` as const)}
         />
     )
+}
+
+function SSHSecretFields({ form }: { form: UseFormReturn<CredentialFormData> }) {
+    const { t } = useTranslation()
+    const method = useWatch({ control: form.control, name: 'auth_method' })
+    return <div className="space-y-4">
+        <FormField control={form.control} name="auth_method" render={({field}) => (
+            <FormItem><FormLabel>{t('ssh.authMethod')}</FormLabel>
+                <Select value={field.value} onValueChange={field.onChange}>
+                    <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                    <SelectContent><SelectItem value="private_key">{t('ssh.privateKey')}</SelectItem>
+                        <SelectItem value="password">{t('ssh.password')}</SelectItem></SelectContent>
+                </Select><FormMessage />
+            </FormItem>
+        )} />
+        {method === 'password' ? <SecretInput form={form} name="password" type="password" label={t('ssh.password')} placeholder={t('ssh.unchanged')} /> : <>
+            <SecretTextarea form={form} name="private_key" label={t('ssh.privateKey')} placeholder={t('ssh.unchanged')} />
+            <SecretInput form={form} name="passphrase" type="password" label={t('ssh.passphrase')} placeholder={t('ssh.unchanged')} />
+        </>}
+    </div>
 }
 
 function SecretInput({
@@ -412,7 +448,12 @@ function buildCredentialPayload(data: CredentialFormData) {
         }
     }
 
-    if (data.type === "kubernetes_runtime") {
+    if (data.type === 'ssh') {
+        secrets.auth_method = data.auth_method
+        for (const key of data.auth_method === 'password' ? ['password'] as const : ['private_key', 'passphrase'] as const) {
+            if (data[key]) secrets[key] = data[key]
+        }
+    } else if (data.type === "kubernetes_runtime") {
         assign("kubeconfig")
         assign("token")
         assign("client_certificate")
@@ -435,7 +476,7 @@ function buildCredentialPayload(data: CredentialFormData) {
     return {
         name: data.name.trim(),
         type: data.type,
-        token: data.type === "docker" ? "" : data.token.trim(),
+        token: data.type === "docker" || data.type === 'ssh' ? "" : data.token.trim(),
         secrets,
         description: data.description?.trim() || null,
     }

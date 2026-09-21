@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react"
-import { AlertTriangle, Clock3, Database, KeyRound, Link2, RotateCw, Save, Settings2 } from "lucide-react"
+import { READINESS_FIELDS } from "@/lib/readiness"
+import { Activity, AlertTriangle, Clock3, Database, Globe, KeyRound, Link2, RotateCcw, RotateCw, Save, Settings2, Zap } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { appPath } from "@/lib/base-path"
 import { toast } from "sonner"
@@ -17,6 +18,7 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import {
     Select,
@@ -109,9 +111,9 @@ function BaseUrlSettingItem({
                 </div>
             </div>
             <div className="min-w-0 space-y-2">
-                <label className="text-sm font-medium" htmlFor="system-base-url">
+                <Label className="text-sm font-medium" htmlFor="system-base-url">
                     {t("systemSettings.global.baseUrl.label")}
-                </label>
+                </Label>
                 <Input
                     id="system-base-url"
                     value={baseUrl}
@@ -149,9 +151,9 @@ function LogLevelSettingItem({
                 </div>
             </div>
             <div className="min-w-0 space-y-2">
-                <label className="text-sm font-medium" htmlFor="system-log-level">
+                <Label className="text-sm font-medium" htmlFor="system-log-level">
                     {t("systemSettings.global.logLevel.label")}
-                </label>
+                </Label>
                 <Select value={logLevel} onValueChange={onLogLevelChange}>
                     <SelectTrigger id="system-log-level" className="min-w-0">
                         <SelectValue />
@@ -198,9 +200,9 @@ function ReleaseHistoryCountSettingItem({
                 </div>
             </div>
             <div className="min-w-0 space-y-2">
-                <label className="text-sm font-medium" htmlFor="release-history-count">
+                <Label className="text-sm font-medium" htmlFor="release-history-count">
                     {t("systemSettings.global.releaseHistoryCount.label")}
-                </label>
+                </Label>
                 <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
                     <Input
                         id="release-history-count"
@@ -256,9 +258,9 @@ function SnapshotHistoryCountSettingItem({
                 </div>
             </div>
             <div className="min-w-0 space-y-2">
-                <label className="text-sm font-medium" htmlFor="snapshot-history-count">
+                <Label className="text-sm font-medium" htmlFor="snapshot-history-count">
                     {t("systemSettings.global.snapshotHistoryCount.label")}
-                </label>
+                </Label>
                 <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
                     <Input
                         id="snapshot-history-count"
@@ -298,7 +300,7 @@ function OciRegistryRedirectsSettingItem({
         <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] md:items-start">
             <div className="flex min-w-0 gap-3">
                 <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                    <Settings2 className="h-4 w-4" />
+                    <Zap className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 space-y-1">
                     <h3 className="text-sm font-semibold text-foreground">
@@ -309,22 +311,126 @@ function OciRegistryRedirectsSettingItem({
                     </p>
                 </div>
             </div>
-            <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2">
-                <label className="min-w-0 text-sm font-medium" htmlFor="oci-registry-redirects-enabled">
-                    {t("systemSettings.global.ociRegistryRedirects.label")}
-                </label>
-                <Switch
-                    id="oci-registry-redirects-enabled"
-                    checked={enabled}
-                    onCheckedChange={onEnabledChange}
-                    aria-describedby="oci-registry-redirects-help"
+            <div className="min-w-0 space-y-2">
+                <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
+                    <Label className="min-w-0 cursor-pointer text-sm font-medium" htmlFor="oci-registry-redirects-enabled">
+                        {t("systemSettings.global.ociRegistryRedirects.label")}
+                    </Label>
+                    <Switch
+                        id="oci-registry-redirects-enabled"
+                        checked={enabled}
+                        onCheckedChange={onEnabledChange}
+                        aria-describedby="oci-registry-redirects-help"
+                    />
+                </div>
+                <p id="oci-registry-redirects-help" className="text-xs leading-relaxed text-muted-foreground">
+                    {enabled
+                        ? t("systemSettings.global.ociRegistryRedirects.enabledHint")
+                        : t("systemSettings.global.ociRegistryRedirects.disabledHint")}
+                </p>
+            </div>
+        </div>
+    )
+}
+
+function FetchRetryCountSettingItem({
+    retryCount,
+    validRetryCount,
+    onRetryCountChange,
+}: {
+    retryCount: string
+    validRetryCount: boolean
+    onRetryCountChange: (value: string) => void
+}) {
+    const { t } = useTranslation()
+
+    return (
+        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] md:items-start">
+            <div className="flex min-w-0 gap-3">
+                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <RotateCcw className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 space-y-1">
+                    <h3 className="text-sm font-semibold text-foreground">
+                        {t("tasks.retrySetting")}
+                    </h3>
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                        {t("tasks.retryHelp")}
+                    </p>
+                </div>
+            </div>
+            <div className="min-w-0 space-y-2">
+                <Label className="text-sm font-medium" htmlFor="fetch-retry-count">
+                    {t("tasks.retrySetting")}
+                </Label>
+                <Input
+                    id="fetch-retry-count"
+                    type="number"
+                    min={0}
+                    max={10}
+                    step={1}
+                    value={retryCount}
+                    onChange={(event) => onRetryCountChange(event.target.value)}
+                    aria-invalid={!validRetryCount}
+                    className="min-w-0"
                 />
             </div>
-            <p id="oci-registry-redirects-help" className="text-xs leading-relaxed text-muted-foreground md:col-start-2">
-                {enabled
-                    ? t("systemSettings.global.ociRegistryRedirects.enabledHint")
-                    : t("systemSettings.global.ociRegistryRedirects.disabledHint")}
-            </p>
+        </div>
+    )
+}
+
+function ReadinessDefaultsSettingItem({
+    readinessValue,
+    validReadiness,
+    onReadinessChange,
+}: {
+    readinessValue: (field: (typeof READINESS_FIELDS)[number]) => string
+    validReadiness: boolean
+    onReadinessChange: (key: string, value: string) => void
+}) {
+    const { t } = useTranslation()
+
+    return (
+        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] md:items-start">
+            <div className="flex min-w-0 gap-3">
+                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <Activity className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 space-y-1">
+                    <h3 className="text-sm font-semibold text-foreground">
+                        {t("readiness.defaultsTitle")}
+                    </h3>
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                        {t("readiness.useDefaultsHelp")}
+                    </p>
+                </div>
+            </div>
+            <div className="min-w-0 space-y-3">
+                <div className="grid gap-2.5 sm:grid-cols-2">
+                    {READINESS_FIELDS.map((field) => (
+                        <div key={field.key} className="space-y-1.5 rounded-lg border border-border/50 bg-muted/20 p-2.5">
+                            <Label htmlFor={field.key} className="text-xs font-medium text-foreground">
+                                {t(`readiness.${field.key}`)}
+                            </Label>
+                            <Input
+                                id={field.key}
+                                type="number"
+                                min={field.min}
+                                max={field.max}
+                                step={1}
+                                value={readinessValue(field)}
+                                onChange={(event) => onReadinessChange(field.key, event.target.value)}
+                                className="h-8 text-xs font-mono"
+                            />
+                        </div>
+                    ))}
+                </div>
+                {!validReadiness ? (
+                    <p role="alert" className="text-xs font-medium text-destructive">
+                        {t("readiness.invalid")}
+                    </p>
+                ) : null}
+            </div>
         </div>
     )
 }
@@ -356,9 +462,9 @@ function TimezoneSettingItem({
                 </div>
             </div>
             <div className="min-w-0 space-y-2">
-                <label className="text-sm font-medium" htmlFor="system-timezone">
+                <Label className="text-sm font-medium" htmlFor="system-timezone">
                     {t("systemSettings.global.timezone.label")}
-                </label>
+                </Label>
                 <Select value={timezone} onValueChange={onTimezoneChange}>
                     <SelectTrigger id="system-timezone" className="min-w-0">
                         <SelectValue />
@@ -490,9 +596,9 @@ function RotateSecurityKeyDialog({
                     </div>
                     {mode === "manual" ? (
                         <div className="space-y-2">
-                            <label className="text-sm font-medium" htmlFor="security-key-manual-value">
+                            <Label className="text-sm font-medium" htmlFor="security-key-manual-value">
                                 {manualLabel}
-                            </label>
+                            </Label>
                             <Textarea
                                 id="security-key-manual-value"
                                 value={manualValue}
@@ -569,6 +675,12 @@ export function SystemSettingsPage() {
             ? parsed
             : DEFAULT_EXECUTOR_SNAPSHOT_HISTORY_COUNT
     }, [settings])
+    const [readinessDraft, setReadinessDraft] = useState<Record<string, string>>({})
+    const readinessValue = (field: typeof READINESS_FIELDS[number]) => readinessDraft[field.key] ?? settings.find((item) => item.key === `system.${field.key}`)?.value ?? String(field.defaultValue)
+    const validReadiness = READINESS_FIELDS.every((field) => /^\d+$/.test(readinessValue(field)) && Number(readinessValue(field)) >= field.min && Number(readinessValue(field)) <= field.max)
+    const [retryCountDraft, setRetryCountDraft] = useState<string | null>(null)
+    const retryCount = retryCountDraft ?? String(settings.find((item) => item.key === "system.fetch_retry_count")?.value ?? "3")
+    const validRetryCount = /^(?:[0-9]|10)$/.test(retryCount)
     const [timezoneDraft, setTimezoneDraft] = useState<string | null>(null)
     const [logLevelDraft, setLogLevelDraft] = useState<string | null>(null)
     const [baseUrlDraft, setBaseUrlDraft] = useState<string | null>(null)
@@ -603,6 +715,11 @@ export function SystemSettingsPage() {
     const isValidBaseUrl = !normalizedBaseUrl || /^https?:\/\/[^\s/?#]+[^\s?#]*$/i.test(normalizedBaseUrl)
 
     const handleSaveGlobalSettings = async () => {
+        if (!validReadiness) { toast.error(t("readiness.invalid")); return }
+        if (!validRetryCount) {
+            toast.error(t("tasks.retryInvalid"))
+            return
+        }
         if (!isValidReleaseHistoryCount) {
             toast.error(t("systemSettings.global.releaseHistoryCount.invalid"))
             return
@@ -618,6 +735,8 @@ export function SystemSettingsPage() {
 
         try {
             await Promise.all([
+                ...READINESS_FIELDS.map((field) => updateSetting.mutateAsync({ key: `system.${field.key}`, value: readinessValue(field) })),
+                updateSetting.mutateAsync({ key: "system.fetch_retry_count", value: retryCount }),
                 updateSetting.mutateAsync({
                     key: SYSTEM_TIMEZONE_SETTING_KEY,
                     value: timezone.trim() || "UTC",
@@ -643,6 +762,7 @@ export function SystemSettingsPage() {
                     value: String(normalizedSnapshotHistoryCount),
                 }),
             ])
+            setRetryCountDraft(null)
             setTimezoneDraft(null)
             setLogLevelDraft(null)
             setBaseUrlDraft(null)
@@ -742,60 +862,115 @@ export function SystemSettingsPage() {
                 </TabsList>
 
                 <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-                    <TabsContent value="general" className="mt-0">
-                    <Card className="border-border/60 bg-card/80">
-                        <CardHeader>
-                            <CardTitle className="flex items-center gap-2">
-                                <Settings2 className="h-5 w-5 text-primary" />
-                                {t("systemSettings.global.title")}
-                            </CardTitle>
-                            <CardDescription>{t("systemSettings.global.description")}</CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="divide-y divide-border/60">
-                                <BaseUrlSettingItem
-                                    baseUrl={baseUrl}
-                                    onBaseUrlChange={setBaseUrlDraft}
-                                />
-                                <TimezoneSettingItem
-                                    timezone={timezone}
-                                    timezoneOptions={timezoneOptions}
-                                    onTimezoneChange={setTimezoneDraft}
-                                />
-                                <OciRegistryRedirectsSettingItem
-                                    enabled={ociRegistryRedirectsEnabled}
-                                    onEnabledChange={setOciRegistryRedirectsEnabledDraft}
-                                />
-                                <LogLevelSettingItem
-                                    logLevel={logLevel}
-                                    onLogLevelChange={setLogLevelDraft}
-                                />
-                                <ReleaseHistoryCountSettingItem
-                                    countDraft={releaseHistoryCountValue}
-                                    cleanupPending={cleanupReleaseHistory.isPending}
-                                    onCountDraftChange={setReleaseHistoryCountDraft}
-                                    onCleanup={handleCleanupReleaseHistory}
-                                />
-                                <SnapshotHistoryCountSettingItem
-                                    countDraft={snapshotHistoryCountValue}
-                                    cleanupPending={cleanupSnapshotHistory.isPending}
-                                    onCountDraftChange={setSnapshotHistoryCountDraft}
-                                    onCleanup={handleCleanupSnapshotHistory}
-                                />
-                            </div>
-                            <div className="flex justify-end border-t border-border/60 pt-5">
-                                <Button
-                                    type="button"
-                                    onClick={handleSaveGlobalSettings}
-                                    disabled={updateSetting.isPending}
-                                >
-                                    <Save className="mr-2 h-4 w-4" />
-                                    {t("common.save")}
-                                </Button>
-                            </div>
-                        </CardContent>
-                    </Card>
-                </TabsContent>
+                    <TabsContent value="general" className="mt-0 space-y-6">
+                        {/* Section 1: 基础运行环境 */}
+                        <Card className="border-border/60 bg-card/80 shadow-xs">
+                            <CardHeader className="border-b border-border/40 pb-4">
+                                <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                                    <Globe className="h-4 w-4 text-primary" />
+                                    {t("systemSettings.global.sections.basic.title")}
+                                </CardTitle>
+                                <CardDescription className="text-xs">
+                                    {t("systemSettings.global.sections.basic.description")}
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="pt-2">
+                                <div className="divide-y divide-border/60">
+                                    <BaseUrlSettingItem
+                                        baseUrl={baseUrl}
+                                        onBaseUrlChange={setBaseUrlDraft}
+                                    />
+                                    <TimezoneSettingItem
+                                        timezone={timezone}
+                                        timezoneOptions={timezoneOptions}
+                                        onTimezoneChange={setTimezoneDraft}
+                                    />
+                                    <LogLevelSettingItem
+                                        logLevel={logLevel}
+                                        onLogLevelChange={setLogLevelDraft}
+                                    />
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        {/* Section 2: 版本抓取与就绪策略 */}
+                        <Card className="border-border/60 bg-card/80 shadow-xs">
+                            <CardHeader className="border-b border-border/40 pb-4">
+                                <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                                    <Zap className="h-4 w-4 text-primary" />
+                                    {t("systemSettings.global.sections.fetchAndReadiness.title")}
+                                </CardTitle>
+                                <CardDescription className="text-xs">
+                                    {t("systemSettings.global.sections.fetchAndReadiness.description")}
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="pt-2">
+                                <div className="divide-y divide-border/60">
+                                    <OciRegistryRedirectsSettingItem
+                                        enabled={ociRegistryRedirectsEnabled}
+                                        onEnabledChange={setOciRegistryRedirectsEnabledDraft}
+                                    />
+                                    <FetchRetryCountSettingItem
+                                        retryCount={retryCount}
+                                        validRetryCount={validRetryCount}
+                                        onRetryCountChange={setRetryCountDraft}
+                                    />
+                                    <ReadinessDefaultsSettingItem
+                                        readinessValue={readinessValue}
+                                        validReadiness={validReadiness}
+                                        onReadinessChange={(key, value) =>
+                                            setReadinessDraft((current) => ({ ...current, [key]: value }))
+                                        }
+                                    />
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        {/* Section 3: 存储与历史保留 */}
+                        <Card className="border-border/60 bg-card/80 shadow-xs">
+                            <CardHeader className="border-b border-border/40 pb-4">
+                                <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                                    <Database className="h-4 w-4 text-primary" />
+                                    {t("systemSettings.global.sections.storageAndRetention.title")}
+                                </CardTitle>
+                                <CardDescription className="text-xs">
+                                    {t("systemSettings.global.sections.storageAndRetention.description")}
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="pt-2">
+                                <div className="divide-y divide-border/60">
+                                    <ReleaseHistoryCountSettingItem
+                                        countDraft={releaseHistoryCountValue}
+                                        cleanupPending={cleanupReleaseHistory.isPending}
+                                        onCountDraftChange={setReleaseHistoryCountDraft}
+                                        onCleanup={handleCleanupReleaseHistory}
+                                    />
+                                    <SnapshotHistoryCountSettingItem
+                                        countDraft={snapshotHistoryCountValue}
+                                        cleanupPending={cleanupSnapshotHistory.isPending}
+                                        onCountDraftChange={setSnapshotHistoryCountDraft}
+                                        onCleanup={handleCleanupSnapshotHistory}
+                                    />
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        {/* 底部保存条 */}
+                        <div className="sticky bottom-0 z-10 flex items-center justify-between rounded-xl border border-border/70 bg-background/95 p-3.5 shadow-md backdrop-blur-sm">
+                            <p className="text-xs text-muted-foreground">
+                                {t("systemSettings.global.description")}
+                            </p>
+                            <Button
+                                type="button"
+                                onClick={handleSaveGlobalSettings}
+                                disabled={updateSetting.isPending}
+                                className="shadow-xs"
+                            >
+                                <Save className="mr-2 h-4 w-4" />
+                                {t("common.save")}
+                            </Button>
+                        </div>
+                    </TabsContent>
 
                 <TabsContent value="security" className="mt-0">
                     <Card className="border-border/60 bg-card/80">

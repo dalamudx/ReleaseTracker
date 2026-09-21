@@ -23,6 +23,15 @@ async def _serialize_runtime_connection(
     payload["uses_credentials"] = runtime_connection.credential_id is not None
     payload["has_inline_secrets"] = False
     payload["credential_name"] = None
+    if runtime_connection.type == "ssh":
+        from ..services.ssh_config import ssh_dependents
+
+        payload["proxy_dependents"] = await ssh_dependents(storage, runtime_connection.id)
+        key = runtime_connection.config.get("host_key")
+        if key:
+            from ..services.ssh_config import parse_host_key
+
+            payload["host_key_fingerprint"] = parse_host_key(key).get_fingerprint()
     if runtime_connection.credential_id is not None:
         credential = await storage.get_credential(runtime_connection.credential_id)
         if credential is not None:
@@ -247,7 +256,10 @@ async def delete_runtime_connection(
     if not runtime_connection:
         raise HTTPException(status_code=404, detail="Runtime connection not found")
 
-    await storage.delete_runtime_connection(runtime_connection_id)
+    try:
+        await storage.delete_runtime_connection(runtime_connection_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     return {"message": f"Runtime connection {runtime_connection.name} deleted"}
 
 

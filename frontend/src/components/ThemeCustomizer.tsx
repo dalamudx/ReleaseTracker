@@ -1,9 +1,10 @@
 // import { useState, useEffect } from "react" // Removed unused
 import { Sun, Moon, Laptop, Check, Palette } from "lucide-react"
 import { useTheme } from "@/context/theme-context"
-import { type Theme, type Color, type Zoom } from "@/types/theme"
+import { type Theme, type Zoom } from "@/types/theme"
 import { useMounted } from "@/hooks/use-mounted"
 import { useTranslation } from "react-i18next"
+import { THEME_COLORS } from "@/config/theme-config"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -44,16 +45,10 @@ export function ThemeCustomizer() {
         }
     ]
 
-    const COLOR_THEMES = [
-        { name: t('theme.color.neutral'), value: "neutral" as Color, color: "oklch(0.45 0.008 264)" },
-        { name: t('theme.color.red'), value: "red" as Color, color: "oklch(0.645 0.246 16.439)" },
-        { name: t('theme.color.rose'), value: "rose" as Color, color: "oklch(0.645 0.246 350)" },
-        { name: t('theme.color.orange'), value: "orange" as Color, color: "oklch(0.769 0.188 45)" },
-        { name: t('theme.color.green'), value: "green" as Color, color: "oklch(0.6 0.118 184.704)" },
-        { name: t('theme.color.blue'), value: "blue" as Color, color: "oklch(0.488 0.243 264.376)" },
-        { name: t('theme.color.yellow'), value: "yellow" as Color, color: "oklch(0.828 0.189 85)" },
-        { name: t('theme.color.violet'), value: "violet" as Color, color: "oklch(0.627 0.265 280)" },
-    ]
+    const COLOR_THEMES = THEME_COLORS.map((themeColor) => ({
+        ...themeColor,
+        name: t(`theme.color.${themeColor.value}`),
+    }))
 
     const SCALE_MODES = [
         { name: t('theme.scale.default'), value: "default" as Zoom },
@@ -101,7 +96,7 @@ export function ThemeCustomizer() {
                         {color !== "neutral" && (
                             <div
                                 className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border border-background"
-                                style={{ backgroundColor: currentColorTheme?.color }}
+                                style={{ backgroundColor: currentColorTheme?.swatch }}
                             />
                         )}
                     </div>
@@ -157,7 +152,7 @@ export function ThemeCustomizer() {
                             >
                                 <div
                                     className="h-6 w-6 rounded-full border-2 border-border"
-                                    style={{ backgroundColor: colorTheme.color }}
+                                    style={{ backgroundColor: colorTheme.swatch }}
                                 />
                                 <div className="text-xs text-center">{colorTheme.name}</div>
                                 {color === colorTheme.value && (

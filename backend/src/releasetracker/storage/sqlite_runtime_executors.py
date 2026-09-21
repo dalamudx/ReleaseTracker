@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import aiosqlite
 
+from . import sqlite_compose_ownership as compose_ownership
+
 from ..config import (
     ExecutorConfig,
     ExecutorServiceBinding,
@@ -33,6 +35,9 @@ logger = logging.getLogger(__name__)
 async def create_runtime_connection(
     storage: "SQLiteStorage", runtime_connection: RuntimeConnectionConfig
 ) -> int:
+    from ..services.ssh_config import validate_ssh_relationship
+
+    await validate_ssh_relationship(storage, runtime_connection)
     now = datetime.now().isoformat()
 
     db = await storage._get_connection()
@@ -160,6 +165,11 @@ async def update_runtime_connection(
     runtime_connection_id: int,
     runtime_connection: RuntimeConnectionConfig,
 ) -> bool:
+    from ..services.ssh_config import validate_ssh_relationship
+
+    await validate_ssh_relationship(
+        storage, runtime_connection, connection_id=runtime_connection_id
+    )
     db = await storage._get_connection()
     columns = await _runtime_connection_columns(db)
     if "credential_id" in columns:
@@ -204,6 +214,10 @@ async def update_runtime_connection(
 
 
 async def delete_runtime_connection(storage: "SQLiteStorage", runtime_connection_id: int) -> bool:
+    from ..services.ssh_config import ssh_dependents
+
+    if await ssh_dependents(storage, runtime_connection_id):
+        raise ValueError("SSH proxy is referenced by other connections; unlink them first")
     db = await storage._get_connection()
     await db.execute("DELETE FROM runtime_connections WHERE id = ?", (runtime_connection_id,))
     await db.commit()
@@ -527,6 +541,16 @@ def _row_to_executor_desired_state(storage: "SQLiteStorage", row: Any) -> Execut
 
 
 async def create_executor_config(storage: "SQLiteStorage", executor_config: ExecutorConfig) -> int:
+    db = await storage._get_connection()
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        return await _create_executor_config(storage, executor_config)
+    except BaseException:
+        await db.rollback()
+        raise
+
+
+async def _create_executor_config(storage: "SQLiteStorage", executor_config: ExecutorConfig) -> int:
     now = datetime.now().isoformat()
 
     db = await storage._get_connection()
@@ -575,6 +599,7 @@ async def create_executor_config(storage: "SQLiteStorage", executor_config: Exec
     except aiosqlite.IntegrityError as exc:
         raise ValueError("duplicate grouped service bindings are not allowed") from exc
 
+    await compose_ownership.write(storage, db, executor_id, executor_config)
     await db.commit()
     return executor_id
 
@@ -713,6 +738,19 @@ async def update_executor_config(
     storage: "SQLiteStorage", executor_id: int, executor_config: ExecutorConfig
 ) -> bool:
     db = await storage._get_connection()
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        await compose_ownership.validate_update(storage, db, executor_id, executor_config)
+        return await _update_executor_config(storage, executor_id, executor_config)
+    except BaseException:
+        await db.rollback()
+        raise
+
+
+async def _update_executor_config(
+    storage: "SQLiteStorage", executor_id: int, executor_config: ExecutorConfig
+) -> bool:
+    db = await storage._get_connection()
     await db.execute(
         """
         UPDATE executors
@@ -754,6 +792,7 @@ async def update_executor_config(
         )
     except aiosqlite.IntegrityError as exc:
         raise ValueError("duplicate grouped service bindings are not allowed") from exc
+    await compose_ownership.write(storage, db, executor_id, executor_config)
     await db.commit()
     return True
 
@@ -767,17 +806,32 @@ async def delete_executor_config(storage: "SQLiteStorage", executor_id: int) -> 
           AND NOT EXISTS (
               SELECT 1 FROM executor_snapshot_claims WHERE executor_id = ?
           )
+          AND NOT EXISTS (
+              SELECT 1 FROM deployment_observations o JOIN tasks t ON t.id=o.task_id
+              WHERE o.executor_id=executors.id AND (o.state IN ('waiting','finalizing')
+                  OR (o.state='blocked' AND t.state='needs_attention'))
+          )
+          AND (runtime_type != 'ssh' OR (
+              NOT EXISTS (SELECT 1 FROM executor_run_history WHERE executor_id = ? AND status IN ('queued','running'))
+              AND NOT EXISTS (SELECT 1 FROM executor_snapshots WHERE executor_id = ? AND locked = 1)
+          ))
         """,
-        (executor_id, executor_id),
+        (executor_id, executor_id, executor_id, executor_id),
     )
+    if result.rowcount == 1:
+        await db.execute("DELETE FROM ssh_compose_ownership WHERE executor_id=?", (executor_id,))
     await db.commit()
     return result.rowcount == 1
 
 
 async def update_executor_status(storage: "SQLiteStorage", status: ExecutorStatus) -> None:
-    updated_at = status.updated_at.isoformat() if status.updated_at else datetime.now().isoformat()
-
     db = await storage._get_connection()
+    await _write_executor_status(db, status)
+    await db.commit()
+
+
+async def _write_executor_status(db, status: ExecutorStatus) -> None:
+    updated_at = status.updated_at.isoformat() if status.updated_at else datetime.now().isoformat()
     await db.execute(
         """
         INSERT INTO executor_status
@@ -799,7 +853,6 @@ async def update_executor_status(storage: "SQLiteStorage", status: ExecutorStatu
             updated_at,
         ),
     )
-    await db.commit()
 
 
 async def get_executor_status(storage: "SQLiteStorage", executor_id: int) -> ExecutorStatus | None:
@@ -959,25 +1012,31 @@ async def finalize_executor_run(
     to_version: str | None = None,
     message: str | None = None,
     diagnostics: dict[str, Any] | None = None,
+    notification_intent: dict[str, Any] | None = None,
+    executor_status: ExecutorStatus | None = None,
 ) -> bool:
-    db = await storage._get_connection()
-    await db.execute(
-        """
-        UPDATE executor_run_history
-        SET finished_at = ?, status = ?, from_version = ?, to_version = ?, message = ?, diagnostics = ?
-        WHERE id = ?
-        """,
-        (
-            (finished_at or datetime.now()).isoformat(),
-            status,
-            from_version,
-            to_version,
-            message,
-            storage._dump_json(diagnostics),
-            run_id,
-        ),
-    )
-    await db.commit()
+    from ..services.executor_notification_outbox import write_notification_intent
+
+    async with storage.tasks.transaction() as db:
+        updated = await db.execute(
+            """UPDATE executor_run_history SET finished_at=?,status=?,from_version=?,
+               to_version=?,message=?,diagnostics=? WHERE id=?""",
+            (
+                (finished_at or datetime.now()).isoformat(),
+                status,
+                from_version,
+                to_version,
+                message,
+                storage._dump_json(diagnostics),
+                run_id,
+            ),
+        )
+        if updated.rowcount != 1:
+            raise ValueError("executor_run_missing")
+        if executor_status is not None:
+            await _write_executor_status(db, executor_status)
+        if notification_intent is not None:
+            await write_notification_intent(db, **notification_intent)
     return True
 
 

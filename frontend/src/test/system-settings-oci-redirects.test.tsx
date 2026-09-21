@@ -107,6 +107,20 @@ describe("SystemSettingsPage OCI registry redirects", () => {
     rotateJwtSecretMock.mockReset()
   })
 
+  it("loads, validates and saves system readiness defaults", async () => {
+    renderPage([{key: "system.readiness_timeout_seconds", value: "240"}])
+    const timeout = screen.getByLabelText("readiness.readiness_timeout_seconds")
+    expect(timeout).toHaveValue(240)
+    expect(screen.getByLabelText("readiness.readiness_interval_seconds")).toHaveValue(5)
+    fireEvent.change(timeout, {target: {value: "0"}})
+    fireEvent.click(screen.getByRole("button", {name: "common.save"}))
+    expect(updateSettingMock).not.toHaveBeenCalled()
+    expect(screen.getByRole("alert")).toHaveTextContent("readiness.invalid")
+    fireEvent.change(timeout, {target: {value: "300"}})
+    fireEvent.click(screen.getByRole("button", {name: "common.save"}))
+    await waitFor(() => expect(updateSettingMock).toHaveBeenCalledWith({key: "system.readiness_timeout_seconds", value: "300"}))
+    expect(updateSettingMock).toHaveBeenCalledWith({key: "system.readiness_stable_seconds", value: "10"})
+  })
   it("defaults the global redirect switch to disabled when the setting is absent", async () => {
     renderPage()
 

@@ -24,6 +24,7 @@ import {
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { DataPagination } from "@/components/common/DataPagination"
+import { QueryErrorState } from "@/components/common/QueryErrorState"
 import { usePageSize } from "@/hooks/use-page-size"
 import {
     useDeleteRuntimeConnection,
@@ -43,7 +44,7 @@ export default function RuntimeConnectionsPage() {
     const [search, setSearch] = useState("")
 
     const skip = (page - 1) * pageSize
-    const { data, isLoading: loading } = useRuntimeConnections({
+    const { data, isLoading: loading, isError, refetch } = useRuntimeConnections({
         skip,
         limit: pageSize,
         search: search.trim() || undefined,
@@ -119,6 +120,10 @@ export default function RuntimeConnectionsPage() {
             </div>
 
             <div className="flex min-h-0 flex-1 flex-col gap-3">
+                {isError ? (
+                    <QueryErrorState onRetry={() => void refetch()} />
+                ) : (
+                    <>
                 <RuntimeConnectionList
                     runtimeConnections={runtimeConnections}
                     loading={loading}
@@ -133,6 +138,8 @@ export default function RuntimeConnectionsPage() {
                     onPageChange={setPage}
                     onPageSizeChange={setPageSize}
                 />
+                    </>
+                )}
             </div>
 
             <RuntimeConnectionDialog

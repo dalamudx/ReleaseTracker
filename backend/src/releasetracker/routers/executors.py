@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -28,6 +28,12 @@ from ..storage.sqlite import SQLiteStorage
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/executors", tags=["executors"])
+
+
+class SSHRecoveryRequest(BaseModel):
+    snapshot_id: int
+    action: Literal["restore_files", "verify_and_unlock"]
+    remote_commands_stopped: Literal[True]
 
 
 class RollbackRequest(BaseModel):
@@ -65,6 +71,12 @@ async def _get_executor_config_current_image(
         return None
 
 
+async def _compose_ownership_status(storage, executor):
+    from ..storage.sqlite_compose_status import public_status
+
+    return await public_status(storage, executor)
+
+
 async def _build_executor_list_item(
     storage: SQLiteStorage, executor: ExecutorConfig
 ) -> dict[str, Any]:
@@ -72,6 +84,7 @@ async def _build_executor_list_item(
     runtime_connection = await storage.get_runtime_connection(executor.runtime_connection_id)
     return {
         **_serialize_executor_config(executor),
+        "compose_ownership": await _compose_ownership_status(storage, executor),
         "status": _serialize_executor_status(status),
         "runtime_connection_name": runtime_connection.name if runtime_connection else None,
     }
@@ -453,6 +466,42 @@ async def _validate_executor_payload(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    if executor.runtime_type == "ssh":
+        from ..services.ssh_compose import SSHComposeProject, analyze_compose
+        from ..services.ssh_compose_discovery import verify_discovered_project
+        from ..services.ssh_compose_ownership import prepare
+        from ..services.ssh_compose_plan import SSHComposeTarget
+        from ..storage.sqlite_compose_ownership import ComposeOwnershipConflict
+
+        try:
+            target = SSHComposeTarget.model_validate(executor.target_ref)
+            project = SSHComposeProject.model_validate(
+                {
+                    k: v
+                    for k, v in executor.target_ref.items()
+                    if k not in {"mode", "write_strategy", "discovery_id"}
+                }
+            )
+            executor.id = existing_executor.id if existing_executor else None
+            await verify_discovered_project(storage, runtime_connection, target)
+            await prepare(storage, runtime_connection, executor, existing_executor)
+            analysis = await analyze_compose(storage, runtime_connection, project)
+            services = {row["service"] for row in analysis["services"]}
+            if executor.target_ref["write_strategy"] == "source":
+                selected = {binding.service for binding in executor.service_bindings}
+                for row in analysis["services"]:
+                    if row["service"] in selected and not row["safe_to_edit"]:
+                        raise ValueError(
+                            "Ambiguous version source; explicitly select override strategy"
+                        )
+            if any(binding.service not in services for binding in executor.service_bindings):
+                raise ValueError("SSH Compose service binding is not in the rendered project")
+        except ComposeOwnershipConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        return executor
+
     adapter = _get_runtime_adapter(runtime_connection)
     try:
         await adapter.validate_target_ref(executor.target_ref)
@@ -462,6 +511,62 @@ async def _validate_executor_payload(
         raise HTTPException(status_code=400, detail=f"Target validation failed: {exc}") from exc
 
     return executor
+
+
+@router.post("/{executor_id}/ssh/recover", dependencies=[Depends(get_current_admin_user)])
+async def recover_ssh_compose_executor(
+    executor_id: int,
+    request: SSHRecoveryRequest,
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    scheduler: Annotated[ExecutorScheduler, Depends(get_executor_scheduler)],
+):
+    from ..services.ssh_compose_recovery import recover_project
+    from ..services.ssh_transport import SSHOperationError
+
+    executor = await storage.get_executor_config(executor_id)
+    if executor is None or executor.runtime_type != "ssh":
+        raise HTTPException(status_code=404, detail="SSH executor not found")
+    if getattr(scheduler, "recovery_tasks", None) is not None:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=202,
+            content=await scheduler.recovery_tasks.enqueue_recovery(
+                executor,
+                request.snapshot_id,
+                request.action,
+            ),
+        )
+    if not await scheduler._try_acquire_executor_run(executor_id):
+        raise HTTPException(status_code=409, detail="Executor is still running")
+    try:
+        latest = await storage.get_latest_executor_run(executor_id)
+        if latest and latest.status in {"queued", "running"}:
+            raise HTTPException(status_code=409, detail="Executor is queued or running")
+        return await recover_project(storage, executor, request.snapshot_id, request.action)
+    except SSHOperationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except (OSError, ValueError):
+        raise HTTPException(
+            status_code=409, detail="Recovery failed; inspect remote host before retrying"
+        ) from None
+    finally:
+        await scheduler._release_executor_run(executor_id)
+
+
+@router.post("/{executor_id}/ssh/preview", dependencies=[Depends(get_current_admin_user)])
+async def preview_ssh_compose_executor(
+    executor_id: int,
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    scheduler: Annotated[ExecutorScheduler, Depends(get_executor_scheduler)],
+):
+    executor = await storage.get_executor_config(executor_id)
+    if executor is None or executor.runtime_type != "ssh":
+        raise HTTPException(status_code=404, detail="SSH executor not found")
+    try:
+        return await scheduler.preview_ssh_executor(executor)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
 @router.get("", dependencies=[Depends(get_current_admin_user)])
@@ -644,7 +749,12 @@ async def create_executor(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Create failed: {exc}") from exc
+        from ..storage.sqlite_compose_ownership import ComposeOwnershipConflict
+
+        raise HTTPException(
+            status_code=409 if isinstance(exc, ComposeOwnershipConflict) else 400,
+            detail=f"Create failed: {exc}",
+        ) from exc
 
 
 @router.put("/{executor_id}", dependencies=[Depends(get_current_admin_user)])
@@ -676,7 +786,12 @@ async def update_executor(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Update failed: {exc}") from exc
+        from ..storage.sqlite_compose_ownership import ComposeOwnershipConflict
+
+        raise HTTPException(
+            status_code=409 if isinstance(exc, ComposeOwnershipConflict) else 400,
+            detail=f"Update failed: {exc}",
+        ) from exc
 
 
 @router.delete("/{executor_id}", dependencies=[Depends(get_current_admin_user)])
@@ -693,7 +808,7 @@ async def delete_executor(
     if not deleted:
         raise HTTPException(
             status_code=409,
-            detail="Executor is in use by an active snapshot rollback",
+            detail="Executor is running or requires snapshot/project recovery",
         )
     await storage.delete_executor_status(executor_id)
     await storage.delete_executor_run_history(executor_id)
@@ -712,6 +827,13 @@ async def run_executor(
         raise HTTPException(status_code=404, detail="Executor not found")
 
     try:
+        if scheduler.deploy_tasks is not None:
+            from fastapi.responses import JSONResponse
+
+            return JSONResponse(
+                status_code=202,
+                content=await scheduler.deploy_tasks.enqueue(executor_id, manual=True),
+            )
         run_id = await scheduler.run_executor_now_async(executor_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -878,6 +1000,11 @@ async def unlock_executor_snapshot(
     if not executor:
         raise HTTPException(status_code=404, detail="Executor not found")
 
+    if executor.runtime_type == "ssh":
+        raise HTTPException(
+            status_code=409,
+            detail="SSH Compose snapshots must be unlocked through verified project recovery",
+        )
     updated = await scheduler.snapshot_service.set_snapshot_locked(
         executor_id, snapshot_id, locked=False
     )
@@ -947,6 +1074,18 @@ async def rollback_executor(
     adapter = _get_runtime_adapter(materialized_runtime)
 
     snapshot_id = payload.snapshot_id if payload is not None else None
+    if getattr(scheduler, "recovery_tasks", None) is not None:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=202,
+            content=await scheduler.recovery_tasks.enqueue_recovery(
+                executor,
+                snapshot_id,
+                "rollback",
+                current_user.username if current_user else None,
+            ),
+        )
     service = RollbackService(storage, scheduler.snapshot_service)
     outcome = await service.rollback(
         executor_config=executor,

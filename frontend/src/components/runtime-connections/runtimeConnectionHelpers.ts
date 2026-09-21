@@ -25,10 +25,20 @@ export type RuntimeConnectionFormValues = {
     base_url: string
     endpoint_id: string
     endpoint_name: string
+    ssh_host?: string
+    ssh_port?: string
+    ssh_username?: string
+    ssh_host_key?: string
+    ssh_proxy_id?: string
+    ssh_allow_proxy?: boolean
 }
 
 export function buildConnectionSummary(runtimeConnection: RuntimeConnection): ConnectionSummary {
     const config = runtimeConnection.config ?? {}
+    if (runtimeConnection.type === "ssh") {
+        return { primary: `${stringifyValue(config.username)}@${stringifyValue(config.host)}:${config.port ?? 22}`,
+            secondary: config.proxy_connection_id ? `SSH → #${config.proxy_connection_id}` : undefined }
+    }
 
     if (runtimeConnection.type === 'kubernetes') {
         const label = buildConnectionLabel(runtimeConnection)
@@ -61,6 +71,7 @@ export function buildConnectionSummary(runtimeConnection: RuntimeConnection): Co
 
 export function buildConnectionLabel(runtimeConnection: RuntimeConnection): string {
     const config = runtimeConnection.config ?? {}
+    if (runtimeConnection.type === "ssh") return buildConnectionSummary(runtimeConnection).primary
 
     if (runtimeConnection.type === 'kubernetes') {
         const endpoint = stringifyValue(runtimeConnection.endpoint)
@@ -93,7 +104,14 @@ export function buildConnectionLabel(runtimeConnection: RuntimeConnection): stri
 
 export function buildPayload(values: RuntimeConnectionFormValues): CreateRuntimeConnectionRequest {
     const config: Record<string, unknown> = {}
-    if (values.type === 'kubernetes') {
+    if (values.type === 'ssh') {
+        config.host = (values.ssh_host || '').trim()
+        config.port = Number(values.ssh_port || '22')
+        config.username = (values.ssh_username || '').trim()
+        config.host_key = (values.ssh_host_key || '').trim()
+        config.proxy_connection_id = parseOptionalPositiveInteger(values.ssh_proxy_id)
+        config.allow_proxy = values.ssh_allow_proxy ?? false
+    } else if (values.type === 'kubernetes') {
         assignIfFilled(config, 'context', values.context)
         if (values.namespaces.length > 0) {
             config.namespaces = values.namespaces

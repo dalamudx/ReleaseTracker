@@ -2,7 +2,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 from .models import ReleaseChannel
 from .services.outbound_http import ALLOWED_OUTBOUND_PORTS
@@ -10,7 +10,7 @@ from .services.runtime_policy import MAX_RUNTIME_READ_RETRIES, MAX_RUNTIME_TIMEO
 
 EXECUTOR_BINDABLE_SOURCE_TYPES = frozenset({"container", "helm"})
 EXECUTOR_GROUPED_BINDING_TARGET_MODES = frozenset(
-    {"portainer_stack", "docker_compose", "kubernetes_workload"}
+    {"portainer_stack", "docker_compose", "kubernetes_workload", "ssh_compose"}
 )
 
 
@@ -121,7 +121,7 @@ class MaintenanceWindowConfig(BaseModel):
 class RuntimeConnectionConfig(BaseModel):
     id: int | None = None
     name: str
-    type: Literal["docker", "podman", "kubernetes", "portainer"]
+    type: Literal["docker", "podman", "kubernetes", "portainer", "ssh"]
     enabled: bool = True
     config: dict[str, Any] = Field(default_factory=dict)
     credential_id: int | None = None
@@ -131,6 +131,10 @@ class RuntimeConnectionConfig(BaseModel):
     @model_validator(mode="after")
     def validate_runtime_connection(self):
         self._validate_operation_policy()
+        if self.type == "ssh":
+            from .services.ssh_config import validate_ssh_config
+
+            validate_ssh_config(self.config, self.credential_id)
         if self.type in {"docker", "podman"}:
             self._validate_container_runtime_connection()
         elif self.type == "kubernetes":
@@ -460,12 +464,19 @@ class HelmReleaseExecutorTargetRef(BaseModel):
 def normalize_executor_target_ref(
     target_ref: Any,
     *,
-    runtime_type: Literal["docker", "podman", "kubernetes", "portainer"] | None = None,
+    runtime_type: Literal["docker", "podman", "kubernetes", "portainer", "ssh"] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(target_ref, dict):
         raise ValueError("target_ref must be an object")
 
     mode = target_ref.get("mode")
+
+    if runtime_type == "ssh" or mode == "ssh_compose":
+        if runtime_type != "ssh" or mode != "ssh_compose":
+            raise ValueError("SSH executors require ssh_compose targets and an SSH connection")
+        from .services.ssh_compose_plan import SSHComposeTarget
+
+        return SSHComposeTarget.model_validate(target_ref).model_dump()
 
     if runtime_type == "portainer":
         if mode != "portainer_stack":
@@ -584,6 +595,7 @@ _CONTAINER_HEALTH_STRATEGIES = frozenset(
 # Per-target-mode allowed strategy catalog. Publicly consumable so routers,
 # UI serializers, and tests can all read from a single source of truth.
 HEALTH_CHECK_ALLOWED_STRATEGIES: dict[str, frozenset[str]] = {
+    "ssh_compose": frozenset({"none"}),  # Deployment always verifies remote images/native health.
     "container": _CONTAINER_HEALTH_STRATEGIES,
     "docker_compose": _CONTAINER_HEALTH_STRATEGIES,
     "portainer_stack": _CONTAINER_HEALTH_STRATEGIES,
@@ -604,6 +616,7 @@ HEALTH_CHECK_ALLOWED_STRATEGIES: dict[str, frozenset[str]] = {
 
 # Default strategy per target mode used when ``use_default_strategy=True``.
 HEALTH_CHECK_DEFAULT_STRATEGY: dict[str, str] = {
+    "ssh_compose": "none",
     "container": "auto",
     "docker_compose": "auto",
     "portainer_stack": "auto",
@@ -768,9 +781,30 @@ class HealthCheckTcpConfig(BaseModel):
         return value
 
 
+READINESS_DEFAULTS = {
+    "readiness_timeout_seconds": 600,
+    "readiness_interval_seconds": 5,
+    "readiness_attempt_timeout_seconds": 10,
+    "readiness_stable_seconds": 10,
+}
+READINESS_BOUNDS = {
+    "readiness_timeout_seconds": (1, 86400),
+    "readiness_interval_seconds": (1, 3600),
+    "readiness_attempt_timeout_seconds": (1, 3600),
+    "readiness_stable_seconds": (0, 3600),
+}
+
+
 class HealthCheckProfile(BaseModel):
     """Per-executor post-update health check configuration."""
 
+    notify_result: bool = False
+    readiness_enabled: bool = True
+    use_system_readiness_defaults: bool = True
+    readiness_timeout_seconds: int = Field(default=600, ge=1, le=86400, strict=True)
+    readiness_interval_seconds: int = Field(default=5, ge=1, le=3600, strict=True)
+    readiness_attempt_timeout_seconds: int = Field(default=10, ge=1, le=3600, strict=True)
+    readiness_stable_seconds: int = Field(default=10, ge=0, le=3600, strict=True)
     strategy: HealthCheckStrategy = "none"
     use_default_strategy: bool = False
     grace_period_seconds: int = 0
@@ -783,6 +817,42 @@ class HealthCheckProfile(BaseModel):
     tcp: HealthCheckTcpConfig | None = None
 
     model_config = {"extra": "forbid"}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_readiness_config(cls, value: Any) -> Any:
+        """Map old strategy controls into the unified readiness switch."""
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        has_explicit_readiness = "readiness_enabled" in payload
+        legacy_fields = {
+            "use_default_strategy",
+            "failure_policy",
+            "grace_period_seconds",
+            "attempt_timeout_seconds",
+            "interval_seconds",
+            "probe_window_seconds",
+            "services",
+            "http",
+            "tcp",
+        }
+        if "readiness_enabled" not in payload and legacy_fields.intersection(payload):
+            payload["readiness_enabled"] = bool(
+                payload.get("use_default_strategy") or payload.get("strategy", "none") != "none"
+            )
+        if has_explicit_readiness and payload.get("readiness_enabled") is False:
+            payload.update(
+                {
+                    "strategy": "none",
+                    "use_default_strategy": False,
+                    "failure_policy": "mark_failed",
+                    "services": None,
+                    "http": None,
+                    "tcp": None,
+                }
+            )
+        return payload
 
     @field_validator(
         "grace_period_seconds",
@@ -911,9 +981,11 @@ class HealthCheckProfile(BaseModel):
 
 
 class ExecutorConfig(BaseModel):
+    # Set only by server-side SSH verification, never accepted from API payloads.
+    _ssh_ownership: dict | None = PrivateAttr(default=None)
     id: int | None = None
     name: str
-    runtime_type: Literal["docker", "podman", "kubernetes", "portainer"]
+    runtime_type: Literal["docker", "podman", "kubernetes", "portainer", "ssh"]
     runtime_connection_id: int
     tracker_name: str
     tracker_source_id: int | None = None
@@ -1001,7 +1073,18 @@ class ExecutorConfig(BaseModel):
             and profile.strategy == "none"
             and HEALTH_CHECK_DEFAULT_STRATEGY.get(target_mode) != "none"
         ):
-            self.health_check = HealthCheckProfile.default_for(target_mode=target_mode)
+            defaults = HealthCheckProfile.default_for(target_mode=target_mode)
+            self.health_check = defaults.model_copy(
+                update={
+                    key: getattr(profile, key)
+                    for key in (
+                        "notify_result",
+                        "readiness_enabled",
+                        "use_system_readiness_defaults",
+                        *READINESS_DEFAULTS,
+                    )
+                }
+            )
             profile = self.health_check
 
         if profile.strategy not in allowed:

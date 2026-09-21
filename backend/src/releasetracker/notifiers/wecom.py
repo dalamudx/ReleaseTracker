@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..services.outbound_http import OutboundResponse
-from .webhook import WebhookNotifier, _build_webhook_payload
+from .webhook import WebhookNotifier
 
 _WECOM_MARKDOWN_MAX_BYTES = 4_096
 
@@ -18,8 +18,10 @@ class WeComNotifier(WebhookNotifier):
     async def notify(self, event: str, payload: Any) -> bool:
         if event not in self.events:
             return False
-        generic_payload = _build_webhook_payload(event, payload, language=self.language)
-        content = _build_wecom_markdown(generic_payload)
+        generic_payload = await self.prepare(event, payload)
+        content = generic_payload.get("_rendered_markdown") or _build_wecom_markdown(
+            generic_payload
+        )
         return await self.send_payload({"msgtype": "markdown", "markdown": {"content": content}})
 
     def _validate_success_response(self, response: OutboundResponse) -> tuple[bool, str | None]:

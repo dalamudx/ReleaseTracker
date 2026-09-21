@@ -11,6 +11,8 @@ import {
     FormMessage,
 } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
+import { READINESS_FIELDS } from "@/lib/readiness"
 import {
     Select,
     SelectContent,
@@ -33,77 +35,93 @@ export function ExecutorSheetHealthCheckFields({
     selectedTargetRef,
 }: ExecutorSheetHealthCheckFieldsProps) {
     const { t } = useTranslation()
-    const strategy = form.watch("health_check_strategy")
-    const isHelmRelease = typeof selectedTargetRef === "object"
-        && selectedTargetRef !== null
-        && (selectedTargetRef as { mode?: string }).mode === "helm_release"
+    const configuredStrategy = form.watch("health_check_strategy")
+    const isSshCompose = selectedTargetRef.mode === "ssh_compose"
+    const readinessEnabled = form.watch("health_check_readiness_enabled") ?? true
+    const useDefaults = form.watch("health_check_use_system_readiness_defaults") ?? true
+    const strategy = readinessEnabled
+        && !isSshCompose
+        && (configuredStrategy === "manual_http" || configuredStrategy === "manual_tcp")
+        ? configuredStrategy
+        : "none"
     const probeActive = strategy !== "none"
     const isHttpProbe = strategy === "manual_http"
     const isTcpProbe = strategy === "manual_tcp"
 
     return (
         <div className="space-y-4 border-t border-border/60 pt-4">
-            <div className="flex flex-col gap-3 rounded-lg border border-border/60 bg-muted/20 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="space-y-1">
-                    <div className="text-sm font-medium">
-                        {t("executors.healthCheck.title")}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                        {t("executors.healthCheck.description")}
-                    </p>
-                </div>
-                <FormField
-                    control={form.control}
-                    name="health_check_strategy"
-                    render={({ field }) => (
-                        <FormItem className="sm:min-w-56">
-                            <FormLabel className="sr-only">
-                                {t("executors.healthCheck.fields.strategy")}
-                            </FormLabel>
-                            <Select
-                                value={field.value}
-                                onValueChange={(value) => {
-                                    field.onChange(value)
-                                    // strategy=none forces mark_failed.
-                                    if (value === "none") {
-                                        form.setValue("health_check_failure_policy", "mark_failed")
-                                    }
-                                }}
-                            >
-                                <FormControl>
-                                    <SelectTrigger>
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                    <SelectItem value="auto">
-                                        {t("executors.healthCheck.strategy.auto")}
-                                    </SelectItem>
-                                    <SelectItem value="runtime_native">
-                                        {t("executors.healthCheck.strategy.runtime_native")}
-                                    </SelectItem>
-                                    <SelectItem value="manual_http">
-                                        {t("executors.healthCheck.strategy.manual_http")}
-                                    </SelectItem>
-                                    <SelectItem value="manual_tcp">
-                                        {t("executors.healthCheck.strategy.manual_tcp")}
-                                    </SelectItem>
-                                    <SelectItem value="none">
-                                        {t("executors.healthCheck.strategy.none")}
-                                    </SelectItem>
-                                    {isHelmRelease ? (
-                                        <SelectItem value="helm_status">
-                                            {t("executors.healthCheck.strategy.helm_status")}
-                                        </SelectItem>
-                                    ) : null}
-                                </SelectContent>
-                            </Select>
-                            <FormMessage />
-                        </FormItem>
-                    )}
-                />
-            </div>
+            <FormField
+                control={form.control}
+                name="health_check_readiness_enabled"
+                render={({ field }) => (
+                    <FormItem className="flex flex-col gap-3 rounded-lg border border-border/60 bg-muted/20 p-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-1">
+                            <FormLabel>{t("executors.healthCheck.title")}</FormLabel>
+                            <FormDescription>{t("executors.healthCheck.description")}</FormDescription>
+                        </div>
+                        <FormControl>
+                            <Switch checked={field.value ?? true} onCheckedChange={field.onChange} />
+                        </FormControl>
+                    </FormItem>
+                )}
+            />
 
+            {readinessEnabled && (
+                <div className="space-y-4">
+                    {!isSshCompose && (
+                        <FormField
+                            control={form.control}
+                            name="health_check_strategy"
+                            render={({ field }) => (
+                                <FormItem>
+                                    <FormLabel>{t("executors.healthCheck.fields.supplementalStrategy")}</FormLabel>
+                                    <Select
+                                        value={strategy}
+                                        onValueChange={(value) => {
+                                            field.onChange(value)
+                                            if (value === "none") {
+                                                form.setValue("health_check_failure_policy", "mark_failed")
+                                            }
+                                        }}
+                                    >
+                                        <FormControl>
+                                            <SelectTrigger><SelectValue /></SelectTrigger>
+                                        </FormControl>
+                                        <SelectContent>
+                                            <SelectItem value="none">{t("executors.healthCheck.strategy.none")}</SelectItem>
+                                            <SelectItem value="manual_http">{t("executors.healthCheck.strategy.manual_http")}</SelectItem>
+                                            <SelectItem value="manual_tcp">{t("executors.healthCheck.strategy.manual_tcp")}</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    <FormDescription>{t("executors.healthCheck.supplementalStrategyHelp")}</FormDescription>
+                                    <FormMessage />
+                                </FormItem>
+                            )}
+                        />
+                    )}
+                    {([
+                        ["health_check_use_system_readiness_defaults", "useDefaults", true],
+                        ["health_check_notify_result", "notify", false],
+                    ] as const).map(([name, label, fallback]) => (
+                        <FormField key={name} control={form.control} name={name} render={({ field }) => (
+                            <FormItem className="flex items-center justify-between gap-4">
+                                <div><FormLabel>{t(`readiness.${label}`)}</FormLabel>
+                                    <FormDescription>{t(`readiness.${label}Help`)}</FormDescription></div>
+                                <FormControl><Switch checked={field.value ?? fallback} onCheckedChange={field.onChange} /></FormControl>
+                            </FormItem>
+                        )} />
+                    ))}
+                    {!useDefaults && <div className="grid gap-4 sm:grid-cols-2">
+                        {READINESS_FIELDS.map((setting) => <FormField key={setting.key} control={form.control}
+                            name={`health_check_${setting.key}`} render={({ field }) => (
+                                <FormItem><FormLabel>{t(`readiness.${setting.key}`)}</FormLabel>
+                                    <FormControl><Input type="number" min={setting.min} max={setting.max} step={1} {...field} value={field.value ?? String(setting.defaultValue)} /></FormControl>
+                                    <FormMessage />
+                                </FormItem>
+                            )} />)}
+                    </div>}
+                </div>
+            )}
             {probeActive ? (
                 <div className="space-y-4">
                     <div className="grid gap-4 md:grid-cols-2">

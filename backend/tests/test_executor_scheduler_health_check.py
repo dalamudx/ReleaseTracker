@@ -349,6 +349,10 @@ async def test_notification_payload_includes_health_check_object(storage, schedu
     monkeypatch.setattr("releasetracker.notifiers.webhook.WebhookNotifier.notify", _fake_notify)
 
     outcome = await scheduler.run_executor_now(executor.id)
+    assert not captured
+    from helpers.notification_delivery import deliver_notifications
+
+    await deliver_notifications(storage)
 
     assert outcome.status == "success"
     assert len(captured) == 1
@@ -403,6 +407,10 @@ async def test_notification_payload_omits_health_check_when_strategy_none(
     monkeypatch.setattr("releasetracker.notifiers.webhook.WebhookNotifier.notify", _fake_notify)
 
     await scheduler.run_executor_now(executor.id)
+    assert not captured
+    from helpers.notification_delivery import deliver_notifications
+
+    await deliver_notifications(storage)
 
     event, payload = captured[0]
     assert event == "executor_run_success"

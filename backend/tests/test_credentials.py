@@ -31,9 +31,10 @@ async def test_credentials_crud(authed_client, storage):
     data = response.json()
     assert data["total"] >= 1
     items = data["items"]
-    # 验证 token 是否脱敏
+    # 验证 token 是否脱敏并包含 runtime_connections_count
     created_item = next(i for i in items if i["id"] == cred_id)
     assert created_item["name"] == "gh-token"
+    assert created_item.get("runtime_connections_count") == 0
     assert "****" in created_item["token"] or "..." in created_item["token"]
     assert created_item["token"] != "ghp_1234567890abcdef"
 
@@ -42,6 +43,7 @@ async def test_credentials_crud(authed_client, storage):
     assert response.status_code == 200
     detail = response.json()
     assert detail["id"] == cred_id
+    assert detail.get("runtime_connections_count") == 0
     # 详情也应脱敏
     assert "****" in detail["token"] or "..." in detail["token"]
 

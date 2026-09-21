@@ -41,6 +41,10 @@ def _serialize_credential(credential: Credential) -> dict[str, Any]:
     payload["token"] = _mask_secret_value(credential.token) if credential.token else ""
     payload["secrets"] = _mask_secret_value(credential.secrets)
     payload["secret_keys"] = sorted(credential.secrets.keys())
+    if credential.type == "ssh":
+        payload["token"] = ""
+        payload["secrets"] = {key: "****" for key in credential.secrets}
+        payload["auth_method"] = credential.secrets.get("auth_method")
     return payload
 
 
@@ -57,7 +61,14 @@ async def get_credentials(
     total = await storage.get_total_credentials_count()
     credentials = await storage.get_credentials_paginated(skip, limit)
 
-    result = [_serialize_credential(credential) for credential in credentials]
+    credential_ids = [c.id for c in credentials if c.id is not None]
+    runtime_counts = await storage.get_runtime_connection_counts_by_credential_ids(credential_ids)
+
+    result = []
+    for credential in credentials:
+        payload = _serialize_credential(credential)
+        payload["runtime_connections_count"] = runtime_counts.get(credential.id, 0) if credential.id is not None else 0
+        result.append(payload)
 
     return {"items": result, "total": total, "skip": skip, "limit": limit}
 
@@ -72,7 +83,10 @@ async def get_credential(
     if not credential:
         raise HTTPException(status_code=404, detail="Credential not found")
 
-    return _serialize_credential(credential)
+    runtime_counts = await storage.get_runtime_connection_counts_by_credential_ids([credential_id])
+    payload = _serialize_credential(credential)
+    payload["runtime_connections_count"] = runtime_counts.get(credential_id, 0)
+    return payload
 
 
 @router.post("", dependencies=[Depends(get_current_admin_user)])
@@ -138,6 +152,13 @@ async def update_credential(
         new_secrets = payload.get("secrets")
         if new_secrets is None:
             new_secrets = existing.secrets
+        elif existing.type == "ssh":
+            new_secrets = {**existing.secrets, **{k: v for k, v in new_secrets.items() if v != ""}}
+            if new_secrets.get("auth_method") == "password":
+                new_secrets.pop("private_key", None)
+                new_secrets.pop("passphrase", None)
+            else:
+                new_secrets.pop("password", None)
 
         credential = Credential(
             name=existing.name,

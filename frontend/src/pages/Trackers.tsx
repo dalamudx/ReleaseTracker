@@ -34,9 +34,9 @@ import {
 import { useQueryClient } from "@tanstack/react-query"
 
 const TRACKER_LIST_WIDTH_STORAGE_KEY = "settings.trackers.listWidthPercent"
-const DEFAULT_TRACKER_LIST_WIDTH = 60
-const MIN_TRACKER_LIST_WIDTH = 35
-const MAX_TRACKER_LIST_WIDTH = 70
+const DEFAULT_TRACKER_LIST_WIDTH = 38
+const MIN_TRACKER_LIST_WIDTH = 28
+const MAX_TRACKER_LIST_WIDTH = 55
 
 function clampTrackerListWidth(value: number): number {
     return Math.min(MAX_TRACKER_LIST_WIDTH, Math.max(MIN_TRACKER_LIST_WIDTH, value))
@@ -79,10 +79,10 @@ export default function TrackersPage() {
     })
     const trackers = data?.items ?? []
     const total = data?.total ?? 0
-    const visibleSelectedTrackerName = selectedTrackerName !== null
-        && trackers.some((tracker) => tracker.name === selectedTrackerName)
+    const visibleSelectedTrackerName = (selectedTrackerName !== null
+        && trackers.some((tracker) => tracker.name === selectedTrackerName))
         ? selectedTrackerName
-        : null
+        : (trackers[0]?.name ?? null)
 
     const deleteTracker = useDeleteTracker()
     const checkTracker = useCheckTracker()
@@ -118,6 +118,10 @@ export default function TrackersPage() {
         try {
             const status = await checkTracker.mutateAsync(name)
             setDetailRefreshKey((value) => value + 1)
+            if ("task_id" in status) {
+                toast.info(t("tasks.submitted", { name, operation: t("tasks.kind.fetch") }), { id: toastId })
+                return
+            }
 
             if (status.manual_check_outcome === "skipped") {
                 const message = status.manual_check_reason === "cooldown"
@@ -193,10 +197,10 @@ export default function TrackersPage() {
     } as CSSProperties
 
     return (
-        <div className="flex h-full min-h-0 flex-col gap-4">
+        <div className="flex h-full min-h-0 flex-col gap-3.5">
             {/* Toolbar — search on the left, primary action on the right. */}
             <div className="flex flex-none flex-wrap items-center justify-between gap-3">
-                <div className="w-full max-w-sm">
+                <div className="w-full max-w-xs sm:max-w-sm">
                     <InputGroup>
                         <InputGroupAddon align="inline-start">
                             <InputGroupText>
@@ -238,7 +242,7 @@ export default function TrackersPage() {
                 smaller screens retain the stacked layout. */}
             <div
                 ref={splitPaneRef}
-                className={`flex min-h-0 flex-1 flex-col gap-4 xl:flex-row xl:gap-0 ${resizingPanels ? "select-none" : ""}`}
+                className={`flex min-h-0 flex-1 flex-col gap-3.5 xl:flex-row xl:gap-0 ${resizingPanels ? "select-none" : ""}`}
                 style={splitPaneStyle}
             >
                 <div
@@ -299,6 +303,9 @@ export default function TrackersPage() {
                     <TrackerDetail
                         trackerName={visibleSelectedTrackerName}
                         refreshKey={detailRefreshKey}
+                        onEdit={handleEdit}
+                        onCheck={handleCheck}
+                        checking={checkTracker.isPending && checkTracker.variables === visibleSelectedTrackerName}
                     />
                 </div>
             </div>

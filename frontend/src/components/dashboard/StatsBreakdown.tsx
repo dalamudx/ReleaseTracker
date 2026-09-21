@@ -55,79 +55,68 @@ function toEntries(
         }))
 }
 
-interface BreakdownCardProps {
+interface EntryListProps {
     title: string
-    description: string
     entries: BreakdownEntry[]
-    loading: boolean
     emptyMessage: string
+    loading: boolean
 }
 
-function BreakdownCard({ title, description, entries, loading, emptyMessage }: BreakdownCardProps) {
+function EntryList({ title, entries, emptyMessage, loading }: EntryListProps) {
     return (
-        <Card className="glass-card flex h-full min-h-0 flex-col">
-            <CardHeader className="flex-none pb-3">
-                <CardTitle className="text-base">{title}</CardTitle>
-                <CardDescription className="text-xs">{description}</CardDescription>
-            </CardHeader>
-            <CardContent className="flex min-h-0 flex-1 flex-col px-6 pb-4">
-                {loading ? (
-                    <div className="space-y-3">
-                        {[1, 2, 3, 4].map((i) => (
-                            <div key={i} className="space-y-1.5">
-                                <div className="flex justify-between">
-                                    <div className="h-3 w-20 animate-pulse rounded bg-muted/60" />
-                                    <div className="h-3 w-10 animate-pulse rounded bg-muted/40" />
-                                </div>
-                                <div className="h-2 w-full animate-pulse rounded-full bg-muted/40" />
+        <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-semibold text-foreground/80">{title}</span>
+            {loading ? (
+                <div className="space-y-2">
+                    {[1, 2].map((i) => (
+                        <div key={i} className="space-y-1">
+                            <div className="flex justify-between">
+                                <div className="h-3 w-16 animate-pulse rounded bg-muted/60" />
+                                <div className="h-3 w-8 animate-pulse rounded bg-muted/40" />
                             </div>
-                        ))}
-                    </div>
-                ) : entries.length === 0 ? (
-                    <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-                        {emptyMessage}
-                    </div>
-                ) : (
-                    <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto pr-1">
-                        {entries.map((entry) => (
-                            <div key={entry.key} className="space-y-1.5">
-                                <div className="flex items-center justify-between gap-3 text-xs">
-                                    <div className="flex min-w-0 items-center gap-2">
-                                        <span
-                                            className="h-2.5 w-2.5 shrink-0 rounded-full"
-                                            style={{ backgroundColor: entry.colorVar }}
-                                        />
-                                        <span className="truncate font-medium text-foreground/90">{entry.label}</span>
-                                    </div>
-                                    <div className="flex shrink-0 items-baseline gap-1.5 tabular-nums text-muted-foreground">
-                                        <span className="font-medium text-foreground/90">{entry.value}</span>
-                                        <span>·</span>
-                                        <span>{entry.percentage.toFixed(1)}%</span>
-                                    </div>
-                                </div>
-                                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/40">
-                                    <div
-                                        className="h-full rounded-full transition-all"
-                                        style={{
-                                            width: `${Math.max(entry.percentage, 1.5)}%`,
-                                            backgroundColor: entry.colorVar,
-                                        }}
+                            <div className="h-1.5 w-full animate-pulse rounded-full bg-muted/40" />
+                        </div>
+                    ))}
+                </div>
+            ) : entries.length === 0 ? (
+                <div className="flex items-center justify-center p-3 text-xs text-muted-foreground">
+                    {emptyMessage}
+                </div>
+            ) : (
+                <div className="space-y-2">
+                    {entries.map((entry) => (
+                        <div key={entry.key} className="space-y-1">
+                            <div className="flex items-center justify-between gap-2 text-xs">
+                                <div className="flex min-w-0 items-center gap-1.5">
+                                    <span
+                                        className="h-2 w-2 shrink-0 rounded-full"
+                                        style={{ backgroundColor: entry.colorVar }}
                                     />
+                                    <span className="truncate font-medium text-foreground/90">{entry.label}</span>
+                                </div>
+                                <div className="flex shrink-0 items-baseline gap-1 text-[11px] tabular-nums text-muted-foreground">
+                                    <span className="font-semibold text-foreground/90">{entry.value}</span>
+                                    <span>·</span>
+                                    <span>{entry.percentage.toFixed(1)}%</span>
                                 </div>
                             </div>
-                        ))}
-                    </div>
-                )}
-            </CardContent>
-        </Card>
+                            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/40">
+                                <div
+                                    className="h-full rounded-full transition-all"
+                                    style={{
+                                        width: `${Math.max(entry.percentage, 1.5)}%`,
+                                        backgroundColor: entry.colorVar,
+                                    }}
+                                />
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
     )
 }
 
-/**
- * Replaces the embedded mini-charts that used to sit inside the KPI cards.
- * Renders the release-type split and the channel split as proper horizontal
- * bar lists where every label and value actually fits.
- */
 export function StatsBreakdown({ stats, loading }: StatsBreakdownProps) {
     const { t } = useTranslation()
 
@@ -142,21 +131,27 @@ export function StatsBreakdown({ stats, loading }: StatsBreakdownProps) {
     )
 
     return (
-        <div className="grid h-full min-h-0 gap-4 md:grid-cols-2">
-            <BreakdownCard
-                title={t("dashboard.stats.releaseTypeStats")}
-                description={t("dashboard.stats.releaseTypeStatsDescription")}
-                entries={releaseTypeEntries}
-                loading={loading}
-                emptyMessage={t("common.noData")}
-            />
-            <BreakdownCard
-                title={t("dashboard.stats.channelStats")}
-                description={t("dashboard.stats.channelStatsDescription")}
-                entries={channelEntries}
-                loading={loading}
-                emptyMessage={t("common.noData")}
-            />
-        </div>
+        <Card className="glass-card flex h-full flex-col">
+            <CardHeader className="flex-none p-3.5 pb-2">
+                <CardTitle className="text-sm font-semibold">{t("dashboard.stats.releaseTypeStats")}</CardTitle>
+                <CardDescription className="text-[11px]">
+                    {t("dashboard.stats.releaseTypeStatsDescription")}
+                </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-1 flex-col justify-between gap-3 px-3.5 pb-3">
+                <EntryList
+                    title={t("dashboard.stats.releaseTypeStats")}
+                    entries={releaseTypeEntries}
+                    emptyMessage={t("common.noData")}
+                    loading={loading}
+                />
+                <EntryList
+                    title={t("dashboard.stats.channelStats")}
+                    entries={channelEntries}
+                    emptyMessage={t("common.noData")}
+                    loading={loading}
+                />
+            </CardContent>
+        </Card>
     )
 }

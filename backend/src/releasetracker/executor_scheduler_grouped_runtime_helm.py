@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .services.task_effects import mark_deployment_mutation
+
 from .config import ExecutorConfig
 from .executor_scheduler_run_lifecycle import ExecutorRunOutcome
 from .executors import KubernetesRuntimeAdapter
@@ -168,6 +170,7 @@ class ExecutorSchedulerHelmRuntime:
         )
 
         try:
+            await mark_deployment_mutation()
             result = await adapter.upgrade_helm_release(
                 executor_config.target_ref,
                 chart_ref=chart_ref,

@@ -29,7 +29,7 @@ vi.mock("sonner", () => ({
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: (key: string, options?: { name?: string; operation?: string }) => key === "tasks.submitted" ? `${key}:${options?.name}:${options?.operation}` : key,
   }),
 }))
 
@@ -73,6 +73,13 @@ vi.mock("@/components/trackers/TrackerDialog", () => ({
 import TrackersPage from "@/pages/Trackers"
 
 describe("TrackersPage tracker invalidation", () => {
+  it("identifies the tracker and fetch operation in queued feedback", async () => {
+    checkTrackerMock.mockResolvedValue({task_id: 7, status: "queued"})
+    render(<QueryClientProvider client={new QueryClient()}><TrackersPage /></QueryClientProvider>)
+    fireEvent.click(screen.getByRole("button", {name: "check tracker"}))
+    await waitFor(() => expect(toastInfoMock).toHaveBeenCalledWith("tasks.submitted:qa-tracker:tasks.kind.fetch", {id: "tracker-check-toast"}))
+    expect(toastSuccessMock).not.toHaveBeenCalled()
+  })
   beforeEach(() => {
     invalidateQueries.mockClear()
     trackerDialogMock.mockClear()
@@ -128,7 +135,7 @@ describe("TrackersPage tracker invalidation", () => {
     expect(localStorage.getItem("settings.trackers.listWidthPercent")).toBe("52")
 
     fireEvent.doubleClick(separator)
-    expect(separator).toHaveAttribute("aria-valuenow", "60")
+    expect(separator).toHaveAttribute("aria-valuenow", "38")
   })
 
   it("invalidates the full trackers query family after dialog success", async () => {

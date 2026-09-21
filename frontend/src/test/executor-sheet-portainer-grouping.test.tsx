@@ -482,7 +482,7 @@ describe("ExecutorSheet Portainer grouping", () => {
     expect(screen.queryByText("executors.review.targetImageDeferred")).not.toBeInTheDocument()
   })
 
-  it("renders review service bindings, image changes, and global timezone summary", () => {
+  it.each(["portainer", "kubernetes"] as const)("renders %s review service bindings and shared image changes", (runtimeType) => {
     render(
       <ExecutorSheetReviewSection
         reviewItems={[
@@ -498,15 +498,13 @@ describe("ExecutorSheet Portainer grouping", () => {
             channel_name: "stable",
           },
         ]}
-        runtimeType="portainer"
-        selectedTargetRef={{
-          mode: "portainer_stack",
-          endpoint_id: 2,
-          stack_id: 11,
-          stack_name: "release-stack",
-          stack_type: "standalone",
-          services: [{ service: "api", image: "ghcr.io/acme/api:1.0" }],
-          service_count: 1,
+        runtimeType={runtimeType}
+        selectedTargetRef={runtimeType === "kubernetes" ? {
+          mode: "kubernetes_workload", namespace: "apps", kind: "Deployment", name: "service-a",
+          services: [{service: "api", image: "ghcr.io/acme/api:1.0"}], service_count: 1,
+        } : {
+          mode: "portainer_stack", endpoint_id: 2, stack_id: 11, stack_name: "release-stack", stack_type: "standalone",
+          services: [{ service: "api", image: "ghcr.io/acme/api:1.0" }], service_count: 1,
         }}
         imageSelectionMode="use_tracker_image_and_tag"
         imageReferenceMode="tag"
@@ -514,6 +512,7 @@ describe("ExecutorSheet Portainer grouping", () => {
       />,
     )
 
+    expect(screen.getByRole("group", {name: "api"})).toBeVisible()
     expect(screen.getByText("executors.review.imageChanges")).toBeInTheDocument()
     expect(screen.getByText("ghcr.io/acme/api:1.0")).toBeInTheDocument()
     expect(screen.getByText("ghcr.io/acme/api:1.2.3")).toBeInTheDocument()

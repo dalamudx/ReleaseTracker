@@ -13,7 +13,12 @@ class ReleaseSchedulerScheduledChecks:
     """Run scheduled aggregate tracker checks and persist status outcomes."""
 
     async def _check_tracker(self, tracker_name: str):
-        """Check one tracker."""
+        """Schedule one tracker; execution belongs to the durable worker."""
+        if self.fetch_tasks is not None:
+            aggregate = await self.storage.get_aggregate_tracker(tracker_name)
+            if aggregate is None or not aggregate.enabled:
+                return None
+            return await self.fetch_tasks.enqueue(tracker_name, trigger_mode="scheduled")
         aggregate_tracker = await self.storage.get_aggregate_tracker(tracker_name)
         tracker_config = await self.storage.get_tracker_config(tracker_name)
         if not tracker_config and aggregate_tracker is None:

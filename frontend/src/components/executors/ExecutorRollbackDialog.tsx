@@ -74,6 +74,12 @@ export function ExecutorRollbackDialog({
                 executorId: executor.id,
                 snapshotId: snapshot.id,
             })
+            if ("task_id" in result) {
+                toast.info(t("tasks.submitted", { name: executor.name, operation: t("executors.snapshots.actions.rollback") }), { id: toastId })
+                handleOpenChange(false)
+                onSuccess?.()
+                return
+            }
             if (result.recovery_outcome === "succeeded") {
                 toast.success(t("executors.rollback.toasts.success"), { id: toastId })
                 onSuccess?.()

@@ -2,11 +2,29 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from contextvars import ContextVar
+
 from typing import Any
 
 from .config import EXECUTOR_BINDABLE_SOURCE_TYPES, ExecutorConfig
 from .models import Release, TrackerSource
 from .storage.sqlite import SQLiteStorage
+
+QUEUED_TARGETS: ContextVar[list[dict] | None] = ContextVar("queued_executor_targets", default=None)
+
+
+def _queued_target(name, source_id, channel):
+    return next(
+        (
+            target
+            for target in (QUEUED_TARGETS.get() or [])
+            if target["tracker_name"] == name
+            and target["source_id"] == source_id
+            and target["channel"] == channel
+        ),
+        {},
+    )
+
 
 _DOCKER_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
@@ -401,6 +419,9 @@ class ExecutorSchedulerTargetResolution:
         tracker_source_id: int | None = None,
         tracker_source_type: str | None = None,
     ) -> str | None:
+        if QUEUED_TARGETS.get() is not None:
+            target = _queued_target(tracker_name, tracker_source_id, channel_name).get("target")
+            return target[0] if target else None
         return await _resolve_tracker_latest_version_from_storage(
             self.storage,
             tracker_name,
@@ -417,6 +438,9 @@ class ExecutorSchedulerTargetResolution:
         tracker_source_id: int | None = None,
         tracker_source_type: str | None = None,
     ) -> tuple[str, str | None] | None:
+        if QUEUED_TARGETS.get() is not None:
+            target = _queued_target(tracker_name, tracker_source_id, channel_name).get("target")
+            return tuple(target) if target else None
         return await _resolve_tracker_latest_target_from_storage(
             self.storage,
             tracker_name,
@@ -433,6 +457,10 @@ class ExecutorSchedulerTargetResolution:
         tracker_source_id: int | None,
         tracker_source_type: str | None,
     ) -> str | None:
+        if QUEUED_TARGETS.get() is not None:
+            return _queued_target(tracker_name, tracker_source_id, channel_name).get(
+                "chart_version"
+            )
         releases = await self._load_bound_releases(
             tracker_name,
             tracker_source_id=tracker_source_id,

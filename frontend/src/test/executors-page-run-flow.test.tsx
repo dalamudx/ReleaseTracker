@@ -6,6 +6,7 @@ import type { ExecutorListItem, ExecutorTargetRef, RuntimeConnection, RuntimeTyp
 
 const {
   deleteExecutorMock,
+  getExecutorMock,
   getExecutorsMock,
   getSettingsMock,
   getRuntimeConnectionsMock,
@@ -14,23 +15,27 @@ const {
   tMock,
   toastErrorMock,
   toastLoadingMock,
+  toastInfoMock,
   toastSuccessMock,
 } = vi.hoisted(() => ({
   deleteExecutorMock: vi.fn(),
+  getExecutorMock: vi.fn(),
   getExecutorsMock: vi.fn(),
   getSettingsMock: vi.fn(),
   getRuntimeConnectionsMock: vi.fn(),
   getTrackersMock: vi.fn(),
   runExecutorMock: vi.fn(),
-  tMock: (key: string, options?: { count?: number }) => options?.count == null ? key : `${key}:${options.count}`,
+  tMock: (key: string, options?: { count?: number; name?: string; operation?: string }) => key === "tasks.submitted" ? `${key}:${options?.name}:${options?.operation}` : options?.count == null ? key : `${key}:${options.count}`,
   toastErrorMock: vi.fn(),
   toastLoadingMock: vi.fn(() => "executor-run-toast"),
   toastSuccessMock: vi.fn(),
+  toastInfoMock: vi.fn(),
 }))
 
 vi.mock("@/api/client", () => ({
   api: {
     deleteExecutor: deleteExecutorMock,
+    getExecutor: getExecutorMock,
     getExecutors: getExecutorsMock,
     getSettings: getSettingsMock,
     getRuntimeConnections: getRuntimeConnectionsMock,
@@ -43,6 +48,7 @@ vi.mock("sonner", () => ({
   toast: {
     error: toastErrorMock,
     loading: toastLoadingMock,
+    info: toastInfoMock,
     success: toastSuccessMock,
   },
 }))
@@ -190,9 +196,51 @@ function renderExecutorsPage() {
 }
 
 describe("ExecutorsPage run flow", () => {
+  it("deduplicates pending run clicks and allows retry after a failed submission", async () => {
+    getExecutorsMock.mockResolvedValue({items: [createExecutor()], total: 1})
+    getRuntimeConnectionsMock.mockResolvedValue({items: [createRuntimeConnection()], total: 1})
+    getTrackersMock.mockResolvedValue({items: [createTracker()], total: 1})
+    getSettingsMock.mockResolvedValue([])
+    const request = deferred<{task_id: number; status: string}>()
+    runExecutorMock.mockReturnValueOnce(request.promise).mockResolvedValue({task_id: 9, status: "queued"})
+    renderExecutorsPage()
+    const run = await screen.findByRole("button", {name: "run executor 1"})
+    fireEvent.click(run)
+    fireEvent.click(run)
+    expect(runExecutorMock).toHaveBeenCalledTimes(1)
+    await act(async () => request.reject(new Error("network unavailable")))
+    await waitFor(() => expect(toastErrorMock).toHaveBeenCalled())
+    fireEvent.click(run)
+    await waitFor(() => expect(runExecutorMock).toHaveBeenCalledTimes(2))
+  })
+  it("offers edit and run actions from the selected history drawer", async () => {
+    getExecutorsMock.mockResolvedValue({items: [createExecutor()], total: 1})
+    getRuntimeConnectionsMock.mockResolvedValue({items: [createRuntimeConnection()], total: 1})
+    getTrackersMock.mockResolvedValue({items: [createTracker()], total: 1})
+    getSettingsMock.mockResolvedValue([])
+    runExecutorMock.mockResolvedValue({task_id: 9, status: "queued"})
+    renderExecutorsPage()
+    fireEvent.click(await screen.findByRole("button", {name: "history executor 1"}))
+    expect(screen.getByRole("button", {name: "common.edit"})).toBeEnabled()
+    fireEvent.click(screen.getByRole("button", {name: "executors.actions.runNow"}))
+    await waitFor(() => expect(runExecutorMock).toHaveBeenCalledWith(1))
+  })
+
+  it("identifies the executor and deployment operation in queued feedback", async () => {
+    getExecutorsMock.mockResolvedValue({items: [createExecutor()], total: 1})
+    getRuntimeConnectionsMock.mockResolvedValue({items: [createRuntimeConnection()], total: 1})
+    getTrackersMock.mockResolvedValue({items: [createTracker()], total: 1})
+    getSettingsMock.mockResolvedValue([])
+    runExecutorMock.mockResolvedValue({task_id: 7, status: "queued"})
+    renderExecutorsPage()
+    fireEvent.click(await screen.findByRole("button", {name: "run executor 1"}))
+    await waitFor(() => expect(toastInfoMock).toHaveBeenCalledWith("tasks.submitted:release-api:tasks.kind.deploy", {id: "executor-run-toast"}))
+    expect(toastSuccessMock).not.toHaveBeenCalled()
+  })
   beforeEach(() => {
     vi.useRealTimers()
     deleteExecutorMock.mockReset()
+    getExecutorMock.mockReset()
     getExecutorsMock.mockReset()
     getSettingsMock.mockReset()
     getRuntimeConnectionsMock.mockReset()
@@ -200,6 +248,7 @@ describe("ExecutorsPage run flow", () => {
     runExecutorMock.mockReset()
     toastErrorMock.mockReset()
     toastLoadingMock.mockClear()
+    toastInfoMock.mockClear()
     toastSuccessMock.mockReset()
   })
 
@@ -272,6 +321,44 @@ describe("ExecutorsPage run flow", () => {
     })
 
     expect(screen.getByTestId("executor-list")).toHaveAttribute("data-loading", "false")
+  })
+
+  it("refreshes a manual run when its asynchronous result becomes terminal", async () => {
+    getExecutorsMock.mockResolvedValue({ items: [createExecutor()], total: 1 })
+    getRuntimeConnectionsMock.mockResolvedValue({ items: [createRuntimeConnection()], total: 1 })
+    getTrackersMock.mockResolvedValue({ items: [createTracker()], total: 1 })
+    getSettingsMock.mockResolvedValue([])
+    runExecutorMock.mockResolvedValue({ status: "queued", run_id: 101 })
+    getExecutorMock
+      .mockResolvedValueOnce({ latest_run: { id: 101, status: "running" } })
+      .mockResolvedValueOnce({ latest_run: { id: 101, status: "success" } })
+
+    renderExecutorsPage()
+    await waitFor(() => {
+      expect(screen.getByTestId("executor-list")).toHaveAttribute("data-loading", "false")
+    })
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "run executor 1" }))
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(getExecutorsMock).toHaveBeenCalledTimes(2)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000)
+      })
+      expect(getExecutorMock).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000)
+      })
+      expect(getExecutorMock).toHaveBeenCalledTimes(2)
+      expect(getExecutorsMock).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("does not enqueue disabled executors when manually run", async () => {

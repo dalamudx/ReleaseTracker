@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .base import BaseNotifier
+from .templates import builtin
 from .webhook import WebhookNotifier
 from .wecom import WeComNotifier
 
@@ -16,12 +17,16 @@ def build_notifier(
     url: str,
     events: list[str] | None = None,
     language: str = "en",
+    template: dict | None = None,
+    detail_url: str | None = None,
 ) -> BaseNotifier:
     common = {
         "name": name,
         "url": url,
         "events": events,
         "language": language,
+        "template": template if template is not None else builtin(),
+        "detail_url": detail_url,
     }
     if notifier_type == "webhook":
         return WebhookNotifier(**common)

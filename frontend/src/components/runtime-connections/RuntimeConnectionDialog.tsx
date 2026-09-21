@@ -53,6 +53,7 @@ import {
     type RuntimeConnectionFormValues,
 } from "./runtimeConnectionHelpers"
 import { toast } from "sonner"
+import { SSHConnectionFields } from './SSHConnectionFields'
 
 interface RuntimeConnectionDialogProps {
     open: boolean
@@ -81,6 +82,7 @@ const DEFAULT_VALUES: RuntimeConnectionFormValues = {
     base_url: "",
     endpoint_id: "",
     endpoint_name: "",
+    ssh_host: '', ssh_port: '22', ssh_username: '', ssh_host_key: '', ssh_proxy_id: '', ssh_allow_proxy: false,
 }
 
 export function RuntimeConnectionDialog({ open, onOpenChange, runtimeConnection, onSuccess }: RuntimeConnectionDialogProps) {
@@ -134,6 +136,12 @@ export function RuntimeConnectionDialog({ open, onOpenChange, runtimeConnection,
             base_url: getStringValue(runtimeConnection.config.base_url),
             endpoint_id: stringifyInteger(runtimeConnection.config.endpoint_id),
             endpoint_name: getStringValue(runtimeConnection.config.endpoint_name),
+            ssh_host: getStringValue(runtimeConnection.config.host),
+            ssh_port: stringifyInteger(runtimeConnection.config.port) || '22',
+            ssh_username: getStringValue(runtimeConnection.config.username),
+            ssh_host_key: getStringValue(runtimeConnection.config.host_key),
+            ssh_proxy_id: stringifyInteger(runtimeConnection.config.proxy_connection_id),
+            ssh_allow_proxy: runtimeConnection.config.allow_proxy === true,
         })
     }, [open, runtimeConnection, form])
 
@@ -305,6 +313,7 @@ export function RuntimeConnectionDialog({ open, onOpenChange, runtimeConnection,
                                                 <SelectItem value="podman">Podman</SelectItem>
                                                 <SelectItem value="kubernetes">Kubernetes</SelectItem>
                                                 <SelectItem value="portainer">Portainer</SelectItem>
+                                                <SelectItem value="ssh">SSH</SelectItem>
                                             </SelectContent>
                                         </Select>
                                         <FormMessage />
@@ -343,7 +352,9 @@ export function RuntimeConnectionDialog({ open, onOpenChange, runtimeConnection,
                             )}
                         />
 
-                        {selectedType === 'kubernetes' ? (
+                        {selectedType === 'ssh' ? (
+                            <SSHConnectionFields form={form} credentials={credentials} connection={runtimeConnection} />
+                        ) : selectedType === 'kubernetes' ? (
                             <KubernetesFields
                                 form={form}
                                             credentials={credentials}
@@ -750,6 +761,8 @@ function validateRuntimeCredentialSelection(values: RuntimeConnectionFormValues)
     if (values.type === 'kubernetes' && !values.in_cluster && !hasCredential) {
         return 'runtimeConnections.dialog.errors.kubernetesCredentialRequired'
     }
+
+    if (values.type === 'ssh' && !hasCredential) return 'ssh.credentialRequired'
 
     if (values.type === 'portainer' && !hasCredential) {
         return 'runtimeConnections.dialog.errors.portainerCredentialRequired'

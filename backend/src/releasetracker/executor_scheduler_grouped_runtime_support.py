@@ -30,7 +30,12 @@ class ExecutorSchedulerGroupedRuntimeSupport:
         executor_config: ExecutorConfig,
     ) -> list[_ExecutorBindingRunContext]:
         target_mode = executor_config.target_ref.get("mode")
-        if target_mode in {"portainer_stack", "docker_compose", "kubernetes_workload"}:
+        if target_mode in {
+            "portainer_stack",
+            "docker_compose",
+            "kubernetes_workload",
+            "ssh_compose",
+        }:
             bindings: list[ExecutorServiceBinding] = sorted(
                 executor_config.service_bindings,
                 key=lambda binding: binding.service,

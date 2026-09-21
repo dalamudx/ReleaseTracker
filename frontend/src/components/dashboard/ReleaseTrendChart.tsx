@@ -124,12 +124,12 @@ export function ReleaseTrendChart({ stats, loading }: ReleaseTrendChartProps) {
     const hasData = chartData.length > 0 && channels.length > 0
 
     return (
-        <Card className="glass-card flex h-full min-h-0 flex-col">
-            <CardHeader className="flex-none pb-3">
+        <Card className="glass-card flex h-full min-h-0 flex-col shadow-sm">
+            <CardHeader className="flex-none p-3.5 pb-2">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                     <div>
-                        <CardTitle className="text-base">{t("dashboard.releaseTrend.title")}</CardTitle>
-                        <CardDescription className="text-xs">{t("dashboard.releaseTrend.description")}</CardDescription>
+                        <CardTitle className="text-sm font-semibold">{t("dashboard.releaseTrend.title")}</CardTitle>
+                        <CardDescription className="text-[11px]">{t("dashboard.releaseTrend.description")}</CardDescription>
                     </div>
                     {!loading && hasData ? (
                         <div className="flex shrink-0 items-center gap-4 text-xs text-muted-foreground">
@@ -155,7 +155,7 @@ export function ReleaseTrendChart({ stats, loading }: ReleaseTrendChartProps) {
                     ) : null}
                 </div>
             </CardHeader>
-            <CardContent className="flex min-h-0 flex-1 flex-col px-6 pb-4">
+            <CardContent className="flex min-h-0 flex-1 flex-col px-4 pb-4 pt-1">
                 {loading ? (
                     <div className="min-h-0 flex-1 animate-pulse rounded-lg bg-muted/20" />
                 ) : !hasData ? (
@@ -163,7 +163,7 @@ export function ReleaseTrendChart({ stats, loading }: ReleaseTrendChartProps) {
                         {t("common.noData")}
                     </div>
                 ) : (
-                    <ChartContainer config={chartConfig} className="min-h-0 w-full flex-1">
+                    <ChartContainer config={chartConfig} className="aspect-auto h-full min-h-[300px] w-full flex-1">
                         <AreaChart
                             accessibilityLayer
                             data={chartData}

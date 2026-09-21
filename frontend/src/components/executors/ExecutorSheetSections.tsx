@@ -1,3 +1,5 @@
+import { ExecutorServiceImageChange } from "./ExecutorServiceImageChange"
+import { SSHComposeTargetFields } from "./SSHComposeTargetFields"
 import { AlertTriangle, CheckCircle2, Layers3, Loader2, Plus, Search, Trash2 } from "lucide-react"
 import type { UseFormReturn } from "react-hook-form"
 import { useTranslation } from "react-i18next"
@@ -268,6 +270,7 @@ interface ExecutorSheetStepTabsProps {
 }
 
 interface ExecutorSheetRuntimeSectionProps {
+    connectionLocked?: boolean
     form: UseFormReturn<ExecutorFormValues>
     enabledRuntimeConnections: RuntimeConnection[]
     handleSelectRuntimeConnection: (value: string) => void
@@ -293,6 +296,7 @@ interface ExecutorSheetBindingSectionProps {
 }
 
 interface ExecutorSheetTargetSectionProps {
+    executorId?: number | null
     form: UseFormReturn<ExecutorFormValues>
     runtimeType: ExecutorFormValues["runtime_type"]
     selectedRuntimeConnection: RuntimeConnection | null
@@ -307,6 +311,7 @@ interface ExecutorSheetTargetSectionProps {
     onSelectDiscoveryNamespace?: (namespace: string) => void
     onSelectRuntimeConnection: (value: string) => void
     onSelectTarget: (target: RuntimeTargetDiscoveryItem) => void
+    onSSHChange?: (target: import("@/api/types").ExecutorTargetRef) => void
 }
 
 interface ExecutorSheetPolicySectionProps {
@@ -392,13 +397,12 @@ function renderReviewImageChanges(
                         ? "executors.review.targetImageDeferred"
                         : "executors.review.targetVersionUnavailable")
                     return (
-                        <div key={`${change.service}-${change.sourceImage}-${targetImage}`} className="rounded-lg border border-border/60 bg-background px-3 py-2">
-                            <div className="text-sm font-medium text-foreground">{change.service || "-"}</div>
-                            <div className="mt-2 grid gap-2 text-xs md:grid-cols-[1fr_auto_1fr] md:items-center">
-                                <div className="break-all rounded-md bg-muted px-2 py-1 font-mono text-muted-foreground">{change.sourceImage}</div>
-                                <div className="text-center text-muted-foreground">→</div>
-                                <div className="break-all rounded-md bg-primary/10 px-2 py-1 font-mono text-primary">{targetImage}</div>
-                            </div>
+                        <ExecutorServiceImageChange
+                            key={`${change.service}-${change.sourceImage}-${targetImage}`}
+                            service={change.service || "-"}
+                            sourceImage={change.sourceImage}
+                            targetImage={targetImage}
+                        >
                             <div className="mt-2 text-xs text-muted-foreground">
                                 {t("executors.review.targetVersion")}: <span className="font-mono text-foreground">{change.targetVersion ?? "-"}</span>
                                 {change.deployAlias && change.deployAlias !== change.targetVersion ? (
@@ -408,7 +412,7 @@ function renderReviewImageChanges(
                                     </>
                                 ) : null}
                             </div>
-                        </div>
+                        </ExecutorServiceImageChange>
                     )
                 })}
             </div>
@@ -453,6 +457,7 @@ export function ExecutorSheetRuntimeSection({
     form,
     enabledRuntimeConnections,
     handleSelectRuntimeConnection,
+    connectionLocked = false,
 }: ExecutorSheetRuntimeSectionProps) {
     const { t } = useTranslation()
 
@@ -484,7 +489,7 @@ export function ExecutorSheetRuntimeSection({
                         render={({ field }) => (
                             <FormItem>
                                 <FormLabel>{t("executors.fields.runtimeConnection")}</FormLabel>
-                                <Select value={field.value} onValueChange={handleSelectRuntimeConnection}>
+                                <Select value={field.value} onValueChange={handleSelectRuntimeConnection} disabled={connectionLocked}>
                                     <FormControl>
                                         <SelectTrigger>
                                             <SelectValue placeholder={t("executors.fields.runtimeConnectionPlaceholder")} />
@@ -715,10 +720,19 @@ export function ExecutorSheetTargetSection({
     onSelectDiscoveryNamespace = () => undefined,
     onSelectRuntimeConnection,
     onSelectTarget,
+    onSSHChange,
+    executorId = null,
 }: ExecutorSheetTargetSectionProps) {
     const { t } = useTranslation()
     const selectedTargetDisplay = buildExecutorTargetDisplay(runtimeType, selectedTargetRef, t)
     const hasSelectedTarget = formatTargetRef(runtimeType, selectedTargetRef) !== "-"
+
+    if (runtimeType === "ssh" && selectedRuntimeConnection && onSSHChange) {
+        return <div className="space-y-4">
+            <ExecutorSheetRuntimeSection connectionLocked={executorId !== null} form={form} enabledRuntimeConnections={enabledRuntimeConnections} handleSelectRuntimeConnection={onSelectRuntimeConnection} />
+            <SSHComposeTargetFields executorId={executorId} key={selectedRuntimeConnection.id} connection={selectedRuntimeConnection} value={selectedTargetRef} onChange={onSSHChange} />
+        </div>
+    }
 
     return (
         <div className="space-y-4">

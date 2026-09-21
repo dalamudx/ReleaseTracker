@@ -22,6 +22,9 @@ class FakeStorage:
         self.closed = False
         self.events: list[str] = []
         self.webhooks = FakeWebhookStore(self)
+        from unittest.mock import AsyncMock
+
+        self.tasks = AsyncMock()
 
     async def initialize(self):
         self.events.append("storage.initialize")
@@ -64,6 +67,9 @@ class FakeSchedulerHost:
     def add_interval_job(self, namespace, job_id, func, *, seconds):
         del func
         self.interval_jobs.append((namespace, job_id, seconds))
+
+    def remove_job(self, namespace, job_id):
+        pass
 
     async def start(self):
         self.start_called = True
@@ -119,7 +125,8 @@ class FakeExecutorScheduler:
 
 
 @pytest.mark.asyncio
-async def test_lifespan_starts_without_identity_drift_repair(monkeypatch):
+async def test_lifespan_starts_without_identity_drift_repair(monkeypatch, storage):
+    database_path = storage.db_path
     fake_storage_holder = {}
     fake_auth_holder = {}
     fake_scheduler_host_holder = {}
@@ -128,6 +135,7 @@ async def test_lifespan_starts_without_identity_drift_repair(monkeypatch):
 
     def fake_storage_factory(db_path: str, system_key_manager=None):
         storage = FakeStorage(db_path)
+        storage.db_path = database_path
         storage.system_key_manager = system_key_manager
         fake_storage_holder["storage"] = storage
         return storage
@@ -172,6 +180,9 @@ async def test_lifespan_starts_without_identity_drift_repair(monkeypatch):
         assert auth.ensure_admin_called is True
         assert scheduler_host.start_called is True
         assert scheduler_host.interval_jobs == [
+            ("tasks", "dispatch", 2),
+            ("readiness", "observe", 2),
+            ("executor_notifications", "tick", 2),
             ("repository_webhooks", "worker", 2),
             ("repository_webhooks", "cleanup", 86400),
         ]

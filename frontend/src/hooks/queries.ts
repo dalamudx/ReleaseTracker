@@ -56,6 +56,7 @@ export const queryKeys = {
     limit?: number
     search?: string
     prerelease?: boolean
+    channel?: string
   }) => ["releases", "history", params] as const,
 
   // Credentials
@@ -108,10 +109,10 @@ export function useStats() {
   })
 }
 
-export function useLatestCurrentReleases() {
+export function useLatestCurrentReleases(limit: number = 6) {
   return useQuery({
-    queryKey: queryKeys.latestCurrentReleases,
-    queryFn: () => api.getLatestCurrentReleases(),
+    queryKey: [...queryKeys.latestCurrentReleases, limit],
+    queryFn: () => api.getLatestCurrentReleases(limit),
     staleTime: 60_000,
   })
 }
@@ -230,6 +231,7 @@ export function useReleaseHistory(params?: {
   limit?: number
   search?: string
   prerelease?: boolean
+  channel?: string
 }) {
   return useQuery({
     queryKey: queryKeys.releaseHistory(params),

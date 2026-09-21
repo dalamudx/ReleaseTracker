@@ -437,6 +437,7 @@ export function ExecutorSheet({
             && selectedRuntimeConnection.type !== "podman"
             && selectedRuntimeConnection.type !== "kubernetes"
             && selectedRuntimeConnection.type !== "portainer"
+            && selectedRuntimeConnection.type !== "ssh"
         ) {
             return
         }
@@ -521,7 +522,7 @@ export function ExecutorSheet({
         const connection = enabledRuntimeConnections.find((item) => String(item.id) === value)
         if (
             connection
-            && (connection.type === "docker" || connection.type === "podman" || connection.type === "kubernetes" || connection.type === "portainer")
+            && (connection.type === "docker" || connection.type === "podman" || connection.type === "kubernetes" || connection.type === "portainer" || connection.type === "ssh")
         ) {
             form.setValue("runtime_type", connection.type, { shouldDirty: true })
         }
@@ -749,6 +750,7 @@ export function ExecutorSheet({
                                     <div className="space-y-4">
                                         {step === "target" ? (
                                             <ExecutorSheetTargetSection
+                                                executorId={executorId}
                                                 form={form}
                                                 runtimeType={runtimeType}
                                                 selectedRuntimeConnection={selectedRuntimeConnection}
@@ -763,6 +765,12 @@ export function ExecutorSheet({
                                                  onSelectDiscoveryNamespace={handleSelectDiscoveryNamespace}
                                                  onSelectRuntimeConnection={handleSelectRuntimeConnection}
                                                  onSelectTarget={handleSelectTarget}
+                                                 onSSHChange={(next) => {
+                                                     if (next.project !== selectedTargetRef.project || next.working_dir !== selectedTargetRef.working_dir) {
+                                                         setServiceBindings([])
+                                                     }
+                                                     setSelectedTargetRef(next)
+                                                 }}
                                             />
                                         ) : null}
 

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from dataclasses import asdict
+
+from .services.task_queue import classify_fetch_error, TaskResult
 
 from .config import TrackerConfig
 from .models import AggregateTracker, Release, TrackerSource
@@ -22,6 +25,8 @@ class ReleaseSchedulerAggregateChecks:
         trigger_mode: str = "scheduled",
         source_ids: set[int] | None = None,
         container_priority_aliases: tuple[str, ...] = (),
+        queued_check: bool = False,
+        commit_guard=None,
     ) -> dict[str, Any]:
         enabled_sources = [
             source
@@ -34,6 +39,7 @@ class ReleaseSchedulerAggregateChecks:
             raise ValueError("Aggregate tracker is missing a persisted ID")
 
         source_errors: list[str] = []
+        source_failures: list[dict] = []
         source_fetch_run_ids: dict[int, int] = {}
         completed_source_checks = 0
         incomplete_source_checks = 0
@@ -90,9 +96,12 @@ class ReleaseSchedulerAggregateChecks:
                     source_tracker,
                     source_config,
                     log_prefix=f"{log_prefix}[{source.source_key}] ",
-                    require_complete=trigger_mode == "webhook",
+                    require_complete=queued_check or trigger_mode == "webhook",
+                    **({"fail_fast": True} if queued_check else {}),
                 )
 
+                if commit_guard is not None:
+                    await commit_guard()
                 mapped_releases = [
                     release.model_copy(
                         update={
@@ -128,6 +137,13 @@ class ReleaseSchedulerAggregateChecks:
                 if fallback_hint:
                     incomplete_source_checks += 1
                     source_errors.append(f"{source.source_key}: {fallback_hint}")
+                    source_failures.append(
+                        asdict(TaskResult("failed", "incomplete_fetch", retryable=True))
+                        | {"source_id": source.id}
+                    )
+                    if queued_check:
+                        mapped_releases = []
+                        filtered_releases = []
 
                 source_history_ids_by_identity = await self.storage.append_source_history_for_run(
                     source_fetch_run_id,
@@ -177,6 +193,7 @@ class ReleaseSchedulerAggregateChecks:
                 completed_source_checks += 1
             except Exception as e:
                 incomplete_source_checks += 1
+                source_failures.append(asdict(classify_fetch_error(e)) | {"source_id": source.id})
                 error_msg = str(e) or getattr(e, "__class__", Exception).__name__
                 logger.error(
                     f"{log_prefix}Aggregate source check failed for {tracker_name}/{source.source_key}: {error_msg}"
@@ -272,7 +289,9 @@ class ReleaseSchedulerAggregateChecks:
             )
 
         channels = tracker_config.channels if tracker_config is not None else []
-        if trigger_mode == "webhook" and incomplete_source_checks:
+        if commit_guard is not None:
+            await commit_guard()
+        if (queued_check or trigger_mode == "webhook") and incomplete_source_checks:
             # Source history is durable evidence, but a partial multi-source view is
             # not an atomic tracker result. Keep the existing current projection so
             # notifications and executor desired state are emitted only by a later
@@ -294,7 +313,12 @@ class ReleaseSchedulerAggregateChecks:
                 sort_mode=sort_mode,
             )
 
-        if source_errors and not projection_releases and completed_source_checks == 0:
+        if (
+            not queued_check
+            and source_errors
+            and not projection_releases
+            and completed_source_checks == 0
+        ):
             raise RuntimeError("; ".join(source_errors))
 
         error = None
@@ -306,4 +330,5 @@ class ReleaseSchedulerAggregateChecks:
             "latest_version": latest_version,
             "error": error,
             "source_fetch_run_ids": source_fetch_run_ids,
+            "source_failures": source_failures,
         }

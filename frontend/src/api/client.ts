@@ -1,4 +1,5 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
+import type { QueueTask, TaskReceipt } from "./task-types"
 import { appPath } from "@/lib/base-path"
 import type {
     AggregateTracker,
@@ -251,13 +252,27 @@ function normalizeLatestCurrentReleaseSummary(item: LatestCurrentReleaseSummary)
 }
 
 export const api = {
+    getTasks: (params?: { before?: number; state?: string }) => apiClient.get<QueueTask[]>("/api/tasks", { params }).then(res => res.data),
+    clearFinishedTasks: () => apiClient.post<{ cleared: number }>("/api/tasks/clear").then(res => res.data),
+    getTask: (id: number) => apiClient.get<QueueTask>(`/api/tasks/${id}`).then(res => res.data),
+    cancelTask: (id: number) => apiClient.post(`/api/tasks/${id}/cancel`).then(res => res.data),
+    retryTask: (id: number) => apiClient.post<TaskReceipt>(`/api/tasks/${id}/retry`).then(res => res.data),
+    recheckTask: (id: number) => apiClient.post<TaskReceipt>(`/api/tasks/${id}/recheck`).then(res => res.data),
+    resolveTask: (id: number) => apiClient.post(`/api/tasks/${id}/resolve`, { remote_stopped: true, state_verified: true }).then(res => res.data),
     getStats: () => apiClient.get<ReleaseStats>('/api/stats').then(res => res.data),
     getTrackers: (params?: { skip?: number, limit?: number, search?: string }) =>
         apiClient.get<{ items: AggregateTracker[], total: number }>('/api/trackers', { params }).then(res => res.data),
-    getLatestCurrentReleases: () => apiClient.get<LatestCurrentReleaseSummary[]>('/api/releases/latest').then(res =>
-        res.data.map(normalizeLatestCurrentReleaseSummary),
-    ),
-    getReleaseHistory: (params?: { tracker?: string, skip?: number, limit?: number, search?: string, prerelease?: boolean }) =>
+    getLatestCurrentReleases: (limit?: number) => {
+        const config = limit !== undefined ? { params: { limit } } : undefined
+        const args: [string, ...unknown[]] = ['/api/releases/latest']
+        if (config !== undefined) {
+            args.push(config)
+        }
+        return apiClient.get<LatestCurrentReleaseSummary[]>(...args as [string]).then(res =>
+            res.data.map(normalizeLatestCurrentReleaseSummary),
+        )
+    },
+    getReleaseHistory: (params?: { tracker?: string, skip?: number, limit?: number, search?: string, prerelease?: boolean, channel?: string }) =>
         apiClient.get<{ items: ReleaseHistoryItem[], total: number, skip?: number, limit?: number }>('/api/releases', { params }).then(res => ({
             ...res.data,
             items: res.data.items.map(normalizeReleaseHistoryItem),
@@ -267,7 +282,7 @@ export const api = {
     createTracker: (data: CreateTrackerRequest) => apiClient.post<AggregateTracker>('/api/trackers', data).then(res => res.data),
     updateTracker: (name: string, data: UpdateTrackerRequest) => apiClient.put<AggregateTracker>(`/api/trackers/${name}`, data).then(res => res.data),
     deleteTracker: (name: string) => apiClient.delete(`/api/trackers/${name}`).then(res => res.data),
-    checkTracker: (name: string) => apiClient.post<TrackerStatus>(`/api/trackers/${name}/check`).then(res => res.data),
+    checkTracker: (name: string) => apiClient.post<TrackerStatus | TaskReceipt>(`/api/trackers/${name}/check`).then(res => res.data),
     getTracker: (name: string) => apiClient.get<AggregateTracker>(`/api/trackers/${name}`).then(res => res.data),
     getTrackerConfig: (name: string) => apiClient.get<AggregateTracker>(`/api/trackers/${name}/config`).then(res => res.data),
     getTrackerCurrentView: (trackerName: string) =>
@@ -324,6 +339,14 @@ export const api = {
     rotateEncryptionKey: (data: RotateSecurityKeyRequest) => apiClient.post<RotateEncryptionKeyResponse>('/api/settings/security-keys/encryption-key', data).then(res => res.data),
 
     // Runtime Connections
+    discoverSSHCompose: (runtimeConnectionId: number, signal?: AbortSignal) =>
+        apiClient.post<{items: Array<{id: string; engine: string; project: string; working_dir: string; config_files: string[]; env_files: string[]; profiles: string[]; tool: string | null; tool_choices: string[]; write_strategy: 'source' | 'override'; services: string[]; warnings: string[]; owner?: {executor_id: number; name: string} | null; ownership_verified?: boolean}>; tools: Array<{tool: string; engine: string; available: boolean; reason: string | null; alias_of?: string}>; warnings: string[]; truncated: boolean; read_only: boolean}>('/api/executors/ssh/compose/discover', {runtime_connection_id: runtimeConnectionId}, {signal}).then(res => res.data),
+    analyzeSSHCompose: (data: Record<string, unknown>, signal?: AbortSignal) =>
+        apiClient.post<{ tools: Array<{tool: string; available: boolean; reason: string | null}>; selected_tool: string | null; requires_tool_selection: boolean; services: Array<{service: string; image: string | null; expression: string | null; source: string; variable: string | null; write_file: string | null; safe_to_edit: boolean; warnings: string[]}> }>('/api/executors/ssh/compose/analyze', data, {signal}).then(res => res.data),
+    discoverSSHHostKey: (data: Partial<RuntimeConnection>) =>
+        apiClient.post<{ host_key: string; fingerprint: string; verified: boolean }>('/api/runtime-connections/ssh/host-key', data).then(res => res.data),
+    testSSHConnection: (data: Partial<RuntimeConnection>) =>
+        apiClient.post<{ success: boolean }>('/api/runtime-connections/ssh/test', data).then(res => res.data),
     getRuntimeConnections: (params?: { skip?: number, limit?: number, search?: string }) =>
         apiClient.get<PaginatedResponse<RuntimeConnection>>('/api/runtime-connections', { params }).then(res => res.data),
     getRuntimeConnection: (id: number) => apiClient.get<RuntimeConnection>(`/api/runtime-connections/${id}`).then(res => res.data),
@@ -347,7 +370,10 @@ export const api = {
     createExecutor: (data: CreateExecutorRequest) => apiClient.post('/api/executors', data).then(res => res.data),
     updateExecutor: (id: number, data: UpdateExecutorRequest) => apiClient.put(`/api/executors/${id}`, data).then(res => res.data),
     deleteExecutor: (id: number) => apiClient.delete(`/api/executors/${id}`).then(res => res.data),
-    runExecutor: (id: number) => apiClient.post<ExecutorRunResponse>(`/api/executors/${id}/run`).then(res => res.data),
+    runExecutor: (id: number) => apiClient.post<ExecutorRunResponse | TaskReceipt>(`/api/executors/${id}/run`).then(res => res.data),
+
+    recoverSSHCompose: (id: number, snapshotId: number, action: "restore_files" | "verify_and_unlock") =>
+        apiClient.post<{status: string; lock_retained: boolean} | TaskReceipt>(`/api/executors/${id}/ssh/recover`, {snapshot_id: snapshotId, action, remote_commands_stopped: true}).then(res => res.data),
 
     // Snapshot history + rollback
     getExecutorSnapshots: (id: number, params?: { page?: number, page_size?: number }) =>
@@ -361,5 +387,5 @@ export const api = {
     unlockExecutorSnapshot: (executorId: number, snapshotId: number) =>
         apiClient.post<LockSnapshotResponse>(`/api/executors/${executorId}/snapshots/${snapshotId}/unlock`).then(res => res.data),
     rollbackExecutor: (id: number, payload?: RollbackRequest) =>
-        apiClient.post<RollbackResponse>(`/api/executors/${id}/rollback`, payload ?? {}).then(res => res.data),
+        apiClient.post<RollbackResponse | TaskReceipt>(`/api/executors/${id}/rollback`, payload ?? {}).then(res => res.data),
 }

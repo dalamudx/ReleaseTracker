@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .services.task_effects import mark_deployment_mutation
+
 from .config import ExecutorConfig
 from .executor_scheduler_grouped_runtime_support import _ExecutorBindingRunResult
 from .executor_scheduler_run_lifecycle import ExecutorRunOutcome
@@ -259,6 +261,7 @@ class ExecutorSchedulerComposeRuntime:
                         run_id=run_id,
                         current_image=current_image_summary,
                     )
+                await mark_deployment_mutation()
                 update_result = await adapter.update_compose_services(
                     executor_config.target_ref,
                     service_target_images,

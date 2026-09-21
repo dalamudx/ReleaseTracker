@@ -1,3 +1,4 @@
+import { ReadinessSummary } from "./ReadinessSummary"
 import { useEffect, useMemo, useState } from "react"
 import {
     ArrowRight,
@@ -56,10 +57,11 @@ interface ExecutorExecutionHistoryPanelProps {
 
 type StatusKey = ExecutorRunHistory["status"]
 
-const STATUS_VARIANT_MAP: Record<StatusKey, "default" | "destructive" | "secondary" | "outline"> = {
+const STATUS_VARIANT_MAP: Record<StatusKey, "success" | "info" | "destructive" | "secondary" | "outline"> = {
     queued: "secondary",
-    running: "secondary",
-    success: "default",
+    running: "info",
+    health_checking: "info",
+    success: "success",
     failed: "destructive",
     skipped: "outline",
 }
@@ -67,6 +69,7 @@ const STATUS_VARIANT_MAP: Record<StatusKey, "default" | "destructive" | "seconda
 const STATUS_ICON_MAP: Record<StatusKey, React.ReactNode> = {
     queued: <Clock className="h-3 w-3" />,
     running: <Clock className="h-3 w-3 animate-pulse" />,
+    health_checking: <Clock className="h-3 w-3" />,
     success: <CheckCircle2 className="h-3 w-3" />,
     failed: <XCircle className="h-3 w-3" />,
     skipped: <CircleSlash className="h-3 w-3" />,
@@ -109,10 +112,53 @@ function buildStructuredImageChangeRows(services: ExecutorRunServiceDiagnostic[]
     }))
 }
 
+function parseDelimitedServiceVersions(
+    versionString: string | null | undefined,
+): Map<string, string> | null {
+    if (!versionString || typeof versionString !== "string") return null
+    const segments = versionString
+        .split(/[;\n]/)
+        .map((segment) => segment.trim())
+        .filter(Boolean)
+    if (segments.length <= 1) return null
+
+    const result = new Map<string, string>()
+    for (const segment of segments) {
+        const colonIndex = segment.indexOf(":")
+        if (colonIndex <= 0) return null
+        const serviceName = segment.slice(0, colonIndex).trim()
+        const imageRef = segment.slice(colonIndex + 1).trim()
+        if (!/^[a-zA-Z0-9_-]+$/.test(serviceName) || !imageRef) {
+            return null
+        }
+        result.set(serviceName, imageRef)
+    }
+
+    return result.size > 0 ? result : null
+}
+
 function buildImageChangeRows(
     fromVersion: string | null | undefined,
     toVersion: string | null | undefined,
 ): ImageChangeRow[] {
+    const fromMap = parseDelimitedServiceVersions(fromVersion)
+    const toMap = parseDelimitedServiceVersions(toVersion)
+
+    if (fromMap || toMap) {
+        const allServices = Array.from(
+            new Set([...(fromMap?.keys() ?? []), ...(toMap?.keys() ?? [])]),
+        ).sort()
+
+        if (allServices.length > 0) {
+            return allServices.map((service) => ({
+                key: `parsed-service-${service}`,
+                service,
+                fromValue: fromMap?.get(service) || "-",
+                toValue: toMap?.get(service) || "-",
+            }))
+        }
+    }
+
     return [
         {
             key: "single-image-change",
@@ -162,7 +208,7 @@ function ExecutorHistoryImageChangeList({
     valueKind: "image" | "version"
     t: ReturnType<typeof useTranslation>["t"]
 }) {
-    const rows = services ? buildStructuredImageChangeRows(services) : buildImageChangeRows(fromVersion, toVersion)
+    const rows = services?.length ? buildStructuredImageChangeRows(services) : buildImageChangeRows(fromVersion, toVersion)
     const hasServiceColumn = rows.some((row) => row.service)
     const titleKey = valueKind === "version" ? "executors.review.versionChanges" : "executors.review.imageChanges"
     const fromLabelKey = valueKind === "version" ? "executors.history.table.fromVersion" : "executors.history.table.fromImage"
@@ -187,7 +233,10 @@ function ExecutorHistoryImageChangeList({
                     {rows.map((row) => (
                         <li
                             key={row.key}
-                            className="grid min-w-0 items-start gap-2 px-3 py-2 sm:grid-cols-[minmax(0,auto)_minmax(0,1fr)_auto_minmax(0,1fr)]"
+                            role={row.service ? "group" : undefined}
+                            aria-label={row.service ?? undefined}
+                            data-testid={row.service ? "executor-history-service-change" : undefined}
+                            className="grid min-w-0 items-start gap-2 px-3 py-2 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)_auto_minmax(0,1fr)]"
                         >
                             {hasServiceColumn ? (
                                 <span
@@ -320,41 +369,138 @@ export function ExecutorExecutionHistoryPanel({ executor, refreshKey }: Executor
 
     return (
         <div className="flex h-full min-h-0 flex-col gap-4">
-            {/* Executor identity card — name, runtime, target. */}
-            <div className="rounded-lg border border-border/60 bg-muted/10 p-3">
-                <div className="min-w-0 space-y-1.5">
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <span className="truncate text-sm font-semibold text-foreground">{executor.name}</span>
-                        <Badge variant={executor.enabled ? "secondary" : "outline"} className="h-5 text-[10px]">
-                            {executor.enabled ? t("common.enabled") : t("common.disabled")}
-                        </Badge>
-                    </div>
-                    <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-                        <span className="shrink-0 font-medium uppercase tracking-wide">{executor.runtime_type}</span>
-                        <span aria-hidden>·</span>
-                        <span className="truncate">{executor.runtime_connection_name || "-"}</span>
-                    </div>
-                    {targetLabel ? (
-                        <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">
-                            <span className="truncate font-medium text-foreground/80">{targetLabel.title}</span>
-                            {targetLabel.summary && targetLabel.summary !== "-" ? (
-                                <>
-                                    <span aria-hidden>·</span>
-                                    <span className="truncate">{targetLabel.summary}</span>
-                                </>
-                            ) : null}
-                            {targetKindLabel ? (
-                                <>
-                                    <span aria-hidden>·</span>
-                                    <Badge variant="outline" className="h-5 border-border/60 text-[10px]">
-                                        {targetKindLabel}
+            {/* Unified Executor Target & Config Card */}
+            {(() => {
+                const targetRef = (executor.target_ref ?? {}) as Record<string, unknown>
+                const runtimeUpper = (executor.runtime_type || "").toUpperCase()
+                const connectionName = executor.runtime_connection_name?.trim() || ""
+                const connectionValue = connectionName ? `${runtimeUpper} · ${connectionName}` : runtimeUpper || "—"
+
+                const targetKind = targetKindLabel || targetLabel?.badges[0] || runtimeUpper
+                let targetToolBadge: string | null = null
+                let targetObject: string
+                let locationLabel: string
+                let locationValue: string
+                let locationMono = false
+
+                if (targetRef.mode === "ssh_compose") {
+                    targetToolBadge = typeof targetRef.tool === "string" ? targetRef.tool : null
+                    targetObject = typeof targetRef.project === "string" ? targetRef.project : "—"
+                    locationLabel = t("executors.target.details.workingDir")
+                    locationValue = typeof targetRef.working_dir === "string" ? targetRef.working_dir : "—"
+                    locationMono = true
+                } else if (targetRef.mode === "docker_compose") {
+                    targetObject = typeof targetRef.project === "string" ? targetRef.project : "—"
+                    locationLabel = t("executors.target.details.workingDir")
+                    locationValue = typeof targetRef.working_dir === "string" ? targetRef.working_dir : "—"
+                    locationMono = true
+                } else if (targetRef.mode === "kubernetes_workload") {
+                    const kind = typeof targetRef.kind === "string" ? targetRef.kind : ""
+                    const name = typeof targetRef.name === "string" ? targetRef.name : ""
+                    targetObject = [kind, name].filter(Boolean).join(" / ") || (targetLabel?.title ?? "—")
+                    locationLabel = t("executors.target.details.namespace")
+                    locationValue = typeof targetRef.namespace === "string" ? targetRef.namespace : "default"
+                } else if (targetRef.mode === "helm_release") {
+                    targetObject = typeof targetRef.release_name === "string" ? targetRef.release_name : (targetLabel?.title ?? "—")
+                    locationLabel = t("executors.target.details.namespace")
+                    locationValue = typeof targetRef.namespace === "string" ? targetRef.namespace : "default"
+                } else if (targetRef.mode === "portainer_stack") {
+                    targetObject = typeof targetRef.stack_name === "string" ? targetRef.stack_name : (targetLabel?.title ?? "—")
+                    locationLabel = t("executors.target.details.endpointId")
+                    locationValue = targetRef.endpoint_id ? `Endpoint #${targetRef.endpoint_id}` : (typeof targetRef.project_path === "string" ? targetRef.project_path : "—")
+                } else {
+                    const containerName = typeof targetRef.container_name === "string" ? targetRef.container_name : ""
+                    const containerId = typeof targetRef.container_id === "string" ? targetRef.container_id.slice(0, 12) : ""
+                    targetObject = containerName || containerId || (targetLabel?.title ?? "—")
+                    locationLabel = t("executors.target.details.containerId")
+                    locationValue = containerId || "—"
+                    locationMono = true
+                }
+
+                let trackerValue = "—"
+                if (Array.isArray(executor.service_bindings) && executor.service_bindings.length > 1) {
+                    trackerValue = executor.tracker_name
+                        ? `${executor.tracker_name} (${t("executors.target.serviceCountSummary", { count: executor.service_bindings.length })})`
+                        : t("executors.target.serviceCountSummary", { count: executor.service_bindings.length })
+                } else if (executor.tracker_name) {
+                    const channel = executor.channel_name ? t(`channel.${executor.channel_name}`, { defaultValue: executor.channel_name }) : ""
+                    trackerValue = channel ? `${executor.tracker_name} / ${channel}` : executor.tracker_name
+                }
+
+                const metadataFields = [
+                    {
+                        key: "connection",
+                        label: t("executors.fields.runtimeConnection"),
+                        value: connectionValue,
+                        mono: false,
+                    },
+                    {
+                        key: "target",
+                        label: t("executors.table.target"),
+                        value: targetObject,
+                        mono: false,
+                    },
+                    {
+                        key: "location",
+                        label: locationLabel,
+                        value: locationValue,
+                        mono: locationMono,
+                    },
+                    {
+                        key: "tracker",
+                        label: t("executors.fields.tracker"),
+                        value: trackerValue,
+                        mono: false,
+                    },
+                ]
+
+                return (
+                    <div className="rounded-lg border border-border/60 bg-muted/10 p-3 shadow-xs" data-testid="executor-target-info-card">
+                        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-border/40 pb-2">
+                            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                                <Badge variant="outline" className="border-border/60 text-[10px] font-medium tracking-wide uppercase">
+                                    {targetKind}
+                                </Badge>
+                                {targetToolBadge ? (
+                                    <Badge variant="secondary" className="h-5 text-[10px]">
+                                        {targetToolBadge}
                                     </Badge>
-                                </>
-                            ) : null}
+                                ) : null}
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                                <Badge variant="outline" className="h-5 text-[10px]">
+                                    {t(`executors.modes.${executor.update_mode}`)}
+                                </Badge>
+                                <Badge variant={executor.enabled ? "secondary" : "outline"} className="h-5 text-[10px]">
+                                    {executor.enabled ? t("common.enabled") : t("common.disabled")}
+                                </Badge>
+                            </div>
                         </div>
-                    ) : null}
-                </div>
-            </div>
+
+                        <div className="mt-2.5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                            {metadataFields.map((field) => (
+                                <div
+                                    key={field.key}
+                                    className="min-w-0 rounded-md border border-border/40 bg-background/60 p-2"
+                                >
+                                    <div className="truncate text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                                        {field.label}
+                                    </div>
+                                    <div
+                                        className={cn(
+                                            "mt-0.5 truncate text-xs font-semibold text-foreground",
+                                            field.mono && "font-mono text-[11px]"
+                                        )}
+                                        title={field.value}
+                                    >
+                                        {field.value}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )
+            })()}
 
             {/* Filter toolbar — search, status filter, clear action. */}
             <div className="flex flex-none flex-wrap items-center gap-2">
@@ -457,7 +603,7 @@ export function ExecutorExecutionHistoryPanel({ executor, refreshKey }: Executor
                                                     className="h-5 shrink-0 gap-1 text-[10px] capitalize"
                                                 >
                                                     {STATUS_ICON_MAP[status]}
-                                                    {t(`executors.results.${status}`)}
+                                                    {status === "health_checking" ? t("readiness.waiting") : t(`executors.results.${status}`)}
                                                 </Badge>
                                                 {typeof entry.diagnostics?.recovery_outcome === "string" ? (
                                                     <Badge
@@ -491,6 +637,8 @@ export function ExecutorExecutionHistoryPanel({ executor, refreshKey }: Executor
                                         </div>
 
                                         <div className="mt-2.5 space-y-2">
+                                            <ReadinessSummary result={entry.diagnostics?.health_check} />
+                                            <ReadinessSummary result={entry.diagnostics?.health_recheck} recheck />
                                             <ExecutorHistoryImageChangeList
                                                 fromVersion={entry.from_version}
                                                 toVersion={entry.to_version}

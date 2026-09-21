@@ -183,14 +183,23 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
 
         apps_api = self._get_apps_api()
         if kind == "Deployment":
-            apps_api.patch_namespaced_deployment(name, namespace, patch_body)
+            submitted = apps_api.patch_namespaced_deployment(name, namespace, patch_body)
         elif kind == "StatefulSet":
-            apps_api.patch_namespaced_stateful_set(name, namespace, patch_body)
+            submitted = apps_api.patch_namespaced_stateful_set(name, namespace, patch_body)
         elif kind == "DaemonSet":
-            apps_api.patch_namespaced_daemon_set(name, namespace, patch_body)
+            submitted = apps_api.patch_namespaced_daemon_set(name, namespace, patch_body)
         else:
             raise ValueError("Unsupported Kubernetes workload kind")
 
+        # Preserve the API response identity, not a later GET that may observe an
+        # external writer. The durable handoff consumes this before releasing ownership.
+        self._readiness_submission = {
+            "namespace": namespace,
+            "kind": kind,
+            "name": name,
+            "metadata": self._readiness_fields(getattr(submitted, "metadata", None)),
+            "images": dict(service_target_images),
+        }
         return RuntimeUpdateResult(
             updated=True,
             old_image=None,
@@ -768,6 +777,26 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
 
         return workloads
 
+    @staticmethod
+    def _readiness_fields(value):
+        if value is None:
+            return {}
+        if hasattr(value, "to_dict"):
+            return value.to_dict()
+        if isinstance(value, dict):
+            return value
+        if hasattr(value, "__dict__"):
+            return {
+                key: (
+                    KubernetesRuntimeAdapter._readiness_fields(item)
+                    if hasattr(item, "__dict__")
+                    else item
+                )
+                for key, item in vars(value).items()
+                if not key.startswith("_")
+            }
+        return {}
+
     def _workload_from_obj(self, kind: str, obj) -> dict[str, Any]:
         containers = obj.spec.template.spec.containers if obj.spec and obj.spec.template else []
         labels = getattr(obj.metadata, "labels", None) or {}
@@ -775,6 +804,10 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
         return {
             "kind": kind,
             "name": obj.metadata.name,
+            # Preserve controller identity/status for durable rollout observation.
+            "metadata": self._readiness_fields(obj.metadata),
+            "spec": self._readiness_fields(obj.spec),
+            "status": self._readiness_fields(getattr(obj, "status", None)),
             "labels": labels if isinstance(labels, dict) else {},
             "annotations": annotations if isinstance(annotations, dict) else {},
             "containers": [

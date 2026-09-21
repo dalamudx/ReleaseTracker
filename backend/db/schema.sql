@@ -31,7 +31,7 @@ CREATE TABLE notifiers (
     description TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
-, language TEXT NOT NULL DEFAULT 'en');
+, language TEXT NOT NULL DEFAULT 'en', template_id INTEGER REFERENCES notification_templates(id));
 CREATE TABLE trackers (
     name TEXT PRIMARY KEY,
     type TEXT NOT NULL,
@@ -504,10 +504,133 @@ CREATE TABLE source_refresh_requests (
     lease_until REAL,
     attempts INTEGER NOT NULL DEFAULT 0,
     reason TEXT NOT NULL DEFAULT '',
-    source_fetch_run_id INTEGER REFERENCES source_fetch_runs(id) ON DELETE SET NULL,
+    source_fetch_run_id INTEGER REFERENCES source_fetch_runs(id) ON DELETE SET NULL, task_id INTEGER REFERENCES tasks(id),
     UNIQUE(delivery_id, tracker_source_id)
 );
 CREATE INDEX idx_source_refresh_due ON source_refresh_requests(state, due_at);
+CREATE TABLE ssh_compose_ownership (
+    executor_id INTEGER PRIMARY KEY REFERENCES executors(id) ON DELETE CASCADE,
+    runtime_key TEXT,
+    project TEXT NOT NULL,
+    working_dir TEXT NOT NULL,
+    UNIQUE(runtime_key, project)
+);
+CREATE TABLE tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL CHECK(kind IN ('fetch', 'deploy', 'recover')),
+    resource_key TEXT NOT NULL,
+    dedupe_key TEXT NOT NULL,
+    target_label TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'queued' CHECK(state IN (
+        'queued','running','retry_wait','succeeded','no_change','skipped',
+        'failed','cancelled','superseded','needs_attention'
+    )),
+    max_retries INTEGER NOT NULL CHECK(max_retries BETWEEN 0 AND 10),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    due_at REAL NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    owner TEXT,
+    lease_until REAL,
+    error_code TEXT,
+    message TEXT,
+    result TEXT
+, cleared_at REAL);
+CREATE INDEX tasks_dispatch ON tasks(kind,state,due_at,id);
+CREATE INDEX tasks_resource ON tasks(resource_key,state);
+CREATE INDEX tasks_pending_dedupe ON tasks(dedupe_key)
+    WHERE state IN ('queued','retry_wait');
+CREATE UNIQUE INDEX tasks_running_resource ON tasks(resource_key)
+    WHERE state='running';
+CREATE TABLE task_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES tasks(id),
+    attempt INTEGER NOT NULL,
+    owner TEXT NOT NULL,
+    started_at REAL NOT NULL,
+    finished_at REAL,
+    state TEXT NOT NULL,
+    error_code TEXT,
+    message TEXT,
+    result TEXT,
+    UNIQUE(task_id, attempt)
+);
+CREATE TABLE task_triggers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES tasks(id),
+    trigger_mode TEXT NOT NULL,
+    trigger_key TEXT UNIQUE,
+    created_at REAL NOT NULL
+);
+CREATE INDEX task_triggers_task ON task_triggers(task_id);
+CREATE INDEX source_refresh_task ON source_refresh_requests(task_id);
+CREATE INDEX tasks_visible ON tasks(id DESC) WHERE cleared_at IS NULL;
+CREATE TABLE deployment_observations (
+    task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    run_id INTEGER NOT NULL REFERENCES executor_run_history(id) ON DELETE CASCADE,
+    executor_id INTEGER NOT NULL,
+    resource_scope TEXT NOT NULL,
+    executor_config TEXT NOT NULL,
+    verification TEXT NOT NULL,
+    finalization TEXT NOT NULL,
+    started_at REAL NOT NULL,
+    deadline REAL NOT NULL,
+    due_at REAL NOT NULL,
+    stable_since REAL,
+    state TEXT NOT NULL DEFAULT 'waiting' CHECK(state IN ('waiting','finalizing','completed','blocked')),
+    outcome TEXT,
+    result TEXT,
+    finished_at REAL
+);
+CREATE INDEX deployment_observations_due ON deployment_observations(state,due_at);
+CREATE TABLE executor_notification_outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL,
+    notifier_id INTEGER NOT NULL,
+    event TEXT NOT NULL,
+    final_result TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sending', 'delivered', 'failed', 'discarded')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    available_at REAL NOT NULL,
+    created_at REAL NOT NULL,
+    delivered_at REAL,
+    UNIQUE(run_id, notifier_id, final_result)
+);
+CREATE INDEX executor_notification_outbox_due ON executor_notification_outbox(status, available_at);
+CREATE TABLE executor_notification_intents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL,
+    final_result TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    notify_health_result INTEGER NOT NULL CHECK (notify_health_result IN (0,1)),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','expanded')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    available_at REAL NOT NULL,
+    created_at REAL NOT NULL,
+    expanded_at REAL,
+    UNIQUE(run_id,final_result)
+);
+CREATE INDEX executor_notification_intents_due ON executor_notification_intents(status,available_at);
+CREATE TABLE notification_templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    translations TEXT NOT NULL DEFAULT '{}',
+    revision INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL
+);
+CREATE TRIGGER notifier_template_insert BEFORE INSERT ON notifiers
+WHEN NEW.template_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM notification_templates WHERE id=NEW.template_id)
+BEGIN SELECT RAISE(ABORT, 'notification_template_not_found'); END;
+CREATE TRIGGER notifier_template_update BEFORE UPDATE OF template_id ON notifiers
+WHEN NEW.template_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM notification_templates WHERE id=NEW.template_id)
+BEGIN SELECT RAISE(ABORT, 'notification_template_not_found'); END;
+CREATE TRIGGER notification_template_in_use BEFORE DELETE ON notification_templates
+WHEN EXISTS (SELECT 1 FROM notifiers WHERE template_id=OLD.id)
+BEGIN SELECT RAISE(ABORT, 'notification_template_in_use'); END;
 -- Dbmate schema migrations
 INSERT INTO "schema_migrations" (version) VALUES
   ('20000101000001'),
@@ -519,4 +642,12 @@ INSERT INTO "schema_migrations" (version) VALUES
   ('20260809000001'),
   ('20260906000001'),
   ('20260916000001'),
-  ('20260916000002');
+  ('20260916000002'),
+  ('20260918000001'),
+  ('20260919000001'),
+  ('20260919000002'),
+  ('20260920000001'),
+  ('20260920000002'),
+  ('20260920000003'),
+  ('20260920000004'),
+  ('20260921000001');

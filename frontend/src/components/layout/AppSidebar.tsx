@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router"
-import { LayoutDashboard, Boxes, Key, Package, Webhook, Settings, Waypoints, Plug2 } from "lucide-react"
+import { navigationItems, isNavigationActive } from "@/lib/navigation"
 import { useTranslation } from "react-i18next"
 
 import { Badge } from "@/components/ui/badge"
@@ -14,6 +14,7 @@ import {
     SidebarGroupContent,
     SidebarRail,
     SidebarFooter,
+    useSidebar,
 } from "@/components/ui/sidebar"
 import { UserNav } from "./UserNav"
 import { assetPath } from "@/lib/base-path"
@@ -22,18 +23,10 @@ const appVersion = import.meta.env.VITE_APP_VERSION
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     const location = useLocation()
+    const { isMobile, setOpenMobile } = useSidebar()
     const { t } = useTranslation()
 
-    const navItems = [
-        { title: t('sidebar.dashboard'), url: "/", icon: LayoutDashboard },
-        { title: t('sidebar.trackers'), url: "/trackers", icon: Boxes },
-        { title: t('sidebar.executors'), url: "/executors", icon: Waypoints },
-        { title: t('sidebar.runtimeConnections'), url: "/runtime-connections", icon: Plug2 },
-        { title: t('sidebar.history'), url: "/history", icon: Package },
-        { title: t('sidebar.credentials'), url: "/credentials", icon: Key },
-        { title: t('sidebar.webhooks'), url: "/webhooks", icon: Webhook },
-        { title: t('sidebar.settings'), url: "/settings", icon: Settings },
-    ]
+    const navItems = navigationItems.map(item => ({ ...item, title: t(item.titleKey) }))
 
     return (
         <Sidebar collapsible="icon" className="border-r border-border/50 bg-background/60 backdrop-blur-xl" {...props}>
@@ -65,11 +58,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                                 <SidebarMenuItem key={item.url}>
                                     <SidebarMenuButton
                                         asChild
-                                        isActive={location.pathname === item.url || (item.url !== "/" && location.pathname.startsWith(item.url))}
+                                        isActive={isNavigationActive(location.pathname, item.url)}
                                         tooltip={item.title}
                                         className="data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:font-medium transition-all duration-200"
                                     >
-                                        <Link to={item.url}>
+                                        <Link to={item.url} aria-current={isNavigationActive(location.pathname, item.url) ? "page" : undefined} onClick={() => { if (isMobile) setOpenMobile(false) }}>
                                             <item.icon />
                                             <span>{item.title}</span>
                                         </Link>

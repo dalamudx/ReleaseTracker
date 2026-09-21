@@ -1,4 +1,5 @@
 import type { TFunction } from "i18next"
+import { READINESS_FIELDS } from "@/lib/readiness"
 
 import type {
     ContainerExecutorTargetRef,
@@ -42,6 +43,13 @@ export interface ExecutorFormValues {
     // round-trip through <input type="number"> without fighting React
     // Hook Form defaults; parsed back to integers when the payload is
     // built.
+    health_check_notify_result?: boolean
+    health_check_readiness_enabled?: boolean
+    health_check_use_system_readiness_defaults?: boolean
+    health_check_readiness_timeout_seconds?: string
+    health_check_readiness_interval_seconds?: string
+    health_check_readiness_attempt_timeout_seconds?: string
+    health_check_readiness_stable_seconds?: string
     health_check_strategy: HealthCheckStrategy
     health_check_failure_policy: HealthCheckFailurePolicy
     health_check_grace_period_seconds: string
@@ -72,7 +80,7 @@ export interface ExecutorTargetDetailItem {
 }
 
 export interface ExecutorTargetDisplay {
-    kind: "container" | "kubernetes" | "kubernetes_workload" | "helm_release" | "portainer_stack" | "docker_compose"
+    kind: "container" | "kubernetes" | "kubernetes_workload" | "helm_release" | "portainer_stack" | "docker_compose" | "ssh_compose"
     title: string
     subtitle: string | null
     summary: string
@@ -325,11 +333,11 @@ export function isHelmReleaseTarget(targetRef: ExecutorTargetRef): targetRef is 
 }
 
 export function usesGroupedServiceBindings(targetRef: ExecutorTargetRef): boolean {
-    return isPortainerStackTarget(targetRef) || isDockerComposeTarget(targetRef) || isKubernetesWorkloadTarget(targetRef)
+    return targetRef.mode === "ssh_compose" || isPortainerStackTarget(targetRef) || isDockerComposeTarget(targetRef) || isKubernetesWorkloadTarget(targetRef)
 }
 
 export function getSingleContainerCurrentImage(
-    runtimeType: RuntimeType,
+    runtimeType: RuntimeConnection["type"],
     targetRef: (ExecutorTargetRef & { image?: unknown }) | null | undefined,
 ): string | null {
     if (!targetRef || (runtimeType !== "docker" && runtimeType !== "podman")) {
@@ -751,6 +759,17 @@ export function buildExecutorTargetDisplay(
     targetRef: ExecutorTargetRef,
     t: TFunction,
 ): ExecutorTargetDisplay {
+    if (targetRef.mode === "ssh_compose") {
+        return {
+            kind: "ssh_compose",
+            title: targetRef.project,
+            subtitle: targetRef.working_dir,
+            summary: `${targetRef.project} / ${targetRef.working_dir}`,
+            badges: ["SSH Compose", targetRef.tool],
+            details: [{label: t("sshExecutor.strategy"), value: t(`sshExecutor.${targetRef.write_strategy}`)}],
+            groupedServices: getGroupedBindingServiceOptions(targetRef),
+        }
+    }
     if (isKubernetesTarget(runtimeType)) {
         const namespace = stringifyTargetValue(targetRef.namespace)
         if (isHelmReleaseTarget(targetRef)) {
@@ -935,6 +954,7 @@ export function createDefaultExecutorValues(defaultRuntimeConnection?: RuntimeCo
         || defaultRuntimeConnection?.type === "podman"
         || defaultRuntimeConnection?.type === "kubernetes"
         || defaultRuntimeConnection?.type === "portainer"
+        || defaultRuntimeConnection?.type === "ssh"
             ? defaultRuntimeConnection.type
             : "docker"
 
@@ -954,7 +974,14 @@ export function createDefaultExecutorValues(defaultRuntimeConnection?: RuntimeCo
         maintenance_days: [],
         maintenance_start_time: "02:00",
         maintenance_end_time: "05:00",
-        health_check_strategy: "auto",
+        health_check_notify_result: false,
+        health_check_readiness_enabled: true,
+        health_check_use_system_readiness_defaults: true,
+        health_check_readiness_timeout_seconds: "600",
+        health_check_readiness_interval_seconds: "5",
+        health_check_readiness_attempt_timeout_seconds: "10",
+        health_check_readiness_stable_seconds: "10",
+        health_check_strategy: "none",
         health_check_failure_policy: "mark_failed",
         health_check_grace_period_seconds: "15",
         health_check_attempt_timeout_seconds: "10",
@@ -973,6 +1000,12 @@ export function createDefaultExecutorValues(defaultRuntimeConnection?: RuntimeCo
 
 export function buildExecutorFormValues(config: ExecutorConfig): ExecutorFormValues {
     const health = config.health_check ?? null
+    const storedStrategy = health?.strategy ?? "none"
+    const supplementalStrategy = storedStrategy === "manual_http" || storedStrategy === "manual_tcp"
+        ? storedStrategy
+        : "none"
+    const readinessEnabled = health?.readiness_enabled
+        ?? (health ? storedStrategy !== "none" || health.use_default_strategy : true)
     return {
         name: config.name,
         runtime_type: config.runtime_type,
@@ -989,7 +1022,14 @@ export function buildExecutorFormValues(config: ExecutorConfig): ExecutorFormVal
         maintenance_days: (config.maintenance_window?.days_of_week ?? []).map((day) => String(day)),
         maintenance_start_time: config.maintenance_window?.start_time ?? "02:00",
         maintenance_end_time: config.maintenance_window?.end_time ?? "05:00",
-        health_check_strategy: health?.strategy ?? "none",
+        health_check_notify_result: health?.notify_result ?? false,
+        health_check_readiness_enabled: readinessEnabled,
+        health_check_use_system_readiness_defaults: health?.use_system_readiness_defaults ?? true,
+        health_check_readiness_timeout_seconds: String(health?.readiness_timeout_seconds ?? 600),
+        health_check_readiness_interval_seconds: String(health?.readiness_interval_seconds ?? 5),
+        health_check_readiness_attempt_timeout_seconds: String(health?.readiness_attempt_timeout_seconds ?? 10),
+        health_check_readiness_stable_seconds: String(health?.readiness_stable_seconds ?? 10),
+        health_check_strategy: supplementalStrategy,
         health_check_failure_policy: normalizeHealthCheckFailurePolicy(health?.failure_policy),
         health_check_grace_period_seconds: String(health?.grace_period_seconds ?? 0),
         health_check_attempt_timeout_seconds: String(health?.attempt_timeout_seconds ?? 0),
@@ -1081,6 +1121,11 @@ export function getExecutorTargetValidationMessage({
 
     if (selectedRuntimeConnection.type !== values.runtime_type) {
         return t("executors.validation.runtimeMismatch")
+    }
+
+    if (values.runtime_type === "ssh") {
+        return selectedTargetRef.mode === "ssh_compose" && selectedTargetRef.project && selectedTargetRef.working_dir && Array.isArray(selectedTargetRef.services) && selectedTargetRef.services.length
+            ? null : t("sshExecutor.analyzeFirst")
     }
 
     if (values.runtime_type === "kubernetes") {
@@ -1299,7 +1344,14 @@ export function getExecutorValidationMessage({
 }
 
 function getHealthCheckValidationMessage(values: ExecutorFormValues, t: TFunction): string | null {
-    if (values.health_check_strategy === "none") {
+    if (!(values.health_check_readiness_enabled ?? true)) {
+        return null
+    }
+    for (const field of READINESS_FIELDS) {
+        const raw = values[`health_check_${field.key}`] ?? String(field.defaultValue)
+        if (!/^\d+$/.test(raw) || Number(raw) < field.min || Number(raw) > field.max) return t("readiness.invalid")
+    }
+    if (values.runtime_type === "ssh" || values.health_check_strategy === "none") {
         return null
     }
 
@@ -1380,7 +1432,9 @@ export function buildExecutorPayload({
         update_mode: values.update_mode,
         image_selection_mode: values.image_selection_mode,
         image_reference_mode: values.image_reference_mode,
-        target_ref: selectedTargetRef,
+        target_ref: selectedTargetRef.mode === "ssh_compose"
+            ? Object.fromEntries(Object.entries(selectedTargetRef).filter(([key]) => key !== "services" && key !== "service_count")) as ExecutorTargetRef
+            : selectedTargetRef,
         service_bindings: resolvedComposeBindings,
         maintenance_window: values.update_mode === "maintenance_window"
             ? {
@@ -1400,9 +1454,21 @@ function normalizeHealthCheckFailurePolicy(value: unknown): HealthCheckFailurePo
 }
 
 function buildHealthCheckPayload(values: ExecutorFormValues, existingHealthCheck: HealthCheckProfile | null): HealthCheckProfile {
-    const strategy = values.health_check_strategy
+    const readinessEnabled = values.health_check_readiness_enabled ?? true
+    const strategy = readinessEnabled
+        && values.runtime_type !== "ssh"
+        && (values.health_check_strategy === "manual_http" || values.health_check_strategy === "manual_tcp")
+        ? values.health_check_strategy
+        : "none"
     return {
         strategy,
+        notify_result: readinessEnabled && (values.health_check_notify_result ?? false),
+        readiness_enabled: readinessEnabled,
+        use_system_readiness_defaults: values.health_check_use_system_readiness_defaults ?? true,
+        readiness_timeout_seconds: Number(values.health_check_readiness_timeout_seconds ?? 600),
+        readiness_interval_seconds: Number(values.health_check_readiness_interval_seconds ?? 5),
+        readiness_attempt_timeout_seconds: Number(values.health_check_readiness_attempt_timeout_seconds ?? 10),
+        readiness_stable_seconds: Number(values.health_check_readiness_stable_seconds ?? 10),
         use_default_strategy: false,
         failure_policy: strategy === "none" ? "mark_failed" : normalizeHealthCheckFailurePolicy(values.health_check_failure_policy),
         grace_period_seconds: toNonNegativeInt(values.health_check_grace_period_seconds),
@@ -1544,6 +1610,7 @@ export function getApiErrorDetailMessage(error: unknown): string | null {
 }
 
 export function formatTargetRef(runtimeType: RuntimeType, targetRef: ExecutorTargetRef): string {
+    if (targetRef.mode === "ssh_compose") return [targetRef.project, targetRef.working_dir].filter(Boolean).join(" / ") || "-"
     if (runtimeType === "kubernetes") {
         if (isHelmReleaseTarget(targetRef)) {
             return [targetRef.namespace, targetRef.release_name, targetRef.chart_name]

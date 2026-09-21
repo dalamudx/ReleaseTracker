@@ -23,10 +23,6 @@ interface RecentReleasesProps {
     loading: boolean
 }
 
-// Source-type colour accents come from the shared entity-colour helper so
-// they match the other list pages.
-
-
 export function RecentReleases({ releases, loading }: RecentReleasesProps) {
     const { t, i18n } = useTranslation()
     const formatDate = useDateFormatter()
@@ -65,26 +61,30 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
 
     return (
         <>
-            <Card className="glass-card flex h-full min-h-0 flex-col">
-                <CardHeader className="flex-none pb-3">
-                    <CardTitle className="text-base">{t("dashboard.recentReleases.title")}</CardTitle>
-                    <CardDescription className="text-xs">
-                        {t("dashboard.recentReleases.description")}
-                    </CardDescription>
+            <Card className="glass-card flex h-full min-h-0 flex-col shadow-sm">
+                <CardHeader className="flex-none p-4 pb-2.5">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <CardTitle className="text-sm font-semibold">{t("dashboard.recentReleases.title")}</CardTitle>
+                            <CardDescription className="text-xs">
+                                {t("dashboard.recentReleases.description")}
+                            </CardDescription>
+                        </div>
+                    </div>
                 </CardHeader>
-                <CardContent className="flex min-h-0 flex-1 flex-col px-0 pb-3">
+                <CardContent className="flex min-h-0 flex-1 flex-col p-0 overflow-hidden">
                     {loading ? (
-                        <div className="space-y-1.5 px-4">
+                        <div className="space-y-1.5 p-3">
                             {[1, 2, 3, 4, 5].map((i) => (
-                                <div key={i} className="h-14 w-full animate-pulse rounded-lg bg-muted/40" />
+                                <div key={i} className="h-8 w-full animate-pulse rounded bg-muted/40" />
                             ))}
                         </div>
                     ) : releases.length === 0 ? (
-                        <div className="flex flex-1 items-center justify-center px-6 text-sm text-muted-foreground">
+                        <div className="flex flex-1 items-center justify-center p-6 text-xs text-muted-foreground">
                             {t("dashboard.recentReleases.noReleases")}
                         </div>
                     ) : (
-                        <ul className="flex min-h-0 flex-1 flex-col divide-y divide-border/40 overflow-y-auto">
+                        <ul className="flex flex-col divide-y divide-border/40">
                             {releases.map((release) => {
                                 const sourceType = release.primary_source?.source_type
                                     ?? release.primary_source_type
@@ -101,70 +101,73 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
                                 return (
                                     <li
                                         key={`${release.tracker_release_history_id}-${release.published_at}`}
-                                        className="group relative grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-2 px-4 py-2.5 transition-colors hover:bg-muted/40 sm:grid-cols-[minmax(0,1fr)_minmax(0,27rem)_auto] sm:gap-x-3"
+                                        className="group relative flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-muted/40"
                                     >
-                                        {/* Hover accent strip — uses the active theme primary colour. */}
+                                        {/* Hover accent strip */}
                                         <span
                                             aria-hidden
-                                            className="absolute left-0 top-1/2 h-7 w-[3px] -translate-y-1/2 rounded-r-full bg-primary opacity-0 transition-opacity group-hover:opacity-100"
+                                            className="absolute left-0 top-1/2 h-5 w-[2.5px] -translate-y-1/2 rounded-r-full bg-primary opacity-0 transition-opacity group-hover:opacity-100"
                                         />
 
-                                        {/* Tracker name — takes the flexible space. */}
-                                        <span className="min-w-0 truncate text-sm font-medium text-foreground">
-                                            {release.tracker_name}
-                                        </span>
+                                        {/* Left: Tracker name + Badges */}
+                                        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                                            <span className="truncate text-xs font-semibold text-foreground max-w-[120px] sm:max-w-[150px]">
+                                                {release.tracker_name}
+                                            </span>
 
-                                        {/* Metadata fields: source type, release type, version, then time. */}
-                                        <div className="col-span-2 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1.5 sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:w-full sm:gap-x-3">
-                                            <div className="flex min-w-0 flex-wrap items-center justify-start gap-1.5 sm:gap-2">
+                                            <div className="flex shrink-0 items-center gap-1.5">
                                                 <Badge
                                                     variant="secondary"
-                                                    className="h-6 min-w-0 max-w-full justify-start rounded-md px-2 text-left text-[11px] font-medium"
+                                                    className="h-5 rounded px-1.5 text-[10px] font-medium leading-none"
                                                 >
-                                                    <span className="truncate text-left">{sourceTypeLabel}</span>
+                                                    {sourceTypeLabel}
                                                 </Badge>
                                                 <Badge
                                                     variant="outline"
-                                                    className="h-6 min-w-0 max-w-full justify-start rounded-md border-border/60 bg-background px-2 text-left text-[11px] font-medium text-foreground/80"
+                                                    className="h-5 rounded border-border/60 bg-background px-1.5 text-[10px] font-medium leading-none text-foreground/80"
                                                 >
-                                                    <span className="truncate text-left">{releaseTypeLabel}</span>
+                                                    {releaseTypeLabel}
                                                 </Badge>
-                                                <span className="min-w-0 max-w-full truncate rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-left font-mono text-xs leading-none text-foreground/90">
-                                                    {versionLabel}
-                                                </span>
                                             </div>
-                                            <span className="justify-self-end whitespace-nowrap text-right text-[11px] tabular-nums text-muted-foreground">
-                                                {relativePublished}
+
+                                            <span className="truncate rounded border border-border/60 bg-muted/40 px-2 py-0.5 font-mono text-[11px] leading-none text-foreground/90 font-medium max-w-[160px] sm:max-w-[220px]">
+                                                {versionLabel}
                                             </span>
                                         </div>
 
-                                        {/* Actions. */}
-                                        <div className="col-start-2 row-start-1 flex shrink-0 items-center gap-0.5 text-muted-foreground/60 transition-colors group-hover:text-muted-foreground sm:col-start-3">
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                disabled={!release.body}
-                                                onClick={() => handleViewNotes(release)}
-                                                title={t("dashboard.recentReleases.viewNotes")}
-                                                aria-label={t("dashboard.recentReleases.viewNotes")}
-                                                className="h-6 w-6"
-                                            >
-                                                <FileText className="h-3.5 w-3.5" />
-                                            </Button>
-                                            {linkHref ? (
+                                        {/* Right: Published time + Actions */}
+                                        <div className="flex shrink-0 items-center gap-1.5">
+                                            <span className="text-right text-[11px] tabular-nums text-muted-foreground whitespace-nowrap" title={formatDate(release.published_at)}>
+                                                {relativePublished}
+                                            </span>
+
+                                            <div className="flex items-center text-muted-foreground/60 transition-colors group-hover:text-muted-foreground">
                                                 <Button
                                                     variant="ghost"
                                                     size="icon"
-                                                    asChild
+                                                    disabled={!release.body}
+                                                    onClick={() => handleViewNotes(release)}
+                                                    title={t("dashboard.recentReleases.viewNotes")}
+                                                    aria-label={t("dashboard.recentReleases.viewNotes")}
                                                     className="h-6 w-6"
-                                                    title={t("dashboard.releaseNotes.viewSource")}
-                                                    aria-label={t("dashboard.releaseNotes.viewSource")}
                                                 >
-                                                    <a href={linkHref} target="_blank" rel="noreferrer">
-                                                        <ExternalLink className="h-3.5 w-3.5" />
-                                                    </a>
+                                                    <FileText className="h-3.5 w-3.5" />
                                                 </Button>
-                                            ) : null}
+                                                {linkHref ? (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        asChild
+                                                        className="h-6 w-6"
+                                                        title={t("dashboard.releaseNotes.viewSource")}
+                                                        aria-label={t("dashboard.releaseNotes.viewSource")}
+                                                    >
+                                                        <a href={linkHref} target="_blank" rel="noreferrer">
+                                                            <ExternalLink className="h-3.5 w-3.5" />
+                                                        </a>
+                                                    </Button>
+                                                ) : null}
+                                            </div>
                                         </div>
                                     </li>
                                 )

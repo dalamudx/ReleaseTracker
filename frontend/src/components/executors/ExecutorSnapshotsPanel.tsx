@@ -27,6 +27,7 @@ import { usePageSize } from "@/hooks/use-page-size"
 import { cn } from "@/lib/utils"
 
 import { ExecutorRollbackDialog } from "./ExecutorRollbackDialog"
+import { SSHRecoveryActions } from "./SSHRecoveryActions"
 
 
 export interface ExecutorSnapshotsPanelProps {
@@ -162,7 +163,7 @@ export function ExecutorSnapshotsPanel({
             </div>
 
             {hasUnredacted ? (
-                <div className="flex items-start gap-2 rounded-lg border border-amber-400/50 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200">
+                <div className="flex items-start gap-2 rounded-lg border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning">
                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                     <span>{t("executors.snapshots.banners.unredacted")}</span>
                 </div>
@@ -225,7 +226,7 @@ export function ExecutorSnapshotsPanel({
                                         {item.unredacted_persisted ? (
                                             <Badge
                                                 variant="outline"
-                                                className="h-5 shrink-0 gap-1 text-[10px] text-amber-700 dark:text-amber-200"
+                                                className="h-5 shrink-0 gap-1 text-[10px] text-warning"
                                             >
                                                 <AlertTriangle className="h-3 w-3" />
                                                 {t("executors.snapshots.banners.unredacted", {
@@ -255,12 +256,12 @@ export function ExecutorSnapshotsPanel({
                                             ) : null}
                                         </dl>
 
-                                        <div className="flex shrink-0 gap-2">
+                                        <div className="flex min-w-0 flex-wrap gap-2">
                                             <Button
                                                 size="sm"
                                                 variant="outline"
                                                 onClick={() => void handleToggleLock(item)}
-                                                disabled={isLockPending}
+                                                disabled={isLockPending || executor.runtime_type === "ssh"}
                                                 aria-label={
                                                     item.locked
                                                         ? t("executors.snapshots.actions.unlock")
@@ -286,7 +287,7 @@ export function ExecutorSnapshotsPanel({
                                                 <Trash2 className="mr-1.5 h-3.5 w-3.5" />
                                                 {t("executors.snapshots.actions.delete")}
                                             </Button>
-                                            <Button
+                                            {executor.runtime_type === "ssh" ? (item.locked && <SSHRecoveryActions executorId={executor.id!} executorName={executor.name} snapshotId={item.id} onSuccess={() => { void refetchSnapshots() }} />) : <Button
                                                 size="sm"
                                                 variant="outline"
                                                 onClick={() => setRollbackSnapshot(item)}
@@ -294,7 +295,7 @@ export function ExecutorSnapshotsPanel({
                                             >
                                                 <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
                                                 {t("executors.snapshots.actions.rollback")}
-                                            </Button>
+                                            </Button>}
                                         </div>
                                     </div>
                                 </li>

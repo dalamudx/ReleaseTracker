@@ -47,6 +47,7 @@ class ReleaseScheduler(
 
     def __init__(self, storage: SQLiteStorage, scheduler_host: SchedulerHost | None = None):
         self.storage = storage
+        self.fetch_tasks = None
         self.scheduler_host = scheduler_host or SchedulerHost()
         self._job_namespace = "tracker"
         self.trackers: dict[str, BaseTracker] = {}

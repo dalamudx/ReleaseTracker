@@ -26,6 +26,8 @@ class ExecutorSchedulerRunQueue:
     """Coordinate manual executor runs and desired-state queue consumption."""
 
     async def run_executor_now(self, executor_id: int) -> ExecutorRunOutcome:
+        if self.deploy_tasks is not None:
+            return await self.deploy_tasks.enqueue(executor_id, manual=True)
         config = await self.storage.get_executor_config(executor_id)
         if not config:
             raise ValueError(f"Executor {executor_id} not found")
@@ -37,6 +39,8 @@ class ExecutorSchedulerRunQueue:
         )
 
     async def run_executor_now_async(self, executor_id: int) -> int:
+        if self.deploy_tasks is not None:
+            return await self.deploy_tasks.enqueue(executor_id, manual=True)
         config = await self.storage.get_executor_config(executor_id)
         if not config:
             raise ValueError(f"Executor {executor_id} not found")
@@ -193,6 +197,8 @@ class ExecutorSchedulerRunQueue:
         self._track_background_task(self.reconcile_pending_desired_states())
 
     async def reconcile_pending_desired_states(self) -> int:
+        if self.deploy_tasks is not None:
+            return await self.deploy_tasks.dispatch_pending()
         if self._desired_state_consume_lock.locked():
             return 0
 

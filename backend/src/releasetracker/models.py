@@ -581,6 +581,7 @@ CredentialType = Literal[
     "podman_runtime",
     "kubernetes_runtime",
     "portainer_runtime",
+    "ssh",
 ]
 
 
@@ -615,6 +616,7 @@ class Notifier(BaseModel):
     events: list[str] = Field(default_factory=lambda: ["new_release"])
     enabled: bool = True
     language: Literal["en", "zh"] = "en"
+    template_id: int | None = None
     description: str | None = None
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
@@ -647,7 +649,7 @@ class ExecutorRunHistory(BaseModel):
     executor_id: int
     started_at: datetime
     finished_at: datetime | None = None
-    status: Literal["queued", "running", "success", "failed", "skipped"]
+    status: Literal["queued", "running", "health_checking", "success", "failed", "skipped"]
     from_version: str | None = None
     to_version: str | None = None
     message: str | None = None

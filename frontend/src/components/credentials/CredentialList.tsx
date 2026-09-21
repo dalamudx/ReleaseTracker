@@ -1,4 +1,4 @@
-import { Edit, MoreHorizontal, Trash2 } from "lucide-react"
+import { Edit, KeyRound, MoreHorizontal, Server, ShieldCheck, Terminal, Trash2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { formatDistanceToNow } from "date-fns"
 import { enUS, zhCN } from "date-fns/locale"
@@ -30,17 +30,43 @@ interface CredentialListProps {
     onDelete: (id: number) => void
 }
 
+function getCredentialCategoryBadge(type: ApiCredential["type"], t: ReturnType<typeof useTranslation>["t"]) {
+    if (type === "ssh") {
+        return (
+            <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                <Terminal className="h-3 w-3 text-warning" />
+                {t("credentials.categories.ssh")}
+            </span>
+        )
+    }
+    if (type.endsWith("_runtime")) {
+        return (
+            <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                <Server className="h-3 w-3 text-info" />
+                {t("credentials.categories.runtime")}
+            </span>
+        )
+    }
+    return (
+        <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+            <ShieldCheck className="h-3 w-3 text-success" />
+            {t("credentials.categories.tracker")}
+        </span>
+    )
+}
+
 export function CredentialList({ credentials, loading, onEdit, onDelete }: CredentialListProps) {
     const { t, i18n } = useTranslation()
     const dateLocale = i18n?.language === "zh" ? zhCN : enUS
 
     return (
-        <div className="min-h-0 flex-1 overflow-auto rounded-md border">
+        <div className="min-h-0 overflow-auto rounded-md border sm:flex-1">
             <Table containerClassName="overflow-visible">
                 <TableHeader className="sticky top-0 z-10 bg-background">
                     <TableRow>
-                        <TableHead className="min-w-[12rem]">{t("credentials.table.name")}</TableHead>
-                        <TableHead>{t("credentials.table.type")}</TableHead>
+                        <TableHead className="min-w-[10rem]">{t("credentials.table.name")}</TableHead>
+                        <TableHead className="hidden sm:table-cell">{t("credentials.table.type")}</TableHead>
+                        <TableHead className="hidden text-center sm:table-cell">{t("credentials.table.runtimeConnections")}</TableHead>
                         <TableHead className="hidden md:table-cell">
                             {t("credentials.table.description")}
                         </TableHead>
@@ -55,13 +81,13 @@ export function CredentialList({ credentials, loading, onEdit, onDelete }: Crede
                 <TableBody>
                     {loading ? (
                         <TableRow>
-                            <TableCell colSpan={5} className="h-24 text-center text-sm text-muted-foreground">
+                            <TableCell colSpan={6} className="h-24 text-center text-sm text-muted-foreground">
                                 {t("common.loading")}
                             </TableCell>
                         </TableRow>
                     ) : credentials.length === 0 ? (
                         <TableRow>
-                            <TableCell colSpan={5} className="h-24 text-center text-sm text-muted-foreground">
+                            <TableCell colSpan={6} className="h-24 text-center text-sm text-muted-foreground">
                                 {t("common.noData")}
                             </TableCell>
                         </TableRow>
@@ -69,19 +95,49 @@ export function CredentialList({ credentials, loading, onEdit, onDelete }: Crede
                         credentials.map((cred) => {
                             return (
                                 <TableRow key={cred.id} className="transition-colors hover:bg-muted/40">
-                                    <TableCell className="py-3 align-middle font-medium">
-                                        <span className="truncate" title={cred.name}>
-                                            {cred.name}
-                                        </span>
+                                    <TableCell className="py-3 align-middle">
+                                        <div className="flex items-center gap-2.5">
+                                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/40 text-muted-foreground">
+                                                <KeyRound className="h-3.5 w-3.5" />
+                                            </div>
+                                            <div className="min-w-0">
+                                                <div className="truncate font-medium text-foreground" title={cred.name}>
+                                                    {cred.name}
+                                                </div>
+                                                <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                                                    {getCredentialCategoryBadge(cred.type, t)}
+                                                    <Badge variant="outline" className="h-4 px-1.5 text-[9px] sm:hidden">
+                                                        {getCredentialTypeLabel(t, cred.type)}
+                                                    </Badge>
+                                                    {typeof cred.runtime_connections_count === "number" && cred.runtime_connections_count > 0 ? (
+                                                        <span className="inline-flex items-center gap-1 text-[10px] text-info sm:hidden">
+                                                            <Server className="size-3" aria-hidden="true" />
+                                                            {t("credentials.runtimeConnectionsCount", { count: cred.runtime_connections_count })}
+                                                        </span>
+                                                    ) : null}
+                                                </div>
+                                            </div>
+                                        </div>
                                     </TableCell>
 
-                                    <TableCell className="py-3 align-middle">
+                                    <TableCell className="hidden py-3 align-middle sm:table-cell">
                                         <Badge
                                             variant="outline"
-                                            className="border-border/60 bg-muted/30 px-1.5 text-[10px] font-medium"
+                                            className="border-border/60 bg-muted/30 px-2 py-0.5 text-xs font-medium"
                                         >
                                             {getCredentialTypeLabel(t, cred.type)}
                                         </Badge>
+                                    </TableCell>
+
+                                    <TableCell className="hidden py-3 text-center align-middle sm:table-cell">
+                                        {typeof cred.runtime_connections_count === "number" && cred.runtime_connections_count > 0 ? (
+                                            <span className="inline-flex items-center gap-1 rounded-full border border-info/30 bg-info/10 px-2 py-0.5 font-mono text-xs font-medium text-info">
+                                                <Server className="h-3 w-3" />
+                                                {cred.runtime_connections_count}
+                                            </span>
+                                        ) : (
+                                            <span className="text-xs text-muted-foreground tabular-nums">0</span>
+                                        )}
                                     </TableCell>
 
                                     <TableCell className="hidden max-w-[360px] py-3 align-middle text-sm text-muted-foreground md:table-cell">

@@ -2,6 +2,7 @@ import { Link } from "react-router"
 import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import { ThemeCustomizer } from "@/components/ThemeCustomizer"
+import { TaskNotificationPopover } from "@/components/layout/TaskNotificationPopover"
 import { Code2, Languages } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
@@ -33,30 +34,31 @@ export function Header() {
     return (
         <header className="sticky top-0 z-50 flex h-14 shrink-0 items-center gap-2 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-14">
             <div className="flex w-full items-center justify-between gap-1 px-4 lg:gap-2 lg:px-6">
-                <div className="flex items-center gap-1 lg:gap-2">
-                    <SidebarTrigger className="-ml-1" />
+                <div className="flex min-w-0 flex-1 items-center gap-1 lg:gap-2">
+                    <SidebarTrigger className="-ml-1 shrink-0" />
                     <Separator
                         orientation="vertical"
                         className="mx-2 data-[orientation=vertical]:h-4"
                     />
-                    <Breadcrumb>
-                        <BreadcrumbList>
+                    <Breadcrumb className="min-w-0">
+                        <BreadcrumbList className="flex-nowrap">
                             {breadcrumbItems.map((item, index) => [
                                 index > 0 && <BreadcrumbSeparator key={`separator-${index}`} />,
-                                <BreadcrumbItem key={`item-${index}`}>
+                                <BreadcrumbItem key={`item-${index}`} className="min-w-0">
                                     {item.href ? (
                                         <BreadcrumbLink asChild>
                                             <Link to={item.href}>{item.label}</Link>
                                         </BreadcrumbLink>
                                     ) : (
-                                        <BreadcrumbPage>{item.label}</BreadcrumbPage>
+                                        <BreadcrumbPage className="truncate" title={item.label}>{item.label}</BreadcrumbPage>
                                     )}
                                 </BreadcrumbItem>
                             ]).flat().filter(Boolean)}
                         </BreadcrumbList>
                     </Breadcrumb>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2">
+                    <TaskNotificationPopover />
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon" className="h-8 w-8">

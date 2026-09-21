@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "meta": {
+    "system": "ReleaseTracker Design System",
+    "northStar": "The Telemetry Cockpit",
+    "sourceStyles": "frontend/src/index.css"
+  },
+  "effects": {
+    "focusRing": "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+    "activeRowBorder": "relative before:absolute before:left-0 before:top-2 before:bottom-2 before:w-1 before:bg-primary before:rounded-r",
+    "backdropBlur": "backdrop-blur-sm bg-background/95",
+    "subtleCardBorder": "border border-border/60 shadow-xs"
+  }
+}

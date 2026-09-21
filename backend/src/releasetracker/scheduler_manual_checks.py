@@ -17,7 +17,9 @@ class ReleaseSchedulerManualChecks:
     """Run manual aggregate tracker checks with duplicate and cooldown protection."""
 
     async def check_tracker_now_v2(self, name: str) -> TrackerStatus:
-        """Check the specified tracker immediately (V2)"""
+        """Submit to the durable queue when running inside the application."""
+        if self.fetch_tasks is not None:
+            return await self.fetch_tasks.enqueue(name, trigger_mode="manual")
         config = await self.storage.get_tracker_config(name)
         aggregate_tracker = await self.storage.get_aggregate_tracker(name)
         if not config and aggregate_tracker is None:

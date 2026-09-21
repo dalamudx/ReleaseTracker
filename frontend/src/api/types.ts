@@ -373,6 +373,7 @@ export type CredentialType =
     | 'podman_runtime'
     | 'kubernetes_runtime'
     | 'portainer_runtime'
+    | 'ssh'
 
 export interface ApiCredential {
     id: number
@@ -381,8 +382,10 @@ export interface ApiCredential {
     token: string
     secrets?: Record<string, unknown>
     secret_keys?: string[]
+    auth_method?: 'password' | 'private_key'
     description?: string | null
     created_at: string
+    runtime_connections_count?: number
 }
 
 export interface CredentialReferenceItem {
@@ -430,6 +433,7 @@ export interface Notifier {
     events: string[]
     enabled: boolean
     language: NotifierLanguage
+    template_id?: number | null
     description?: string
     created_at: string
 }
@@ -564,12 +568,12 @@ export interface PaginatedResponse<T> {
     limit?: number
 }
 
-export type RuntimeType = 'docker' | 'podman' | 'kubernetes' | 'portainer'
-export type RuntimeConnectionType = RuntimeType | 'portainer'
+export type RuntimeType = 'docker' | 'podman' | 'kubernetes' | 'portainer' | 'ssh'
+export type RuntimeConnectionType = RuntimeType | 'ssh'
 export type ExecutorUpdateMode = 'manual' | 'maintenance_window' | 'immediate'
 export type ImageSelectionMode = 'replace_tag_on_current_image' | 'use_tracker_image_and_tag'
 export type ImageReferenceMode = 'digest' | 'tag'
-export type SupportedExecutorTargetMode = 'container' | 'portainer_stack' | 'docker_compose' | 'kubernetes_workload' | 'helm_release'
+export type SupportedExecutorTargetMode = 'container' | 'portainer_stack' | 'docker_compose' | 'kubernetes_workload' | 'helm_release' | 'ssh_compose'
 export type ExecutorTargetMode = SupportedExecutorTargetMode
 
 export interface ExecutorTargetRefBase {
@@ -642,7 +646,20 @@ export interface DockerComposeExecutorTargetRef extends ExecutorTargetRefBase {
     service_count?: number
 }
 
+export interface SSHComposeExecutorTargetRef extends ExecutorTargetRefBase {
+    mode: 'ssh_compose'
+    discovery_id?: string | null
+    project: string
+    working_dir: string
+    config_files: string[]
+    env_files: string[]
+    profiles: string[]
+    tool: 'docker_compose' | 'docker-compose' | 'podman_compose' | 'podman-compose'
+    write_strategy: 'source' | 'override'
+    services?: Array<{service: string; image?: string | null}>
+}
 export type ExecutorTargetRef =
+    | SSHComposeExecutorTargetRef
     | ContainerExecutorTargetRef
     | KubernetesExecutorTargetRef
     | HelmReleaseExecutorTargetRef
@@ -673,6 +690,8 @@ export interface RuntimeConnection {
     credential_type?: CredentialType | null
     uses_credentials?: boolean
     has_inline_secrets?: boolean
+    proxy_dependents?: Array<{id: number; name: string}>
+    host_key_fingerprint?: string
     secrets: Record<string, unknown>
     endpoint?: string | null
     description?: string | null
@@ -696,13 +715,13 @@ export interface ExecutorStatus {
     id?: number | null
     executor_id: number
     last_run_at?: string | null
-    last_result?: 'success' | 'failed' | 'skipped' | null
+    last_result?: 'success' | 'failed' | 'skipped' | 'health_checking' | null
     last_error?: string | null
     last_version?: string | null
     updated_at?: string
 }
 
-export type ExecutorRunHistoryStatus = 'queued' | 'running' | 'success' | 'failed' | 'skipped'
+export type ExecutorRunHistoryStatus = 'queued' | 'running' | 'health_checking' | 'success' | 'failed' | 'skipped'
 
 export interface ExecutorRunServiceDiagnostic {
     service: string
@@ -723,6 +742,9 @@ export interface ExecutorRunDiagnostics {
     services: ExecutorRunServiceDiagnostic[]
     /** Health check outcome payload attached when post-update checks ran. */
     health_check?: Record<string, unknown> | null
+    /** Read-only follow-up evidence; never replaces the original health check. */
+    health_recheck?: Record<string, unknown> | null
+    health_rechecks?: Array<Record<string, unknown>>
     /** Recovery outcome persisted on manual rollback runs. */
     recovery_outcome?: RecoveryOutcome | null
     /** Underlying adapter error when recovery_outcome is not 'succeeded'. */
@@ -745,6 +767,7 @@ export interface ExecutorRunHistory {
 }
 
 export interface ExecutorConfig {
+    compose_ownership?: "verified" | "verification_required" | "conflict" | "recovery_required" | null
     id?: number | null
     name: string
     runtime_type: RuntimeType
@@ -793,6 +816,13 @@ export interface HealthCheckTcpConfig {
 }
 
 export interface HealthCheckProfile {
+    notify_result?: boolean
+    readiness_enabled?: boolean
+    use_system_readiness_defaults?: boolean
+    readiness_timeout_seconds?: number
+    readiness_interval_seconds?: number
+    readiness_attempt_timeout_seconds?: number
+    readiness_stable_seconds?: number
     strategy: HealthCheckStrategy
     use_default_strategy?: boolean
     grace_period_seconds: number

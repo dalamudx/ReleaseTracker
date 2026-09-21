@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "lint": "eslint .",
     "check:bundle": "node scripts/check-initial-bundle.mjs",
+    "check:dev-updates": "node --test scripts/check-dev-file-updates.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

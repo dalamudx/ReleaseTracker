@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -12,6 +13,10 @@ if TYPE_CHECKING:
 
 
 async def create_credential(storage: "SQLiteStorage", credential: Credential) -> int:
+    if credential.type == "ssh":
+        from ..services.ssh_config import validate_ssh_secrets
+
+        await asyncio.to_thread(validate_ssh_secrets, credential.secrets)
     encrypted_token = storage._encrypt(credential.token) if credential.token else None
     encrypted_secrets = storage._encrypt_nested_strings(credential.secrets)
 
@@ -102,6 +107,14 @@ async def get_credential_by_name(storage: "SQLiteStorage", name: str) -> Credent
 async def update_credential(
     storage: "SQLiteStorage", credential_id: int, credential: Credential
 ) -> bool:
+    existing = await get_credential(storage, credential_id)
+    if existing and existing.type == "ssh" and credential.type != "ssh":
+        if any((await get_credential_references(storage, existing)).values()):
+            raise ValueError("Referenced SSH credentials cannot change type")
+    if credential.type == "ssh":
+        from ..services.ssh_config import validate_ssh_secrets
+
+        await asyncio.to_thread(validate_ssh_secrets, credential.secrets)
     encrypted_token = storage._encrypt(credential.token) if credential.token else None
     encrypted_secrets = storage._encrypt_nested_strings(credential.secrets)
 
@@ -216,6 +229,26 @@ async def get_credential_reference_counts(
 ) -> dict[str, int]:
     references = await get_credential_references(storage, credential)
     return {key: len(items) for key, items in references.items()}
+
+
+async def get_runtime_connection_counts_by_credential_ids(
+    storage: "SQLiteStorage", credential_ids: list[int]
+) -> dict[int, int]:
+    if not credential_ids or not await storage._table_exists("runtime_connections"):
+        return {}
+    db = await storage._get_connection()
+    columns = await _table_columns(db, "runtime_connections")
+    if "credential_id" not in columns:
+        return {}
+    placeholders = ",".join("?" for _ in credential_ids)
+    query = f"""
+        SELECT credential_id, COUNT(*) as cnt
+        FROM runtime_connections
+        WHERE credential_id IN ({placeholders})
+        GROUP BY credential_id
+    """
+    rows = await (await db.execute(query, tuple(credential_ids))).fetchall()
+    return {int(row[0]): int(row[1]) for row in rows if row[0] is not None}
 
 
 async def _table_columns(db: aiosqlite.Connection, table_name: str) -> set[str]:

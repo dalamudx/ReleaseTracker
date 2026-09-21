@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
+import { notificationTemplates } from "@/api/notification-templates"
 import { useTranslation } from "react-i18next"
 import { Edit, MoreHorizontal, Plus, Search, Send, Trash2, X } from "lucide-react"
 import { useForm } from "react-hook-form"
@@ -349,6 +351,7 @@ interface NotifierDialogProps {
 
 function NotifierDialog({ open, onOpenChange, notifier }: NotifierDialogProps) {
     const { t } = useTranslation()
+    const templates = useQuery({ queryKey: ['notification-templates'], queryFn: notificationTemplates.list, enabled: open })
     const createNotifier = useCreateNotifier()
     const updateNotifier = useUpdateNotifier()
 
@@ -404,6 +407,7 @@ function NotifierDialog({ open, onOpenChange, notifier }: NotifierDialogProps) {
     }
 
     const availableEvents = [
+        { id: "executor_health_check_result", label: t("settings.notifications.eventTypes.executor_health_check_result") },
         { id: "new_release", label: t("settings.notifications.eventTypes.new_release") },
         { id: "republish", label: t("settings.notifications.eventTypes.republish") },
         { id: "executor_run_success", label: t("settings.notifications.eventTypes.executor_run_success") },
@@ -497,6 +501,23 @@ function NotifierDialog({ open, onOpenChange, notifier }: NotifierDialogProps) {
                                         <Input {...field} />
                                     </FormControl>
                                     <FormMessage />
+                                </FormItem>
+                            )}
+                        />
+                        <FormField
+                            control={form.control}
+                            name="template_id"
+                            render={({ field }) => (
+                                <FormItem>
+                                    <FormLabel>{t('notificationTemplates.select')}</FormLabel>
+                                    <Select value={String(field.value ?? 'builtin')} onValueChange={value => field.onChange(value === 'builtin' ? null : Number(value))}>
+                                        <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                                        <SelectContent>
+                                            <SelectItem value="builtin">{t('notificationTemplates.builtin')}</SelectItem>
+                                            {templates.data?.items.map(item => <SelectItem key={item.id} value={String(item.id)}>{item.name}</SelectItem>)}
+                                        </SelectContent>
+                                    </Select>
+                                    {templates.isError && <p className="text-sm text-destructive">{t('notificationTemplates.loadFailed')}</p>}
                                 </FormItem>
                             )}
                         />

@@ -4,6 +4,7 @@ import {
     CircleSlash,
     CircleX,
     Edit,
+    History,
     MoreHorizontal,
     Play,
     Trash2,
@@ -15,6 +16,8 @@ import type { MouseEvent, ReactNode } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { ActiveRowMarker } from "@/components/common/ActiveRowMarker"
+import { Spinner } from "@/components/ui/spinner"
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -36,7 +39,6 @@ import {
     TooltipTrigger,
 } from "@/components/ui/tooltip"
 import type { ExecutorListItem } from "@/api/types"
-import { cn } from "@/lib/utils"
 import { getChannelLabel } from "@/lib/channel"
 import { buildExecutorTargetDisplay, isHelmReleaseTarget } from "./executorSheetHelpers"
 
@@ -47,19 +49,49 @@ interface ExecutorListProps {
     onDelete: (executorId: number) => void
     onRun: (executorId: number) => void
     onViewExecutionHistory: (executorId: number) => void
+    onSelect: (executorId: number) => void
     selectedExecutorId: number | null
+    submittingExecutorIds?: ReadonlySet<number>
 }
 
 const STATUS_VARIANT_MAP = {
-    success: "default",
+    health_checking: "info",
+    success: "success",
     failed: "destructive",
     skipped: "secondary",
 } as const
 
 const STATUS_ICON_MAP: Record<string, ReactNode> = {
+    health_checking: <History className="h-3 w-3" />,
     success: <CircleCheck className="h-3 w-3" />,
     failed: <CircleX className="h-3 w-3" />,
     skipped: <CircleSlash className="h-3 w-3" />,
+}
+
+function getExecutorTargetServiceCount(executor: ExecutorListItem): number | null {
+    const serviceBindingCount = executor.service_bindings?.length ?? 0
+    if (serviceBindingCount > 0) {
+        return serviceBindingCount
+    }
+
+    const targetRef = executor.target_ref
+    const explicitCount = targetRef.service_count
+    if (typeof explicitCount === "number" && Number.isInteger(explicitCount) && explicitCount >= 0) {
+        return explicitCount
+    }
+
+    if (Array.isArray(targetRef.services)) {
+        return targetRef.services.length
+    }
+    if (Array.isArray(targetRef.workloads)) {
+        return targetRef.workloads.length
+    }
+
+    if (!targetRef.mode || targetRef.mode === "container") {
+        return 1
+    }
+
+    return null
 }
 
 export function ExecutorList({
@@ -69,7 +101,9 @@ export function ExecutorList({
     onDelete,
     onRun,
     onViewExecutionHistory,
+    onSelect,
     selectedExecutorId,
+    submittingExecutorIds,
 }: ExecutorListProps) {
     const { t, i18n } = useTranslation()
     const dateLocale = i18n?.language === "zh" ? zhCN : enUS
@@ -81,18 +115,19 @@ export function ExecutorList({
             className="min-h-0 flex-1 overflow-auto rounded-md border"
             data-testid="executor-list"
             data-loading={String(loading)}
+            aria-busy={loading}
         >
-            <Table containerClassName="overflow-visible">
+            <Table className="table-fixed" containerClassName="overflow-visible">
                 <TableHeader className="sticky top-0 z-10 bg-background">
                     <TableRow>
-                        <TableHead className="min-w-[14rem]">{t("executors.table.name")}</TableHead>
-                        <TableHead className="min-w-[18rem]">{t("executors.table.target")}</TableHead>
-                        <TableHead className="hidden min-w-[12rem] md:table-cell">
+                        <TableHead>{t("executors.table.name")}</TableHead>
+                        <TableHead className="hidden w-[28%] md:table-cell">{t("executors.table.target")}</TableHead>
+                        <TableHead className="hidden w-[17%] xl:table-cell">
                             {t("executors.table.tracker")}
                         </TableHead>
-                        <TableHead className="min-w-[10rem]">{t("executors.table.status")}</TableHead>
-                        <TableHead className="hidden lg:table-cell">{t("executors.table.lastRun")}</TableHead>
-                        <TableHead className="w-[1%] text-right">{t("executors.table.actions")}</TableHead>
+                        <TableHead className="hidden w-24 sm:table-cell">{t("executors.table.status")}</TableHead>
+                        <TableHead className="hidden w-24 lg:table-cell">{t("executors.table.lastRun")}</TableHead>
+                        <TableHead className="w-28 text-right">{t("executors.table.actions")}</TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -112,12 +147,12 @@ export function ExecutorList({
                         executors.map((executor) => {
                             const targetDisplay = buildExecutorTargetDisplay(executor.runtime_type, executor.target_ref, t)
                             const targetKindLabel = targetDisplay.badges.find((badge) => badge !== executor.runtime_type) ?? targetDisplay.badges[0]
+                            const targetServiceCount = getExecutorTargetServiceCount(executor)
                             const lastResult = executor.status?.last_result ?? null
                             const lastRunAt = executor.status?.last_run_at ?? null
-                            const serviceBindings = executor.service_bindings ?? []
-                            const serviceBindingSummary = buildServiceBindingSummary(serviceBindings)
                             const isSelected = executor.id === selectedExecutorId
                             const hasError = Boolean(executor.invalid_config_error)
+                            const isPending = Boolean(executor.id && submittingExecutorIds?.has(executor.id))
                             const referenceLabel = isHelmReleaseTarget(executor.target_ref)
                                 ? t("executors.referenceModes.chart")
                                 : executor.image_reference_mode?.toUpperCase()
@@ -125,25 +160,28 @@ export function ExecutorList({
                             return (
                                 <TableRow
                                     key={executor.id ?? executor.name}
+                                    data-testid="executor-row"
                                     data-selected={isSelected || undefined}
-                                    className={cn(
-                                        "relative cursor-pointer transition-colors hover:bg-muted/40",
-                                        isSelected && "bg-primary/5 hover:bg-primary/10",
-                                    )}
-                                    onClick={() => executor.id && onViewExecutionHistory(executor.id)}
+                                    data-state={isSelected ? "selected" : undefined}
+                                    aria-selected={isSelected}
+                                    tabIndex={0}
+                                    className="cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                                    onClick={() => executor.id && onSelect(executor.id)}
+                                    onKeyDown={(event) => {
+                                        if (event.target !== event.currentTarget) return
+                                        if (event.key === "Enter" || event.key === " ") {
+                                            event.preventDefault()
+                                            if (executor.id) onSelect(executor.id)
+                                        }
+                                    }}
                                 >
                                     {/* Name column — tracker name + runtime type accent. */}
                                     <TableCell className="relative py-3 align-top">
-                                        {isSelected ? (
-                                            <span
-                                                aria-hidden
-                                                className="absolute left-0 top-1/2 h-8 w-[3px] -translate-y-1/2 rounded-r-full bg-primary"
-                                            />
-                                        ) : null}
-                                        <div className="min-w-0 space-y-1 pl-1">
+                                        <ActiveRowMarker active={isSelected} testId="executor-selection-marker" />
+                                        <div className="min-w-0 space-y-1 pl-1.5">
                                             <div className="flex items-center gap-1.5">
                                                 <span
-                                                    className="truncate text-sm font-semibold text-foreground"
+                                                    className="min-w-0 truncate text-sm font-semibold text-foreground"
                                                     title={executor.name}
                                                 >
                                                     {executor.name}
@@ -162,6 +200,9 @@ export function ExecutorList({
                                                     {executor.description}
                                                 </div>
                                             ) : null}
+                                            <div className="truncate text-xs text-muted-foreground md:hidden" title={targetDisplay.title}>
+                                                {targetDisplay.title}
+                                            </div>
                                             <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
                                                 <span className="shrink-0 uppercase tracking-wide">
                                                     {executor.runtime_type}
@@ -171,47 +212,58 @@ export function ExecutorList({
                                                     {executor.runtime_connection_name || "—"}
                                                 </span>
                                             </div>
+                                            {executor.compose_ownership && executor.compose_ownership !== "verified" ? (
+                                                <Badge variant="outline" className="max-w-full whitespace-normal break-words text-[10px] text-warning">
+                                                    {t(`sshExecutor.ownership_${executor.compose_ownership}`)}
+                                                </Badge>
+                                            ) : null}
+                                            <div className="sm:hidden">
+                                                {hasError ? (
+                                                    <Badge variant="destructive" className="h-5 gap-1 text-[10px]"><CircleAlert className="size-3" />{t("executors.status.invalid")}</Badge>
+                                                ) : (
+                                                    <Badge variant={lastResult ? STATUS_VARIANT_MAP[lastResult] : "outline"} className="h-5 gap-1 text-[10px]">
+                                                        {lastResult ? STATUS_ICON_MAP[lastResult] : null}
+                                                        {t(lastResult ? `executors.results.${lastResult}` : "executors.results.idle")}
+                                                    </Badge>
+                                                )}
+                                            </div>
                                         </div>
                                     </TableCell>
 
                                     {/* Target column. */}
-                                    <TableCell className="py-3 align-top">
+                                    <TableCell data-testid="executor-target-cell" className="hidden py-3 align-top md:table-cell">
                                         <div className="min-w-0 space-y-0.5">
-                                            <div className="flex min-w-0 items-center gap-2">
-                                                <span
-                                                    className="truncate text-sm font-medium text-foreground"
-                                                    title={targetDisplay.title}
-                                                >
-                                                    {targetDisplay.title}
-                                                </span>
+                                            <div
+                                                className="truncate text-sm font-medium text-foreground"
+                                                title={targetDisplay.title}
+                                            >
+                                                {targetDisplay.title}
+                                            </div>
+                                            <div className="flex min-w-0 items-center gap-1.5">
                                                 {targetKindLabel ? (
                                                     <Badge
                                                         variant="outline"
-                                                        className="h-5 shrink-0 border-border/60 px-1.5 text-[10px] font-normal"
+                                                        className="h-5 max-w-[65%] shrink truncate border-border/60 px-1.5 text-[10px] font-normal"
+                                                        title={targetKindLabel}
                                                     >
                                                         {targetKindLabel}
                                                     </Badge>
                                                 ) : null}
-                                            </div>
-                                            {targetDisplay.subtitle ? (
-                                                <div
-                                                    className="truncate font-mono text-[11px] text-muted-foreground"
-                                                    title={targetDisplay.subtitle}
-                                                >
-                                                    {targetDisplay.subtitle}
-                                                </div>
-                                            ) : null}
-                                            <div
-                                                className="truncate text-xs text-muted-foreground"
-                                                title={targetDisplay.summary}
-                                            >
-                                                {targetDisplay.summary}
+                                                {targetServiceCount !== null ? (
+                                                    <span
+                                                        data-testid="executor-target-service-count"
+                                                        data-count={targetServiceCount}
+                                                        className="shrink-0 text-[11px] text-muted-foreground"
+                                                    >
+                                                        {t("executors.target.serviceCountSummary", { count: targetServiceCount })}
+                                                    </span>
+                                                ) : null}
                                             </div>
                                         </div>
                                     </TableCell>
 
                                     {/* Tracker column (hidden on narrow screens). */}
-                                    <TableCell className="hidden py-3 align-top md:table-cell">
+                                    <TableCell className="hidden py-3 align-top xl:table-cell">
                                         <div className="min-w-0 space-y-0.5">
                                             <div
                                                 className="truncate text-sm text-foreground"
@@ -228,19 +280,11 @@ export function ExecutorList({
                                                     </>
                                                 ) : null}
                                             </div>
-                                            {serviceBindingSummary ? (
-                                                <div
-                                                    className="truncate text-[11px] text-muted-foreground"
-                                                    title={serviceBindingSummary}
-                                                >
-                                                    {t("executors.target.details.services")}: {serviceBindingSummary}
-                                                </div>
-                                            ) : null}
                                         </div>
                                     </TableCell>
 
                                     {/* Status column — compact badge + mode. */}
-                                    <TableCell className="py-3 align-top">
+                                    <TableCell className="hidden py-3 align-top sm:table-cell">
                                         <div className="space-y-1">
                                             <div className="flex flex-wrap items-center gap-1.5">
                                                 {hasError ? (
@@ -294,7 +338,7 @@ export function ExecutorList({
 
                                     {/* Actions. */}
                                     <TableCell
-                                        className="w-[1%] whitespace-nowrap py-3 text-right align-top"
+                                        className="whitespace-nowrap py-3 text-right align-top"
                                         onClick={stopRowClick}
                                     >
                                         <div className="flex items-center justify-end gap-0.5">
@@ -304,21 +348,37 @@ export function ExecutorList({
                                                         variant="ghost"
                                                         size="icon"
                                                         className="h-7 w-7"
-                                                        disabled={!executor.enabled || !executor.id}
+                                                        disabled={!executor.enabled || !executor.id || hasError || isPending}
+                                                        aria-label={t("executors.actions.runNow")}
                                                         onClick={(event) => {
                                                             stopRowClick(event)
                                                             if (executor.id) onRun(executor.id)
                                                         }}
                                                     >
-                                                        <Play className="h-3.5 w-3.5" />
-                                                        <span className="sr-only">
-                                                            {t("executors.actions.runNow")}
-                                                        </span>
+                                                        {isPending ? <Spinner className="size-3.5" /> : <Play className="size-3.5" />}
+                                                        <span className="sr-only">{t("executors.actions.runNow")}</span>
                                                     </Button>
                                                 </TooltipTrigger>
                                                 <TooltipContent>
                                                     {t("executors.actions.runNow")}
                                                 </TooltipContent>
+                                            </Tooltip>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="size-7"
+                                                        aria-label={t("executors.actions.viewExecutionHistory")}
+                                                        onClick={(event) => {
+                                                            stopRowClick(event)
+                                                            if (executor.id) onViewExecutionHistory(executor.id)
+                                                        }}
+                                                    >
+                                                        <History className="size-3.5" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>{t("executors.actions.viewExecutionHistory")}</TooltipContent>
                                             </Tooltip>
                                             <DropdownMenu>
                                                 <DropdownMenuTrigger asChild onClick={stopRowClick}>
@@ -329,6 +389,7 @@ export function ExecutorList({
                                                 </DropdownMenuTrigger>
                                                 <DropdownMenuContent align="end">
                                                     <DropdownMenuItem
+                                                        disabled={isPending}
                                                         onClick={(event) => {
                                                             stopRowClick(event)
                                                             if (executor.id) onEdit(executor.id)
@@ -339,6 +400,7 @@ export function ExecutorList({
                                                     </DropdownMenuItem>
                                                     <DropdownMenuSeparator />
                                                     <DropdownMenuItem
+                                                        disabled={isPending}
                                                         className="text-destructive focus:text-destructive"
                                                         onClick={(event) => {
                                                             stopRowClick(event)
@@ -360,15 +422,4 @@ export function ExecutorList({
             </Table>
         </div>
     )
-}
-
-function buildServiceBindingSummary(
-    serviceBindings: NonNullable<ExecutorListItem["service_bindings"]>,
-): string | null {
-    if (serviceBindings.length === 0) return null
-    const visible = serviceBindings.slice(0, 2).map((binding) => binding.service).filter(Boolean)
-    const overflow = serviceBindings.length - visible.length
-    const summary = visible.join(", ")
-    if (!summary) return String(serviceBindings.length)
-    return overflow > 0 ? `${summary} +${overflow}` : summary
 }

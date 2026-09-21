@@ -3643,6 +3643,10 @@ async def test_executor_run_sends_executor_specific_notification(storage, monkey
     monkeypatch.setattr("releasetracker.notifiers.webhook.WebhookNotifier.notify", fake_notify)
 
     outcome = await scheduler.run_executor_now(executor_id)
+    assert not captured  # No inline network delivery during deployment.
+    from helpers.notification_delivery import deliver_notifications
+
+    await deliver_notifications(storage)
 
     assert outcome.status == "success"
     assert captured

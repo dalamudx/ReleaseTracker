@@ -32,6 +32,11 @@ export default defineConfig(({ command }) => ({
   },
   server: {
     host: "0.0.0.0",
+    watch: {
+      // Editors may truncate before writing. Do not transform/cache that empty
+      // intermediate file as a valid module with no named exports.
+      awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 20 },
+    },
     proxy: {
       "/api": {
         target: "http://localhost:8000",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 from db_helpers import (
@@ -23,6 +24,59 @@ def test_dbmate_migrations_are_single_release_baseline():
         assert "-- migrate:down" in content, f"missing migrate:down in {path.name}"
 
 
+def test_legacy_executor_health_profiles_migrate_to_readiness(tmp_path):
+    migration = next(
+        sql
+        for path, sql in iter_dbmate_up_sql(dbmate_migrations_dir())
+        if path.name == "20260920000004_unify_executor_health_check.sql"
+    )
+    conn = sqlite3.connect(tmp_path / "health-config.db")
+    try:
+        conn.execute("CREATE TABLE executors (id INTEGER PRIMARY KEY, health_check TEXT NOT NULL)")
+        legacy_disabled = {
+            "strategy": "none",
+            "use_default_strategy": False,
+            "failure_policy": "mark_failed",
+            "grace_period_seconds": 0,
+            "attempt_timeout_seconds": 0,
+            "interval_seconds": 0,
+            "probe_window_seconds": 0,
+        }
+        legacy_enabled = legacy_disabled | {
+            "strategy": "runtime_native",
+            "attempt_timeout_seconds": 10,
+            "interval_seconds": 5,
+            "probe_window_seconds": 180,
+        }
+        current = legacy_enabled | {
+            "readiness_enabled": False,
+            "readiness_timeout_seconds": 42,
+            "notify_result": True,
+        }
+        conn.executemany(
+            "INSERT INTO executors(id, health_check) VALUES (?, ?)",
+            [
+                (1, json.dumps(legacy_disabled)),
+                (2, json.dumps(legacy_enabled)),
+                (3, json.dumps(current)),
+            ],
+        )
+        conn.executescript(migration)
+        profiles = {
+            row[0]: json.loads(row[1])
+            for row in conn.execute("SELECT id, health_check FROM executors ORDER BY id")
+        }
+        assert profiles[1]["readiness_enabled"] is False
+        assert profiles[2]["readiness_enabled"] is True
+        assert profiles[1]["use_system_readiness_defaults"] is True
+        assert profiles[1]["readiness_timeout_seconds"] == 600
+        assert profiles[3]["readiness_timeout_seconds"] == 42
+        assert profiles[3]["strategy"] == "none"
+        assert profiles[3]["notify_result"] is True
+    finally:
+        conn.close()
+
+
 def test_apply_dbmate_migrations_builds_full_schema(tmp_path):
     migrations_dir = dbmate_migrations_dir()
     db_path = tmp_path / "dbmate.db"
@@ -42,6 +96,7 @@ def test_apply_dbmate_migrations_builds_full_schema(tmp_path):
         assert "release_history" not in tables
         assert "aggregate_trackers" in tables
         assert "executor_snapshots" in tables
+        assert "ssh_compose_ownership" in tables
         assert "executor_service_bindings" in tables
         assert "executor_desired_state" in tables
         assert "source_release_aliases" in tables

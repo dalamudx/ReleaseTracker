@@ -9,6 +9,7 @@ const {
   onSuccessMock,
   toastErrorMock,
   toastLoadingMock,
+  toastInfoMock,
   toastSuccessMock,
   translateMock,
 } = vi.hoisted(() => ({
@@ -18,7 +19,8 @@ const {
   toastErrorMock: vi.fn(),
   toastLoadingMock: vi.fn(() => "rollback-toast"),
   toastSuccessMock: vi.fn(),
-  translateMock: (key: string, options?: { defaultValue?: string }) => options?.defaultValue ?? key,
+  toastInfoMock: vi.fn(),
+  translateMock: (key: string, options?: { defaultValue?: string; name?: string; operation?: string }) => key === "tasks.submitted" ? `${key}:${options?.name}:${options?.operation}` : options?.defaultValue ?? key,
 }))
 
 vi.mock("react-i18next", () => ({
@@ -31,6 +33,7 @@ vi.mock("sonner", () => ({
   toast: {
     error: toastErrorMock,
     loading: toastLoadingMock,
+    info: toastInfoMock,
     success: toastSuccessMock,
   },
 }))
@@ -127,12 +130,21 @@ function renderDialog() {
 }
 
 describe("ExecutorRollbackDialog", () => {
+  it("identifies the executor and rollback operation without reporting completion", async () => {
+    mutateAsyncMock.mockResolvedValue({task_id: 7, status: "queued"})
+    renderDialog()
+    fireEvent.change(screen.getByLabelText("executors.rollback.dialog.confirmPrompt"), {target: {value: "sample-executor"}})
+    fireEvent.click(screen.getByRole("button", {name: "executors.rollback.dialog.confirmLabel"}))
+    await waitFor(() => expect(toastInfoMock).toHaveBeenCalledWith("tasks.submitted:sample-executor:executors.snapshots.actions.rollback", {id: "rollback-toast"}))
+    expect(toastSuccessMock).not.toHaveBeenCalled()
+  })
   beforeEach(() => {
     mutateAsyncMock.mockReset()
     onOpenChangeMock.mockReset()
     onSuccessMock.mockReset()
     toastErrorMock.mockReset()
     toastLoadingMock.mockClear()
+    toastInfoMock.mockClear()
     toastSuccessMock.mockReset()
     vi.spyOn(console, "error").mockImplementation(() => undefined)
   })

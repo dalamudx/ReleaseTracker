@@ -27,6 +27,9 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
   --color-success: var(--success);
@@ -75,11 +78,14 @@
   /* Neutral-500 */
   --accent: oklch(0.967 0.003 286.027);
   --accent-foreground: oklch(0.209 0.013 285.938);
-  --destructive: oklch(0.577 0.245 27.325);
-  --warning: oklch(0.74 0.17 70);
-  --warning-foreground: oklch(0.32 0.1 60);
-  --success: oklch(0.66 0.16 155);
-  --success-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.48 0.20 27);
+  --destructive-foreground: oklch(0.984 0.002 247.858);
+  --info: oklch(0.46 0.15 250);
+  --info-foreground: oklch(0.984 0.002 247.858);
+  --warning: oklch(0.42 0.11 70);
+  --warning-foreground: oklch(0.984 0.002 247.858);
+  --success: oklch(0.42 0.12 155);
+  --success-foreground: oklch(0.984 0.002 247.858);
   --border: oklch(0.921 0.007 286.067);
   /* Neutral-200 */
   --input: oklch(0.921 0.007 286.067);
@@ -123,11 +129,14 @@
   /* Neutral-400 */
   --accent: oklch(0.269 0.024 286.32);
   --accent-foreground: oklch(0.984 0.002 247.858);
-  --destructive: oklch(0.396 0.141 25.723);
-  --warning: oklch(0.78 0.17 80);
-  --warning-foreground: oklch(0.985 0 0);
-  --success: oklch(0.72 0.17 155);
-  --success-foreground: oklch(0.16 0.05 155);
+  --destructive: oklch(0.72 0.18 25);
+  --destructive-foreground: oklch(0.139 0.006 285.885);
+  --info: oklch(0.76 0.13 250);
+  --info-foreground: oklch(0.139 0.006 285.885);
+  --warning: oklch(0.82 0.15 80);
+  --warning-foreground: oklch(0.139 0.006 285.885);
+  --success: oklch(0.78 0.14 155);
+  --success-foreground: oklch(0.139 0.006 285.885);
   --border: oklch(0.269 0.024 286.32);
   /* Neutral-800 */
   --input: oklch(0.269 0.024 286.32);
@@ -283,8 +292,18 @@
 
   body {
     @apply bg-background text-foreground antialiased font-sans;
+    caret-color: var(--primary);
     font-feature-settings: "rlig" 1, "calt" 1;
     text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: color-mix(in oklch, var(--primary) 22%, transparent);
+    color: var(--foreground);
+  }
+
+  * {
+    scrollbar-color: color-mix(in oklch, var(--muted-foreground) 42%, transparent) transparent;
   }
 }
 
@@ -293,71 +312,30 @@
 }
 
 @utility glass-card {
-  @apply relative overflow-hidden backdrop-blur-xl transition-all duration-300;
-
-  /* Light mode - enhanced visibility with border and better shadows */
-  @apply bg-card/50 border border-border/40;
-  box-shadow:
-    0 1px 3px 0 rgb(0 0 0 / 0.1),
-    0 1px 2px -1px rgb(0 0 0 / 0.1),
-    inset 0 1px 0 0 rgb(255 255 255 / 0.8);
-
-  &::before {
-    content: "";
-    @apply absolute inset-0 rounded-[inherit] pointer-events-none p-[1px];
-    background: linear-gradient(to bottom, oklch(var(--border) / 0.6), oklch(var(--border) / 0.1));
-    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-    mask-composite: exclude;
-  }
+  @apply relative overflow-hidden border border-border/60 bg-card shadow-xs transition-colors duration-150;
 
   &:hover {
-    @apply bg-card/70 -translate-y-[2px] border-border/60;
-    box-shadow:
-      0 10px 15px -3px rgb(0 0 0 / 0.15),
-      0 4px 6px -4px rgb(0 0 0 / 0.1),
-      inset 0 1px 0 0 rgb(255 255 255 / 1),
-      0 0 0 1px oklch(var(--primary) / 0.2);
-  }
-
-  /* Enhanced dark mode visibility */
-  .dark & {
-    @apply bg-card/70 border border-border/40;
-    box-shadow:
-      0 1px 3px 0 rgb(0 0 0 / 0.4),
-      0 1px 2px -1px rgb(0 0 0 / 0.3),
-      inset 0 0 0 1px rgb(255 255 255 / 0.08);
-  }
-
-  .dark &:hover {
-    @apply bg-card/90 border-border/60;
-    box-shadow:
-      0 10px 15px -3px rgb(0 0 0 / 0.5),
-      0 4px 6px -4px rgb(0 0 0 / 0.4),
-      inset 0 0 0 1px rgb(255 255 255 / 0.15),
-      0 0 0 1px oklch(var(--primary) / 0.4);
+    @apply border-border bg-card;
   }
 }
 
-/* Subtle grainy noise texture for depth (Shadcn style) */
-body::before {
-  content: "";
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  z-index: -1;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.05'/%3E%3C/svg%3E");
-  opacity: 0.15;
-  mix-blend-mode: overlay;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
-/* Cleanup old radial gradients if present */
-body {
-  background-image: none !important;
-}
+@media (pointer: coarse) and (max-width: 767px) {
+  [data-slot="button"] {
+    min-height: 2.75rem;
+  }
 
-.dark body {
-  background-image: none !important;
+  [data-slot="button"][data-size^="icon"] {
+    min-width: 2.75rem;
+  }
 }

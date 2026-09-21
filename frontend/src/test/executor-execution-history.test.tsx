@@ -82,6 +82,16 @@ describe("ExecutorExecutionHistoryPanel image rendering", () => {
     toastSuccessMock.mockReset()
   })
 
+  it("keeps images alongside waiting and per-service readiness", async () => {
+    getExecutorHistoryMock.mockResolvedValue({ items: [createHistoryItem({
+      status: "health_checking", from_version: "registry.example.test/team/service-a:1.1.0", to_version: "registry.example.test/team/service-a:1.2.0",
+      diagnostics: { kind: "docker", summary: {updated_count: 1, skipped_count: 0, failed_count: 0, group_message: null}, services: [], health_check: {outcome: "pending", services: [{service: "service-a", status: "pending", method: "native", message: "starting"}]} },
+    })], total: 1 })
+    render(<ExecutorExecutionHistoryPanel executor={createExecutor()} refreshKey={0} />)
+    expect(await screen.findByText("readiness.waiting")).toBeVisible()
+    expect(screen.getByTestId("executor-history-image-change-list")).toHaveTextContent("registry.example.test/team/service-a:1.2.0")
+    expect(screen.getByRole("status")).toHaveTextContent("service-a: readiness.outcome.pending · native — starting")
+  })
   it("renders backend from/to image refs verbatim under image columns", async () => {
     getExecutorHistoryMock.mockResolvedValue({
       items: [
@@ -133,7 +143,7 @@ describe("ExecutorExecutionHistoryPanel image rendering", () => {
     expect(screen.getByTestId("executor-history-to-image")).toHaveTextContent("-")
   })
 
-  it("renders structured grouped diagnostics with the existing image change layout", async () => {
+  it.each(["docker_compose", "podman_compose", "ssh_compose", "portainer_stack", "kubernetes_workload"])("renders %s services as separate aligned image-change rows", async (kind) => {
     getExecutorHistoryMock.mockResolvedValue({
       items: [
         createHistoryItem({
@@ -141,7 +151,7 @@ describe("ExecutorExecutionHistoryPanel image rendering", () => {
           to_version: null,
           message: "docker-compose run finished",
           diagnostics: {
-            kind: "docker_compose",
+            kind,
             summary: {
               updated_count: 1,
               skipped_count: 1,
@@ -180,6 +190,29 @@ describe("ExecutorExecutionHistoryPanel image rendering", () => {
     expect(within(imageChangeList).getAllByText("ghcr.io/acme/worker:2.0.0")).toHaveLength(2)
     expect(within(imageChangeList).getAllByTestId("executor-history-from-image")).toHaveLength(2)
     expect(within(imageChangeList).getAllByTestId("executor-history-to-image")).toHaveLength(2)
+    // Pagination and run identity stay at execution level; services are nested display rows.
+    expect(screen.getAllByTestId("executor-history-item")).toHaveLength(1)
+    expect(within(imageChangeList).queryByRole("table")).not.toBeInTheDocument()
+    expect(within(imageChangeList).getByText("executors.history.table.fromImage")).toBeVisible()
+    expect(within(imageChangeList).getByText("executors.history.table.toImage")).toBeVisible()
+    const rows = within(imageChangeList).getAllByTestId("executor-history-service-change")
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toHaveAccessibleName("api")
+    expect(within(rows[0]).getByTestId("executor-history-from-image")).toHaveTextContent("ghcr.io/acme/api:1.0.0")
+    expect(within(rows[0]).getByTestId("executor-history-to-image")).toHaveTextContent("ghcr.io/acme/api:1.1.0")
+    expect(rows[1]).toHaveAccessibleName("worker")
+    expect(within(rows[1]).getAllByText("ghcr.io/acme/worker:2.0.0")).toHaveLength(2)
+  })
+
+  it("preserves the single image change when service diagnostics are empty", async () => {
+    getExecutorHistoryMock.mockResolvedValue({items: [createHistoryItem({diagnostics: {
+      kind: "docker_compose",
+      summary: {updated_count: 0, skipped_count: 0, failed_count: 0, group_message: null},
+      services: [],
+    }})], total: 1})
+    render(<ExecutorExecutionHistoryPanel executor={createExecutor()} refreshKey={0} />)
+    expect(await screen.findByTestId("executor-history-from-image")).toHaveTextContent("docker.io/library/sample-base:24.04")
+    expect(screen.getByTestId("executor-history-to-image")).toHaveTextContent("docker.io/library/sample-base:24.10")
   })
 
   it("renders Portainer stack executor context in the history header", async () => {
@@ -204,9 +237,10 @@ describe("ExecutorExecutionHistoryPanel image rendering", () => {
       />,
     )
 
-    expect(await screen.findByText("release-stack")).toBeInTheDocument()
-    expect(screen.getByText("release-stack #11")).toBeInTheDocument()
-    expect(screen.getByText("Portainer stack")).toBeInTheDocument()
+    const infoCard = await screen.findByTestId("executor-target-info-card")
+    expect(within(infoCard).getByText("release-stack")).toBeInTheDocument()
+    expect(within(infoCard).getByText("Endpoint #2")).toBeInTheDocument()
+    expect(within(infoCard).getByText("Portainer stack")).toBeInTheDocument()
   })
 
   it("renders Helm release history as version changes", async () => {
@@ -237,14 +271,83 @@ describe("ExecutorExecutionHistoryPanel image rendering", () => {
       />,
     )
 
-    expect(await screen.findByText("certd")).toBeInTheDocument()
-    expect(screen.getByText("apps / certd / certd-chart")).toBeInTheDocument()
+    const infoCard = await screen.findByTestId("executor-target-info-card")
+    expect(within(infoCard).getByText("certd")).toBeInTheDocument()
+    expect(within(infoCard).getByText("apps")).toBeInTheDocument()
+    expect(within(infoCard).getByText("Helm release")).toBeInTheDocument()
     expect(screen.getByText("executors.review.versionChanges")).toBeInTheDocument()
     expect(screen.getByText("executors.history.table.fromVersion")).toBeInTheDocument()
     expect(screen.getByText("executors.history.table.toVersion")).toBeInTheDocument()
     expect(screen.getByTestId("executor-history-from-version")).toHaveTextContent("0.7.0")
     expect(screen.getByTestId("executor-history-to-version")).toHaveTextContent("0.8.0")
     expect(screen.queryByText("executors.review.imageChanges")).not.toBeInTheDocument()
+  })
+
+  it("renders unified 4-field metadata card for SSH Compose target", async () => {
+    getExecutorHistoryMock.mockResolvedValue({
+      items: [createHistoryItem()],
+      total: 1,
+    })
+
+    render(
+      <ExecutorExecutionHistoryPanel
+        executor={createExecutor({
+          name: "test",
+          runtime_type: "ssh",
+          runtime_connection_name: "example-ssh",
+          enabled: true,
+          update_mode: "manual",
+          tracker_name: "affine",
+          channel_name: "stable",
+          target_ref: {
+            mode: "ssh_compose",
+            project: "sample_project",
+            working_dir: "/srv/sample_project",
+            tool: "podman-compose",
+            write_strategy: "source",
+            config_files: ["compose.yml"],
+            env_files: [],
+            profiles: [],
+          },
+        })}
+        refreshKey={0}
+      />,
+    )
+
+    const infoCard = await screen.findByTestId("executor-target-info-card")
+    expect(within(infoCard).getByText("SSH Compose")).toBeInTheDocument()
+    expect(within(infoCard).getByText("podman-compose")).toBeInTheDocument()
+    expect(within(infoCard).getByText("SSH · example-ssh")).toBeInTheDocument()
+    expect(within(infoCard).getByText("sample_project")).toBeInTheDocument()
+    expect(within(infoCard).getByText("/srv/sample_project")).toBeInTheDocument()
+    expect(within(infoCard).getByText("affine / channel.stable")).toBeInTheDocument()
+  })
+
+  it("parses semicolon-delimited multi-service strings into separate aligned service rows even without diagnostics.services", async () => {
+    getExecutorHistoryMock.mockResolvedValue({
+      items: [
+        createHistoryItem({
+          from_version: "service-a: registry.example.test/team/service-a:1.0.0; service-b: registry.example.test/team/service-b:2.0.0",
+          to_version: "service-a: registry.example.test/team/service-a:1.1.0; service-b: registry.example.test/team/service-b:2.1.0",
+          diagnostics: null,
+        }),
+      ],
+      total: 1,
+    })
+
+    render(<ExecutorExecutionHistoryPanel executor={createExecutor()} refreshKey={0} />)
+
+    const imageChangeList = await screen.findByTestId("executor-history-image-change-list")
+    const rows = within(imageChangeList).getAllByTestId("executor-history-service-change")
+    expect(rows).toHaveLength(2)
+
+    expect(rows[0]).toHaveAccessibleName("service-a")
+    expect(within(rows[0]).getByTestId("executor-history-from-image")).toHaveTextContent("registry.example.test/team/service-a:1.0.0")
+    expect(within(rows[0]).getByTestId("executor-history-to-image")).toHaveTextContent("registry.example.test/team/service-a:1.1.0")
+
+    expect(rows[1]).toHaveAccessibleName("service-b")
+    expect(within(rows[1]).getByTestId("executor-history-from-image")).toHaveTextContent("registry.example.test/team/service-b:2.0.0")
+    expect(within(rows[1]).getByTestId("executor-history-to-image")).toHaveTextContent("registry.example.test/team/service-b:2.1.0")
   })
 
   it("clears executor history after confirmation", async () => {

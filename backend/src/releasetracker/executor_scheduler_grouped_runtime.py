@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 
+from .executor_scheduler_ssh import ExecutorSchedulerSSH
 from .executor_scheduler_grouped_runtime_helm import ExecutorSchedulerHelmRuntime
 from .executor_scheduler_grouped_runtime_kubernetes import ExecutorSchedulerKubernetesRuntime
 from .executor_scheduler_grouped_runtime_compose import ExecutorSchedulerComposeRuntime
@@ -11,6 +12,7 @@ from .executor_scheduler_grouped_runtime_support import (
 
 
 class ExecutorSchedulerGroupedRuntime(
+    ExecutorSchedulerSSH,
     ExecutorSchedulerHelmRuntime,
     ExecutorSchedulerKubernetesRuntime,
     ExecutorSchedulerComposeRuntime,

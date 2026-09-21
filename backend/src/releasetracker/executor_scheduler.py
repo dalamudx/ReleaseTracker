@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .services.task_effects import mark_deployment_mutation
+
 import asyncio
 import logging
 from datetime import datetime
@@ -63,6 +65,7 @@ class ExecutorScheduler(
         snapshot_service: SnapshotService | None = None,
     ):
         self.storage = storage
+        self.deploy_tasks = None
         self.scheduler_host = scheduler_host or SchedulerHost()
         self._job_namespace = "executor"
         self._now_provider = now_provider or datetime.now
@@ -158,6 +161,12 @@ class ExecutorScheduler(
         self.scheduler_host.remove_job(self._job_namespace, executor_config.id)
 
     async def _execute_executor_by_id(self, executor_id: int) -> None:
+        if self.deploy_tasks is not None:
+            config = await self.storage.get_executor_config(executor_id)
+            if config and config.enabled:
+                await self._enqueue_current_projection_work_for_executor(config)
+                await self.deploy_tasks.dispatch_pending()
+            return
         config = await self.storage.get_executor_config(executor_id)
         if not config:
             return
@@ -172,6 +181,10 @@ class ExecutorScheduler(
     ) -> ExecutorRunOutcome:
         await self._refresh_system_timezone()
         target_mode = executor_config.target_ref.get("mode")
+        if target_mode == "ssh_compose":
+            return await self._execute_ssh_compose_executor(
+                executor_config, manual=manual, _run_id=_run_id
+            )
         if target_mode == "portainer_stack":
             return await self._execute_portainer_stack_executor(
                 executor_config,
@@ -371,6 +384,7 @@ class ExecutorScheduler(
                         run_id=run_id,
                         current_image=current_image,
                     )
+                await mark_deployment_mutation()
                 result = await adapter.update_image(executor_config.target_ref, target_image)
                 if not result.updated:
                     return await self._finalize_run(

@@ -7,6 +7,7 @@ from typing import Any
 from .executor_trigger import enqueue_executor_binding_targets
 from .models import Release
 from .notifiers import SUPPORTED_NOTIFIER_TYPES, build_notifier
+from .notifiers.template_store import get_template
 from .notifiers.base import NotificationEvent
 
 logger = logging.getLogger(__name__)
@@ -170,6 +171,7 @@ class ReleaseSchedulerProjectionNotifications:
                             url=n.url,
                             events=n.events,
                             language=n.language,
+                            template=await get_template(self.storage, n.template_id),
                         )
                     )
         except Exception as e:

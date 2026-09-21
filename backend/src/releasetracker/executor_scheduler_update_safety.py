@@ -57,6 +57,10 @@ class ExecutorSchedulerUpdateSafety:
         Otherwise returns a structured outcome the caller feeds into
         ``_finalize_run``.
         """
+        from .services.deployment_readiness_context import DEFER_READINESS
+
+        if DEFER_READINESS.get():
+            return None
         profile = executor_config.health_check
         if profile is None or profile.strategy == "none":
             return None

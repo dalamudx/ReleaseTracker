@@ -26,6 +26,7 @@ from . import (
     sqlite_source_observations,
     sqlite_release_queries,
     sqlite_webhooks,
+    sqlite_tasks,
 )
 from ..models import (
     Release,
@@ -110,6 +111,7 @@ class SQLiteStorage:
         # Notifier in-memory cache, invalidated after CRUD operations
         self._notifiers_cache: list | None = None
         self.webhooks = sqlite_webhooks.WebhookStore(self)
+        self.tasks = sqlite_tasks.TaskStore(self)
 
         if system_key_manager is None:
             raise RuntimeError("SQLiteStorage requires SystemKeyManager")
@@ -439,6 +441,12 @@ class SQLiteStorage:
                         row["secret"], self.fernet
                     )
 
+        from ..services.ssh_compose_snapshot import snapshot_inventory
+
+        count, invalid = await snapshot_inventory(self, db)
+        if count:
+            inventory["ssh_compose_snapshot"] = count
+        undecryptable_count += invalid
         return {"inventory": inventory, "undecryptable_count": undecryptable_count}
 
     async def rotate_encrypted_data(self, new_key: str) -> dict[str, Any]:
@@ -472,6 +480,12 @@ class SQLiteStorage:
         oauth_provider_updates: list[tuple[str, int]] = []
         runtime_connection_updates: list[tuple[str, int]] = []
         repository_webhook_updates: list[tuple[str, str]] = []
+        from ..services.ssh_compose_snapshot import prepare_snapshot_rotation
+
+        snapshot_updates = await prepare_snapshot_rotation(self, db, old_fernet, new_fernet)
+        if snapshot_updates:
+            stats["inventory"]["ssh_compose_snapshot"] = len(snapshot_updates)
+            stats["rotated"]["ssh_compose_snapshot"] = len(snapshot_updates)
 
         try:
             cursor = await db.execute("SELECT id, token, secrets FROM credentials")
@@ -575,6 +589,10 @@ class SQLiteStorage:
             await db.executemany(
                 "UPDATE repository_webhooks SET secret = ? WHERE id = ?",
                 repository_webhook_updates,
+            )
+            await db.executemany(
+                "UPDATE executor_snapshots SET snapshot_data = ?, snapshot_sha256 = ?, snapshot_size_bytes = ? WHERE id = ?",
+                snapshot_updates,
             )
             await db.commit()
         except BaseException:
@@ -1056,6 +1074,10 @@ class SQLiteStorage:
             "repository_webhooks",
             "webhook_deliveries",
             "source_refresh_requests",
+            "ssh_compose_ownership",
+            "tasks",
+            "task_attempts",
+            "task_triggers",
             "tracker_release_history",
             "tracker_release_history_sources",
             "tracker_current_releases",
@@ -2980,6 +3002,9 @@ class SQLiteStorage:
     async def get_credential_reference_counts(self, credential) -> dict[str, int]:
         return await sqlite_credentials.get_credential_reference_counts(self, credential)
 
+    async def get_runtime_connection_counts_by_credential_ids(self, credential_ids: list[int]) -> dict[int, int]:
+        return await sqlite_credentials.get_runtime_connection_counts_by_credential_ids(self, credential_ids)
+
     def _row_to_credential(self, row):
         return sqlite_credentials._row_to_credential(self, row)
 
@@ -3014,7 +3039,10 @@ class SQLiteStorage:
             )
 
     async def delete_runtime_connection(self, runtime_connection_id: int) -> bool:
-        return await sqlite_runtime_executors.delete_runtime_connection(self, runtime_connection_id)
+        async with self._encryption_rotation_lock:
+            return await sqlite_runtime_executors.delete_runtime_connection(
+                self, runtime_connection_id
+            )
 
     def _row_to_runtime_connection(self, row):
         return sqlite_runtime_executors._row_to_runtime_connection(self, row)
@@ -3134,6 +3162,8 @@ class SQLiteStorage:
         to_version: str | None = None,
         message: str | None = None,
         diagnostics: dict[str, Any] | None = None,
+        notification_intent: dict[str, Any] | None = None,
+        executor_status: ExecutorStatus | None = None,
     ) -> bool:
         return await sqlite_runtime_executors.finalize_executor_run(
             self,
@@ -3144,6 +3174,8 @@ class SQLiteStorage:
             to_version=to_version,
             message=message,
             diagnostics=diagnostics,
+            notification_intent=notification_intent,
+            executor_status=executor_status,
         )
 
     async def set_executor_run_status(self, run_id: int, status: str) -> None:
@@ -3458,6 +3490,7 @@ class SQLiteStorage:
                 cls._normalize_notifier_language(row["language"]) if "language" in keys else "en"
             ),
             description=row["description"],
+            template_id=row["template_id"] if "template_id" in keys else None,
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
@@ -3545,8 +3578,8 @@ class SQLiteStorage:
         db = await self._get_connection()
         cursor = await db.execute(
             """
-            INSERT INTO notifiers (name, type, url, events, enabled, language, description, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO notifiers (name, type, url, events, enabled, language, description, created_at, updated_at, template_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 notifier_data["name"],
@@ -3558,6 +3591,7 @@ class SQLiteStorage:
                 notifier_data.get("description"),
                 now,
                 now,
+                notifier_data.get("template_id"),
             ),
         )
         await db.commit()
@@ -3605,6 +3639,9 @@ class SQLiteStorage:
         if "enabled" in notifier_data:
             fields.append("enabled = ?")
             values.append(1 if notifier_data["enabled"] else 0)
+        if "template_id" in notifier_data:
+            fields.append("template_id = ?")
+            values.append(notifier_data["template_id"])
         if "language" in notifier_data:
             fields.append("language = ?")
             values.append(self._normalize_notifier_language(notifier_data["language"]))

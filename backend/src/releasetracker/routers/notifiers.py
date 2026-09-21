@@ -5,6 +5,7 @@ from typing import Annotated
 from datetime import datetime
 
 from ..models import Notifier, User
+from ..notifiers.template_store import get_template
 from ..notifiers import SUPPORTED_NOTIFIER_TYPES, build_notifier
 
 # ...
@@ -82,6 +83,10 @@ async def create_notifier(
     if "url" not in notifier_data or not notifier_data["url"]:
         raise HTTPException(status_code=400, detail="URL is required")
     notifier_data["type"] = _normalize_notifier_type(notifier_data.get("type"))
+    try:
+        await get_template(storage, notifier_data.get("template_id"))
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc)) from None
 
     try:
         return await storage.create_notifier(notifier_data)
@@ -100,6 +105,11 @@ async def update_notifier(
 ):
     """Update a notifier"""
     storage: SQLiteStorage = get_storage(request)
+    if "template_id" in notifier_data:
+        try:
+            await get_template(storage, notifier_data["template_id"])
+        except ValueError as exc:
+            raise HTTPException(400, detail=str(exc)) from None
     if "type" in notifier_data:
         notifier_data["type"] = _normalize_notifier_type(notifier_data["type"])
     try:
@@ -144,6 +154,7 @@ async def test_notifier(
     )
     payload = {
         "event": "test",
+        "name": notifier.name,
         "message": message,
         "content": message,  # Discord compatibility
         "text": message,  # Slack compatibility
@@ -159,6 +170,7 @@ async def test_notifier(
         url=notifier.url,
         events=["test"],
         language=notifier.language,
+        template=await get_template(storage, notifier.template_id),
     ).notify("test", payload)
     if not delivered:
         raise HTTPException(status_code=400, detail="Webhook test failed")

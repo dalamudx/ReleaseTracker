@@ -1,7 +1,10 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
-import { ChevronDown, Copy, FileText, Inbox } from "lucide-react"
+import { BookOpen, ChevronDown, Copy, Edit, Inbox, Loader2, Play } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
+import { formatDistanceToNow } from "date-fns"
+import { enUS, zhCN } from "date-fns/locale"
+import { cn } from "@/lib/utils"
 
 import type {
     AggregateTracker,
@@ -37,6 +40,11 @@ import {
     TableHead,
     TableRow,
 } from "@/components/ui/table"
+import {
+    Collapsible,
+    CollapsibleContent,
+    CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 import { getTrackerChannelConfigValueLabel } from "./trackerDetailHelpers"
 
 function getTrackerChannelTypeLabel(
@@ -83,16 +91,38 @@ function mapContributionToReleaseNotesSubject(
 interface TrackerDetailProps {
     trackerName: string | null
     refreshKey: number
+    onEdit?: (name: string) => void
+    onCheck?: (name: string) => void
+    checking?: boolean
 }
 
 function normalizeArtifactDigest(digest: string): string {
     return /^[0-9a-f]{64}$/i.test(digest) ? `sha256:${digest}` : digest
 }
 
-export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
-    const { t } = useTranslation()
+export function TrackerDetail({
+    trackerName,
+    refreshKey,
+    onEdit,
+    onCheck,
+    checking = false,
+}: TrackerDetailProps) {
+    const { t, i18n } = useTranslation()
     const formatDate = useDateFormatter()
+    const [sourcesOpen, setSourcesOpen] = useState(true)
     const [selectedRelease, setSelectedRelease] = useState<ReleaseNotesSubject | null>(null)
+
+    const formatRelative = (dateString: string | null | undefined): string => {
+        if (!dateString) return ""
+        try {
+            return formatDistanceToNow(new Date(dateString), {
+                addSuffix: true,
+                locale: i18n.language === "zh" ? zhCN : enUS,
+            })
+        } catch {
+            return formatDate(dateString)
+        }
+    }
     const [releaseNotesOpen, setReleaseNotesOpen] = useState(false)
     const [expandedVersionIdentity, setExpandedVersionIdentity] = useState<string | null | undefined>(undefined)
     const [expandedArtifactAliases, setExpandedArtifactAliases] = useState<Set<string>>(() => new Set())
@@ -240,50 +270,99 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
     return (
         <div className="space-y-4">
             {/* Summary card — title, description, 4 quick stats. */}
-            <Card className="gap-3 py-4">
-                <CardHeader className="pb-0">
+            <Card className="glass-card gap-3 p-4 shadow-xs">
+                <div className="flex flex-col gap-3">
                     <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 space-y-1">
-                            <CardTitle className="flex items-center gap-2 text-base">
-                                <span className="truncate">{tracker.name}</span>
+                        <div className="min-w-0 space-y-0.5">
+                            <div className="flex items-center gap-2">
+                                <span className="text-base font-bold tracking-tight text-foreground truncate">{tracker.name}</span>
                                 <Badge variant={tracker.enabled ? "secondary" : "outline"} className="h-5 shrink-0 text-[10px]">
                                     {tracker.enabled ? t("common.enabled") : t("common.disabled")}
                                 </Badge>
-                            </CardTitle>
-                            <CardDescription className="text-xs">
-                                {tracker.description || t("trackers.aggregate.detail.noDescription")}
-                            </CardDescription>
+                            </div>
+                            {tracker.description && (
+                                <p className="text-xs text-muted-foreground line-clamp-1">
+                                    {tracker.description}
+                                </p>
+                            )}
+                        </div>
+
+                        {/* Top Action Buttons for current tracker */}
+                        <div className="flex items-center gap-1.5 shrink-0">
+                            {onCheck && (
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 px-2.5 text-xs font-medium"
+                                    onClick={() => onCheck(tracker.name)}
+                                    disabled={checking}
+                                >
+                                    {checking ? (
+                                        <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                        <Play className="mr-1 h-3.5 w-3.5 text-primary" />
+                                    )}
+                                    <span>{t("common.check")}</span>
+                                </Button>
+                            )}
+                            {onEdit && (
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 px-2.5 text-xs font-medium"
+                                    onClick={() => onEdit(tracker.name)}
+                                >
+                                    <Edit className="mr-1 h-3.5 w-3.5" />
+                                    <span>{t("common.edit")}</span>
+                                </Button>
+                            )}
                         </div>
                     </div>
-                </CardHeader>
-                <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                    <SummaryStat
-                        label={t("trackers.aggregate.detail.primarySource")}
-                        value={primaryChannel?.source_key || "—"}
-                        hint={getTrackerChannelTypeLabel(primaryChannel?.source_type, t)}
-                    />
-                    <SummaryStat
-                        label={t("trackers.aggregate.detail.sourceCount")}
-                        value={`${tracker.status.enabled_source_count} / ${tracker.status.source_count}`}
-                    />
-                    <SummaryStat
-                        label={t("trackers.aggregate.detail.latestCanonical")}
-                        value={latestReleaseVersion || "—"}
-                        mono
-                    />
-                    <SummaryStat
-                        label={t("trackers.aggregate.detail.releaseChannels")}
-                        value={String(trackerChannelReleaseCount)}
-                    />
-                </CardContent>
+
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        <SummaryStat
+                            label={t("trackers.aggregate.detail.primarySource")}
+                            value={primaryChannel?.source_key || "—"}
+                            hint={getTrackerChannelTypeLabel(primaryChannel?.source_type, t)}
+                        />
+                        <SummaryStat
+                            label={t("trackers.aggregate.detail.sourceCount")}
+                            value={`${tracker.status.enabled_source_count} / ${tracker.status.source_count}`}
+                        />
+                        <SummaryStat
+                            label={t("trackers.aggregate.detail.latestCanonical")}
+                            value={latestReleaseVersion || "—"}
+                            mono
+                        />
+                        <SummaryStat
+                            label={t("trackers.aggregate.detail.releaseChannels")}
+                            value={String(trackerChannelReleaseCount)}
+                        />
+                    </div>
+                </div>
             </Card>
 
-            {/* Source channels card. */}
-            <Card className="gap-3 py-4">
-                <CardHeader className="pb-0">
-                    <CardTitle className="text-base">{t("trackers.aggregate.detail.trackerChannelsTitle")}</CardTitle>
-                </CardHeader>
-                <CardContent className="grid gap-3 md:grid-cols-2">
+            {/* Section 1: Source Channels Config (collapsible, defaultOpen=true) */}
+            <Collapsible open={sourcesOpen} onOpenChange={setSourcesOpen}>
+                <Card className="glass-card gap-0 py-0 shadow-xs">
+                    <CardHeader className="p-3.5 pb-2">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <CardTitle className="text-sm font-semibold">{t("trackers.aggregate.detail.trackerChannelsTitle")}</CardTitle>
+                                <Badge variant="secondary" className="h-4.5 rounded px-1.5 text-[10px] font-normal text-muted-foreground">
+                                    {tracker.sources.length}
+                                </Badge>
+                            </div>
+                            <CollapsibleTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-6 w-6">
+                                    <ChevronDown className={cn("h-3.5 w-3.5 transition-transform duration-200", sourcesOpen ? "" : "-rotate-90")} />
+                                    <span className="sr-only">Toggle channels</span>
+                                </Button>
+                            </CollapsibleTrigger>
+                        </div>
+                    </CardHeader>
+                    <CollapsibleContent>
+                        <CardContent className="grid gap-2.5 p-3.5 pt-0 sm:grid-cols-2">
                     {tracker.sources.map((channel) => {
                         const isPrimary = tracker.primary_changelog_source_key === channel.source_key
                         const channelConfigEntries = Object.entries(channel.source_config ?? {})
@@ -292,12 +371,12 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
                         return (
                             <div
                                 key={channel.source_key}
-                                className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-3"
+                                className="space-y-2 rounded-lg border border-border/60 bg-muted/20 p-2.5"
                             >
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0 space-y-0.5">
                                         <div className="flex items-center gap-1.5">
-                                            <span className="truncate text-sm font-medium text-foreground">
+                                            <span className="truncate text-sm font-semibold text-foreground">
                                                 {channel.source_key}
                                             </span>
                                             {isPrimary ? (
@@ -322,7 +401,7 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
                                 </div>
 
                                 {(channelConfigEntries.length > 0 || channel.credential_name) ? (
-                                    <dl className="space-y-1 pl-2 text-xs">
+                                    <dl className="space-y-0.5 pl-1 text-[11px] leading-tight">
                                         {channelConfigEntries.map(([key, value]) => (
                                             <div key={key} className="flex min-w-0 items-start gap-2">
                                                 <dt className="shrink-0 font-medium text-muted-foreground">
@@ -348,21 +427,37 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
                             </div>
                         )
                     })}
-                </CardContent>
-            </Card>
+                        </CardContent>
+                    </CollapsibleContent>
+                </Card>
+            </Collapsible>
 
-            {/* Release views / canonical version matrix. */}
-            <Card className="gap-3 py-4">
-                <CardHeader className="pb-0">
-                    <CardTitle className="text-base">{t("trackers.aggregate.detail.releaseViewsTitle")}</CardTitle>
+            {/* Section 2: Canonical Release Matrix */}
+            <Card className="glass-card gap-0 py-0 shadow-xs">
+                <CardHeader className="p-3.5 pb-2">
+                    <CardTitle className="text-sm font-semibold">{t("trackers.aggregate.detail.releaseViewsTitle")}</CardTitle>
                     <CardDescription className="text-xs">
                         {t("trackers.aggregate.detail.canonicalDiagramDescription")}
                     </CardDescription>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="p-3.5 pt-0">
                     {versionViewMatrixModel.rows.length === 0 ? (
-                        <div className="flex items-center justify-center rounded-lg border border-dashed border-border/60 py-8 text-sm text-muted-foreground">
-                            {t("trackers.aggregate.detail.emptyCanonical")}
+                        <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/60 py-8 text-center">
+                            <span className="text-xs text-muted-foreground">
+                                {t("trackers.aggregate.detail.emptyCanonical")}
+                            </span>
+                            {onCheck && (
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 text-xs"
+                                    onClick={() => onCheck(tracker.name)}
+                                    disabled={checking}
+                                >
+                                    <Play className="mr-1 h-3 w-3 text-primary" />
+                                    <span>{t("trackers.aggregate.detail.checkNow")}</span>
+                                </Button>
+                            )}
                         </div>
                     ) : (
                         <div className="overflow-hidden rounded-lg border border-border/60">
@@ -406,7 +501,7 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
                                             <Fragment key={row.identityKey}>
                                                 <TableRow className="bg-muted/30 hover:bg-muted/40">
                                                     <TableCell colSpan={4} className="whitespace-normal p-0">
-                                                        <div className="flex min-w-0 items-center gap-2 px-3 py-2">
+                                                        <div className="flex min-w-0 items-center gap-2 px-3 py-1">
                                                             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                                                                 <span
                                                                     className="max-w-full truncate font-mono text-sm font-semibold text-foreground"
@@ -420,16 +515,26 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
                                                                     })}
                                                                 </span>
                                                             </div>
-                                                            <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1">
-                                                                {row.sourceTypeBadges.map((sourceType) => (
-                                                                    <Badge
-                                                                        key={`${row.identityKey}-${sourceType}`}
-                                                                        variant="outline"
-                                                                        className="h-5 border-border/60 bg-background/80 text-[10px] uppercase tracking-wide"
+                                                            <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
+                                                                {row.publishedAt ? (
+                                                                    <span
+                                                                        className="text-[11px] tabular-nums text-muted-foreground whitespace-nowrap"
+                                                                        title={formatDate(row.publishedAt)}
                                                                     >
-                                                                        {getTrackerChannelTypeLabel(sourceType, t)}
-                                                                    </Badge>
-                                                                ))}
+                                                                        {formatRelative(row.publishedAt)}
+                                                                    </span>
+                                                                ) : null}
+                                                                <div className="flex items-center gap-1">
+                                                                    {row.sourceTypeBadges.map((sourceType) => (
+                                                                        <Badge
+                                                                            key={`${row.identityKey}-${sourceType}`}
+                                                                            variant="outline"
+                                                                            className="h-5 border-border/60 bg-background/80 text-[10px] uppercase tracking-wide"
+                                                                        >
+                                                                            {getTrackerChannelTypeLabel(sourceType, t)}
+                                                                        </Badge>
+                                                                    ))}
+                                                                </div>
                                                             </div>
                                                             <Button
                                                                 type="button"
@@ -445,7 +550,7 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
                                                                 title={isExpanded
                                                                     ? t("trackers.aggregate.detail.collapseVersion")
                                                                     : t("trackers.aggregate.detail.expandVersion")}
-                                                                className="h-9 w-9 shrink-0"
+                                                                className="h-7 w-7 shrink-0"
                                                             >
                                                                 <ChevronDown
                                                                     className={`h-4 w-4 transition-transform ${isExpanded ? "rotate-180" : ""}`}
@@ -463,9 +568,9 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
                                                                 }}
                                                                 title={t("dashboard.recentReleases.viewNotes")}
                                                                 aria-label={t("dashboard.recentReleases.viewNotes")}
-                                                                className="h-9 w-9 shrink-0"
+                                                                className="h-7 w-7 shrink-0"
                                                             >
-                                                                <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+                                                                <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />
                                                             </Button>
                                                         </div>
                                                     </TableCell>
@@ -474,25 +579,25 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
                                                     <TableRow className="bg-muted/20 hover:bg-muted/20">
                                                         <TableHead
                                                             scope="col"
-                                                            className="h-8 w-[28%] whitespace-normal text-[10px] md:w-[20%] xl:w-[18%]"
+                                                            className="h-7 py-0 w-[28%] whitespace-normal text-[10px] md:w-[20%] xl:w-[18%]"
                                                         >
                                                             {t("trackers.aggregate.detail.artifactTable.source")}
                                                         </TableHead>
                                                         <TableHead
                                                             scope="col"
-                                                            className="h-8 w-[72%] whitespace-normal text-[10px] md:w-[50%] xl:w-[42%]"
+                                                            className="h-7 py-0 w-[72%] whitespace-normal text-[10px] md:w-[50%] xl:w-[42%]"
                                                         >
                                                             {t("trackers.aggregate.detail.artifactTable.version")}
                                                         </TableHead>
                                                         <TableHead
                                                             scope="col"
-                                                            className="hidden h-8 whitespace-normal text-[10px] md:table-cell md:w-[30%] xl:w-[25%]"
+                                                            className="hidden h-7 py-0 whitespace-normal text-[10px] md:table-cell md:w-[30%] xl:w-[25%]"
                                                         >
                                                             {t("trackers.aggregate.detail.artifactTable.digest")}
                                                         </TableHead>
                                                         <TableHead
                                                             scope="col"
-                                                            className="hidden h-8 whitespace-normal text-[10px] xl:table-cell xl:w-[15%]"
+                                                            className="hidden h-7 py-0 whitespace-normal text-[10px] xl:table-cell xl:w-[15%]"
                                                         >
                                                             {t("trackers.aggregate.detail.artifactTable.publishedAt")}
                                                         </TableHead>
@@ -546,15 +651,15 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
 
                                                     return (
                                                         <TableRow key={artifactKey}>
-                                                            <TableCell className="whitespace-normal align-middle">
-                                                                <ul className="space-y-1.5">
+                                                            <TableCell className="whitespace-normal py-1.5 px-2.5 align-middle">
+                                                                <ul className="space-y-0.5">
                                                                     {artifactSourceTypes.map((sourceType) => (
                                                                         <li key={`${artifactKey}-${sourceType}`} className="min-w-0">
                                                                             <Badge
                                                                                 variant="secondary"
-                                                                                className="max-w-full font-normal"
+                                                                                className="max-w-full font-normal h-4.5 text-[10px] px-1.5 leading-none"
                                                                             >
-                                                                                <span className="truncate">
+                                                                            <span className="truncate">
                                                                                     {getTrackerChannelTypeLabel(sourceType, t)}
                                                                                 </span>
                                                                             </Badge>
@@ -562,8 +667,8 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
                                                                     ))}
                                                                 </ul>
                                                             </TableCell>
-                                                            <TableCell className="whitespace-normal align-middle">
-                                                                <ul className="min-w-0 space-y-1.5">
+                                                            <TableCell className="whitespace-normal py-1.5 px-2.5 align-middle">
+                                                                <ul className="min-w-0 space-y-0.5">
                                                                     <li className="min-w-0">
                                                                         <code
                                                                             className="block truncate font-mono text-xs font-medium"
@@ -583,7 +688,7 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
                                                                             <Button
                                                                                 type="button"
                                                                                 variant="ghost"
-                                                                                className="h-8 px-2 text-[10px] text-muted-foreground"
+                                                                                className="h-5 px-1.5 text-[10px] text-muted-foreground"
                                                                                 onClick={() => toggleArtifactAliases(artifactKey)}
                                                                                 aria-expanded={aliasesExpanded}
                                                                                 aria-label={aliasesExpanded
@@ -626,7 +731,7 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
                                                                     </Button>
                                                                 </div>
                                                             </TableCell>
-                                                            <TableCell className="hidden whitespace-normal align-middle md:table-cell">
+                                                            <TableCell className="hidden whitespace-normal py-1.5 px-2.5 align-middle md:table-cell">
                                                                 <div className="flex min-w-0 items-center gap-1">
                                                                     <code
                                                                         className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/80"
@@ -638,7 +743,7 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
                                                                         type="button"
                                                                         variant="ghost"
                                                                         size="icon"
-                                                                        className="h-9 w-9 shrink-0"
+                                                                        className="h-6 w-6 shrink-0"
                                                                         onClick={() => void copyArtifactDigest(digest)}
                                                                         aria-label={t("trackers.aggregate.detail.copyDigest")}
                                                                         title={t("trackers.aggregate.detail.copyDigest")}
@@ -648,7 +753,7 @@ export function TrackerDetail({ trackerName, refreshKey }: TrackerDetailProps) {
                                                                 </div>
                                                             </TableCell>
                                                             <TableCell
-                                                                className="hidden whitespace-normal align-middle text-xs text-muted-foreground xl:table-cell"
+                                                                className="hidden whitespace-normal py-1.5 px-2.5 align-middle text-xs text-muted-foreground xl:table-cell"
                                                             >
                                                                 {artifact.published_at
                                                                     ? formatDate(artifact.published_at)
@@ -685,19 +790,19 @@ interface SummaryStatProps {
 
 function SummaryStat({ label, value, hint, mono }: SummaryStatProps) {
     return (
-        <div className="rounded-lg border border-border/60 bg-muted/10 p-3">
+        <div className="rounded-lg border border-border/60 bg-muted/10 p-2">
             <div>
                 <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                     {label}
                 </div>
                 <div
-                    className={`mt-1.5 truncate text-sm font-semibold text-foreground ${mono ? "font-mono" : ""}`}
+                    className={`mt-0.5 truncate text-xs font-semibold text-foreground ${mono ? "font-mono" : ""}`}
                     title={value}
                 >
                     {value}
                 </div>
                 {hint ? (
-                    <div className="mt-0.5 truncate text-[10px] uppercase text-muted-foreground" title={hint}>
+                    <div className="truncate text-[9px] uppercase text-muted-foreground leading-none mt-0.5" title={hint}>
                         {hint}
                     </div>
                 ) : null}

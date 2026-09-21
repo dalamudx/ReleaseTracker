@@ -9,6 +9,8 @@ from typing import Annotated
 from zoneinfo import ZoneInfo
 
 from ..models import User
+from ..config import READINESS_DEFAULTS, READINESS_BOUNDS
+from ..storage.sqlite_tasks import FETCH_RETRY_SETTING, DEFAULT_FETCH_RETRIES
 from ..storage.sqlite import (
     MAX_EXECUTOR_SNAPSHOT_RETENTION_COUNT,
     MAX_RELEASE_HISTORY_RETENTION_COUNT,
@@ -138,6 +140,30 @@ async def _build_security_keys_status(
 
 def _normalize_setting_value(key: str, value: str) -> str:
     normalized_value = str(value).strip()
+
+    field = key.removeprefix("system.")
+    if key.startswith("system.") and field in READINESS_BOUNDS:
+        lower, upper = READINESS_BOUNDS[field]
+        if (
+            not normalized_value.isascii()
+            or not normalized_value.isdecimal()
+            or not lower <= int(normalized_value) <= upper
+        ):
+            raise HTTPException(
+                status_code=400, detail=f"{field} must be an integer from {lower} to {upper}"
+            )
+        return str(int(normalized_value))
+    if key == FETCH_RETRY_SETTING:
+        if not normalized_value.isascii() or not normalized_value.isdecimal():
+            raise HTTPException(
+                status_code=400, detail="Fetch retry count must be an integer from 0 to 10"
+            )
+        count = int(normalized_value)
+        if not 0 <= count <= 10:
+            raise HTTPException(
+                status_code=400, detail="Fetch retry count must be between 0 and 10"
+            )
+        return str(count)
 
     if key == SYSTEM_TIMEZONE_SETTING_KEY:
         timezone_value = normalized_value or "UTC"
@@ -355,6 +381,9 @@ async def get_settings(
         key: (value, updated_at)
         for key, (value, updated_at) in (await storage.get_all_settings_with_updated_at()).items()
     }
+    settings.setdefault(FETCH_RETRY_SETTING, (str(DEFAULT_FETCH_RETRIES), None))
+    for field, default in READINESS_DEFAULTS.items():
+        settings.setdefault(f"system.{field}", (str(default), None))
     oci_redirects_setting = settings.get(SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY)
     if oci_redirects_setting is None or oci_redirects_setting[0] not in {
         CANONICAL_BOOLEAN_TRUE,

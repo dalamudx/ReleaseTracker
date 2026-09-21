@@ -1,11 +1,10 @@
 import { CircleCheck, CircleX, Edit, MoreHorizontal, Play, Trash2 } from "lucide-react"
-import { formatDistanceToNow } from "date-fns"
-import { enUS, zhCN } from "date-fns/locale"
 import { useTranslation } from "react-i18next"
 
 import type { TrackerStatus } from "@/api/types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { ActiveRowMarker } from "@/components/common/ActiveRowMarker"
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -30,7 +29,6 @@ import { cn } from "@/lib/utils"
 import {
     formatChannelSummary,
     getTrackerError,
-    getTrackerLastCheck,
     getTrackerLastVersion,
 } from "./trackerListHelpers"
 
@@ -53,34 +51,31 @@ export function TrackerList({
     onDelete,
     onCheck,
 }: TrackerListProps) {
-    const { t, i18n } = useTranslation()
-    const dateLocale = i18n?.language === "zh" ? zhCN : enUS
+    const { t } = useTranslation()
 
     const stopRowClick = (event: React.MouseEvent) => event.stopPropagation()
 
     return (
-        <div className="min-h-0 flex-1 overflow-auto rounded-md border">
+        <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border/60 bg-card/40 shadow-xs">
             <Table containerClassName="overflow-visible">
-                <TableHeader className="sticky top-0 z-10 bg-background">
-                    <TableRow>
-                        <TableHead className="min-w-[14rem]">{t("trackers.table.name")}</TableHead>
-                        <TableHead>{t("trackers.aggregate.table.sources")}</TableHead>
-                        <TableHead>{t("trackers.table.status")}</TableHead>
-                        <TableHead className="hidden md:table-cell">{t("trackers.table.lastVersion")}</TableHead>
-                        <TableHead className="hidden lg:table-cell">{t("trackers.table.lastCheck")}</TableHead>
+                <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm">
+                    <TableRow className="hover:bg-transparent">
+                        <TableHead className="min-w-[10rem]">{t("trackers.table.name")}</TableHead>
+                        <TableHead className="w-20">{t("trackers.table.status")}</TableHead>
+                        <TableHead className="hidden sm:table-cell">{t("trackers.table.lastVersion")}</TableHead>
                         <TableHead className="w-[1%] text-right">{t("trackers.table.actions")}</TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
                     {loading ? (
                         <TableRow>
-                            <TableCell colSpan={6} className="h-24 text-center text-sm text-muted-foreground">
+                            <TableCell colSpan={4} className="h-24 text-center text-sm text-muted-foreground">
                                 {t("common.loading")}
                             </TableCell>
                         </TableRow>
                     ) : trackers.length === 0 ? (
                         <TableRow>
-                            <TableCell colSpan={6} className="h-24 text-center text-sm text-muted-foreground">
+                            <TableCell colSpan={4} className="h-24 text-center text-sm text-muted-foreground">
                                 {t("common.noData")}
                             </TableCell>
                         </TableRow>
@@ -89,7 +84,6 @@ export function TrackerList({
                             const channelTypes = formatChannelSummary(tracker)
                             const trackerError = getTrackerError(tracker)
                             const trackerLastVersion = getTrackerLastVersion(tracker)
-                            const trackerLastCheck = getTrackerLastCheck(tracker)
                             const isSelected = selectedTrackerName === tracker.name
 
                             return (
@@ -97,53 +91,55 @@ export function TrackerList({
                                     key={tracker.name}
                                     data-selected={isSelected || undefined}
                                     className={cn(
-                                        "relative cursor-pointer transition-colors hover:bg-muted/40",
-                                        isSelected && "bg-primary/5 hover:bg-primary/10",
+                                        "relative cursor-pointer transition-colors hover:bg-muted/40 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                                        isSelected && "bg-primary/[0.08] hover:bg-primary/[0.12] dark:bg-primary/15 dark:hover:bg-primary/20",
                                     )}
                                     onClick={() => onSelect(tracker.name)}
+                                    onKeyDown={(event) => {
+                                        if (event.currentTarget !== event.target) return
+                                        if (event.key === "Enter" || event.key === " ") {
+                                            event.preventDefault()
+                                            onSelect(tracker.name)
+                                        }
+                                    }}
+                                    role="button"
+                                    tabIndex={0}
+                                    aria-pressed={isSelected}
                                 >
-                                    <TableCell className="relative py-3 align-middle">
-                                        {isSelected ? (
-                                            <span
-                                                aria-hidden
-                                                className="absolute left-0 top-1/2 h-8 w-[3px] -translate-y-1/2 rounded-r-full bg-primary"
-                                            />
-                                        ) : null}
-                                        <div className="space-y-1 pl-1">
-                                            <div className="font-medium text-foreground">{tracker.name}</div>
+                                    <TableCell className="relative py-2.5 align-middle">
+                                        <ActiveRowMarker active={isSelected} />
+                                        <div className="space-y-0.5 pl-1.5 min-w-0">
+                                            <div className="flex items-center gap-1.5">
+                                                <span className="truncate font-semibold text-sm text-foreground">{tracker.name}</span>
+                                                {channelTypes.length > 0 && (
+                                                    <div className="flex items-center gap-1 shrink-0">
+                                                        {channelTypes.map((channelType) => (
+                                                            <Badge
+                                                                key={channelType}
+                                                                variant="secondary"
+                                                                className="h-4 rounded px-1 text-[9px] font-medium leading-none"
+                                                            >
+                                                                {t(`trackers.aggregate.detail.channelType.${channelType}`)}
+                                                            </Badge>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
                                             {tracker.description ? (
-                                                <div className="line-clamp-2 text-xs text-muted-foreground">
+                                                <div className="line-clamp-1 text-[11px] text-muted-foreground">
                                                     {tracker.description}
                                                 </div>
                                             ) : null}
                                         </div>
                                     </TableCell>
 
-                                    <TableCell className="py-3 align-middle">
-                                        {channelTypes.length > 0 ? (
-                                            <div className="flex flex-wrap gap-1">
-                                                {channelTypes.map((channelType) => (
-                                                    <Badge
-                                                        key={channelType}
-                                                        variant="outline"
-                                                        className="border-border/60 bg-muted/30 px-1.5 text-[10px] font-medium"
-                                                    >
-                                                        {t(`trackers.aggregate.detail.channelType.${channelType}`)}
-                                                    </Badge>
-                                                ))}
-                                            </div>
-                                        ) : (
-                                            <span className="text-xs text-muted-foreground">—</span>
-                                        )}
-                                    </TableCell>
-
-                                    <TableCell className="py-3 align-middle">
+                                    <TableCell className="py-2.5 align-middle">
                                         {trackerError ? (
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
-                                                    <div className="flex items-center gap-1.5 text-destructive">
-                                                        <CircleX className="h-4 w-4" />
-                                                        <span className="text-xs font-medium">{t("trackers.status.error")}</span>
+                                                    <div className="flex items-center gap-1 text-destructive">
+                                                        <CircleX className="h-3.5 w-3.5 shrink-0" />
+                                                        <span className="text-[11px] font-medium">{t("trackers.status.error")}</span>
                                                     </div>
                                                 </TooltipTrigger>
                                                 <TooltipContent>
@@ -151,43 +147,27 @@ export function TrackerList({
                                                 </TooltipContent>
                                             </Tooltip>
                                         ) : (
-                                            <div className="flex items-center gap-1.5">
+                                            <div className="flex items-center gap-1">
                                                 <CircleCheck
                                                     className={cn(
-                                                        "h-4 w-4",
-                                                        tracker.enabled ? "text-primary" : "text-muted-foreground/60",
+                                                        "h-3.5 w-3.5 shrink-0",
+                                                        tracker.enabled ? "text-success" : "text-muted-foreground/60",
                                                     )}
                                                 />
-                                                <span className="text-xs text-muted-foreground">
+                                                <span className="text-[11px] text-muted-foreground">
                                                     {tracker.enabled ? t("trackers.status.enabled") : t("trackers.status.disabled")}
                                                 </span>
                                             </div>
                                         )}
                                     </TableCell>
 
-                                    <TableCell className="hidden py-3 align-middle font-mono text-sm md:table-cell">
+                                    <TableCell className="hidden py-2.5 align-middle font-mono text-xs sm:table-cell">
                                         {trackerLastVersion ? (
-                                            <span className="max-w-[10rem] truncate text-foreground/80" title={trackerLastVersion}>
+                                            <span className="max-w-[12rem] truncate text-foreground/90 font-medium inline-block rounded bg-muted/40 px-1.5 py-0.5 border border-border/50" title={trackerLastVersion}>
                                                 {trackerLastVersion}
                                             </span>
                                         ) : (
                                             <span className="text-xs text-muted-foreground">—</span>
-                                        )}
-                                    </TableCell>
-
-                                    <TableCell className="hidden py-3 align-middle text-xs text-muted-foreground lg:table-cell">
-                                        {trackerLastCheck ? (
-                                            <span
-                                                className="whitespace-nowrap tabular-nums"
-                                                title={new Date(trackerLastCheck).toLocaleString()}
-                                            >
-                                                {formatDistanceToNow(new Date(trackerLastCheck), {
-                                                    addSuffix: true,
-                                                    locale: dateLocale,
-                                                })}
-                                            </span>
-                                        ) : (
-                                            t("common.never")
                                         )}
                                     </TableCell>
 

@@ -1,6 +1,7 @@
 import { useMemo } from "react"
 import { useLocation } from "react-router"
 import { useTranslation } from "react-i18next"
+import { navigationItems, canonicalNavigationPath } from "@/lib/navigation"
 
 interface BreadcrumbItem {
     label: string
@@ -12,18 +13,11 @@ export function useBreadcrumb(): BreadcrumbItem[] {
     const { t } = useTranslation()
 
     return useMemo(() => {
-        const routeLabels: Record<string, string> = {
-            "/": t("sidebar.dashboard"),
-            "/trackers": t("sidebar.trackers"),
-            "/executors": t("sidebar.executors"),
-            "/runtime-connections": t("sidebar.runtimeConnections"),
-            "/history": t("sidebar.history"),
-            "/credentials": t("sidebar.credentials"),
-            "/notifications": t("sidebar.notifications"),
-            "/settings": t("sidebar.settings"),
-        }
+        const routeLabels: Record<string, string> = Object.fromEntries(
+            navigationItems.map(item => [item.url, t(item.titleKey)])
+        )
 
-        const pathnames = location.pathname.split("/").filter((x) => x)
+        const pathnames = canonicalNavigationPath(location.pathname).split("/").filter((x) => x)
         const items: BreadcrumbItem[] = []
 
         let currentPath = ""

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .services.task_effects import mark_deployment_mutation
+
 from .config import ExecutorConfig
 from .executor_scheduler_grouped_runtime_support import _ExecutorBindingRunResult
 from .executor_scheduler_run_lifecycle import ExecutorRunOutcome
@@ -247,6 +249,7 @@ class ExecutorSchedulerKubernetesRuntime:
                 service: target_image for service, (_, target_image) in pending_updates.items()
             }
             try:
+                await mark_deployment_mutation()
                 update_result = await adapter.update_workload_services(
                     executor_config.target_ref,
                     service_target_images,

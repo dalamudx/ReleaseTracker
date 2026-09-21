@@ -45,6 +45,7 @@ class RepositoryWebhookScheduler:
         self.scheduler_host = scheduler_host
         self._worker_task: asyncio.Task[None] | None = None
         self._stopping = False
+        self.fetch_tasks = None
 
     async def initialize(self):
         recovered = await self.storage.webhooks.recover_interrupted_requests()
@@ -68,6 +69,9 @@ class RepositoryWebhookScheduler:
         """Claim work quickly and keep the APScheduler interval job non-blocking."""
         if self._stopping:
             return
+        if self.fetch_tasks is not None:
+            await self._dispatch_to_task_queue()
+            return
         if self._worker_task is not None:
             if not self._worker_task.done():
                 return
@@ -82,6 +86,66 @@ class RepositoryWebhookScheduler:
         task = asyncio.create_task(self._run_claimed(requests), name="repository-webhook-refresh")
         self._worker_task = task
         task.add_done_callback(self._worker_done)
+
+    async def _dispatch_to_task_queue(self):
+        # Synchronize receipt visibility from the single authoritative queue. This
+        # also repairs a crash between task completion and delivery bookkeeping.
+        db = await self.storage._get_connection()
+        rows = await (
+            await db.execute("""SELECT r.*,t.state AS task_state,t.attempts AS task_attempts,
+               t.error_code,t.due_at AS task_due,t.result AS task_result
+               FROM source_refresh_requests r JOIN tasks t ON t.id=r.task_id
+               WHERE r.state IN ('pending','running','deferred') LIMIT 1000""")
+        ).fetchall()
+        for row in rows:
+            task_state = row["task_state"]
+            state = {
+                "queued": "deferred",
+                "retry_wait": "deferred",
+                "running": "running",
+                "succeeded": "completed",
+                "no_change": "no_change",
+                "skipped": "ignored",
+                "superseded": "ignored",
+                "cancelled": "ignored",
+            }.get(task_state, "failed")
+            result = json.loads(row["task_result"] or "{}")
+            run_id = result.get("source_fetch_run_ids", {}).get(str(row["tracker_source_id"]))
+            await db.execute(
+                """UPDATE source_refresh_requests SET state=?,reason=?,due_at=?,attempts=?,
+                   source_fetch_run_id=COALESCE(?,source_fetch_run_id),lease_until=NULL WHERE id=?""",
+                (
+                    state,
+                    row["error_code"] or "",
+                    row["task_due"],
+                    row["task_attempts"],
+                    run_id,
+                    row["id"],
+                ),
+            )
+        await db.commit()
+        requests = await self.storage.webhooks.claim()
+        if not requests:
+            return
+        try:
+            receipt = await self.fetch_tasks.enqueue(
+                requests[0]["tracker_name"],
+                trigger_mode="webhook",
+                source_ids={item["tracker_source_id"] for item in requests},
+                request_ids=[item["id"] for item in requests],
+                initial_attempts=max(item["attempts"] for item in requests),
+                max_retries=3 if any(item["attempts"] for item in requests) else None,
+                priority_aliases=_container_priority_aliases(requests),
+                trigger_key="webhook-requests:" + ",".join(str(item["id"]) for item in requests),
+            )
+        except ValueError:
+            await self.storage.webhooks.finish(requests, "ignored", "configuration_changed")
+            return
+        async with self.storage.webhooks.transaction() as db:
+            await db.executemany(
+                "UPDATE source_refresh_requests SET task_id=? WHERE id=?",
+                [(receipt["task_id"], item["id"]) for item in requests],
+            )
 
     async def _run_claimed(self, requests):
         try:

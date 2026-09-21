@@ -23,3 +23,9 @@ dist-ssr
 .mise.toml
 test.md
 AGENTS.md
+
+# Local UI inspection scripts
+frontend/scripts/check_dashboard_*.mjs
+frontend/scripts/inspect_*.mjs
+frontend/scripts/screenshot_*.mjs
+frontend/scripts/test_*.mjs
