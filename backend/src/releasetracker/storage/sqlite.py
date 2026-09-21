@@ -3002,8 +3002,12 @@ class SQLiteStorage:
     async def get_credential_reference_counts(self, credential) -> dict[str, int]:
         return await sqlite_credentials.get_credential_reference_counts(self, credential)
 
-    async def get_runtime_connection_counts_by_credential_ids(self, credential_ids: list[int]) -> dict[int, int]:
-        return await sqlite_credentials.get_runtime_connection_counts_by_credential_ids(self, credential_ids)
+    async def get_runtime_connection_counts_by_credential_ids(
+        self, credential_ids: list[int]
+    ) -> dict[int, int]:
+        return await sqlite_credentials.get_runtime_connection_counts_by_credential_ids(
+            self, credential_ids
+        )
 
     def _row_to_credential(self, row):
         return sqlite_credentials._row_to_credential(self, row)

@@ -67,7 +67,9 @@ async def get_credentials(
     result = []
     for credential in credentials:
         payload = _serialize_credential(credential)
-        payload["runtime_connections_count"] = runtime_counts.get(credential.id, 0) if credential.id is not None else 0
+        payload["runtime_connections_count"] = (
+            runtime_counts.get(credential.id, 0) if credential.id is not None else 0
+        )
         result.append(payload)
 
     return {"items": result, "total": total, "skip": skip, "limit": limit}
