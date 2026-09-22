@@ -330,11 +330,22 @@ async def test_task_api_redacts_private_payload_and_enforces_cancel_guard(storag
     data = response.json()
     assert data["target"] == {"tracker_id": 1, "tracker_name": "app"}
     assert "secret-token" not in response.text
+
     assert not {"owner", "lease_until", "payload", "resource_key", "dedupe_key"}.intersection(data)
     running = await storage.tasks.claim("fetch")
     assert authed_client.post(f"/api/tasks/{task['id']}/cancel").status_code == 409
     await storage.tasks.finish(running, "failed")
     assert authed_client.get("/api/tasks?state=failed").json()[0]["id"] == task["id"]
+
+    approval_task = await storage.tasks.enqueue(
+        kind="deploy", resource_key="approval-resource", dedupe_key="approval-key",
+        payload={"executor_id": 1}, target_label="app", trigger_mode="manual",
+    )
+    async with storage.tasks.transaction() as db:
+        await db.execute("UPDATE tasks SET approval_pending=1 WHERE id=?", (approval_task["id"],))
+    pending = authed_client.get(f"/api/tasks/{approval_task["id"]}").json()
+    assert pending["approval_pending"] is True
+    assert pending["state"] == "awaiting_approval"
 
 
 async def test_manual_check_api_returns_202_and_no_remote_io(storage, authed_client, monkeypatch):

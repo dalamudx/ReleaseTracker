@@ -7,7 +7,7 @@ import i18n from "@/i18n/config"
 import TasksPage from "@/pages/Tasks"
 import type { QueueTask } from "@/api/task-types"
 
-vi.mock("@/api/client", () => ({ api: { getTasks: vi.fn(), getTask: vi.fn(), cancelTask: vi.fn(), retryTask: vi.fn(), resolveTask: vi.fn(), clearFinishedTasks: vi.fn() } }))
+vi.mock("@/api/client", () => ({ api: { getTasks: vi.fn(), getTask: vi.fn(), getDeploymentPlan: vi.fn(), approveDeployment: vi.fn(), cancelTask: vi.fn(), retryTask: vi.fn(), resolveTask: vi.fn(), clearFinishedTasks: vi.fn() } }))
 
 function task(state: QueueTask["state"], kind: QueueTask["kind"] = "fetch"): QueueTask {
     return { id: 17, kind, state, target_label: "nginx-test", attempts: 1, max_retries: 3, due_at: 1789705000, created_at: 1789704900, updated_at: 1789705000, error_code: null, message: null, result: {}, target: {} }
@@ -29,6 +29,25 @@ describe("persistent task queue", () => {
         fireEvent.click(screen.getByRole("button", { name: i18n.t("common.retry") }))
         await waitFor(() => expect(api.getTasks).toHaveBeenCalledTimes(2))
         expect(await screen.findByText(i18n.t("tasks.empty"))).toBeVisible()
+    })
+
+    it("loads and enables the deployment plan for an unmanaged task", async () => {
+        const pending = { ...task("queued", "deploy"), approval_pending: true }
+        vi.mocked(api.getTasks).mockResolvedValue([pending])
+        vi.mocked(api.getTask).mockResolvedValue(pending)
+        vi.mocked(api.getDeploymentPlan).mockResolvedValue({ id: 9, task_id: 17, fingerprint: "plan-fingerprint", state: "pending", reason: "unmanaged", expires_at: 1789706800, summary: {} })
+        vi.mocked(api.approveDeployment).mockResolvedValue({ task_id: 17, status: "queued" })
+        show()
+        await screen.findByText("nginx-test")
+        fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.details", { id: 17 }) }))
+        expect(await screen.findByText(i18n.t("tasks.approvalRequired"))).toBeVisible()
+        const review = screen.getByRole("button", { name: i18n.t("tasks.reviewPlan") })
+        const approve = screen.getByRole("button", { name: i18n.t("tasks.approvePlan") })
+        await waitFor(() => {
+            expect(review).toBeEnabled()
+            expect(approve).toBeEnabled()
+        })
+        expect(api.getDeploymentPlan).toHaveBeenCalledWith(17)
     })
 
     it("shows readiness wait while task remains running", async () => {

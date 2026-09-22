@@ -1,6 +1,6 @@
 import type { ReadinessResult } from "@/lib/readiness"
 
-export type TaskState = "queued" | "running" | "retry_wait" | "succeeded" | "no_change" | "skipped" | "failed" | "cancelled" | "superseded" | "needs_attention"
+export type TaskState = "queued" | "awaiting_approval" | "running" | "retry_wait" | "succeeded" | "no_change" | "skipped" | "failed" | "cancelled" | "superseded" | "needs_attention"
 export interface TaskReceipt { task_id: number; status: TaskState }
 export interface DeploymentPlan {
     id: number

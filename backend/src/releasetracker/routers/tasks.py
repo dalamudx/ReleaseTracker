@@ -25,6 +25,10 @@ def public_task(task):
         for key, value in task.items()
         if key not in {"payload", "owner", "lease_until", "dedupe_key", "resource_key"}
     }
+    if "approval_pending" in result:
+        # SQLite stores this flag as INTEGER; keep the public API contract
+        # boolean so clients do not treat an approval task as missing its plan.
+        result["approval_pending"] = bool(result["approval_pending"])
     result["target"] = {
         key: value
         for key, value in task["payload"].items()
