@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime, timezone
 from json import JSONDecodeError
 import asyncio
 import json
@@ -10,6 +11,7 @@ import threading
 import time
 
 import pytest
+from kubernetes import client as kubernetes_client
 
 from releasetracker.config import RuntimeConnectionConfig
 from releasetracker.executors.base import RuntimeMutationError
@@ -1755,6 +1757,20 @@ async def test_kubernetes_adapter_create_apps_api_incluster(monkeypatch):
     monkeypatch.setattr("importlib.import_module", fake_import)
     adapter._create_apps_api()
     assert fake_config.calls == [("incluster", None)]
+
+
+def test_kubernetes_readiness_fields_are_json_serializable():
+    created_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    metadata = kubernetes_client.V1ObjectMeta(
+        name="sample-worker",
+        creation_timestamp=created_at,
+    )
+
+    payload = KubernetesRuntimeAdapter._readiness_fields(metadata)
+
+    assert payload["creation_timestamp"] == created_at.isoformat()
+    assert KubernetesRuntimeAdapter._readiness_fields({"optional": None}) == {"optional": None}
+    assert json.loads(json.dumps(payload))["name"] == "sample-worker"
 
 
 @pytest.mark.asyncio

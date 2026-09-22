@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import date, datetime
 from typing import Any
 import importlib
 import json
@@ -779,23 +780,27 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
 
     @staticmethod
     def _readiness_fields(value):
-        if value is None:
+        def make_json_safe(item):
+            if item is None or isinstance(item, str | int | float | bool):
+                return item
+            if isinstance(item, datetime | date):
+                return item.isoformat()
+            if hasattr(item, "to_dict"):
+                return make_json_safe(item.to_dict())
+            if isinstance(item, dict):
+                return {key: make_json_safe(nested) for key, nested in item.items()}
+            if isinstance(item, list | tuple):
+                return [make_json_safe(nested) for nested in item]
+            if hasattr(item, "__dict__"):
+                return {
+                    key: make_json_safe(nested)
+                    for key, nested in vars(item).items()
+                    if not key.startswith("_")
+                }
             return {}
-        if hasattr(value, "to_dict"):
-            return value.to_dict()
-        if isinstance(value, dict):
-            return value
-        if hasattr(value, "__dict__"):
-            return {
-                key: (
-                    KubernetesRuntimeAdapter._readiness_fields(item)
-                    if hasattr(item, "__dict__")
-                    else item
-                )
-                for key, item in vars(value).items()
-                if not key.startswith("_")
-            }
-        return {}
+
+        converted = make_json_safe(value)
+        return {} if converted is None else converted
 
     def _workload_from_obj(self, kind: str, obj) -> dict[str, Any]:
         containers = obj.spec.template.spec.containers if obj.spec and obj.spec.template else []
