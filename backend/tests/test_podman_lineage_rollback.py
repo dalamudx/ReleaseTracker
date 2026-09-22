@@ -8,7 +8,6 @@ import pytest
 from releasetracker.services.deployment_plan import MARKER_KEYS
 from releasetracker.services.podman_target_lineage import snapshot_binding, target_fingerprint
 from releasetracker.services.rollback_service import RollbackService
-from releasetracker.storage.sqlite_podman_lineage import LineageConflict
 
 pytestmark = pytest.mark.asyncio
 MARKERS = dict(zip(MARKER_KEYS, ("fictional-installation", "fictional-target", "1")))

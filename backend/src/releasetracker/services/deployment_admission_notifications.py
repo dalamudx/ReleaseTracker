@@ -80,7 +80,7 @@ class DeploymentAdmissionNotificationOutbox:
             if event is None:
                 return False
             payload = json.loads(event["payload"])
-            notifiers = await self.storage.list_notifiers()
+            notifiers = await self.storage.get_notifiers()
             try:
                 for item in notifiers:
                     if not item.enabled or item.type not in SUPPORTED_NOTIFIER_TYPES:

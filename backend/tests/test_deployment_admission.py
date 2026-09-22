@@ -6,6 +6,9 @@ from dataclasses import replace
 
 import pytest
 
+from releasetracker.services.deployment_admission_notifications import (
+    DeploymentAdmissionNotificationOutbox,
+)
 from releasetracker.services.deployment_plan import TargetEvidence, managed_markers
 from releasetracker.storage.sqlite_deployment_admission import (
     AdmissionConflict,
@@ -314,6 +317,40 @@ async def test_second_executor_concurrent_approval_cannot_steal_target(storage):
     await store.approve(first_task["id"], first["id"], first["fingerprint"], "admin")
     with pytest.raises(AdmissionConflict, match="target_already_owned"):
         await store.approve(second_task["id"], second["id"], second["fingerprint"], "admin")
+
+
+async def test_notification_worker_expands_event_with_sqlite_notifier_contract(storage):
+    await storage.create_notifier(
+        {
+            "name": "approval-webhook",
+            "type": "webhook",
+            "url": "https://hooks.example.test/deployment",
+            "events": ["executor_approval_required"],
+            "enabled": True,
+            "language": "en",
+        }
+    )
+    await staged(storage)
+    worker = DeploymentAdmissionNotificationOutbox(storage)
+    await worker.initialize()
+    try:
+        assert await worker._expand_one() is True
+        db = await storage._get_connection()
+        row = await (
+            await db.execute("SELECT event,status FROM deployment_admission_notification_outbox")
+        ).fetchone()
+        assert dict(row) == {
+            "event": "executor_approval_required",
+            "status": "pending",
+        }
+        expanded = await (
+            await db.execute(
+                "SELECT expanded_at FROM deployment_admission_events ORDER BY id DESC LIMIT 1"
+            )
+        ).fetchone()
+        assert expanded["expanded_at"] is not None
+    finally:
+        await worker.shutdown()
 
 
 async def test_stage_rolls_back_park_if_notification_intent_fails(storage):
