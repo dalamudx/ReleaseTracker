@@ -9,7 +9,7 @@ async def test_admin_template_crud_preview_and_binding(authed_client):
     client = authed_client
     catalog = client.get("/api/notification-templates")
     assert catalog.status_code == 200
-    assert len(catalog.json()["events"]) == 8
+    assert len(catalog.json()["events"]) == 10
     template = builtin() | {"name": "Example template"}
     created = client.post("/api/notification-templates", json=template)
     assert created.status_code == 201, created.text

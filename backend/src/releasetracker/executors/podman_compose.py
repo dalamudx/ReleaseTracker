@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import container_recovery
+
 import logging
 from typing import Any, TYPE_CHECKING
 
@@ -221,6 +223,8 @@ def _validate_compose_snapshot(
     project = target_ref.get("project")
     if not isinstance(project, str) or not project.strip():
         raise ValueError("target_ref.project must be a non-empty string")
+    if snapshot.get("runtime_type") != adapter.runtime_connection.type:
+        raise ValueError("snapshot runtime_type does not match recovery runtime")
     snapshot_project = snapshot.get("project")
     if snapshot_project != project.strip():
         raise ValueError("snapshot.project must match target_ref.project")
@@ -249,6 +253,10 @@ def _validate_compose_container_snapshot(adapter: "PodmanRuntimeAdapter", snapsh
         raise ValueError("compose snapshot entry create_config must be a non-empty dict")
     if create_config.get("image") != snapshot.get("image"):
         raise ValueError("compose snapshot entry create_config.image must match image")
+    adapter._validate_snapshot_target_identity(
+        {"container_name": snapshot.get("container_name")}, snapshot
+    )
+    container_recovery.validate_evidence(snapshot)
 
 
 async def _recover_compose_from_snapshot(
@@ -262,6 +270,9 @@ async def _recover_compose_from_snapshot(
     if not isinstance(snapshots, list):
         raise ValueError("snapshot.snapshots must be a list")
     client = adapter._get_client()
+    for item in snapshots:
+        container_recovery.prepare_image(adapter, item)
+        adapter._inspect_recovery_conflict(item["create_config"])
     current_pod_refs = adapter._recover_snapshot_pods(client, snapshots)
     for item in snapshots:
         result = await adapter._recover_grouped_container_from_snapshot(
@@ -271,6 +282,7 @@ async def _recover_compose_from_snapshot(
         )
         if result.new_container_id:
             recovered_ids.append(result.new_container_id)
+    await container_recovery.verify_group(adapter, recovered_ids, snapshots)
     recovered_image = snapshot.get("image") if isinstance(snapshot.get("image"), str) else None
     return RuntimeUpdateResult(
         updated=True,

@@ -71,6 +71,42 @@ async def cancel_task(task_id: int, storage: Annotated[SQLiteStorage, Depends(ge
     return {"status": "cancelled"}
 
 
+class DeploymentApproval(BaseModel):
+    plan_id: int
+    fingerprint: str
+    plan_reviewed: Literal[True]
+
+
+@router.get("/{task_id}/deployment-plan")
+async def deployment_plan(task_id: int, storage: Annotated[SQLiteStorage, Depends(get_storage)]):
+    from ..storage.sqlite_deployment_admission import DeploymentAdmissionStore
+
+    plan = await DeploymentAdmissionStore(storage).latest(task_id)
+    if plan is None:
+        raise HTTPException(404, "Deployment plan not found")
+    return plan
+
+
+@router.post("/{task_id}/approve")
+async def approve_deployment(
+    task_id: int,
+    body: DeploymentApproval,
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    actor: Annotated[User, Depends(get_current_admin_user)],
+):
+    from ..storage.sqlite_deployment_admission import AdmissionConflict, DeploymentAdmissionStore
+
+    try:
+        plan = await DeploymentAdmissionStore(storage).approve(
+            task_id, body.plan_id, body.fingerprint, actor.username
+        )
+    except AdmissionConflict as exc:
+        raise HTTPException(409, str(exc)) from None
+    return JSONResponse(
+        status_code=202, content={"task_id": task_id, "plan_id": plan["id"], "status": "queued"}
+    )
+
+
 class ManualResolution(BaseModel):
     remote_stopped: Literal[True]
     state_verified: Literal[True]

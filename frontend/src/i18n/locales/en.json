@@ -54,6 +54,8 @@
       "executor_run_failed": "Deployment incomplete",
       "executor_run_skipped": "Deployment skipped",
       "executor_health_check_result": "Readiness result",
+      "executor_approval_required": "Deployment approval required",
+      "executor_deployment_blocked": "Deployment blocked",
       "error": "Processing error",
       "test": "Test notification",
       "zh": "简体中文",
@@ -1564,7 +1566,9 @@
         "executor_run_success": "Executor Run Succeeded",
         "executor_run_failed": "Executor Run Failed",
         "executor_run_skipped": "Executor Run Skipped",
-        "executor_health_check_result": "Health Check Result"
+        "executor_health_check_result": "Health Check Result",
+        "executor_approval_required": "Deployment Approval Required",
+        "executor_deployment_blocked": "Deployment Blocked"
       },
       "eventDescriptions": {
         "new_release": "Triggered when a new version is detected",
@@ -1572,7 +1576,9 @@
         "executor_run_success": "Triggered when an executor updates its runtime target successfully",
         "executor_run_failed": "Triggered when an executor run fails",
         "executor_run_skipped": "Triggered when an executor run is skipped",
-        "executor_health_check_result": "Triggered when deployment readiness or health verification completes"
+        "executor_health_check_result": "Triggered when deployment readiness or health verification completes",
+        "executor_approval_required": "Triggered when deployment needs approval for missing management or configuration drift",
+        "executor_deployment_blocked": "Triggered when deployment is blocked by target ownership or safety validation"
       }
     },
     "tabs": {
@@ -1665,6 +1671,22 @@
     "due": "Scheduled for {{time}}",
     "details": "Task #{{id}} details",
     "attention": "The remote result is uncertain. Verify the runtime state before resolving or starting another mutation.",
+    "approvalRequired": "Deployment plan requires approval",
+    "approvalReason": "Reason: {{reason}}",
+    "approvalExpires": "Approval expires {{time}}",
+    "reviewPlan": "Review deployment plan",
+    "approvePlan": "Approve and continue",
+    "planApproved": "Deployment plan approved; the task will continue",
+    "planTarget": "Target: {{target}}",
+    "planIdentity": "Runtime identity: {{identity}}",
+    "planRecovery": "Recovery scope: {{scope}}",
+    "planNoData": "Application data is not included; automatic rollback is disabled.",
+    "planReviewRequired": "Confirm the target identity, configuration summary, and recovery boundary before continuing.",
+    "approvalFailed": "Deployment approval failed. Refresh the plan and try again.",
+    "approvalExpired": "The deployment plan has expired. Refresh it and approve again.",
+    "approvalConflict": "The target is owned by another configuration; this plan cannot be approved.",
+    "approvalChanged": "The target configuration changed. Refresh the plan and approve it again.",
+    "approvalStale": "This plan is no longer current. Refresh it and approve again.",
     "triggers": "Trigger",
     "timeline": "Attempts",
     "sourceRun": "{{source}} · fetch run #{{run}}",

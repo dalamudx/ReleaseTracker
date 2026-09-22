@@ -113,18 +113,20 @@ class ExecutorSchedulerHelmRuntime:
                 run_id=_run_id,
             )
 
-        target_chart_version = await self._resolve_tracker_latest_chart_version(
+        chart_target = await self._resolve_tracker_latest_chart_target(
             tracker_config.name,
             executor_config.channel_name,
             tracker_source_id=tracker_source.id,
             tracker_source_type=tracker_source.source_type,
         )
-        if target_chart_version is None:
+        if chart_target is None:
             return await self._record_skipped(
                 executor_config,
                 message="tracker has no chart versions",
                 run_id=_run_id,
             )
+        target_chart_version = chart_target["version"]
+        target_chart_digest = chart_target.get("digest")
 
         source_config = tracker_source.source_config or {}
         repo_url = source_config.get("repo")
@@ -150,7 +152,16 @@ class ExecutorSchedulerHelmRuntime:
                 run_id=_run_id,
             )
 
-        if current_chart_version == target_chart_version:
+        target_chart_digest = (
+            target_chart_digest.strip()
+            if isinstance(target_chart_digest, str) and target_chart_digest.strip()
+            else None
+        )
+        recorded_chart_digest = executor_config.target_ref.get("chart_digest")
+        same_chart_artifact = current_chart_version == target_chart_version and (
+            target_chart_digest is None or recorded_chart_digest == target_chart_digest
+        )
+        if same_chart_artifact:
             return await self._record_skipped(
                 executor_config,
                 message="Helm release already at target chart version",
@@ -169,7 +180,15 @@ class ExecutorSchedulerHelmRuntime:
             )
         )
 
+        snapshot_created = False
         try:
+            if self._supports_persisted_full_config_snapshots(executor_config):
+                snapshot_created = await self._capture_pre_update_snapshot(
+                    executor_config,
+                    adapter,
+                    run_id=run_id,
+                    current_image=current_chart_version,
+                )
             await mark_deployment_mutation()
             result = await adapter.upgrade_helm_release(
                 executor_config.target_ref,
@@ -192,6 +211,7 @@ class ExecutorSchedulerHelmRuntime:
                     **executor_config.target_ref,
                     "chart_name": chart_ref,
                     "chart_version": result.new_image or target_chart_version,
+                    "chart_digest": target_chart_digest,
                 }
                 await self.storage.update_executor_target_ref(executor_config.id, refreshed_ref)
                 executor_config = executor_config.model_copy(update={"target_ref": refreshed_ref})
@@ -214,6 +234,7 @@ class ExecutorSchedulerHelmRuntime:
                 message=message,
                 last_error=message,
                 from_version=current_chart_version,
+                diagnostics=self._manual_rollback_diagnostics(snapshot_created=snapshot_created),
             )
         except Exception as exc:
             message = str(exc) or exc.__class__.__name__
@@ -225,4 +246,5 @@ class ExecutorSchedulerHelmRuntime:
                 message=message,
                 last_error=message,
                 from_version=current_chart_version,
+                diagnostics=self._manual_rollback_diagnostics(snapshot_created=snapshot_created),
             )

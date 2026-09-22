@@ -33,6 +33,46 @@ def test_literal_patch_preserves_comments_secrets_and_other_fields():
         plan.validate_rendered(expected)
 
 
+def test_managed_markers_are_part_of_the_single_compose_file_plan():
+    source = "services:\n  web:\n    image: app:1\n"
+    markers = {
+        "releasetracker.io/managed-by": "installation-test",
+        "releasetracker.io/target-id": "target-test",
+        "releasetracker.io/schema": "1",
+    }
+    plan = build_plan(
+        target(),
+        {"/app/compose.yml": source},
+        {"services": {"web": {"image": "app:1"}}},
+        {},
+        {},
+        {"web": "app:2"},
+        managed_markers=markers,
+    )
+    assert len(plan.changes) == 1
+    assert "releasetracker.io/target-id: target-test" in plan.changes[0].after
+    expected = {"services": {"web": {"image": "app:2", "labels": markers}}}
+    plan.validate_rendered(expected)
+
+
+def test_managed_markers_do_not_turn_dotenv_change_into_yaml():
+    markers = {
+        "releasetracker.io/managed-by": "installation-test",
+        "releasetracker.io/target-id": "target-test",
+        "releasetracker.io/schema": "1",
+    }
+    with pytest.raises(ValueError, match="managed_markers_require_override"):
+        build_plan(
+            target(),
+            {"/app/compose.yml": "services:\n  web:\n    image: app:${VERSION}\n"},
+            {"services": {"web": {"image": "app:1"}}},
+            {"/app/.env": "VERSION=1\n"},
+            {},
+            {"web": "app:2"},
+            managed_markers=markers,
+        )
+
+
 def test_env_patch_preserves_other_values_and_crlf():
     plan = build_plan(
         target(),

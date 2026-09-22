@@ -20,6 +20,8 @@ EVENTS = (
     "executor_run_failed",
     "executor_run_skipped",
     "executor_health_check_result",
+    "executor_approval_required",
+    "executor_deployment_blocked",
     "error",
     "test",
 )
@@ -31,6 +33,8 @@ TITLES = {
         "部署未完成",
         "已跳过部署",
         "服务核验结果",
+        "需要确认部署",
+        "部署已阻断",
         "任务处理异常",
         "通知测试",
     ),
@@ -41,6 +45,8 @@ TITLES = {
         "Deployment incomplete",
         "Deployment skipped",
         "Readiness check result",
+        "Deployment approval required",
+        "Deployment blocked",
         "Task processing error",
         "Test notification",
     ),
@@ -273,7 +279,11 @@ def context_for(event, payload, language, template=None):
         else (
             "health"
             if event == "executor_health_check_result"
-            else "deployment" if event.startswith("executor_run_") else event
+            else (
+                "deployment_admission"
+                if event in {"executor_approval_required", "executor_deployment_blocked"}
+                else "deployment" if event.startswith("executor_run_") else event
+            )
         )
     )
     context = {
@@ -298,8 +308,10 @@ def context_for(event, payload, language, template=None):
     context["timestamp"] = ""
     if isinstance(payload, dict):
         context["timestamp"] = safe_text(payload.get("finished_at") or payload.get("timestamp"))
-        if category == "error":
-            context["reason"] = safe_text(payload.get("error") or payload.get("message"))
+        if category in {"error", "deployment_admission"}:
+            context["reason"] = safe_text(
+                payload.get("reason") or payload.get("error") or payload.get("message")
+            )
     if hasattr(payload, "tracker_name") and hasattr(payload, "version"):
         context["subject"]["name"] = safe_text(payload.tracker_name)
         context["release"] = {

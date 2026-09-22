@@ -235,6 +235,23 @@ class FakeKubernetesWorkloadAdapter(KubernetesRuntimeAdapter):
     async def fetch_workload_service_images(self, target_ref) -> dict[str, str | None]:
         return dict(self.current_images)
 
+    async def capture_snapshot(self, target_ref, current_image):
+        return {
+            "mode": "kubernetes_workload",
+            "runtime_type": "kubernetes",
+            "namespace": target_ref["namespace"],
+            "kind": target_ref["kind"],
+            "name": target_ref["name"],
+            "workload": {"metadata": {"resourceVersion": "rv-test"}},
+            "containers": dict(self.current_images),
+        }
+
+    async def validate_snapshot(self, target_ref, snapshot):
+        if snapshot.get("mode") != "kubernetes_workload":
+            raise ValueError("invalid fake kubernetes workload snapshot")
+        if not snapshot.get("containers"):
+            raise ValueError("fake kubernetes workload snapshot requires containers")
+
     async def update_workload_services(self, target_ref, service_target_images):
         if self.fail_update:
             raise RuntimeError(self.fail_update)
@@ -269,6 +286,20 @@ class FakeHelmReleaseAdapter(KubernetesRuntimeAdapter):
 
     async def get_helm_release_version(self, target_ref):
         return self.current_chart_version
+
+    async def capture_snapshot(self, target_ref, current_image):
+        return {
+            "mode": "helm_release",
+            "namespace": target_ref["namespace"],
+            "release_name": target_ref["release_name"],
+            "chart_name": target_ref.get("chart_name", "chart"),
+            "chart_version": current_image,
+            "release": {"name": target_ref["release_name"]},
+        }
+
+    async def validate_snapshot(self, target_ref, snapshot):
+        if snapshot.get("mode") != "helm_release":
+            raise ValueError("invalid fake Helm snapshot")
 
     async def upgrade_helm_release(self, target_ref, *, chart_ref, chart_version, repo_url):
         self.update_calls.append((target_ref, chart_ref, chart_version, repo_url))
@@ -1252,6 +1283,7 @@ async def _create_bound_helm_release(
     app_version: str,
     chart_version: str,
     published_at: datetime,
+    commit_sha: str | None = None,
 ) -> None:
     aggregate_tracker = await storage.get_aggregate_tracker(tracker_name)
     assert aggregate_tracker is not None and aggregate_tracker.id is not None
@@ -1280,6 +1312,7 @@ async def _create_bound_helm_release(
                 url=f"https://charts.example/{tracker_name}",
                 prerelease=False,
                 channel_name="stable",
+                commit_sha=commit_sha,
             )
         ],
     )
@@ -4205,6 +4238,32 @@ async def test_subsequent_run_uses_refreshed_container_id(storage):
     assert second_outcome.status == "success"
 
 
+def _portainer_snapshot_engine_responses(images):
+    def ok(payload):
+        return FakePortainerHttpResponse(status_code=200, payload=payload)
+
+    prefix = "/api/endpoints/2/docker"
+    responses = {
+        ("GET", f"{prefix}/info", None): ok({"ID": "engine-example"}),
+        ("GET", f"{prefix}/containers/json", None): ok([{"Id": name} for name in images]),
+    }
+    for name, image in images.items():
+        responses[("GET", f"{prefix}/containers/{name}/json", None)] = ok(
+            {
+                "Id": name,
+                "Image": "sha256:" + "a" * 64,
+                "Config": {
+                    "Image": image,
+                    "Labels": {
+                        "com.docker.compose.project": "release-stack",
+                        "com.docker.compose.service": name,
+                    },
+                },
+            }
+        )
+    return responses
+
+
 @pytest.mark.asyncio
 async def test_portainer_stack_executor_updates_bound_services_via_single_stack_update(storage):
     runtime_id = await _create_portainer_runtime_connection(storage)
@@ -4318,6 +4377,15 @@ async def test_portainer_stack_executor_updates_bound_services_via_single_stack_
     )
     scheduler._adapters[executor_id] = PortainerRuntimeAdapter(adapter_runtime, client=fake_client)
 
+    fake_client.responses.update(
+        _portainer_snapshot_engine_responses(
+            {
+                "api": "ghcr.io/acme/api:1.0.0",
+                "db": "sample-db:16",
+                "worker": "ghcr.io/acme/worker:1.0.0",
+            }
+        )
+    )
     persisted_config = await storage.get_executor_config(executor_id)
     assert persisted_config is not None
     assert [binding.model_dump() for binding in persisted_config.service_bindings] == [
@@ -4350,7 +4418,9 @@ async def test_portainer_stack_executor_updates_bound_services_via_single_stack_
     assert "ghcr.io/acme/worker:2.0.0" in payload["stackFileContent"]
     assert "sample-db:16" in payload["stackFileContent"]
 
-    assert await storage.get_executor_snapshot(executor_id) is None
+    snapshot = await storage.get_executor_snapshot(executor_id)
+    assert snapshot is not None
+    assert snapshot.snapshot_data["stack_type"] == "standalone"
 
     history = await storage.get_executor_run_history(executor_id, limit=1)
     assert history[0].status == "success"
@@ -4563,6 +4633,7 @@ async def test_helm_release_executor_upgrades_chart_version_from_helm_source(sto
         app_version="2.0.0",
         chart_version="0.8.0",
         published_at=datetime(2026, 3, 25, tzinfo=timezone.utc),
+        commit_sha="sha256:" + "a" * 64,
     )
     source_id = await _get_tracker_source_id(storage, "certd-chart")
     target_ref = {
@@ -4587,6 +4658,10 @@ async def test_helm_release_executor_upgrades_chart_version_from_helm_source(sto
     )
 
     scheduler = ExecutorScheduler(storage)
+    chart_target = await scheduler._resolve_tracker_latest_chart_target(
+        "certd-chart", "stable", tracker_source_id=source_id, tracker_source_type="helm"
+    )
+    assert chart_target == {"version": "0.8.0", "digest": "sha256:" + "a" * 64}
     adapter = FakeHelmReleaseAdapter(
         RuntimeConnectionConfig(
             name="k8s-prod",
@@ -4607,7 +4682,9 @@ async def test_helm_release_executor_upgrades_chart_version_from_helm_source(sto
     assert adapter.update_calls == [
         ({**target_ref, "workloads": []}, "certd", "0.8.0", "https://charts.example")
     ]
-    assert await storage.get_executor_snapshot(executor_id) is None
+    snapshot = await storage.get_executor_snapshot(executor_id)
+    assert snapshot is not None
+    assert snapshot.snapshot_data["mode"] == "helm_release"
     history = await storage.get_executor_run_history(executor_id, limit=1)
     assert history[0].status == "success"
     assert history[0].from_version == "0.7.0"
@@ -4616,10 +4693,12 @@ async def test_helm_release_executor_upgrades_chart_version_from_helm_source(sto
     assert updated_config is not None
     assert updated_config.target_ref["chart_name"] == "certd"
     assert updated_config.target_ref["chart_version"] == "0.8.0"
+    assert updated_config.target_ref["chart_digest"] == "sha256:" + "a" * 64
 
 
+@pytest.mark.parametrize("digest_matches", [True, False])
 @pytest.mark.asyncio
-async def test_helm_release_executor_skips_when_chart_version_is_current(storage):
+async def test_helm_release_executor_compares_same_chart_version_by_digest(storage, digest_matches):
     runtime_id = await storage.create_runtime_connection(
         RuntimeConnectionConfig(
             name="k8s-prod",
@@ -4646,6 +4725,7 @@ async def test_helm_release_executor_skips_when_chart_version_is_current(storage
         app_version="3.0.0",
         chart_version="1.2.3",
         published_at=datetime(2026, 3, 25, tzinfo=timezone.utc),
+        commit_sha="sha256:" + "a" * 64,
     )
     source_id = await _get_tracker_source_id(storage, "sample_canary-chart")
     target_ref = {
@@ -4653,6 +4733,7 @@ async def test_helm_release_executor_skips_when_chart_version_is_current(storage
         "namespace": "apps",
         "release_name": "sample_canary",
         "chart_name": "sample_canary",
+        "chart_digest": "sha256:" + ("a" if digest_matches else "b") * 64,
     }
     executor_id = await storage.save_executor_config(
         ExecutorConfig(
@@ -4682,11 +4763,20 @@ async def test_helm_release_executor_skips_when_chart_version_is_current(storage
 
     outcome = await scheduler.run_executor_now(executor_id)
 
-    assert outcome.status == "skipped"
-    assert outcome.from_version == "1.2.3"
-    assert outcome.to_version == "1.2.3"
-    assert outcome.message == "Helm release already at target chart version"
-    assert adapter.update_calls == []
+    if digest_matches:
+        assert outcome.status == "skipped"
+        assert outcome.from_version == "1.2.3"
+        assert outcome.to_version == "1.2.3"
+        assert outcome.message == "Helm release already at target chart version"
+        assert adapter.update_calls == []
+    else:
+        assert outcome.status == "success"
+        assert outcome.from_version == "1.2.3"
+        assert outcome.to_version == "1.2.3"
+        assert adapter.update_calls
+        updated_config = await storage.get_executor_config(executor_id)
+        assert updated_config is not None
+        assert updated_config.target_ref["chart_digest"] == "sha256:" + "a" * 64
 
 
 @pytest.mark.asyncio
@@ -4798,7 +4888,9 @@ async def test_kubernetes_workload_executor_updates_bound_containers_via_single_
             },
         )
     ]
-    assert await storage.get_executor_snapshot(executor_id) is None
+    snapshot = await storage.get_executor_snapshot(executor_id)
+    assert snapshot is not None
+    assert snapshot.snapshot_data["mode"] == "kubernetes_workload"
 
     history = await storage.get_executor_run_history(executor_id, limit=1)
     assert history[0].diagnostics == {
@@ -5602,6 +5694,9 @@ async def test_portainer_stack_executor_classifies_read_timeout_during_update(st
                 2,
             ): httpx.ReadTimeout("timed out"),
         }
+    )
+    fake_client.responses.update(
+        _portainer_snapshot_engine_responses({"api": "ghcr.io/acme/timeout:1.0.0"})
     )
     scheduler._adapters[executor_id] = PortainerRuntimeAdapter(adapter_runtime, client=fake_client)
 

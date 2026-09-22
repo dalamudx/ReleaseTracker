@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from functools import wraps
+from inspect import signature
 from typing import Any
 from urllib.parse import urlparse
+
+from ..services.deployment_plan import MANAGED_MARKERS
 
 from ..config import normalize_executor_target_ref
 from .base import (
@@ -10,6 +14,20 @@ from .base import (
     RuntimeUpdateResult,
     offload_blocking_runtime_adapter_methods,
 )
+
+
+def snapshot_recovery(operation):
+    """Restore historical labels verbatim, independently of deployment context."""
+
+    @wraps(operation)
+    async def recover(*args, **kwargs):
+        token = MANAGED_MARKERS.set({})
+        try:
+            return await operation(*args, **kwargs)
+        finally:
+            MANAGED_MARKERS.reset(token)
+
+    return recover
 
 
 @offload_blocking_runtime_adapter_methods
@@ -44,12 +62,11 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
     def is_target_missing_error(self, exc: Exception) -> bool:
         # Docker and Podman SDKs use different NotFound exception classes.
         # Only an explicit 404-like error may bypass the pre-rollback capture.
-        if isinstance(exc, KeyError):
-            return True
-        if exc.__class__.__name__ in {"NotFound", "NotFoundError"}:
-            return True
         response = getattr(exc, "response", None)
-        return getattr(response, "status_code", None) == 404
+        status = getattr(response, "status_code", None)
+        if status is not None:
+            return status == 404
+        return exc.__class__.__name__ in {"NotFound", "NotFoundError"}
 
     async def validate_target_ref(self, target_ref: dict[str, Any]) -> None:
         normalize_executor_target_ref(
@@ -79,6 +96,22 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
                 return value
         return None
 
+    async def get_managed_markers(self, target_ref: dict[str, Any]) -> tuple[dict[str, str], ...]:
+        """Return markers from every managed container in the selected target."""
+        if target_ref.get("mode") == "docker_compose":
+            project = target_ref.get("project")
+            if not isinstance(project, str) or not project.strip():
+                return ()
+            containers = self._find_compose_service_containers(project.strip())
+            return tuple(
+                self._compose_labels_for_container(container)
+                for container_list in containers.values()
+                for container in container_list
+            )
+        container = self._get_container(target_ref)
+        labels = self._compose_labels_for_container(container)
+        return (labels,) if labels else ()
+
     async def capture_snapshot(
         self, target_ref: dict[str, Any], current_image: str
     ) -> dict[str, Any]:
@@ -102,6 +135,53 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
         )
         if not (has_id or has_name):
             raise ValueError("snapshot must include container_id or container_name")
+        self._validate_snapshot_target_identity(target_ref, snapshot)
+
+    def _remove_container_once(self, container):
+        # Check Python argument compatibility BEFORE sending a destructive call.
+        # A TypeError/timeout returned after a call is not permission to replay it.
+        try:
+            signature(container.remove).bind(force=True)
+        except TypeError:
+            if self._container_looks_running(container):
+                container.stop()
+            container.remove()
+        else:
+            container.remove(force=True)
+
+    def _inspect_recovery_conflict(self, create_config):
+        container_name = create_config.get("name")
+        if not isinstance(container_name, str) or not container_name.strip():
+            return
+        try:
+            self._get_client().containers.get(container_name)
+        except Exception as exc:
+            if not self.is_target_missing_error(exc):
+                raise
+
+    def _validate_snapshot_target_identity(self, target_ref, snapshot):
+        if snapshot.get("runtime_type") != self.runtime_connection.type:
+            raise ValueError("snapshot runtime_type does not match recovery runtime")
+
+        def name(value):
+            return value.strip().lstrip("/") if isinstance(value, str) else ""
+
+        saved_name = name(snapshot.get("container_name"))
+        create_config = snapshot.get("create_config")
+        create_name = name(create_config.get("name")) if isinstance(create_config, dict) else ""
+        if saved_name and create_name and saved_name != create_name:
+            raise ValueError("snapshot create name does not match captured container name")
+        expected_name = saved_name or create_name
+        target_name = name(target_ref.get("container_name"))
+        if target_name and target_name != expected_name:
+            raise ValueError("snapshot container name does not match recovery target")
+        target_id = target_ref.get("container_id")
+        if target_id and target_id != snapshot.get("container_id"):
+            # Recreating a managed container legitimately changes its ID. A different
+            # ID is acceptable only when a fresh inspect proves the stable name.
+            current = self._get_client().containers.get(target_id)
+            if not expected_name or name(getattr(current, "name", None)) != expected_name:
+                raise ValueError("snapshot container identity does not match recovery target")
 
     async def update_image(self, target_ref: dict[str, Any], new_image: str) -> RuntimeUpdateResult:
         if not isinstance(new_image, str) or not new_image.strip():

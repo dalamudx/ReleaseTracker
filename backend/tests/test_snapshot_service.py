@@ -161,7 +161,7 @@ async def test_get_snapshot_redacts_snapshot_data_on_read(storage):
     # Metadata fields are preserved on the detail view.
     assert detail.trigger == "pre_update"
     assert detail.image_at_capture == "acme/api:1"
-    assert detail.unredacted_persisted is False
+    assert detail.unredacted_persisted is True
 
 
 @pytest.mark.asyncio

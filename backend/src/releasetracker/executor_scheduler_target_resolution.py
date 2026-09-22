@@ -449,17 +449,21 @@ class ExecutorSchedulerTargetResolution:
             tracker_source_type=tracker_source_type,
         )
 
-    async def _resolve_tracker_latest_chart_version(
+    async def _resolve_tracker_latest_chart_target(
         self,
         tracker_name: str,
         channel_name: str | None,
         *,
         tracker_source_id: int | None,
         tracker_source_type: str | None,
-    ) -> str | None:
+    ) -> dict[str, str | None] | None:
         if QUEUED_TARGETS.get() is not None:
-            return _queued_target(tracker_name, tracker_source_id, channel_name).get(
-                "chart_version"
+            queued = _queued_target(tracker_name, tracker_source_id, channel_name)
+            version = queued.get("chart_version")
+            return (
+                {"version": version, "digest": queued.get("chart_digest")}
+                if isinstance(version, str) and version.strip()
+                else None
             )
         releases = await self._load_bound_releases(
             tracker_name,
@@ -507,11 +511,27 @@ class ExecutorSchedulerTargetResolution:
         if best_release is None:
             return None
         chart_version = best_release.chart_version or best_release.tag_name
-        return (
-            chart_version.strip()
-            if isinstance(chart_version, str) and chart_version.strip()
-            else None
+        if not isinstance(chart_version, str) or not chart_version.strip():
+            return None
+        digest_value = best_release.commit_sha or best_release.artifact_digest
+        digest = digest_value.strip() if isinstance(digest_value, str) else None
+        return {"version": chart_version.strip(), "digest": digest or None}
+
+    async def _resolve_tracker_latest_chart_version(
+        self,
+        tracker_name: str,
+        channel_name: str | None,
+        *,
+        tracker_source_id: int | None,
+        tracker_source_type: str | None,
+    ) -> str | None:
+        target = await self._resolve_tracker_latest_chart_target(
+            tracker_name,
+            channel_name,
+            tracker_source_id=tracker_source_id,
+            tracker_source_type=tracker_source_type,
         )
+        return target["version"] if target else None
 
     def _build_target_image(
         self,

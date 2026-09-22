@@ -190,8 +190,11 @@ class TaskQueue:
             await asyncio.gather(heartbeat, return_exceptions=True)
 
     async def _finish(self, task, outcome):
-        if outcome.state == "observing":
-            # Handoff transaction transferred ownership to the durable observer.
+        if outcome.state in {"observing", "awaiting_approval"}:
+            # A handoff transaction already released worker ownership. Admission
+            # is retry-neutral and cannot be represented by a terminal finish.
+            # It may already have been approved/cancelled concurrently. Never
+            # overwrite that newer state using the old worker's completion.
             return
         state = outcome.state
         due_at = None

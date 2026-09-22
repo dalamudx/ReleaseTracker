@@ -255,6 +255,8 @@ export const api = {
     getTasks: (params?: { before?: number; state?: string }) => apiClient.get<QueueTask[]>("/api/tasks", { params }).then(res => res.data),
     clearFinishedTasks: () => apiClient.post<{ cleared: number }>("/api/tasks/clear").then(res => res.data),
     getTask: (id: number) => apiClient.get<QueueTask>(`/api/tasks/${id}`).then(res => res.data),
+    getDeploymentPlan: (id: number) => apiClient.get<import("./task-types").DeploymentPlan>(`/api/tasks/${id}/deployment-plan`).then(res => res.data),
+    approveDeployment: (id: number, plan: { plan_id: number; fingerprint: string }) => apiClient.post<TaskReceipt>(`/api/tasks/${id}/approve`, { ...plan, plan_reviewed: true }).then(res => res.data),
     cancelTask: (id: number) => apiClient.post(`/api/tasks/${id}/cancel`).then(res => res.data),
     retryTask: (id: number) => apiClient.post<TaskReceipt>(`/api/tasks/${id}/retry`).then(res => res.data),
     recheckTask: (id: number) => apiClient.post<TaskReceipt>(`/api/tasks/${id}/recheck`).then(res => res.data),

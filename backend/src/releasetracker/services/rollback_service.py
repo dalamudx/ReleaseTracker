@@ -15,6 +15,11 @@ from ..executors.health_check.recovery_hook import (
     RecoveryOutcome,
 )
 from ..models import ExecutorRunHistory, ExecutorSnapshot
+from .podman_target_lineage import (
+    ACTIVE_PODMAN_LINEAGE,
+    normalize_members,
+    snapshot_binding,
+)
 from .snapshot_integrity import SnapshotIntegrityError, verify_snapshot_integrity
 
 if TYPE_CHECKING:
@@ -74,7 +79,12 @@ class RollbackService:
             raise HTTPException(status_code=404, detail="Snapshot not found")
         try:
             integrity_status = verify_snapshot_integrity(snapshot)
+            if integrity_status != "verified":
+                raise SnapshotIntegrityError("snapshot integrity is not verified")
             await adapter.validate_snapshot(executor_config.target_ref, snapshot.snapshot_data)
+            await self._validate_podman_lineage_snapshot(
+                executor_config, adapter, snapshot.snapshot_data, verify_live=False
+            )
         except Exception as exc:
             return RollbackPreview(
                 snapshot_id=snapshot.id,
@@ -143,7 +153,12 @@ class RollbackService:
             # A missing live target is recoverable; malformed or tampered history is not.
             try:
                 diagnostics["snapshot_integrity"] = verify_snapshot_integrity(snapshot)
+                if diagnostics["snapshot_integrity"] != "verified":
+                    raise SnapshotIntegrityError("snapshot integrity is not verified")
                 await adapter.validate_snapshot(executor_config.target_ref, snapshot.snapshot_data)
+                await self._validate_podman_lineage_snapshot(
+                    executor_config, adapter, snapshot.snapshot_data, verify_live=False
+                )
             except (SnapshotIntegrityError, Exception) as exc:
                 diagnostics["snapshot_validation_error"] = str(exc)
                 return await self._finalize_failed(
@@ -155,6 +170,9 @@ class RollbackService:
                 )
 
             await self._storage.set_executor_run_status(run_id, "running")
+            podman_lineage = await self._validate_podman_lineage_snapshot(
+                executor_config, adapter, snapshot.snapshot_data, verify_live=True
+            )
             (
                 pre_rollback_captured,
                 from_version,
@@ -183,13 +201,17 @@ class RollbackService:
                 diagnostics["pre_rollback_snapshot"] = "skipped: target is absent"
 
             coordinator = RecoveryHookCoordinator(self._storage)
-            recovery_result = await coordinator.recover_detailed(
-                executor_id=executor_id,
-                adapter=adapter,
-                target_ref=executor_config.target_ref,
-                budget_seconds=self._rollback_budget_seconds(executor_config),
-                snapshot=snapshot,
-            )
+            lineage_token = ACTIVE_PODMAN_LINEAGE.set(podman_lineage)
+            try:
+                recovery_result = await coordinator.recover_detailed(
+                    executor_id=executor_id,
+                    adapter=adapter,
+                    target_ref=executor_config.target_ref,
+                    budget_seconds=self._rollback_budget_seconds(executor_config),
+                    snapshot=snapshot,
+                )
+            finally:
+                ACTIVE_PODMAN_LINEAGE.reset(lineage_token)
             recovery_outcome = recovery_result.outcome
             recovery_error = recovery_result.error
             diagnostics["recovery_outcome"] = recovery_outcome
@@ -199,6 +221,24 @@ class RollbackService:
                 executor_config=executor_config,
                 new_container_id=recovery_result.new_container_id,
             )
+            if recovery_outcome == "succeeded" and podman_lineage is not None:
+                new_id = recovery_result.new_container_id
+                refreshed_ref = dict(executor_config.target_ref)
+                if executor_config.target_ref.get("mode", "container") == "container":
+                    if not isinstance(new_id, str) or not new_id:
+                        raise RuntimeError("Podman recovery returned no replacement container ID")
+                    refreshed_ref["container_id"] = new_id
+                planned = podman_lineage["members"][0]["markers"]
+                new_members = normalize_members(
+                    await adapter.get_target_lineage_members(refreshed_ref, planned)
+                )
+                await self._storage.podman_lineage.transition(
+                    executor_id=executor_id,
+                    expected_generation=podman_lineage["generation"],
+                    expected_members=podman_lineage["members"],
+                    new_members=new_members,
+                    executor_run_id=run_id,
+                )
 
             status = "success" if recovery_outcome == "succeeded" else "failed"
             message = f"rollback to snapshot {snapshot.id} {recovery_outcome}"
@@ -252,6 +292,25 @@ class RollbackService:
 
     # ---- Helpers ---------------------------------------------------------
 
+    async def _validate_podman_lineage_snapshot(
+        self, executor_config, adapter, snapshot_data, *, verify_live: bool
+    ):
+        if executor_config.runtime_type != "podman" or executor_config.target_ref.get(
+            "mode", "container"
+        ) not in {"container", "docker_compose"}:
+            return None
+        current, _ = await self._storage.podman_lineage.validate_snapshot(
+            executor_config.id, snapshot_data
+        )
+        if verify_live:
+            planned = current["members"][0]["markers"]
+            observed = normalize_members(
+                await adapter.get_target_lineage_members(executor_config.target_ref, planned)
+            )
+            if observed != current["members"]:
+                raise ValueError("Podman target lineage no longer matches the live container")
+        return current
+
     async def _reject_when_active(self, executor_id: int) -> None:
         latest = await self._storage.get_latest_executor_run(executor_id)
         if latest is not None and latest.status in _ROLLBACK_ACTIVE_STATES:
@@ -286,7 +345,19 @@ class RollbackService:
                 return False, None, False
 
         try:
-            snapshot_data = await adapter.capture_snapshot(target_ref, current_image)
+            lineage = None
+            if executor_config.runtime_type == "podman" and target_ref.get("mode", "container") in {
+                "container",
+                "docker_compose",
+            }:
+                lineage = await self._storage.podman_lineage.get(executor_config.id)
+            lineage_token = ACTIVE_PODMAN_LINEAGE.set(lineage)
+            try:
+                snapshot_data = await adapter.capture_snapshot(target_ref, current_image)
+            finally:
+                ACTIVE_PODMAN_LINEAGE.reset(lineage_token)
+            if lineage is not None:
+                snapshot_data["podman_target_lineage"] = snapshot_binding(lineage)
             await adapter.validate_snapshot(target_ref, snapshot_data)
         except NotImplementedError as exc:
             diagnostics["pre_rollback_capture_error"] = (
@@ -297,17 +368,14 @@ class RollbackService:
             diagnostics["pre_rollback_capture_error"] = str(exc)
             return False, current_image or None, False
 
-        redacted, unredacted = self._snapshot_service.redact_for_persist(
-            snapshot_data, runtime_type=executor_config.runtime_type
-        )
         await self._storage.create_executor_snapshot(
             ExecutorSnapshot(
                 executor_id=executor_config.id,
-                snapshot_data=redacted,
+                snapshot_data=snapshot_data,
                 trigger="pre_rollback",
                 image_at_capture=current_image or None,
                 executor_run_id=run_id,
-                unredacted_persisted=unredacted,
+                unredacted_persisted=True,
             )
         )
 

@@ -6,13 +6,15 @@ from typing import Any
 from urllib.parse import urlparse
 
 from ..services.runtime_policy import runtime_operation_policy
+from ..services.deployment_plan import MANAGED_MARKERS
 from .base import (
     RuntimeMutationError,
     RuntimeUpdateResult,
     offload_blocking_runtime_adapter_methods,
 )
 from .compose_runtime_update import GroupedRuntimeRecreateSpec, build_grouped_runtime_recreate_spec
-from .container_runtime import _ContainerRuntimeAdapter
+from .container_runtime import _ContainerRuntimeAdapter, snapshot_recovery
+from . import container_recovery, docker_identity
 
 
 @offload_blocking_runtime_adapter_methods
@@ -217,19 +219,23 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
     async def capture_snapshot(
         self, target_ref: dict[str, Any], current_image: str
     ) -> dict[str, Any]:
+        identity = docker_identity.read(self)
         if target_ref.get("mode") == "docker_compose":
-            return await self._capture_compose_snapshot(target_ref, current_image)
+            snapshot = await self._capture_compose_snapshot(target_ref, current_image)
+            return docker_identity.bind(self, snapshot, identity)
 
         container = self._get_container(target_ref)
         spec = self._build_recreate_spec_from_inspect(container, current_image)
         if spec is None:
-            return {
+            snapshot = {
                 "runtime_type": self.runtime_connection.type,
                 "container_id": getattr(container, "id", None),
                 "container_name": getattr(container, "name", None),
                 "image": current_image,
             }
-        return dict(spec.snapshot_payload)
+        else:
+            snapshot = dict(spec.snapshot_payload)
+        return docker_identity.bind(self, snapshot, identity)
 
     async def validate_snapshot(self, target_ref: dict[str, Any], snapshot: dict[str, Any]) -> None:
         if target_ref.get("mode") == "docker_compose":
@@ -245,6 +251,7 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         if create_config.get("image") != snapshot.get("image"):
             raise ValueError("snapshot.create_config.image must match snapshot.image")
 
+    @snapshot_recovery
     async def recover_from_snapshot(
         self, target_ref: dict[str, Any], snapshot: dict[str, Any]
     ) -> RuntimeUpdateResult:
@@ -258,40 +265,34 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
             raise ValueError("snapshot.create_config must be a dict")
 
         client = self._get_client()
+        self._inspect_recovery_conflict(create_config)
         recovered_image = snapshot.get("image") if isinstance(snapshot.get("image"), str) else None
-        images = getattr(client, "images", None)
-        if recovered_image and images is not None and hasattr(images, "pull"):
-            images.pull(recovered_image)
+        image_id = container_recovery.prepare_image(self, snapshot)
+        create_config = dict(create_config, image=image_id)
 
-        existing_container = self._cleanup_replacement_conflict(client, snapshot, create_config)
-        if existing_container is not None:
-            state = getattr(existing_container, "attrs", {}) or {}
-            is_running = bool((state.get("State") or {}).get("Running"))
-            if not is_running:
-                existing_container.start()
-            return RuntimeUpdateResult(
-                updated=True,
-                old_image=None,
-                new_image=recovered_image,
-                message="runtime recovered from snapshot",
-                new_container_id=getattr(existing_container, "id", None),
-            )
+        self._validate_snapshot_target_identity(target_ref, snapshot)
+        removed = self._cleanup_replacement_conflict(client, snapshot, create_config)
 
         recovered_container = None
         try:
+            docker_identity.verify(self, snapshot, destructive=bool(removed))
             recovered_container = self._create_docker_container(client, create_config)
+            docker_identity.verify(self, snapshot, destructive=True)
             self._restore_container_networks_from_snapshot(client, recovered_container, snapshot)
+            docker_identity.verify(self, snapshot, destructive=True)
             recovered_container.start()
         except Exception:
             if recovered_container is not None:
+                docker_identity.verify(self, snapshot, destructive=True)
                 self._remove_container_if_present(recovered_container)
             raise
 
+        await container_recovery.verify_container(self, recovered_container, snapshot)
         return RuntimeUpdateResult(
             updated=True,
             old_image=None,
             new_image=recovered_image,
-            message="runtime recovered from snapshot",
+            message="runtime recovered from snapshot; native readiness verified",
             new_container_id=getattr(recovered_container, "id", None),
         )
 
@@ -341,6 +342,8 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         project = target_ref.get("project")
         if not isinstance(project, str) or not project.strip():
             raise ValueError("target_ref.project must be a non-empty string")
+        if snapshot.get("runtime_type") != self.runtime_connection.type:
+            raise ValueError("snapshot runtime_type does not match recovery runtime")
         snapshot_project = snapshot.get("project")
         if snapshot_project != project.strip():
             raise ValueError("snapshot.project must match target_ref.project")
@@ -368,6 +371,10 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
             raise ValueError("compose snapshot entry create_config must be a non-empty dict")
         if create_config.get("image") != snapshot.get("image"):
             raise ValueError("compose snapshot entry create_config.image must match image")
+        self._validate_snapshot_target_identity(
+            {"container_name": snapshot.get("container_name")}, snapshot
+        )
+        container_recovery.validate_evidence(snapshot)
 
     async def _recover_compose_from_snapshot(
         self,
@@ -379,6 +386,10 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         snapshots = snapshot.get("snapshots")
         if not isinstance(snapshots, list):
             raise ValueError("snapshot.snapshots must be a list")
+        docker_identity.verify_group(self, snapshot)
+        for item in snapshots:
+            container_recovery.prepare_image(self, item)
+            self._inspect_recovery_conflict(item["create_config"])
         for item in snapshots:
             result = await self.recover_from_snapshot(
                 self._target_ref_for_compose_snapshot_entry(item),
@@ -386,6 +397,7 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
             )
             if result.new_container_id:
                 recovered_ids.append(result.new_container_id)
+        await container_recovery.verify_group(self, recovered_ids, snapshots)
         recovered_image = snapshot.get("image") if isinstance(snapshot.get("image"), str) else None
         return RuntimeUpdateResult(
             updated=True,
@@ -417,6 +429,12 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         )
 
     def _create_docker_container(self, client, create_config: dict[str, Any]):
+        markers = MANAGED_MARKERS.get()
+        if markers:
+            create_config = dict(create_config)
+            labels = dict(create_config.get("labels") or create_config.get("Labels") or {})
+            labels.update(markers)
+            create_config["labels"] = labels
         create_kwargs = self._sanitize_docker_create_kwargs(create_config)
         exposed_ports = create_kwargs.pop("_releasetracker_exposed_ports", None)
         if not exposed_ports:
@@ -482,19 +500,17 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
 
         try:
             existing_container = client.containers.get(container_name)
-        except Exception:
-            return None
+        except Exception as exc:
+            if self.is_target_missing_error(exc):
+                return None
+            raise
 
-        # Decide whether the live container is already at the snapshot's
-        # state. We compare live image tags / digest to the snapshot's
-        # recorded image; stored ``container_id`` is not a reliable
-        # signal because every recreate assigns a new id.
-        recovered_image = snapshot.get("image") if isinstance(snapshot.get("image"), str) else None
-        if recovered_image and self._container_matches_image(existing_container, recovered_image):
-            return existing_container
+        # A matching tag (or original ID) cannot prove complete configuration
+        # equality. Explicit recovery always recreates from the saved config.
 
+        docker_identity.verify(self, snapshot)
         self._remove_container_if_present(existing_container)
-        return None
+        return True
 
     @staticmethod
     def _container_matches_image(container, target_image: str) -> bool:
@@ -533,20 +549,7 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         return False
 
     def _remove_container_if_present(self, container) -> None:
-        try:
-            container.remove(force=True)
-            return
-        except TypeError:
-            pass
-        except Exception:
-            pass
-
-        if self._container_looks_running(container):
-            try:
-                container.stop()
-            except Exception:
-                pass
-        container.remove()
+        self._remove_container_once(container)
 
     @staticmethod
     def _container_looks_running(container) -> bool:
@@ -849,6 +852,7 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
                 else None
             ),
             network_config=network_config,
+            recovery_snapshot=snapshot,
         )
 
     def _restore_container_networks_for_payload(
@@ -858,6 +862,7 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         *,
         container_id: str | None,
         network_config: dict[str, Any],
+        recovery_snapshot: dict[str, Any] | None = None,
     ) -> None:
         network_mode = network_config.get("network_mode")
         if isinstance(network_mode, str) and (
@@ -882,11 +887,15 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
             if not isinstance(endpoint, dict):
                 continue
             network = networks.get(network_name)
+            if recovery_snapshot is not None:
+                docker_identity.verify(self, recovery_snapshot, destructive=True)
             if hasattr(network, "disconnect"):
                 try:
                     network.disconnect(new_container, force=True)
                 except Exception:
                     pass
+            if recovery_snapshot is not None:
+                docker_identity.verify(self, recovery_snapshot, destructive=True)
             network.connect(new_container, **self._network_connect_kwargs(container_id, endpoint))
 
     def _network_connect_kwargs(

@@ -16,7 +16,13 @@ from contextlib import asynccontextmanager
 
 import asyncssh
 
-from .ssh_compose import TOOLS, load_yaml, read_project_file
+from .ssh_compose import (
+    TOOLS,
+    extract_compose_service_markers,
+    load_yaml,
+    read_project_file,
+)
+from .deployment_plan import MANAGED_MARKERS
 from .ssh_compose_plan import SSHComposeTarget, build_plan, fingerprint
 from .ssh_transport import SSHOperationError, open_ssh_session
 
@@ -92,7 +98,15 @@ async def read_state(session, sftp, target):
 async def make_plan(session, sftp, target, targets):
     files, env_files, rendered, environment, override = await read_state(session, sftp, target)
     plan = await asyncio.to_thread(
-        build_plan, target, files, rendered, env_files, environment, targets, override=override
+        build_plan,
+        target,
+        files,
+        rendered,
+        env_files,
+        environment,
+        targets,
+        override=override,
+        managed_markers=MANAGED_MARKERS.get(),
     )
     # Detect an externally-created .env between preview, pull and commit.
     if not target.env_files and not env_files:
@@ -277,6 +291,16 @@ async def project_lock(session, sftp, target):
                 pass
 
 
+async def read_managed_markers(storage, connection, target, services=None):
+    """Read per-service ownership labels from the remote rendered Compose model."""
+    async with open_ssh_session(storage, connection) as session:
+        async with session.sftp() as sftp:
+            _, _, rendered, _, _ = await read_state(session, sftp, target)
+    if services is not None:
+        rendered = {"services": {s: rendered.get("services", {}).get(s, {}) for s in services}}
+    return extract_compose_service_markers(rendered)
+
+
 async def execute_update(
     storage,
     connection,
@@ -374,6 +398,7 @@ async def execute_update(
                             },
                             "lock_path": lock["path"],
                             "plan_id": summary["plan_id"],
+                            "managed_markers": dict(MANAGED_MARKERS.get() or {}),
                         }
                     )
                     await _check_inputs(session, sftp, plan)

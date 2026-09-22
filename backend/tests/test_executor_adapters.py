@@ -19,12 +19,36 @@ from releasetracker.executors.docker import DockerRuntimeAdapter
 from releasetracker.executors.kubernetes import KubernetesRuntimeAdapter
 from releasetracker.executors.compose_runtime_update import GroupedRuntimeRecreateSpec
 from releasetracker.executors.podman import PodmanRuntimeAdapter
+from releasetracker.services.deployment_plan import MANAGED_MARKERS
+
+
+class FakeContainerNotFound(KeyError):
+    response = SimpleNamespace(status_code=404)
+
+
+RECOVERY_IMAGE_ID = "sha256:" + "a" * 64
+DOCKER_ENGINE_ID = "11111111-2222-4333-8444-555555555555"
+
+
+def docker_engine_identity():
+    return {"schema": 1, "kind": "docker", "daemon_id": DOCKER_ENGINE_ID}
+
+
+def recovery_evidence():
+    return {
+        "schema": 1,
+        "image_id": RECOVERY_IMAGE_ID,
+        "healthcheck": None,
+        "config_observed": True,
+    }
 
 
 class FakeImage:
     def __init__(self, tags=None, image_id=None):
         self.tags = tags or []
-        self.id = image_id
+        self.id = image_id or (
+            self.tags[0] if self.tags and self.tags[0].startswith("sha256:") else RECOVERY_IMAGE_ID
+        )
 
 
 class FakeContainer:
@@ -53,6 +77,7 @@ class FakeContainer:
 
     def start(self) -> None:
         self.start_calls.append(True)
+        self.attrs.setdefault("State", {})["Running"] = True
         if self._event_log is not None:
             self._event_log.append(f"start:{self.name}")
 
@@ -107,7 +132,7 @@ class FakeContainerManager:
         for container in self._containers:
             if container.id == identifier or container.name == identifier:
                 return container
-        raise KeyError("container not found")
+        raise FakeContainerNotFound("container not found")
 
     def _forget_container(self, container: FakeContainer) -> None:
         try:
@@ -276,6 +301,9 @@ def _fake_docker_runtime_mounts(host_mounts: list[dict]) -> list[dict]:
 
 
 class FakeContainerClient:
+    def info(self):
+        return {"ID": DOCKER_ENGINE_ID}
+
     def __init__(self, containers):
         self.containers = FakeContainerManager(containers)
         self.update_container_image_calls = []
@@ -288,6 +316,9 @@ class FakeDockerImageManager:
     def __init__(self, should_fail: bool = False):
         self.pull_calls: list[str] = []
         self._should_fail = should_fail
+
+    def get(self, image: str):
+        return FakeImage(image_id=image)
 
     def pull(self, image: str) -> None:
         self.pull_calls.append(image)
@@ -306,6 +337,9 @@ class FakeDockerLowLevelApi:
 
 
 class FakeDockerRecreateClient:
+    def info(self):
+        return {"ID": DOCKER_ENGINE_ID}
+
     def __init__(
         self,
         containers,
@@ -444,6 +478,9 @@ class FakePodmanImageManager:
     def __init__(self, should_fail: bool = False):
         self.pull_calls: list[str] = []
         self._should_fail = should_fail
+
+    def get(self, image: str):
+        return FakeImage(image_id=image)
 
     def pull(self, image: str) -> None:
         self.pull_calls.append(image)
@@ -759,7 +796,7 @@ class FakePodmanContainerManager:
         for container in self._containers:
             if container.id == identifier or container.name == identifier:
                 return container
-        raise KeyError("container not found")
+        raise FakeContainerNotFound("container not found")
 
     def _forget_container(self, container: FakeContainer) -> None:
         try:
@@ -1099,6 +1136,7 @@ async def test_docker_adapter_discovers_and_updates_image_only():
     await adapter.validate_snapshot({"container_id": "abc"}, snapshot)
     assert snapshot == {
         "runtime_type": "docker",
+        "engine_identity": docker_engine_identity(),
         "container_id": "abc",
         "container_name": "sample-web",
         "image": "sample-web:1.25",
@@ -1553,6 +1591,7 @@ async def test_podman_adapter_recovery_restores_networks_with_raw_api():
         {"container_name": "sample-cache"},
         {
             "runtime_type": "podman",
+            "recovery_evidence": recovery_evidence(),
             "container_id": "def1234567890",
             "container_name": "sample-cache",
             "image": "sample-cache:7.2",
@@ -2122,6 +2161,84 @@ async def test_kubernetes_adapter_uses_target_ref_chart_version_when_status_lack
 
 
 @pytest.mark.asyncio
+async def test_helm_snapshot_recovery_prefers_native_revision_rollback(monkeypatch):
+    runtime = RuntimeConnectionConfig(
+        name="k8s-prod",
+        type="kubernetes",
+        config={"namespace": "apps", "in_cluster": True},
+        secrets={},
+    )
+    apps_api = FakeAppsApi(
+        [
+            FakeWorkload(
+                "sample-ci-web",
+                [FakeContainerSpec("web", "registry.example.test/team/web:5.8.13")],
+                labels={"app.kubernetes.io/instance": "sample-ci"},
+                annotations={"meta.helm.sh/release-name": "sample-ci"},
+            )
+        ],
+        [],
+        [],
+    )
+    adapter = KubernetesRuntimeAdapter(runtime, apps_api=apps_api)
+    calls = []
+
+    def fake_run_helm_command(args):
+        calls.append(args)
+        if args[0] == "status":
+            return json.dumps(
+                {
+                    "name": "sample-ci",
+                    "version": 4,
+                    "chart": {"metadata": {"name": "sample-ci", "version": "5.8.13"}},
+                }
+            )
+        return "{}"
+
+    monkeypatch.setattr(adapter, "_run_helm_command", fake_run_helm_command)
+    target_ref = {
+        "mode": "helm_release",
+        "namespace": "apps",
+        "release_name": "sample-ci",
+        "chart_name": "sample-ci",
+        "chart_version": "5.8.13",
+    }
+    snapshot = await adapter.capture_snapshot(target_ref, "5.8.13")
+    assert snapshot["revision"] == 4
+    marker_token = MANAGED_MARKERS.set(
+        {
+            "releasetracker.io/managed-by": "installation-test",
+            "releasetracker.io/target-id": "target-test",
+            "releasetracker.io/schema": "1",
+        }
+    )
+    try:
+        await adapter.recover_from_snapshot(target_ref, snapshot)
+    finally:
+        MANAGED_MARKERS.reset(marker_token)
+    assert calls == [
+        ["status", "sample-ci", "--namespace", "apps", "--output", "json"],
+        ["rollback", "sample-ci", "4", "--namespace", "apps"],
+    ]
+    assert apps_api.patch_calls == [
+        (
+            "Deployment",
+            "sample-ci-web",
+            "apps",
+            {
+                "metadata": {
+                    "annotations": {
+                        "releasetracker.io/managed-by": "installation-test",
+                        "releasetracker.io/target-id": "target-test",
+                        "releasetracker.io/schema": "1",
+                    }
+                }
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_kubernetes_adapter_discovery_requires_namespace_when_multiple_configured():
     runtime = RuntimeConnectionConfig(
         name="k8s-prod",
@@ -2395,6 +2512,66 @@ async def test_kubernetes_adapter_updates_bound_workload_services_in_single_patc
 
 
 @pytest.mark.asyncio
+async def test_kubernetes_workload_recovery_requires_submission_evidence_and_resource_version():
+    runtime = RuntimeConnectionConfig(
+        name="k8s-prod",
+        type="kubernetes",
+        config={"namespace": "apps", "in_cluster": True},
+        secrets={},
+    )
+    image = "registry.example.test/team/service-a@sha256:" + "a" * 64
+    workload = FakeWorkload("worker", [FakeContainerSpec("worker", image)])
+    workload.metadata.resource_version = "rv-7"
+    workload.metadata.uid = "example-workload-uid"
+    workload.metadata.generation = 2
+    apps_api = FakeAppsApi([workload], [], [])
+    adapter = KubernetesRuntimeAdapter(runtime, apps_api=apps_api)
+    target_ref = {
+        "mode": "kubernetes_workload",
+        "namespace": "apps",
+        "kind": "Deployment",
+        "name": "worker",
+    }
+
+    snapshot = await adapter.capture_snapshot(target_ref, "worker:1.0")
+    await adapter.validate_snapshot(target_ref, snapshot)
+    assert snapshot["containers"] == {"worker": image}
+
+    with pytest.raises(RuntimeError, match="not verified"):
+        await adapter.recover_from_snapshot(target_ref, snapshot)
+    assert apps_api.patch_calls[-1][3]["metadata"] == {
+        "uid": "example-workload-uid",
+        "resourceVersion": "rv-7",
+    }
+    assert apps_api.patch_calls[-1][3]["spec"]["template"]["spec"]["containers"] == [
+        {"name": "worker", "image": image}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_kubernetes_workload_recovery_requires_resource_version():
+    runtime = RuntimeConnectionConfig(
+        name="k8s-prod",
+        type="kubernetes",
+        config={"namespace": "apps", "in_cluster": True},
+        secrets={},
+    )
+    workload = FakeWorkload("worker", [FakeContainerSpec("worker", "worker:1.0")])
+    apps_api = FakeAppsApi([workload], [], [])
+    adapter = KubernetesRuntimeAdapter(runtime, apps_api=apps_api)
+    target_ref = {
+        "mode": "kubernetes_workload",
+        "namespace": "apps",
+        "kind": "Deployment",
+        "name": "worker",
+    }
+    snapshot = await adapter.capture_snapshot(target_ref, "worker:1.0")
+    with pytest.raises(ValueError, match="resourceVersion"):
+        await adapter.recover_from_snapshot(target_ref, snapshot)
+    assert apps_api.patch_calls == []
+
+
+@pytest.mark.asyncio
 async def test_podman_adapter_pull_failure_leaves_container_untouched():
     runtime = RuntimeConnectionConfig(
         name="podman-prod",
@@ -2440,6 +2617,8 @@ async def test_docker_adapter_recovery_removes_partial_replacement_before_recrea
         {"container_name": "api"},
         {
             "runtime_type": "docker",
+            "engine_identity": docker_engine_identity(),
+            "recovery_evidence": recovery_evidence(),
             "container_id": "old-id",
             "container_name": "api",
             "image": "api:1.0",
@@ -2450,11 +2629,11 @@ async def test_docker_adapter_recovery_removes_partial_replacement_before_recrea
     assert result.updated is True
     assert result.new_image == "api:1.0"
     assert len(partial_replacement.remove_calls) == 1
-    assert client.containers.create_calls == [{"image": "api:1.0", "name": "api"}]
+    assert client.containers.create_calls == [{"image": RECOVERY_IMAGE_ID, "name": "api"}]
 
 
 @pytest.mark.asyncio
-async def test_docker_adapter_recovery_reuses_original_container_when_it_still_exists():
+async def test_docker_adapter_recovery_recreates_original_container_even_when_it_still_exists():
     runtime = RuntimeConnectionConfig(
         name="docker-prod",
         type="docker",
@@ -2474,6 +2653,8 @@ async def test_docker_adapter_recovery_reuses_original_container_when_it_still_e
         {"container_name": "api"},
         {
             "runtime_type": "docker",
+            "engine_identity": docker_engine_identity(),
+            "recovery_evidence": recovery_evidence(),
             "container_id": "old-id",
             "container_name": "api",
             "image": "api:1.0",
@@ -2483,14 +2664,14 @@ async def test_docker_adapter_recovery_reuses_original_container_when_it_still_e
 
     assert result.updated is True
     assert result.new_image == "api:1.0"
-    assert result.new_container_id == "old-id"
-    assert len(original_container.start_calls) == 1
-    assert len(original_container.remove_calls) == 0
-    assert client.containers.create_calls == []
+    assert result.new_container_id == "docker-new-id"
+    assert original_container.start_calls == []
+    assert len(original_container.remove_calls) == 1
+    assert client.containers.create_calls == [{"image": RECOVERY_IMAGE_ID, "name": "api"}]
 
 
 @pytest.mark.asyncio
-async def test_docker_adapter_recovery_skips_start_when_container_already_running():
+async def test_docker_adapter_recovery_recreates_even_when_original_container_is_running():
     runtime = RuntimeConnectionConfig(
         name="docker-prod",
         type="docker",
@@ -2510,6 +2691,8 @@ async def test_docker_adapter_recovery_skips_start_when_container_already_runnin
         {"container_name": "api"},
         {
             "runtime_type": "docker",
+            "engine_identity": docker_engine_identity(),
+            "recovery_evidence": recovery_evidence(),
             "container_id": "old-id",
             "container_name": "api",
             "image": "api:1.0",
@@ -2518,10 +2701,10 @@ async def test_docker_adapter_recovery_skips_start_when_container_already_runnin
     )
 
     assert result.updated is True
-    assert result.new_container_id == "old-id"
-    assert len(original_container.start_calls) == 0
-    assert len(original_container.remove_calls) == 0
-    assert client.containers.create_calls == []
+    assert result.new_container_id == "docker-new-id"
+    assert original_container.start_calls == []
+    assert len(original_container.remove_calls) == 1
+    assert client.containers.create_calls == [{"image": RECOVERY_IMAGE_ID, "name": "api"}]
 
 
 @pytest.mark.asyncio
@@ -2551,6 +2734,8 @@ async def test_docker_adapter_recovery_preserves_multi_port_create_config():
         {"container_name": "api"},
         {
             "runtime_type": "docker",
+            "engine_identity": docker_engine_identity(),
+            "recovery_evidence": recovery_evidence(),
             "container_id": "old-id",
             "container_name": "api",
             "image": "api:1.0",
@@ -2720,6 +2905,8 @@ async def test_docker_adapter_recovery_restores_snapshot_networks():
         {"container_name": "api"},
         {
             "runtime_type": "docker",
+            "engine_identity": docker_engine_identity(),
+            "recovery_evidence": recovery_evidence(),
             "container_id": "old-id",
             "container_name": "api",
             "image": "api:1.0",
@@ -2751,14 +2938,16 @@ async def test_docker_adapter_recovery_cleans_up_failed_recovery_container():
         secrets={},
     )
     client = FakeDockerRecreateClient([])
-    client.containers.fail_start_for_images.add("api:1.0")
+    client.containers.fail_start_for_images.add(RECOVERY_IMAGE_ID)
     adapter = DockerRuntimeAdapter(runtime, client=client)
 
-    with pytest.raises(RuntimeError, match="start failed: api:1.0"):
+    with pytest.raises(RuntimeError, match=f"start failed: {RECOVERY_IMAGE_ID}"):
         await adapter.recover_from_snapshot(
             {"container_name": "api"},
             {
                 "runtime_type": "docker",
+                "engine_identity": docker_engine_identity(),
+                "recovery_evidence": recovery_evidence(),
                 "container_id": "old-id",
                 "container_name": "api",
                 "image": "api:1.0",
@@ -2837,6 +3026,7 @@ async def test_podman_adapter_recovery_recreates_container_from_snapshot():
         {"container_name": "sample-cache"},
         {
             "runtime_type": "podman",
+            "recovery_evidence": recovery_evidence(),
             "container_id": "def",
             "container_name": "sample-cache",
             "image": "sample-cache:7.2",
@@ -2855,7 +3045,7 @@ async def test_podman_adapter_recovery_recreates_container_from_snapshot():
     assert len(client.api.post_calls) == 1
     assert len(client.containers.create_calls) == 1
     create_payload = client.api.post_calls[0]["data"]
-    assert create_payload["image"] == "sample-cache:7.2"
+    assert create_payload["image"] == RECOVERY_IMAGE_ID
     assert "network_mode" not in create_payload
     assert "netns" not in create_payload
 
@@ -2876,6 +3066,7 @@ async def test_podman_adapter_recovery_omits_blank_working_dir_from_low_level_pa
             {"container_name": "sample-cache"},
             {
                 "runtime_type": "podman",
+                "recovery_evidence": recovery_evidence(),
                 "container_id": "def",
                 "container_name": "sample-cache",
                 "image": "sample-cache:7.2",
@@ -2914,6 +3105,7 @@ async def test_podman_adapter_recovery_preserves_nonblank_working_dir_in_low_lev
             {"container_name": "sample-cache"},
             {
                 "runtime_type": "podman",
+                "recovery_evidence": recovery_evidence(),
                 "container_id": "def",
                 "container_name": "sample-cache",
                 "image": "sample-cache:7.2",
@@ -3423,6 +3615,7 @@ async def test_podman_adapter_recovery_absolutizes_relative_storage_destinations
         {"container_name": "nginx-podman"},
         {
             "runtime_type": "podman",
+            "recovery_evidence": recovery_evidence(),
             "container_id": "old-id",
             "container_name": "nginx-podman",
             "image": "nginx:1.26",
@@ -3467,6 +3660,7 @@ async def test_podman_adapter_recovery_drops_invalid_named_volumes_from_snapshot
         {"container_name": "storage-app"},
         {
             "runtime_type": "podman",
+            "recovery_evidence": recovery_evidence(),
             "container_id": "old-id",
             "container_name": "storage-app",
             "image": "sample-base:22.04",
@@ -3504,6 +3698,7 @@ async def test_podman_adapter_recovery_preserves_source_named_volume_from_snapsh
         {"container_name": "storage-app"},
         {
             "runtime_type": "podman",
+            "recovery_evidence": recovery_evidence(),
             "container_id": "old-id",
             "container_name": "storage-app",
             "image": "sample-base:22.04",
@@ -3826,6 +4021,7 @@ async def test_podman_adapter_recovery_omits_tmpfs_create_kwarg_and_restores_net
         {"container_name": "tmpfs-app"},
         {
             "runtime_type": "podman",
+            "recovery_evidence": recovery_evidence(),
             "container_id": "old-id",
             "container_name": "tmpfs-app",
             "image": "ghcr.io/acme/tmpfs-app:1.0",
@@ -3969,6 +4165,7 @@ async def test_podman_adapter_recovery_returns_new_container_id():
         {"container_name": "sample-cache"},
         {
             "runtime_type": "podman",
+            "recovery_evidence": recovery_evidence(),
             "container_id": "old-id",
             "container_name": "sample-cache",
             "image": "sample-cache:7.2",
@@ -4792,7 +4989,9 @@ async def test_docker_compose_snapshot_captures_and_recovers_grouped_config():
     assert result.updated is True
     assert result.new_image == "api=ghcr.io/acme/api:1.0"
     assert result.message == "docker compose recovered from snapshot"
-    assert client.containers.create_calls == [snapshot["snapshots"][0]["create_config"]]
+    assert client.containers.create_calls == [
+        dict(snapshot["snapshots"][0]["create_config"], image=RECOVERY_IMAGE_ID)
+    ]
     assert client.networks.connect_calls == [
         (
             "release-stack_default",
@@ -4982,7 +5181,7 @@ async def test_podman_compose_fetch_images_falls_back_to_get_for_complete_inspec
             self.get_calls.append(identifier)
             if identifier in (summary_container.id, summary_container.name):
                 return full_container
-            raise KeyError("container not found")
+            raise FakeContainerNotFound("container not found")
 
     class SummaryOnlyPodmanClient:
         def __init__(self):
@@ -5047,7 +5246,7 @@ def test_podman_compose_find_service_containers_returns_full_inspect_container_o
             self.get_calls.append(identifier)
             if identifier in (summary_container.id, summary_container.name):
                 return full_container
-            raise KeyError("container not found")
+            raise FakeContainerNotFound("container not found")
 
     class SummaryOnlyPodmanClient:
         def __init__(self):
@@ -5254,8 +5453,8 @@ async def test_podman_compose_snapshot_captures_and_recovers_pod_backed_group():
     assert result.new_image == "api=ghcr.io/acme/api:1.0; worker=ghcr.io/acme/worker:1.0"
     assert result.message == "podman compose recovered from snapshot"
     assert [call["image"] for call in client.containers.create_calls] == [
-        "ghcr.io/acme/api:1.0",
-        "ghcr.io/acme/worker:1.0",
+        RECOVERY_IMAGE_ID,
+        RECOVERY_IMAGE_ID,
     ]
     assert all(call["pod"] == "core-pod" for call in client.containers.create_calls)
 
@@ -5362,6 +5561,7 @@ async def test_podman_compose_snapshot_recovery_recreates_stale_pod_by_name():
     )
     api_snapshot = {
         "runtime_type": "podman",
+        "recovery_evidence": recovery_evidence(),
         "container_id": "api-1",
         "container_name": "core-api-1",
         "compose_project": "core",
@@ -5395,6 +5595,7 @@ async def test_podman_compose_snapshot_recovery_recreates_stale_pod_by_name():
     }
     worker_snapshot = {
         "runtime_type": "podman",
+        "recovery_evidence": recovery_evidence(),
         "container_id": "worker-1",
         "container_name": "core-worker-1",
         "compose_project": "core",
@@ -5435,6 +5636,7 @@ async def test_podman_compose_snapshot_recovery_recreates_stale_pod_by_name():
         {"mode": "docker_compose", "project": "core"},
         {
             "mode": "docker_compose",
+            "runtime_type": runtime.type,
             "project": "core",
             "image": "api=ghcr.io/acme/api:1.0; worker=ghcr.io/acme/worker:1.0",
             "services": ["api", "worker"],
@@ -5477,6 +5679,7 @@ async def test_podman_compose_snapshot_recovery_sanitizes_nested_stale_pod_refer
     stale_pod_id = "1c533360b00f4b0685fd702da5a2582753c9668d9a0e05e90b9ea3af7227b471"
     snapshot = {
         "runtime_type": "podman",
+        "recovery_evidence": recovery_evidence(),
         "container_id": "api-1",
         "container_name": "core-api-1",
         "compose_project": "core",
@@ -5520,6 +5723,7 @@ async def test_podman_compose_snapshot_recovery_sanitizes_nested_stale_pod_refer
         {"mode": "docker_compose", "project": "core"},
         {
             "mode": "docker_compose",
+            "runtime_type": runtime.type,
             "project": "core",
             "image": "api=ghcr.io/acme/api:1.0",
             "services": ["api"],
@@ -5529,7 +5733,7 @@ async def test_podman_compose_snapshot_recovery_sanitizes_nested_stale_pod_refer
 
     assert result.updated is True
     assert len(client.containers.create_calls) == 1
-    assert client.containers.create_calls[0]["image"] == "ghcr.io/acme/api:1.0"
+    assert client.containers.create_calls[0]["image"] == RECOVERY_IMAGE_ID
     assert client.containers.create_calls[0]["name"] == "core-api-1"
     assert client.containers.create_calls[0]["pod"] == "current-pod-id"
     assert client.containers.create_calls[0]["labels"] == {
@@ -5555,6 +5759,7 @@ async def test_podman_compose_snapshot_recovery_groups_sibling_stale_pod_ids_by_
     )
     api_snapshot = {
         "runtime_type": "podman",
+        "recovery_evidence": recovery_evidence(),
         "container_id": "api-1",
         "container_name": "core-api-1",
         "compose_project": "core",
@@ -5588,6 +5793,7 @@ async def test_podman_compose_snapshot_recovery_groups_sibling_stale_pod_ids_by_
     }
     worker_snapshot = {
         "runtime_type": "podman",
+        "recovery_evidence": recovery_evidence(),
         "container_id": "worker-1",
         "container_name": "core-worker-1",
         "compose_project": "core",
@@ -5626,6 +5832,7 @@ async def test_podman_compose_snapshot_recovery_groups_sibling_stale_pod_ids_by_
         {"mode": "docker_compose", "project": "core"},
         {
             "mode": "docker_compose",
+            "runtime_type": runtime.type,
             "project": "core",
             "image": "api=ghcr.io/acme/api:1.0; worker=ghcr.io/acme/worker:1.0",
             "services": ["api", "worker"],
@@ -5669,6 +5876,7 @@ async def test_podman_compose_snapshot_recovery_uses_current_pod_from_stable_con
     current_pod_name = "nginx-docker-traefik-test"
     nginx_snapshot = {
         "runtime_type": "podman",
+        "recovery_evidence": recovery_evidence(),
         "container_id": "c332df545be11953a36c937d298eda732f3721755d347be4a356912ef3844ee3",
         "container_name": "nginx-behind-traefik",
         "compose_project": current_pod_name,
@@ -5695,6 +5903,7 @@ async def test_podman_compose_snapshot_recovery_uses_current_pod_from_stable_con
     }
     traefik_snapshot = {
         "runtime_type": "podman",
+        "recovery_evidence": recovery_evidence(),
         "container_id": "449aced0d19175df137e60cc457d438696ba8adb7a6f5b4cca4906730b79b2bc",
         "container_name": "traefik-test",
         "compose_project": current_pod_name,
@@ -5761,6 +5970,7 @@ async def test_podman_compose_snapshot_recovery_uses_current_pod_from_stable_con
         {"mode": "docker_compose", "project": current_pod_name},
         {
             "mode": "docker_compose",
+            "runtime_type": runtime.type,
             "project": current_pod_name,
             "image": "nginx=docker.io/library/nginx:1.25; traefik=docker.io/library/traefik:3.0",
             "services": ["nginx", "traefik"],
@@ -5794,6 +6004,7 @@ async def test_podman_compose_snapshot_recovery_rejects_pod_id_without_current_c
     )
     snapshot = {
         "runtime_type": "podman",
+        "recovery_evidence": recovery_evidence(),
         "container_id": "api-1",
         "container_name": "core-api-1",
         "compose_project": "core",
@@ -5815,6 +6026,7 @@ async def test_podman_compose_snapshot_recovery_rejects_pod_id_without_current_c
             {"mode": "docker_compose", "project": "core"},
             {
                 "mode": "docker_compose",
+                "runtime_type": runtime.type,
                 "project": "core",
                 "image": "api=ghcr.io/acme/api:1.0",
                 "services": ["api"],
@@ -6169,6 +6381,7 @@ async def test_podman_compose_grouped_recovery_uses_low_level_create_after_empty
     result = await adapter._recover_grouped_container_from_snapshot(
         {
             "runtime_type": "podman",
+            "recovery_evidence": recovery_evidence(),
             "container_id": "api-1",
             "container_name": "core-api-1",
             "image": "ghcr.io/acme/api:1.0",
@@ -6244,6 +6457,7 @@ async def test_podman_compose_grouped_update_drops_blank_storage_destinations_fr
         network_config={},
         snapshot_payload={
             "runtime_type": "podman",
+            "recovery_evidence": recovery_evidence(),
             "container_id": "api-1",
             "container_name": "core-api-1",
             "image": "ghcr.io/acme/api:1.0",
@@ -6298,6 +6512,7 @@ async def test_podman_compose_grouped_recovery_drops_blank_storage_destinations_
         result = await adapter._recover_grouped_container_from_snapshot(
             {
                 "runtime_type": "podman",
+                "recovery_evidence": recovery_evidence(),
                 "container_id": "api-1",
                 "container_name": "core-api-1",
                 "image": "ghcr.io/acme/api:1.0",
@@ -7686,6 +7901,7 @@ async def test_podman_grouped_snapshot_recovery_sanitizes_legacy_empty_network_p
     adapter = PodmanRuntimeAdapter(runtime, client=client)
     snapshot = {
         "runtime_type": "podman",
+        "recovery_evidence": recovery_evidence(),
         "container_id": "nginx-1",
         "container_name": "nginx-podman-compose",
         "image": "docker.io/library/nginx:1.25",
@@ -7727,7 +7943,7 @@ async def test_podman_grouped_snapshot_recovery_sanitizes_legacy_empty_network_p
     assert client.api.post_calls
     assert client.containers.create_calls == [
         {
-            "image": "docker.io/library/nginx:1.25",
+            "image": RECOVERY_IMAGE_ID,
             "name": "nginx-podman-compose",
             "pod": "nginx-podman-compose",
         }
@@ -7749,6 +7965,7 @@ async def test_podman_grouped_snapshot_recovery_uses_resolved_pod_object_without
     adapter = PodmanRuntimeAdapter(runtime, client=client)
     snapshot = {
         "runtime_type": "podman",
+        "recovery_evidence": recovery_evidence(),
         "container_id": "nginx-1",
         "container_name": "nginx-podman-compose",
         "image": "docker.io/library/nginx:1.25",

@@ -138,6 +138,62 @@ def load_yaml(text):
         raise SSHOperationError("compose", "unsupported_yaml_structure") from None
 
 
+def extract_compose_service_markers(rendered):
+    services = rendered.get("services") if isinstance(rendered, dict) else None
+    if not isinstance(services, dict):
+        return ()
+    result = []
+    for service_config in services.values():
+        labels = service_config.get("labels") if isinstance(service_config, dict) else None
+        markers = {}
+        if isinstance(labels, dict):
+            markers = {
+                key: value
+                for key, value in labels.items()
+                if isinstance(key, str) and isinstance(value, str)
+            }
+        elif isinstance(labels, list):
+            for label in labels:
+                if isinstance(label, str):
+                    key, separator, value = label.partition("=")
+                    if key and separator:
+                        markers[key] = value
+        result.append(markers)
+    return tuple(result)
+
+
+def inject_managed_markers(text, markers, *, service_names=None):
+    if not markers:
+        return text
+    document = load_yaml(text)
+    services = document.get("services")
+    if not isinstance(services, dict):
+        raise SSHOperationError("compose", "services_required_for_managed_markers")
+    for name in service_names if service_names is not None else list(services):
+        service_config = services.setdefault(name, {})
+        if not isinstance(service_config, dict):
+            raise SSHOperationError("compose", "service_mapping_required_for_managed_markers")
+        labels = service_config.get("labels")
+        if isinstance(labels, dict):
+            normalized = dict(labels)
+        elif isinstance(labels, list):
+            normalized = {}
+            for label in labels:
+                if not isinstance(label, str) or "=" not in label:
+                    raise SSHOperationError("compose", "explicit_label_values_required")
+                key, _, value = label.partition("=")
+                if not key or key in normalized:
+                    raise SSHOperationError("compose", "ambiguous_labels_for_managed_markers")
+                normalized[key] = value
+        elif labels is None:
+            normalized = {}
+        else:
+            raise SSHOperationError("compose", "unsupported_labels_for_managed_markers")
+        normalized.update(markers)
+        service_config["labels"] = normalized
+    return yaml.safe_dump(document, sort_keys=False, allow_unicode=True)
+
+
 def dotenv_entries(text):
     """Only simple, unambiguous assignments are eligible for in-place updates."""
     entries = {}

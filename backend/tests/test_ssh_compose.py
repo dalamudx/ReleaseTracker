@@ -5,6 +5,8 @@ from releasetracker.services.ssh_compose import (
     image_provenance,
     load_yaml,
     dotenv_entries,
+    extract_compose_service_markers,
+    inject_managed_markers,
 )
 
 
@@ -16,6 +18,35 @@ def analyze(expression, *, env="VERSION=1.2.3", process=None, extra=""):
         {"/app/.env": env},
         process or {},
     )[0]
+
+
+def test_compose_managed_markers_round_trip_all_services():
+    source = """services:
+  web:
+    image: registry.example.test/team/web:1.2.0
+    labels:
+      app.example/owner: team
+  worker:
+    image: registry.example.test/team/worker:1.2.0
+    labels:
+      - app.example/role=worker
+"""
+    markers = {
+        "releasetracker.io/managed-by": "installation-test",
+        "releasetracker.io/target-id": "target-test",
+        "releasetracker.io/schema": "1",
+    }
+    rendered = load_yaml(inject_managed_markers(source, markers))
+    found = extract_compose_service_markers(rendered)
+    assert len(found) == 2
+    assert all(item["releasetracker.io/target-id"] == "target-test" for item in found)
+    assert found[0]["app.example/owner"] == "team"
+    assert found[1]["app.example/role"] == "worker"
+
+
+def test_unmarked_compose_service_is_reported_as_empty_marker_set():
+    rendered = load_yaml("services:\n  web:\n    image: registry.example.test/team/web:1.2.0\n")
+    assert extract_compose_service_markers(rendered) == ({},)
 
 
 def test_literal_and_dotenv_provenance():

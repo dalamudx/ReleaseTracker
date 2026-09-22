@@ -4,6 +4,8 @@ from .services.task_effects import mark_deployment_mutation
 
 import asyncio
 import logging
+import hashlib
+import json
 from datetime import datetime
 from typing import Any, Callable, Coroutine
 from zoneinfo import ZoneInfo
@@ -41,6 +43,13 @@ from .executor_trigger import enqueue_executor_binding_targets
 from .scheduler_host import SchedulerHost
 from .services.runtime_credentials import materialize_runtime_connection_credentials
 from .services.snapshot_service import SnapshotService
+from .services.deployment_plan import MANAGED_MARKERS
+from .services.podman_target_lineage import (
+    ACTIVE_PODMAN_LINEAGE,
+    normalize_members,
+    target_fingerprint,
+)
+from .storage.sqlite_podman_lineage import LineageConflict
 from .storage.sqlite import SQLiteStorage
 
 logger = logging.getLogger(__name__)
@@ -376,16 +385,35 @@ class ExecutorScheduler(
             )
 
             try:
+                podman_lineage = await self._verify_podman_lineage_before_write(
+                    executor_config, adapter
+                )
                 snapshot_created = False
-                if self._supports_persisted_full_config_snapshots(executor_config):
-                    snapshot_created = await self._capture_pre_update_snapshot(
-                        executor_config,
-                        adapter,
-                        run_id=run_id,
-                        current_image=current_image,
-                    )
+                lineage_token = ACTIVE_PODMAN_LINEAGE.set(podman_lineage)
+                try:
+                    if self._supports_persisted_full_config_snapshots(executor_config):
+                        snapshot_created = await self._capture_pre_update_snapshot(
+                            executor_config,
+                            adapter,
+                            run_id=run_id,
+                            current_image=current_image,
+                        )
+                finally:
+                    ACTIVE_PODMAN_LINEAGE.reset(lineage_token)
                 await mark_deployment_mutation()
-                result = await adapter.update_image(executor_config.target_ref, target_image)
+                if podman_lineage is not None and podman_lineage.get("pending"):
+                    podman_lineage = await self.storage.podman_lineage.establish(
+                        executor_id=executor_config.id,
+                        target_id=podman_lineage["target_id"],
+                        mode=podman_lineage["mode"],
+                        target_fingerprint=podman_lineage["target_fingerprint"],
+                        members=podman_lineage["members"],
+                    )
+                lineage_write_token = ACTIVE_PODMAN_LINEAGE.set(podman_lineage)
+                try:
+                    result = await adapter.update_image(executor_config.target_ref, target_image)
+                finally:
+                    ACTIVE_PODMAN_LINEAGE.reset(lineage_write_token)
                 if not result.updated:
                     return await self._finalize_run(
                         executor_config,
@@ -399,6 +427,15 @@ class ExecutorScheduler(
 
                 target_mode = executor_config.target_ref.get("mode", "container")
                 if (
+                    executor_config.runtime_type == "podman"
+                    and target_mode == "container"
+                    and not result.new_container_id
+                ):
+                    raise RuntimeMutationError(
+                        "Podman update returned no replacement container ID; lineage was not advanced",
+                        destructive_started=True,
+                    )
+                if (
                     result.new_container_id
                     and executor_config.id is not None
                     and target_mode == "container"
@@ -411,6 +448,10 @@ class ExecutorScheduler(
                     executor_config = executor_config.model_copy(
                         update={"target_ref": refreshed_ref}
                     )
+                    if executor_config.runtime_type == "podman":
+                        await self._advance_podman_lineage(
+                            executor_config, adapter, podman_lineage, run_id
+                        )
 
                 # --- Post-update health check --------------------------
                 # Only runs for container-mode executors in this branch.
@@ -470,9 +511,82 @@ class ExecutorScheduler(
         finally:
             pass
 
+    async def _verify_podman_lineage_before_write(self, executor_config, adapter):
+        mode = executor_config.target_ref.get("mode", "container")
+        if executor_config.runtime_type != "podman" or mode not in {
+            "container",
+            "docker_compose",
+        }:
+            return None
+        if executor_config.id is None:
+            raise ValueError("Podman lineage requires a persisted executor")
+        lineage = await self.storage.podman_lineage.get(executor_config.id)
+        planned = MANAGED_MARKERS.get()
+        if planned is None:
+            if lineage is not None:
+                raise LineageConflict("Podman managed target requires an approved deployment task")
+            return None
+        members = normalize_members(
+            await adapter.get_target_lineage_members(executor_config.target_ref, planned)
+        )
+        lineage_mode = "container" if mode == "container" else "compose"
+        fingerprint_ref = (
+            {"container_name": members[0]["name"]}
+            if lineage_mode == "container"
+            else {"project": executor_config.target_ref.get("project")}
+        )
+        expected_fingerprint = target_fingerprint(lineage_mode, fingerprint_ref)
+        if lineage is None:
+            return {
+                "pending": True,
+                "target_id": planned["releasetracker.io/target-id"],
+                "mode": lineage_mode,
+                "generation": 1,
+                "target_fingerprint": expected_fingerprint,
+                "members": members,
+            }
+        if lineage["target_fingerprint"] != expected_fingerprint or lineage["members"] != members:
+            raise LineageConflict("Podman target lineage no longer matches the live container")
+        return lineage
+
+    async def _advance_podman_lineage(self, executor_config, adapter, previous, run_id):
+        if executor_config.id is None:
+            raise RuntimeMutationError(
+                "Podman lineage requires a persisted executor", destructive_started=True
+            )
+        target_ref = executor_config.target_ref
+        planned = MANAGED_MARKERS.get()
+        if planned is None or previous is None:
+            return
+        members = normalize_members(await adapter.get_target_lineage_members(target_ref, planned))
+        if any(item["marker_state"] != "managed" for item in members):
+            raise RuntimeMutationError(
+                "replacement container lacks managed markers", destructive_started=True
+            )
+        await self.storage.podman_lineage.transition(
+            executor_id=executor_config.id,
+            expected_generation=previous["generation"],
+            expected_members=previous["members"],
+            new_members=members,
+            executor_run_id=run_id,
+        )
+
+    def _runtime_adapter_cache_key(self, runtime_connection) -> str:
+        payload = {
+            "type": runtime_connection.type,
+            "config": getattr(runtime_connection, "config", {}) or {},
+            "credential_id": getattr(runtime_connection, "credential_id", None),
+            "secrets": getattr(runtime_connection, "secrets", {}) or {},
+        }
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+
     def _get_adapter(self, executor_id: int, runtime_connection) -> BaseRuntimeAdapter:
+        cache_key = self._runtime_adapter_cache_key(runtime_connection)
         cached_adapter = self._adapters.get(executor_id)
-        if cached_adapter is not None:
+        if cached_adapter is not None and (
+            not hasattr(cached_adapter, "_runtime_cache_key")
+            or cached_adapter._runtime_cache_key == cache_key
+        ):
             return cached_adapter
 
         if runtime_connection.type == "docker":
@@ -486,6 +600,7 @@ class ExecutorScheduler(
         else:
             raise ValueError(f"Unsupported runtime type: {runtime_connection.type}")
 
+        adapter._runtime_cache_key = cache_key
         self._adapters[executor_id] = adapter
         return adapter
 

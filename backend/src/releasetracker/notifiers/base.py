@@ -13,6 +13,8 @@ class NotificationEvent:
     EXECUTOR_RUN_FAILED = "executor_run_failed"
     EXECUTOR_RUN_SKIPPED = "executor_run_skipped"
     EXECUTOR_HEALTH_CHECK_RESULT = "executor_health_check_result"
+    EXECUTOR_APPROVAL_REQUIRED = "executor_approval_required"
+    EXECUTOR_DEPLOYMENT_BLOCKED = "executor_deployment_blocked"
     ERROR = "error"
 
 

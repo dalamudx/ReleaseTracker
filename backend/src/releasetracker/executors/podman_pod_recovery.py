@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .base import RuntimeUpdateResult
+from . import container_recovery
 from .compose_runtime_update import GroupedRuntimeRecreateSpec
 
 logger = logging.getLogger("releasetracker.executors.podman")
@@ -51,31 +52,19 @@ class PodmanPodRecovery:
 
         client = client or self._get_client()
         recovered_image = snapshot.get("image") if isinstance(snapshot.get("image"), str) else None
-        if recovered_image:
-            client.images.pull(recovered_image)
+        image_id = container_recovery.prepare_image(self, snapshot)
 
         restorable_create_config = self._podman_grouped_create_config_for_snapshot(
             snapshot,
             client=client,
             pod_ref_override=pod_ref_override,
         )
-        existing_container = self._cleanup_grouped_replacement_conflict(
+        restorable_create_config["image"] = image_id
+        self._cleanup_grouped_replacement_conflict(
             client,
             snapshot,
             restorable_create_config,
         )
-        if existing_container is not None:
-            state = getattr(existing_container, "attrs", {}) or {}
-            is_running = bool((state.get("State") or {}).get("Running"))
-            if not is_running:
-                existing_container.start()
-            return RuntimeUpdateResult(
-                updated=True,
-                old_image=None,
-                new_image=recovered_image,
-                message="runtime recovered from snapshot",
-                new_container_id=getattr(existing_container, "id", None),
-            )
 
         restorable_create_config = self._podman_container_create_config(restorable_create_config)
 
@@ -97,11 +86,12 @@ class PodmanPodRecovery:
                 self._remove_container_if_present(recovered_container)
             raise
 
+        await container_recovery.verify_container(self, recovered_container, snapshot)
         return RuntimeUpdateResult(
             updated=True,
             old_image=None,
             new_image=recovered_image,
-            message="runtime recovered from snapshot",
+            message="runtime recovered from snapshot; native readiness verified",
             new_container_id=getattr(recovered_container, "id", None),
         )
 
@@ -117,15 +107,12 @@ class PodmanPodRecovery:
 
         try:
             existing_container = client.containers.get(container_name)
-        except Exception:
-            return None
+        except Exception as exc:
+            if self.is_target_missing_error(exc):
+                return None
+            raise
 
-        snapshot_container_id = snapshot.get("container_id")
-        recovered_image = snapshot.get("image") if isinstance(snapshot.get("image"), str) else None
-        existing_container_id = getattr(existing_container, "id", None)
-        existing_image = self._extract_image(existing_container)
-        if existing_container_id == snapshot_container_id and existing_image == recovered_image:
-            return existing_container
+        # Recreate even when the tag matches: tags do not identify artifacts.
 
         self._remove_container_if_present(existing_container)
         return None

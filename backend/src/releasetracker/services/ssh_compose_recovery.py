@@ -67,19 +67,24 @@ async def recover_project(storage, executor, snapshot_id, action):
             current = {}
             for change in payload["changes"]:
                 text = await read_project_file(session, sftp, change["path"], optional=True)
-                if fingerprint(text) not in (fingerprint(change["before"]), change["after_sha256"]):
+                allowed = {fingerprint(change["before"]), change["after_sha256"]}
+                if fingerprint(text) not in allowed:
                     raise SSHOperationError("recovery", "file_changed_since_deployment")
                 current[change["path"]] = text
             if action == "restore_files":
                 for change in payload["changes"]:
                     path, before = change["path"], change["before"]
-                    if current[path] == before:
+                    # Restore exact captured bytes, including dotenv and comments.
+                    # First-enrollment rollback removes newly introduced ownership;
+                    # the next deployment must pass admission again.
+                    restored = before
+                    if current[path] == restored:
                         continue
-                    if before is None:
+                    if restored is None:
                         async with asyncio.timeout(session.policy.write_timeout_seconds):
                             await sftp.remove(path)
                     else:
-                        staged = await _write_staged(session, sftp, path, before, current[path])
+                        staged = await _write_staged(session, sftp, path, restored, current[path])
                         async with asyncio.timeout(session.policy.write_timeout_seconds):
                             await sftp.posix_rename(staged, path)
                 return {

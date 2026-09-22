@@ -19,6 +19,7 @@ from . import (
     sqlite_aggregate_trackers,
     sqlite_auth_oidc,
     sqlite_credentials,
+    sqlite_podman_lineage,
     sqlite_runtime_executors,
     sqlite_release_history,
     sqlite_release_aliases,
@@ -112,6 +113,7 @@ class SQLiteStorage:
         self._notifiers_cache: list | None = None
         self.webhooks = sqlite_webhooks.WebhookStore(self)
         self.tasks = sqlite_tasks.TaskStore(self)
+        self.podman_lineage = sqlite_podman_lineage.PodmanLineageStore(self)
 
         if system_key_manager is None:
             raise RuntimeError("SQLiteStorage requires SystemKeyManager")
@@ -443,9 +445,8 @@ class SQLiteStorage:
 
         from ..services.ssh_compose_snapshot import snapshot_inventory
 
-        count, invalid = await snapshot_inventory(self, db)
-        if count:
-            inventory["ssh_compose_snapshot"] = count
+        snapshot_counts, invalid = await snapshot_inventory(self, db)
+        inventory.update(snapshot_counts)
         undecryptable_count += invalid
         return {"inventory": inventory, "undecryptable_count": undecryptable_count}
 
@@ -482,10 +483,11 @@ class SQLiteStorage:
         repository_webhook_updates: list[tuple[str, str]] = []
         from ..services.ssh_compose_snapshot import prepare_snapshot_rotation
 
-        snapshot_updates = await prepare_snapshot_rotation(self, db, old_fernet, new_fernet)
-        if snapshot_updates:
-            stats["inventory"]["ssh_compose_snapshot"] = len(snapshot_updates)
-            stats["rotated"]["ssh_compose_snapshot"] = len(snapshot_updates)
+        snapshot_updates, snapshot_counts = await prepare_snapshot_rotation(
+            self, db, old_fernet, new_fernet
+        )
+        stats["inventory"].update(snapshot_counts)
+        stats["rotated"].update(snapshot_counts)
 
         try:
             cursor = await db.execute("SELECT id, token, secrets FROM credentials")
@@ -3228,8 +3230,12 @@ class SQLiteStorage:
     async def save_executor_snapshot(self, snapshot: ExecutorSnapshot) -> None:
         await sqlite_runtime_executors.save_executor_snapshot(self, snapshot)
 
-    async def create_executor_snapshot(self, snapshot: ExecutorSnapshot) -> int:
-        return await sqlite_runtime_executors.create_executor_snapshot(self, snapshot)
+    async def create_executor_snapshot(
+        self, snapshot: ExecutorSnapshot, *, _encryption_lock_held: bool = False
+    ) -> int:
+        return await sqlite_runtime_executors.create_executor_snapshot(
+            self, snapshot, _encryption_lock_held=_encryption_lock_held
+        )
 
     async def get_executor_snapshot(self, executor_id: int) -> ExecutorSnapshot | None:
         return await sqlite_runtime_executors.get_executor_snapshot(self, executor_id)

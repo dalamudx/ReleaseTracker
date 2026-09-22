@@ -536,7 +536,7 @@ CREATE TABLE tasks (
     error_code TEXT,
     message TEXT,
     result TEXT
-, cleared_at REAL);
+, cleared_at REAL, approval_pending INTEGER NOT NULL DEFAULT 0 CHECK(approval_pending IN (0,1)));
 CREATE INDEX tasks_dispatch ON tasks(kind,state,due_at,id);
 CREATE INDEX tasks_resource ON tasks(resource_key,state);
 CREATE INDEX tasks_pending_dedupe ON tasks(dedupe_key)
@@ -631,6 +631,86 @@ BEGIN SELECT RAISE(ABORT, 'notification_template_not_found'); END;
 CREATE TRIGGER notification_template_in_use BEFORE DELETE ON notification_templates
 WHEN EXISTS (SELECT 1 FROM notifiers WHERE template_id=OLD.id)
 BEGIN SELECT RAISE(ABORT, 'notification_template_in_use'); END;
+CREATE TABLE managed_deployment_identity (
+    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+    installation_id TEXT NOT NULL
+);
+CREATE TABLE managed_targets (
+    target_id TEXT PRIMARY KEY,
+    executor_id INTEGER NOT NULL UNIQUE,
+    identity_key TEXT NOT NULL UNIQUE,
+    baseline TEXT,
+    last_task_id INTEGER,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE TABLE deployment_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES tasks(id),
+    executor_id INTEGER NOT NULL,
+    target_id TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    identity_key TEXT NOT NULL,
+    evidence_hash TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('pending','approved','applied','superseded','blocked','cancelled')),
+    reason TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL,
+    approved_at REAL,
+    approved_by TEXT,
+    applied_at REAL
+);
+CREATE INDEX deployment_plans_task ON deployment_plans(task_id,id);
+CREATE TABLE deployment_admission_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id INTEGER NOT NULL REFERENCES deployment_plans(id),
+    event TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    expanded_at REAL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    due_at REAL NOT NULL,
+    UNIQUE(plan_id,event)
+);
+CREATE TABLE deployment_admission_notification_outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    admission_event_id INTEGER NOT NULL REFERENCES deployment_admission_events(id),
+    notifier_id INTEGER NOT NULL,
+    event TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','sending','delivered','failed','discarded')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    available_at REAL NOT NULL,
+    created_at REAL NOT NULL,
+    delivered_at REAL,
+    UNIQUE(admission_event_id, notifier_id)
+);
+CREATE INDEX deployment_admission_notification_due ON deployment_admission_notification_outbox(status, available_at, id);
+CREATE TABLE podman_target_lineages (
+ executor_id INTEGER PRIMARY KEY,
+ target_id TEXT NOT NULL UNIQUE,
+ mode TEXT NOT NULL CHECK(mode IN ('container','docker_compose')),
+ target_fingerprint TEXT NOT NULL,
+ generation INTEGER NOT NULL CHECK(generation>=1),
+ members TEXT NOT NULL,
+ created_at REAL NOT NULL,
+ updated_at REAL NOT NULL
+);
+CREATE TABLE podman_target_lineage_transitions (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ executor_id INTEGER NOT NULL,
+ task_id INTEGER,
+ executor_run_id INTEGER,
+ from_generation INTEGER NOT NULL,
+ to_generation INTEGER NOT NULL,
+ old_members TEXT NOT NULL,
+ new_members TEXT NOT NULL,
+ created_at REAL NOT NULL,
+ CHECK((task_id IS NOT NULL) != (executor_run_id IS NOT NULL)),
+ UNIQUE(executor_id,to_generation)
+);
+CREATE INDEX podman_lineage_transition_executor ON podman_target_lineage_transitions(executor_id,id);
 -- Dbmate schema migrations
 INSERT INTO "schema_migrations" (version) VALUES
   ('20000101000001'),
@@ -650,4 +730,7 @@ INSERT INTO "schema_migrations" (version) VALUES
   ('20260920000002'),
   ('20260920000003'),
   ('20260920000004'),
-  ('20260921000001');
+  ('20260921000001'),
+  ('20260922000001'),
+  ('20260922000002'),
+  ('20260922000003');

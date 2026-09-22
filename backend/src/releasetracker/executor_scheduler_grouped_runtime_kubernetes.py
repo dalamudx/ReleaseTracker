@@ -244,11 +244,22 @@ class ExecutorSchedulerKubernetesRuntime:
             pending_updates.clear()
 
         group_update_message: str | None = None
+        snapshot_created = False
         if pending_updates:
             service_target_images = {
                 service: target_image for service, (_, target_image) in pending_updates.items()
             }
+            current_image_summary = self._compose_snapshot_image_summary(
+                {service: current_image for service, (current_image, _) in pending_updates.items()}
+            )
             try:
+                if self._supports_persisted_full_config_snapshots(executor_config):
+                    snapshot_created = await self._capture_pre_update_snapshot(
+                        executor_config,
+                        adapter,
+                        run_id=run_id,
+                        current_image=current_image_summary,
+                    )
                 await mark_deployment_mutation()
                 update_result = await adapter.update_workload_services(
                     executor_config.target_ref,
@@ -289,6 +300,8 @@ class ExecutorSchedulerKubernetesRuntime:
             binding_results,
             group_message=group_update_message,
         )
+        if any(result.status == "failed" for result in binding_results):
+            diagnostics.update(self._manual_rollback_diagnostics(snapshot_created=snapshot_created))
         from_version, to_version = self._summarize_grouped_image_versions(binding_results)
         return await self._finalize_run(
             executor_config,

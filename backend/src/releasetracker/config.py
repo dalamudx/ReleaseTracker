@@ -420,6 +420,7 @@ class HelmReleaseExecutorTargetRef(BaseModel):
     release_name: str
     chart_name: str | None = None
     chart_version: str | None = None
+    chart_digest: str | None = None
     app_version: str | None = None
     workloads: list[dict[str, Any]] = Field(default_factory=list)
     service_count: int | None = None
@@ -431,7 +432,7 @@ class HelmReleaseExecutorTargetRef(BaseModel):
             raise ValueError(f"target_ref.{info.field_name} must be a non-empty string")
         return value.strip()
 
-    @field_validator("chart_name", "chart_version", "app_version")
+    @field_validator("chart_name", "chart_version", "chart_digest", "app_version")
     @classmethod
     def _validate_optional_strings(cls, value: Any, info):
         if value is None:

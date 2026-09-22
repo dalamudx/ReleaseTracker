@@ -14,6 +14,7 @@ from releasetracker.executors.health_check.recovery_hook import (
     RecoveryHookCoordinator,
 )
 from releasetracker.models import ExecutorSnapshot
+from releasetracker.services.snapshot_integrity import build_snapshot_integrity
 
 
 class _FakeStorage:
@@ -72,12 +73,18 @@ class _ValidatingAdapter(BaseRuntimeAdapter):
 
 
 def _snapshot() -> ExecutorSnapshot:
+    data = {"image": "img:prev"}
+    integrity = build_snapshot_integrity(data)
     return ExecutorSnapshot(
         id=1,
         executor_id=42,
-        snapshot_data={"image": "img:prev"},
+        snapshot_data=data,
         trigger="pre_update",
         image_at_capture="img:prev",
+        unredacted_persisted=True,
+        snapshot_format_version=integrity.format_version,
+        snapshot_sha256=integrity.sha256,
+        snapshot_size_bytes=integrity.size_bytes,
         created_at=datetime(2026, 5, 8, 10, 0, 0),
         updated_at=datetime(2026, 5, 8, 10, 0, 0),
     )

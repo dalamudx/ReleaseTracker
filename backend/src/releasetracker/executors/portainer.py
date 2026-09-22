@@ -8,8 +8,10 @@ import httpx
 import yaml
 
 from ..config import normalize_executor_target_ref
+from ..services.deployment_plan import MANAGED_MARKERS, MARKER_KEYS
 from ..services.runtime_policy import run_read_operation, runtime_operation_policy
 from .base import BaseRuntimeAdapter, RuntimeTarget, RuntimeUpdateResult
+from . import portainer_recovery
 
 _SUPPORTED_PORTAINER_STACK_TYPES = {"standalone"}
 _PORTAINER_STACK_TYPE_MAP = {
@@ -205,6 +207,25 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         if unsupported_reason is not None:
             raise ValueError(unsupported_reason)
 
+    async def get_managed_markers(self, target_ref: dict[str, Any]) -> tuple[dict[str, str], ...]:
+        normalized = normalize_executor_target_ref(target_ref, runtime_type="portainer")
+        stack = await self.fetch_stack_detail(
+            endpoint_id=normalized["endpoint_id"], stack_id=normalized["stack_id"]
+        )
+        values = stack.get("Labels") or stack.get("labels") or {}
+        raw_values = values if isinstance(values, dict) else {}
+        stack_markers = {
+            key: value
+            for key, value in raw_values.items()
+            if key in MARKER_KEYS and isinstance(value, str)
+        }
+        stack_file = await self.fetch_stack_file(
+            endpoint_id=normalized["endpoint_id"], stack_id=normalized["stack_id"]
+        )
+        marker_sets = [stack_markers] if stack_markers else []
+        marker_sets.extend(self._extract_stack_marker_sets(stack_file))
+        return tuple(marker_sets)
+
     async def fetch_stack_service_images(self, target_ref: dict[str, Any]) -> dict[str, str | None]:
         normalized_target_ref = normalize_executor_target_ref(target_ref, runtime_type="portainer")
         endpoint_id = normalized_target_ref["endpoint_id"]
@@ -245,6 +266,7 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
             raise ValueError(unsupported_reason)
 
         stack_file = await self.fetch_stack_file(endpoint_id=endpoint_id, stack_id=stack_id)
+        stack_file = self._inject_managed_markers(stack_file)
         patched_stack_file, updated_services = self._patch_stack_file_service_images(
             stack_file,
             service_target_images,
@@ -298,6 +320,7 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         if unsupported_reason is not None:
             raise ValueError(unsupported_reason)
 
+        self._validate_snapshot_target(normalized_target_ref, stack)
         stack_file = await self.fetch_stack_file(endpoint_id=endpoint_id, stack_id=stack_id)
         service_metadata = self._extract_stack_service_metadata(stack_file)
 
@@ -325,15 +348,18 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         else:
             snapshot["image_at_capture"] = None
 
+        snapshot["recovery_evidence"] = await portainer_recovery.capture(
+            self, normalized_target_ref, stack_file
+        )
         return snapshot
 
     async def validate_snapshot(self, target_ref: dict[str, Any], snapshot: dict[str, Any]) -> None:
         """Validate that a Portainer snapshot can be restored against the
         current target.
 
-        Enforces: snapshot is non-empty, stack file is a non-empty string,
-        recorded stack type is a supported Portainer variant, and the live
-        target's stack type matches the snapshot's. Any mismatch raises
+        Require complete environment entries and matching endpoint, stack ID,
+        name and runtime in the snapshot. Revalidate live identity and supported
+        stack kind; historical snapshots without identity fail closed. Any mismatch raises
         ``ValueError`` so manual rollback can surface it as ``invalid_snapshot``.
         """
         if not isinstance(snapshot, dict) or not snapshot:
@@ -354,13 +380,39 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         endpoint_id = normalized_target_ref["endpoint_id"]
         stack_id = normalized_target_ref["stack_id"]
 
+        for field in ("endpoint_id", "stack_id", "stack_name"):
+            if snapshot.get(field) != normalized_target_ref[field]:
+                raise ValueError(f"snapshot.{field} does not match recovery target")
+        if snapshot.get("runtime_type") != "portainer":
+            raise ValueError("snapshot.runtime_type must be portainer")
+        if not isinstance(snapshot.get("env"), list) or any(
+            not isinstance(item, dict)
+            or not isinstance(item.get("name"), str)
+            or not isinstance(item.get("value"), str)
+            for item in snapshot["env"]
+        ):
+            raise ValueError("snapshot.env must contain complete name/value entries")
+
         live_stack = await self.fetch_stack_detail(endpoint_id=endpoint_id, stack_id=stack_id)
-        live_stack_type = self._resolve_stack_type(live_stack)
-        if live_stack_type != snapshot_stack_type:
-            raise ValueError(
-                "stack_type mismatch between snapshot and target "
-                f"({snapshot_stack_type} != {live_stack_type})"
-            )
+        self._validate_snapshot_target(normalized_target_ref, live_stack)
+        portainer_recovery.validate(snapshot)
+
+    def _validate_snapshot_target(self, target_ref: dict[str, Any], stack: dict[str, Any]) -> None:
+        """Fail closed on missing or changed identity, including the final pre-write read."""
+        if target_ref["endpoint_id"] != self._runtime_endpoint_id():
+            raise ValueError("recovery target endpoint does not match runtime connection")
+        for field, remote_field in (
+            ("endpoint_id", "EndpointId"),
+            ("stack_id", "Id"),
+            ("stack_name", "Name"),
+        ):
+            if stack.get(remote_field) != target_ref[field]:
+                raise ValueError(f"live stack {field} does not match recovery target")
+        if self._resolve_stack_type(stack) != target_ref["stack_type"]:
+            raise ValueError("stack_type mismatch between snapshot and target")
+        reason = self._resolve_unsupported_stack_kind_reason(stack)
+        if reason is not None:
+            raise ValueError(reason)
 
     async def recover_from_snapshot(
         self, target_ref: dict[str, Any], snapshot: dict[str, Any]
@@ -368,9 +420,9 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         """Restore a Portainer stack from a captured snapshot.
 
         Validates the snapshot, calls the Portainer stack update endpoint
-        with the captured stack file and env vars, then polls the live
-        stack status until it reports the active enum value (``Status`` ==
-        ``1``) or an internal timeout elapses.
+        with the captured stack file and env vars without pulling mutable tags,
+        then verifies all services against native snapshot evidence. Stack active
+        status alone is never enough to declare recovery successful.
         """
         await self.validate_snapshot(target_ref, snapshot)
 
@@ -378,12 +430,16 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         endpoint_id = normalized_target_ref["endpoint_id"]
         stack_id = normalized_target_ref["stack_id"]
 
+        # Recovery restores the approved historical bytes, not the current deployment context.
         stack_file = snapshot["stack_file"]
-        env_payload = snapshot.get("env")
-        if not isinstance(env_payload, list):
-            env_payload = []
+        env_payload = snapshot["env"]
 
         live_stack = await self.fetch_stack_detail(endpoint_id=endpoint_id, stack_id=stack_id)
+        self._validate_snapshot_target(normalized_target_ref, live_stack)
+        evidence = portainer_recovery.validate(snapshot)
+        await portainer_recovery.preflight(self, normalized_target_ref, evidence)
+        live_stack = await self.fetch_stack_detail(endpoint_id=endpoint_id, stack_id=stack_id)
+        self._validate_snapshot_target(normalized_target_ref, live_stack)
         # Reuse the single in-adapter update path so we get the same error
         # handling as forward updates, but override env with the snapshot
         # version so recovery is byte-for-byte deterministic.
@@ -395,13 +451,20 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
             stack_id=stack_id,
             stack=snapshot_stack,
             stack_file_content=stack_file,
+            pull_image=False,
         )
 
         await self._wait_until_stack_active(
-            endpoint_id=endpoint_id,
-            stack_id=stack_id,
+            target_ref=normalized_target_ref,
+            evidence=evidence,
             timeout_seconds=_PORTAINER_RECOVERY_POLL_TIMEOUT_SECONDS,
         )
+
+        restored = await self.fetch_stack_detail(endpoint_id=endpoint_id, stack_id=stack_id)
+        self._validate_snapshot_target(normalized_target_ref, restored)
+        restored_file = await self.fetch_stack_file(endpoint_id=endpoint_id, stack_id=stack_id)
+        if restored_file != stack_file or restored.get("Env") != env_payload:
+            raise RuntimeError("Portainer recovery configuration readback does not match snapshot")
 
         image_at_capture = snapshot.get("image_at_capture")
         new_image = image_at_capture if isinstance(image_at_capture, str) else None
@@ -416,36 +479,34 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
     async def _wait_until_stack_active(
         self,
         *,
-        endpoint_id: int,
-        stack_id: int,
+        target_ref: dict[str, Any],
+        evidence: dict[str, Any],
         timeout_seconds: int,
     ) -> None:
-        """Poll the stack detail endpoint until the stack reports active.
+        """Require two stable native samples, not just Portainer's active flag.
 
-        Portainer returns ``Status == 1`` for an active standalone stack.
-        Polling bails out on the first active reading, or when the adapter's
-        internal timeout elapses so the caller can surface a recovery-hook
-        timeout.
+        All services must match captured immutable images, counts and native
+        health configuration. Without a Healthcheck this proves runtime state
+        only, never application health. Observation performs no further writes.
         """
         loop = asyncio.get_event_loop()
         deadline = loop.time() + max(1, timeout_seconds)
-        last_status: Any = None
-
+        previous = None
         while True:
-            stack = await self.fetch_stack_detail(endpoint_id=endpoint_id, stack_id=stack_id)
-            last_status = stack.get("Status") if "Status" in stack else stack.get("status")
-            if isinstance(last_status, int) and last_status == 1:
-                return
-            if isinstance(last_status, str) and last_status.strip() == "1":
-                return
-
+            stack = await self.fetch_stack_detail(
+                endpoint_id=target_ref["endpoint_id"], stack_id=target_ref["stack_id"]
+            )
+            self._validate_snapshot_target(target_ref, stack)
+            active = str(stack.get("Status", stack.get("status"))) == "1"
+            ready, sample = await portainer_recovery.probe(self, target_ref, evidence)
+            if active and ready:
+                if previous == sample and loop.time() < deadline:
+                    return
+                previous = sample
+            else:
+                previous = None
             if loop.time() >= deadline:
-                raise RuntimeError(
-                    "Portainer stack did not reach active status within "
-                    f"{timeout_seconds} seconds after restore "
-                    f"(last Status={last_status!r})"
-                )
-
+                raise RuntimeError("Portainer recovery native service verification timed out")
             await asyncio.sleep(_PORTAINER_RECOVERY_POLL_INTERVAL_SECONDS)
 
     async def update_image(self, target_ref: dict[str, Any], new_image: str) -> RuntimeUpdateResult:
@@ -473,13 +534,13 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
             ),
         )
 
-        stack_file = self._as_text(
+        stack_file = (
             payload.get("StackFileContent")
             or payload.get("stackFileContent")
             or payload.get("FileContent")
             or payload.get("fileContent")
         )
-        if not stack_file:
+        if not isinstance(stack_file, str) or not stack_file.strip():
             raise ValueError(
                 "Portainer stack file payload is missing stack content for "
                 f"endpoint_id={endpoint_id}, stack_id={stack_id}"
@@ -493,6 +554,7 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         stack_id: int,
         stack: dict[str, Any],
         stack_file_content: str,
+        pull_image: bool = True,
     ) -> None:
         env_payload = stack.get("Env")
         if not isinstance(env_payload, list):
@@ -507,7 +569,7 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
                     "stackFileContent": stack_file_content,
                     "env": env_payload,
                     "prune": True,
-                    "pullImage": True,
+                    "pullImage": pull_image,
                 },
                 timeout=self._write_timeout(),
             )
@@ -592,6 +654,66 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
             policy=self._operation_policy,
             operation_name=f"portainer:{method}:{path}",
         )
+
+    @classmethod
+    def _extract_stack_marker_sets(cls, stack_file: str) -> list[dict[str, str]]:
+        try:
+            parsed = yaml.safe_load(stack_file)
+        except yaml.YAMLError:
+            return []
+        if not isinstance(parsed, dict) or not isinstance(parsed.get("services"), dict):
+            return []
+        marker_sets: list[dict[str, str]] = []
+        for service_config in parsed["services"].values():
+            if not isinstance(service_config, dict):
+                continue
+            labels = service_config.get("labels")
+            markers: dict[str, str] = {}
+            if isinstance(labels, dict):
+                markers.update(
+                    {
+                        key: value
+                        for key, value in labels.items()
+                        if isinstance(key, str) and isinstance(value, str)
+                    }
+                )
+            elif isinstance(labels, list):
+                for label in labels:
+                    if not isinstance(label, str):
+                        continue
+                    key, separator, value = label.partition("=")
+                    if key and separator and value:
+                        markers[key] = value
+            # Preserve an empty entry for an unmarked service. Admission must
+            # fail closed when only part of a stack carries ownership markers.
+            marker_sets.append(markers)
+        return marker_sets
+
+    @classmethod
+    def _inject_managed_markers(cls, stack_file: str) -> str:
+        markers = MANAGED_MARKERS.get()
+        if not markers:
+            return stack_file
+        try:
+            parsed = yaml.safe_load(stack_file)
+        except yaml.YAMLError as exc:
+            raise ValueError("Portainer stack file is not valid YAML") from exc
+        if not isinstance(parsed, dict) or not isinstance(parsed.get("services"), dict):
+            raise ValueError("Portainer stack file is missing a services map")
+        for service_config in parsed["services"].values():
+            if not isinstance(service_config, dict):
+                continue
+            labels = service_config.get("labels")
+            normalized = dict(labels) if isinstance(labels, dict) else {}
+            if isinstance(labels, list):
+                for label in labels:
+                    if isinstance(label, str):
+                        key, separator, value = label.partition("=")
+                        if key and separator:
+                            normalized[key] = value
+            normalized.update(markers)
+            service_config["labels"] = normalized
+        return yaml.safe_dump(parsed, sort_keys=False)
 
     @classmethod
     def _extract_stack_service_metadata(cls, stack_file: str) -> list[dict[str, str | None]]:

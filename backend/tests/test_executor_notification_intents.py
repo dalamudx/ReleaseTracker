@@ -309,6 +309,12 @@ async def test_notification_failure_never_retries_successful_queued_deployment(
     claimed = await storage.tasks.claim("deploy")
     await queue._run(claimed)
     task = await storage.tasks.get(receipt["task_id"])
+    if task["approval_pending"]:
+        plan = await handler.admission.latest(task["id"])
+        await handler.admission.approve(task["id"], plan["id"], plan["fingerprint"], "test-admin")
+        claimed = await storage.tasks.claim("deploy")
+        await queue._run(claimed)
+        task = await storage.tasks.get(receipt["task_id"])
     assert task["state"] == "succeeded" and task["attempts"] == 1
     adapter.update_image.assert_awaited_once()
     outbox = ExecutorNotificationOutbox(storage)

@@ -11,6 +11,8 @@ import subprocess
 import tempfile
 
 from ..services.runtime_policy import runtime_operation_policy
+from ..services.deployment_plan import MANAGED_MARKERS
+from . import kubernetes_artifact_evidence, kubernetes_recovery
 from .base import (
     BaseRuntimeAdapter,
     RuntimeMutationError,
@@ -28,6 +30,11 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
         super().__init__(runtime_connection)
         self._apps_api = apps_api
         self._core_api = None
+
+    def supports_single_image_operations(self, target_ref: dict[str, Any]) -> bool:
+        """Workloads and Helm releases are grouped targets, never single images."""
+        del target_ref
+        return False
 
     async def discover_targets(self, namespace: str | None = None) -> list[RuntimeTarget]:
         apps_api = self._get_apps_api()
@@ -94,6 +101,51 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
         self._validate_workload_kind(kind)
         self._get_workload(kind, name, namespace)
 
+    async def get_managed_markers(self, target_ref: dict[str, Any]) -> tuple[dict[str, str], ...]:
+        if target_ref.get("mode") == "helm_release":
+            self._get_helm_release(target_ref)
+            namespace = self._require_target_field(target_ref, "namespace")
+            release_name = self._require_target_field(target_ref, "release_name")
+            candidates = []
+            for workload in self._list_workloads(self._get_apps_api(), namespace):
+                labels = workload.get("labels") or {}
+                annotations = workload.get("annotations") or {}
+                if (
+                    annotations.get("meta.helm.sh/release-name") == release_name
+                    or labels.get("app.kubernetes.io/instance") == release_name
+                ):
+                    candidates.append({"labels": labels, "annotations": annotations})
+        else:
+            namespace = self._require_target_field(target_ref, "namespace")
+            kind = self._require_target_field(target_ref, "kind")
+            name = self._require_target_field(target_ref, "name")
+            workload = self._get_workload(kind, name, namespace)
+            metadata = workload.get("metadata") if isinstance(workload, dict) else None
+            spec = workload.get("spec") if isinstance(workload, dict) else None
+            template = spec.get("template") if isinstance(spec, dict) else None
+            template_metadata = template.get("metadata") if isinstance(template, dict) else None
+            candidates = [metadata, template_metadata]
+
+        def marker_set(candidate) -> dict[str, str]:
+            markers: dict[str, str] = {}
+            if not isinstance(candidate, dict):
+                return markers
+            for field in ("annotations", "labels"):
+                values = candidate.get(field)
+                if isinstance(values, dict):
+                    markers.update(
+                        {
+                            key: value
+                            for key, value in values.items()
+                            if isinstance(key, str) and isinstance(value, str)
+                        }
+                    )
+            return markers
+
+        if target_ref.get("mode") == "helm_release":
+            return tuple(marker_set(candidate) for candidate in candidates) or ({},)
+        return (marker_set(candidates[0]) | marker_set(candidates[1]),)
+
     async def get_current_image(self, target_ref: dict[str, Any]) -> str:
         self._require_workload_target_mode(target_ref)
         raise ValueError(
@@ -103,14 +155,70 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
     async def capture_snapshot(
         self, target_ref: dict[str, Any], current_image: str
     ) -> dict[str, Any]:
+        del current_image
+        if target_ref.get("mode") == "helm_release":
+            return await self.capture_helm_release_snapshot(target_ref)
         self._require_workload_target_mode(target_ref)
-        raise ValueError(
-            "Kubernetes workload targets use grouped updates and do not support single-container snapshots"
-        )
+        namespace = self._require_target_field(target_ref, "namespace")
+        kind = self._require_target_field(target_ref, "kind")
+        name = self._require_target_field(target_ref, "name")
+        self._authorize_namespace(namespace)
+        self._validate_workload_kind(kind)
+        workload = self._get_workload(kind, name, namespace)
+        containers = {
+            container["name"]: container["image"]
+            for container in self._workload_containers(workload)
+        }
+        if not containers:
+            raise ValueError("Kubernetes workload snapshot has no container images")
+        snapshot = {
+            "mode": "kubernetes_workload",
+            "runtime_type": "kubernetes",
+            "namespace": namespace,
+            "kind": kind,
+            "name": name,
+            "workload": workload,
+            "containers": containers,
+            "recovery_scope": (
+                "workload_spec" if workload.get("api_spec") is not None else "container_images"
+            ),
+            "recovery_exclusions": [
+                "workload_metadata",
+                "server_metadata",
+                "referenced_resources",
+                "volume_data",
+            ],
+        }
+        snapshot["artifact_evidence"] = kubernetes_artifact_evidence.collect(self, snapshot)
+        return snapshot
 
     async def validate_snapshot(self, target_ref: dict[str, Any], snapshot: dict[str, Any]) -> None:
         if not isinstance(snapshot, dict) or not snapshot:
             raise ValueError("snapshot must be a non-empty dict")
+        if target_ref.get("mode") == "helm_release":
+            await self.validate_helm_release_snapshot(target_ref, snapshot)
+            return
+        if target_ref.get("mode") == "kubernetes_workload":
+            if snapshot.get("mode") != "kubernetes_workload":
+                raise ValueError("snapshot.mode must be kubernetes_workload")
+            for field in ("namespace", "kind", "name"):
+                value = snapshot.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"snapshot.{field} must be a non-empty string")
+                if value != target_ref.get(field):
+                    raise ValueError(f"snapshot.{field} must match target_ref.{field}")
+            workload = snapshot.get("workload")
+            containers = snapshot.get("containers")
+            if not isinstance(workload, dict) or not workload:
+                raise ValueError("snapshot.workload must be a non-empty dict")
+            if not isinstance(containers, dict) or not containers:
+                raise ValueError("snapshot.containers must be a non-empty dict")
+            for service, image in containers.items():
+                if not isinstance(service, str) or not service.strip():
+                    raise ValueError("snapshot.containers contains an invalid service")
+                if not isinstance(image, str) or not image.strip():
+                    raise ValueError(f"snapshot.containers.{service} must be a non-empty string")
+            return
         for field in ("namespace", "kind", "name", "container", "image"):
             value = snapshot.get(field)
             if not isinstance(value, str) or not value.strip():
@@ -172,15 +280,11 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
             {"name": service, "image": image}
             for service, image in sorted(service_target_images.items())
         ]
-        patch_body = {
-            "spec": {
-                "template": {
-                    "spec": {
-                        "containers": containers_patch,
-                    }
-                }
-            }
-        }
+        template_patch = {"spec": {"containers": containers_patch}}
+        markers = MANAGED_MARKERS.get()
+        if markers:
+            template_patch["metadata"] = {"annotations": markers}
+        patch_body = {"spec": {"template": template_patch}}
 
         apps_api = self._get_apps_api()
         if kind == "Deployment":
@@ -222,7 +326,8 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
         release_name = self._require_target_field(target_ref, "release_name")
         chart_name, chart_version = self._parse_helm_release_chart(release)
         app_version = self._parse_helm_release_app_version(release)
-        return {
+        revision = self._parse_helm_release_revision(release)
+        snapshot = {
             "mode": "helm_release",
             "namespace": namespace,
             "release_name": release_name,
@@ -232,6 +337,9 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
             "app_version": app_version or self._optional_target_field(target_ref, "app_version"),
             "release": release,
         }
+        if revision is not None:
+            snapshot["revision"] = revision
+        return snapshot
 
     async def validate_helm_release_snapshot(
         self, target_ref: dict[str, Any], snapshot: dict[str, Any]
@@ -251,6 +359,80 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
         release = snapshot.get("release")
         if not isinstance(release, dict) or not release:
             raise ValueError("snapshot.release must be a non-empty dict")
+        revision = snapshot.get("revision")
+        if revision is not None and (
+            isinstance(revision, bool) or not isinstance(revision, int) or revision < 1
+        ):
+            raise ValueError("snapshot.revision must be a positive integer")
+
+    def _ensure_helm_marker_target(self, target_ref: dict[str, Any]) -> None:
+        if not MANAGED_MARKERS.get():
+            return
+        namespace = self._require_target_field(target_ref, "namespace")
+        release_name = self._require_target_field(target_ref, "release_name")
+        apps_api = self._get_apps_api()
+        supported = {"Deployment", "StatefulSet", "DaemonSet"}
+        matched = [
+            workload
+            for workload in self._list_workloads(apps_api, namespace)
+            if (
+                (workload.get("annotations") or {}).get("meta.helm.sh/release-name") == release_name
+                or (workload.get("labels") or {}).get("app.kubernetes.io/instance") == release_name
+            )
+        ]
+        if not any(workload.get("kind") in supported for workload in matched):
+            raise RuntimeError(
+                "Helm release has no identifiable workload to receive ReleaseTracker markers"
+            )
+        for workload in matched:
+            if workload.get("kind") in supported and not hasattr(
+                apps_api,
+                {
+                    "Deployment": "patch_namespaced_deployment",
+                    "StatefulSet": "patch_namespaced_stateful_set",
+                    "DaemonSet": "patch_namespaced_daemon_set",
+                }[workload["kind"]],
+            ):
+                raise RuntimeError(
+                    f"Kubernetes API cannot mark Helm {workload.get('kind')} resources"
+                )
+
+    def _apply_helm_managed_markers(self, target_ref: dict[str, Any]) -> None:
+        markers = MANAGED_MARKERS.get()
+        if not markers:
+            return
+        namespace = self._require_target_field(target_ref, "namespace")
+        release_name = self._require_target_field(target_ref, "release_name")
+        apps_api = self._get_apps_api()
+        patch_methods = {
+            "Deployment": "patch_namespaced_deployment",
+            "StatefulSet": "patch_namespaced_stateful_set",
+            "DaemonSet": "patch_namespaced_daemon_set",
+        }
+        matched = 0
+        for workload in self._list_workloads(apps_api, namespace):
+            labels = workload.get("labels") or {}
+            annotations = workload.get("annotations") or {}
+            if not (
+                annotations.get("meta.helm.sh/release-name") == release_name
+                or labels.get("app.kubernetes.io/instance") == release_name
+            ):
+                continue
+            method_name = patch_methods.get(workload.get("kind"))
+            name = workload.get("name")
+            if method_name is None or not isinstance(name, str) or not name.strip():
+                continue
+            method = getattr(apps_api, method_name, None)
+            if method is None:
+                raise RuntimeError(
+                    f"Kubernetes API cannot mark Helm {workload.get('kind')} resources"
+                )
+            method(name=name, namespace=namespace, body={"metadata": {"annotations": markers}})
+            matched += 1
+        if matched == 0:
+            raise RuntimeError(
+                "Helm release has no identifiable workload to receive ReleaseTracker markers"
+            )
 
     async def upgrade_helm_release(
         self,
@@ -277,6 +459,7 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
                 message="Helm release already at target chart version",
             )
 
+        self._ensure_helm_marker_target(target_ref)
         command = [
             "upgrade",
             release_name,
@@ -286,11 +469,13 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
             "--version",
             chart_version.strip(),
             "--install",
+            "--reuse-values",
         ]
         if isinstance(repo_url, str) and repo_url.strip():
             command.extend(["--repo", repo_url.strip()])
         try:
             self._run_helm_command(command)
+            self._apply_helm_managed_markers(target_ref)
         except Exception as exc:
             raise RuntimeMutationError(str(exc), destructive_started=True) from exc
 
@@ -313,18 +498,32 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
             raise ValueError("snapshot.chart_name must be a non-empty string")
         if not isinstance(chart_version, str) or not chart_version.strip():
             raise ValueError("snapshot.chart_version must be a non-empty string")
-        self._run_helm_command(
-            [
-                "upgrade",
-                release_name,
-                chart_name,
-                "--namespace",
-                namespace,
-                "--version",
-                chart_version,
-                "--install",
-            ]
-        )
+        revision = snapshot.get("revision")
+        if isinstance(revision, int) and not isinstance(revision, bool) and revision > 0:
+            self._run_helm_command(
+                [
+                    "rollback",
+                    release_name,
+                    str(revision),
+                    "--namespace",
+                    namespace,
+                ]
+            )
+        else:
+            self._run_helm_command(
+                [
+                    "upgrade",
+                    release_name,
+                    chart_name,
+                    "--namespace",
+                    namespace,
+                    "--version",
+                    chart_version,
+                    "--install",
+                    "--reuse-values",
+                ]
+            )
+        self._apply_helm_managed_markers(target_ref)
         return RuntimeUpdateResult(
             updated=True,
             old_image=None,
@@ -332,11 +531,99 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
             message="Helm release recovered from snapshot",
         )
 
+    async def recover_workload_from_snapshot(
+        self, target_ref: dict[str, Any], snapshot: dict[str, Any]
+    ) -> RuntimeUpdateResult:
+        await self.validate_snapshot(target_ref, snapshot)
+        namespace = self._require_target_field(target_ref, "namespace")
+        kind = self._require_target_field(target_ref, "kind")
+        name = self._require_target_field(target_ref, "name")
+        self._authorize_namespace(namespace)
+        self._validate_workload_kind(kind)
+        if snapshot.get("runtime_type") != "kubernetes":
+            raise ValueError("snapshot runtime_type must be kubernetes")
+        snapshot = kubernetes_artifact_evidence.prepare(snapshot)
+        current = self._get_workload(kind, name, namespace)
+        current_containers = {
+            container["name"]: container["image"]
+            for container in self._workload_containers(current)
+        }
+        previous_containers = snapshot["containers"]
+        missing = sorted(set(previous_containers) - set(current_containers))
+        if missing and snapshot.get("recovery_scope") != "workload_spec":
+            raise ValueError(
+                "Kubernetes workload recovery containers are missing: " + ", ".join(missing)
+            )
+        metadata = current.get("metadata")
+        resource_version = None
+        if isinstance(metadata, dict):
+            resource_version = metadata.get("resourceVersion") or metadata.get("resource_version")
+        if not isinstance(resource_version, str) or not resource_version.strip():
+            raise ValueError("Kubernetes workload recovery requires resourceVersion")
+        saved_metadata = snapshot["workload"].get("metadata") or {}
+        saved_uid = saved_metadata.get("uid")
+        current_uid = metadata.get("uid")
+        if not isinstance(saved_uid, str) or not saved_uid.strip():
+            raise ValueError("Kubernetes workload recovery requires snapshot UID")
+        if current_uid != saved_uid:
+            raise ValueError("Kubernetes workload UID changed since snapshot capture")
+        kubernetes_recovery.validate_images(previous_containers)
+        kubernetes_recovery.validate_strategy(current)
+        expected_spec = kubernetes_recovery.recovery_spec(snapshot, current)
+        patch_body = {
+            "metadata": {"uid": saved_uid, "resourceVersion": resource_version},
+            "spec": {
+                "template": {
+                    "spec": {
+                        "containers": [
+                            {"name": service, "image": image}
+                            for service, image in sorted(previous_containers.items())
+                        ]
+                    }
+                }
+            },
+        }
+        if expected_spec is not None:
+            patch_body = [
+                {"op": "test", "path": "/metadata/uid", "value": saved_uid},
+                {"op": "test", "path": "/metadata/resourceVersion", "value": resource_version},
+                {"op": "replace", "path": "/spec", "value": expected_spec},
+            ]
+        apps_api = self._get_apps_api()
+        if kind == "Deployment":
+            submitted = apps_api.patch_namespaced_deployment(name, namespace, patch_body)
+        elif kind == "StatefulSet":
+            submitted = apps_api.patch_namespaced_stateful_set(name, namespace, patch_body)
+        elif kind == "DaemonSet":
+            submitted = apps_api.patch_namespaced_daemon_set(name, namespace, patch_body)
+        else:  # pragma: no cover - guarded by validate_snapshot
+            raise ValueError("Unsupported Kubernetes workload kind")
+        await kubernetes_recovery.verify_rollout(
+            self, target_ref, submitted, previous_containers, current, expected_spec
+        )
+        return RuntimeUpdateResult(
+            updated=True,
+            old_image="; ".join(
+                f"{service}={current_containers.get(service, '')}"
+                for service in sorted(previous_containers)
+            ),
+            new_image="; ".join(
+                f"{service}={image}" for service, image in sorted(previous_containers.items())
+            ),
+            message=(
+                "Kubernetes workload spec restored and rollout verified"
+                if expected_spec is not None
+                else "Kubernetes workload images restored and rollout verified"
+            ),
+        )
+
     async def recover_from_snapshot(
         self, target_ref: dict[str, Any], snapshot: dict[str, Any]
     ) -> RuntimeUpdateResult:
         if target_ref.get("mode") == "helm_release":
             return await self.recover_helm_release_from_snapshot(target_ref, snapshot)
+        if target_ref.get("mode") == "kubernetes_workload":
+            return await self.recover_workload_from_snapshot(target_ref, snapshot)
         return await super().recover_from_snapshot(target_ref, snapshot)
 
     async def probe_runtime_native_health(
@@ -726,6 +1013,16 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
         return None, None
 
     @staticmethod
+    def _parse_helm_release_revision(release: dict[str, Any]) -> int | None:
+        for key in ("version", "revision"):
+            value = release.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                return value
+            if isinstance(value, str) and value.strip().isdigit() and int(value.strip()) > 0:
+                return int(value.strip())
+        return None
+
+    @staticmethod
     def _parse_helm_release_app_version(release: dict[str, Any]) -> str | None:
         for key in ("appVersion", "app_version"):
             value = release.get(key)
@@ -812,6 +1109,7 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
             # Preserve controller identity/status for durable rollout observation.
             "metadata": self._readiness_fields(obj.metadata),
             "spec": self._readiness_fields(obj.spec),
+            "api_spec": kubernetes_recovery.api_spec(obj.spec),
             "status": self._readiness_fields(getattr(obj, "status", None)),
             "labels": labels if isinstance(labels, dict) else {},
             "annotations": annotations if isinstance(annotations, dict) else {},
@@ -820,14 +1118,38 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
             ],
         }
 
-    def _get_workload(self, kind: str, name: str, namespace: str) -> dict[str, Any]:
+    def _get_workload(
+        self, kind: str, name: str, namespace: str, *, request_timeout: float | None = None
+    ) -> dict[str, Any]:
         apps_api = self._get_apps_api()
+        options = {"_request_timeout": request_timeout} if request_timeout is not None else {}
+        from kubernetes.client import AppsV1Api
+
+        if isinstance(apps_api, AppsV1Api):
+            # Preserve fields unknown to the installed SDK before deserialization.
+            methods = {
+                "Deployment": "deployment",
+                "StatefulSet": "stateful_set",
+                "DaemonSet": "daemon_set",
+            }
+            self._validate_workload_kind(kind)
+            response = getattr(apps_api, f"read_namespaced_{methods[kind]}")(
+                name, namespace, _preload_content=False, **options
+            )
+            try:
+                raw = json.loads(response.data)
+                obj = apps_api.api_client.deserialize(response, f"V1{kind}")
+                workload = self._workload_from_obj(kind, obj)
+                workload["api_spec"] = kubernetes_recovery.normalize_spec(raw["spec"])
+                return workload
+            finally:
+                response.release_conn()
         if kind == "Deployment":
-            workload = apps_api.read_namespaced_deployment(name, namespace)
+            workload = apps_api.read_namespaced_deployment(name, namespace, **options)
         elif kind == "StatefulSet":
-            workload = apps_api.read_namespaced_stateful_set(name, namespace)
+            workload = apps_api.read_namespaced_stateful_set(name, namespace, **options)
         elif kind == "DaemonSet":
-            workload = apps_api.read_namespaced_daemon_set(name, namespace)
+            workload = apps_api.read_namespaced_daemon_set(name, namespace, **options)
         else:
             raise ValueError("Unsupported Kubernetes workload kind")
         return self._workload_from_obj(kind, workload)

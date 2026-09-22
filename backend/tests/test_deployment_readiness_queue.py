@@ -60,8 +60,18 @@ async def setup(storage, monkeypatch, *, stable=10, timeout=30):
     )
     receipt = await handler.enqueue(executor.id, manual=True)
     task = await storage.tasks.claim("deploy")
+    from releasetracker.services.deployment_plan import TargetEvidence
+
+    evidence = TargetEvidence(
+        "test-runtime", "test-target", {"kind": "container"}, (), "container_config"
+    )
+    monkeypatch.setattr(handler, "_collect_admission_evidence", AsyncMock(return_value=evidence))
+    plan = await handler.admission.stage(task, evidence)
+    await handler.admission.approve(task["id"], plan["id"], plan["fingerprint"], "test-admin")
+    task = await storage.tasks.claim("deploy")
     await storage.tasks.start_attempt(task)
     run_id = await scheduler._claim_executor_run(executor.id, trigger="manual")
+    await handler.admission.mark_applied(task, evidence)
     await storage.tasks.checkpoint(task, {"run_id": run_id, "mutation_started": True})
     await observer.handoff(
         task,
@@ -202,6 +212,14 @@ async def test_durable_queue_path_defers_success_until_native_ready(storage, mon
     receipt = await scheduler.deploy_tasks.enqueue(executor.id, manual=True)
     queue = TaskQueue(storage.tasks, MagicMock())
     queue.register("deploy", scheduler.deploy_tasks)
+    task = await storage.tasks.claim("deploy")
+    await queue._run(task)
+    saved = await storage.tasks.get(receipt["task_id"])
+    assert saved["state"] == "awaiting_approval", saved
+    plan = await scheduler.deploy_tasks.admission.latest(receipt["task_id"])
+    await scheduler.deploy_tasks.admission.approve(
+        receipt["task_id"], plan["id"], plan["fingerprint"], "test-admin"
+    )
     task = await storage.tasks.claim("deploy")
     await queue._run(task)
     saved = await storage.tasks.get(receipt["task_id"])

@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 import aiosqlite
 
 from . import sqlite_compose_ownership as compose_ownership
+
+from ..services.executor_snapshot_crypto import KIND as ENCRYPTED_SNAPSHOT_KIND
+from ..services.executor_snapshot_crypto import decrypt as decrypt_snapshot
+from ..services.executor_snapshot_crypto import encrypt as encrypt_snapshot
 
 from ..config import (
     ExecutorConfig,
@@ -30,6 +35,15 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _snapshot_encryption_lock(storage: "SQLiteStorage", already_held: bool):
+    if already_held:
+        yield
+        return
+    async with storage.encryption_rotation_lock:
+        yield
 
 
 async def create_runtime_connection(
@@ -491,10 +505,17 @@ def _row_to_executor_snapshot(storage: "SQLiteStorage", row: Any) -> ExecutorSna
     )
     snapshot_sha256 = row["snapshot_sha256"] if "snapshot_sha256" in row_keys else None
     snapshot_size_bytes = row["snapshot_size_bytes"] if "snapshot_size_bytes" in row_keys else None
+    stored_data = storage._load_json(row["snapshot_data"])
+    if isinstance(stored_data, dict) and stored_data.get("kind") == ENCRYPTED_SNAPSHOT_KIND:
+        try:
+            stored_data = decrypt_snapshot(storage, stored_data)
+        except Exception:
+            # Keep ciphertext so integrity checks report an invalid snapshot.
+            pass
     return ExecutorSnapshot(
         id=row["id"],
         executor_id=row["executor_id"],
-        snapshot_data=storage._load_json(row["snapshot_data"]),
+        snapshot_data=stored_data,
         trigger=trigger,
         image_at_capture=image_at_capture,
         executor_run_id=executor_run_id,
@@ -1173,46 +1194,50 @@ async def prune_old_executor_runs(storage: "SQLiteStorage", days: int = 90) -> i
     return deleted
 
 
-async def create_executor_snapshot(storage: "SQLiteStorage", snapshot: ExecutorSnapshot) -> int:
-    """Insert a new snapshot row as part of the multi-row history.
-
-    Returns the new snapshot id. Never overwrites an existing row;
-    callers relying on the old single-row semantics should use
-    ``get_executor_snapshot`` which still returns the most recent row.
-    """
+async def create_executor_snapshot(
+    storage: "SQLiteStorage", snapshot: ExecutorSnapshot, *, _encryption_lock_held: bool = False
+) -> int:
+    """Insert an encrypted generic snapshot or preserve SSH's own envelope."""
     created_at = (
         snapshot.created_at.isoformat() if snapshot.created_at else datetime.now().isoformat()
     )
     updated_at = (
         snapshot.updated_at.isoformat() if snapshot.updated_at else datetime.now().isoformat()
     )
-
-    integrity = build_snapshot_integrity(snapshot.snapshot_data)
-    db = await storage._get_connection()
-    cursor = await db.execute(
-        """
-        INSERT INTO executor_snapshots
-        (executor_id, snapshot_data, trigger, image_at_capture, executor_run_id,
-         unredacted_persisted, locked, snapshot_format_version, snapshot_sha256,
-         snapshot_size_bytes, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            snapshot.executor_id,
-            storage._dump_json(snapshot.snapshot_data),
-            snapshot.trigger,
-            snapshot.image_at_capture,
-            snapshot.executor_run_id,
-            1 if snapshot.unredacted_persisted else 0,
-            1 if snapshot.locked else 0,
-            integrity.format_version,
-            integrity.sha256,
-            integrity.size_bytes,
-            created_at,
-            updated_at,
-        ),
+    logical_data = snapshot.snapshot_data
+    is_ssh_snapshot = (
+        isinstance(logical_data, dict) and logical_data.get("kind") == "ssh_compose_encrypted_v1"
     )
-    await db.commit()
+    async with _snapshot_encryption_lock(storage, _encryption_lock_held):
+        persisted_data = (
+            logical_data if is_ssh_snapshot else encrypt_snapshot(storage, logical_data)
+        )
+        integrity = build_snapshot_integrity(logical_data)
+        db = await storage._get_connection()
+        cursor = await db.execute(
+            """
+            INSERT INTO executor_snapshots
+            (executor_id, snapshot_data, trigger, image_at_capture, executor_run_id,
+             unredacted_persisted, locked, snapshot_format_version, snapshot_sha256,
+             snapshot_size_bytes, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                snapshot.executor_id,
+                storage._dump_json(persisted_data),
+                snapshot.trigger,
+                snapshot.image_at_capture,
+                snapshot.executor_run_id,
+                1 if (snapshot.unredacted_persisted or not is_ssh_snapshot) else 0,
+                1 if snapshot.locked else 0,
+                integrity.format_version,
+                integrity.sha256,
+                integrity.size_bytes,
+                created_at,
+                updated_at,
+            ),
+        )
+        await db.commit()
     snapshot_id = cursor.lastrowid
     if snapshot_id is None:
         raise ValueError("Failed to create executor snapshot")

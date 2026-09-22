@@ -191,6 +191,27 @@ async def test_encrypted_snapshot_roundtrip_rotation_and_redaction(storage, syst
 
 
 @pytest.mark.asyncio
+async def test_generic_snapshot_is_encrypted_and_rotates(storage, system_key_manager):
+    from test_executor_snapshots_history import _create_executor
+    from releasetracker.models import ExecutorSnapshot
+    from releasetracker.services.system_keys import rotate_encryption_key
+
+    eid = await _create_executor(storage, name="generic-snapshot")
+    payload = {"create_config": {"environment": ["API_TOKEN=fictional-token"]}}
+    sid = await storage.create_executor_snapshot(
+        ExecutorSnapshot(executor_id=eid, snapshot_data=payload, trigger="pre_update")
+    )
+    db = await storage._get_connection()
+    row = await (
+        await db.execute("SELECT snapshot_data FROM executor_snapshots WHERE id = ?", (sid,))
+    ).fetchone()
+    assert "fictional-token" not in row["snapshot_data"]
+    assert (await storage.get_executor_snapshot_by_id(eid, sid)).snapshot_data == payload
+    await rotate_encryption_key(storage, system_key_manager, generate=True)
+    assert (await storage.get_executor_snapshot_by_id(eid, sid)).snapshot_data == payload
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "replicas,health,running,expected",
     [

@@ -2912,7 +2912,7 @@ async def test_list_executor_snapshots_returns_paginated_history(authed_client, 
     assert item["id"] == snapshot_id
     assert item["trigger"] == "pre_update"
     assert item["image_at_capture"] == "acme/api:1.0.0"
-    assert item["unredacted_persisted"] is False
+    assert item["unredacted_persisted"] is True
 
 
 @pytest.mark.asyncio

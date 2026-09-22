@@ -116,6 +116,11 @@ class BaseRuntimeAdapter(ABC):
         del target_ref
         return None
 
+    async def get_managed_markers(self, target_ref: dict[str, Any]) -> tuple[dict[str, str], ...]:
+        """Read ReleaseTracker ownership markers without changing the runtime."""
+        del target_ref
+        return ()
+
     @abstractmethod
     async def capture_snapshot(
         self, target_ref: dict[str, Any], current_image: str

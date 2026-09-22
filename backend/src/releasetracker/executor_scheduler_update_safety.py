@@ -9,6 +9,7 @@ from .config import ExecutorConfig
 from .executors import BaseRuntimeAdapter
 from .executors.base import RuntimeUpdateResult
 from .models import ExecutorSnapshot
+from .services.podman_target_lineage import ACTIVE_PODMAN_LINEAGE, snapshot_binding
 
 logger = logging.getLogger(__name__)
 
@@ -179,19 +180,18 @@ class ExecutorSchedulerUpdateSafety:
             executor_config.target_ref,
             current_image,
         )
+        lineage = ACTIVE_PODMAN_LINEAGE.get()
+        if lineage is not None:
+            snapshot_data["podman_target_lineage"] = snapshot_binding(lineage)
         await adapter.validate_snapshot(executor_config.target_ref, snapshot_data)
-        redacted_snapshot, unredacted_persisted = self._snapshot_service.redact_for_persist(
-            snapshot_data,
-            runtime_type=executor_config.runtime_type,
-        )
         await self.storage.create_executor_snapshot(
             ExecutorSnapshot(
                 executor_id=executor_config.id,
-                snapshot_data=redacted_snapshot,
+                snapshot_data=snapshot_data,
                 trigger="pre_update",
                 image_at_capture=current_image,
                 executor_run_id=run_id,
-                unredacted_persisted=unredacted_persisted,
+                unredacted_persisted=True,
             )
         )
         await self._prune_snapshot_history(executor_config.id)
@@ -206,10 +206,9 @@ class ExecutorSchedulerUpdateSafety:
         if target_mode in {"container", "docker_compose"}:
             return executor_config.runtime_type in {"docker", "podman"}
         if target_mode == "portainer_stack":
-            # Current Portainer stack updates use the declarative stack-file API,
-            # so stack history is the source of truth rather than full runtime
-            # recreate snapshots.
-            return False
+            return executor_config.runtime_type == "portainer"
+        if target_mode in {"kubernetes_workload", "helm_release"}:
+            return executor_config.runtime_type == "kubernetes"
         return False
 
     @staticmethod

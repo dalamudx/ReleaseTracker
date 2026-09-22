@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .services.podman_target_lineage import ACTIVE_PODMAN_LINEAGE
 from .services.task_effects import mark_deployment_mutation
 
 from .config import ExecutorConfig
@@ -246,6 +247,7 @@ class ExecutorSchedulerComposeRuntime:
 
         group_update_message: str | None = None
         snapshot_created = False
+        podman_lineage = None
         if pending_updates:
             service_target_images = {
                 service: target_image for service, (_, target_image) in pending_updates.items()
@@ -254,18 +256,42 @@ class ExecutorSchedulerComposeRuntime:
                 {service: current_image for service, (current_image, _) in pending_updates.items()}
             )
             try:
-                if self._supports_persisted_full_config_snapshots(executor_config):
-                    snapshot_created = await self._capture_pre_update_snapshot(
-                        executor_config,
-                        adapter,
-                        run_id=run_id,
-                        current_image=current_image_summary,
+                if isinstance(adapter, PodmanRuntimeAdapter):
+                    podman_lineage = await self._verify_podman_lineage_before_write(
+                        executor_config, adapter
                     )
+                if self._supports_persisted_full_config_snapshots(executor_config):
+                    lineage_token = ACTIVE_PODMAN_LINEAGE.set(podman_lineage)
+                    try:
+                        snapshot_created = await self._capture_pre_update_snapshot(
+                            executor_config,
+                            adapter,
+                            run_id=run_id,
+                            current_image=current_image_summary,
+                        )
+                    finally:
+                        ACTIVE_PODMAN_LINEAGE.reset(lineage_token)
                 await mark_deployment_mutation()
-                update_result = await adapter.update_compose_services(
-                    executor_config.target_ref,
-                    service_target_images,
-                )
+                if podman_lineage is not None and podman_lineage.get("pending"):
+                    podman_lineage = await self.storage.podman_lineage.establish(
+                        executor_id=executor_config.id,
+                        target_id=podman_lineage["target_id"],
+                        mode=podman_lineage["mode"],
+                        target_fingerprint=podman_lineage["target_fingerprint"],
+                        members=podman_lineage["members"],
+                    )
+                lineage_token = ACTIVE_PODMAN_LINEAGE.set(podman_lineage)
+                try:
+                    update_result = await adapter.update_compose_services(
+                        executor_config.target_ref,
+                        service_target_images,
+                    )
+                finally:
+                    ACTIVE_PODMAN_LINEAGE.reset(lineage_token)
+                if podman_lineage is not None:
+                    await self._advance_podman_lineage(
+                        executor_config, adapter, podman_lineage, run_id=run_id
+                    )
                 group_update_message = (
                     update_result.message
                     or f"{self._compose_runtime_display_name(runtime_connection.type)} services updated"

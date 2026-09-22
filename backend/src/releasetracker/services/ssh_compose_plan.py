@@ -24,7 +24,10 @@ from .ssh_compose import (
     SSHComposeProject,
     image_provenance,
     load_yaml,
+    inject_managed_markers,
+    extract_compose_service_markers,
 )
+from .deployment_plan import MARKER_KEYS
 from .ssh_transport import SSHOperationError
 
 SERVICE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}\Z")
@@ -83,6 +86,7 @@ class ComposePlan:
     rendered: dict = field(repr=False)
     targets: dict[str, str]
     changes: list[FileChange] = field(repr=False)
+    managed_markers: dict[str, str] = field(default_factory=dict)
 
     def public_summary(self):
         payload = {
@@ -121,6 +125,12 @@ class ComposePlan:
         expected = copy.deepcopy(self.rendered)
         for service, image in self.targets.items():
             expected["services"][service]["image"] = image
+        if self.managed_markers:
+            expected = load_yaml(
+                inject_managed_markers(
+                    yaml.safe_dump(expected), self.managed_markers, service_names=self.targets
+                )
+            )
         if expected != rendered:
             raise SSHOperationError("plan", "non_image_configuration_change")
 
@@ -181,6 +191,7 @@ def build_plan(
     targets: dict[str, str],
     *,
     override: str | None = None,
+    managed_markers: dict[str, str] | None = None,
 ) -> ComposePlan:
     if not targets or len(targets) > 64:
         raise SSHOperationError("plan", "one_to_64_services_required")
@@ -194,6 +205,7 @@ def build_plan(
     }
     if any(s not in rows or not rows[s]["image"] for s in targets):
         raise SSHOperationError("plan", "bound_service_image_missing")
+    markers = {k: v for k, v in (managed_markers or {}).items() if k in MARKER_KEYS}
     all_files = {**files, **env_files}
     after = dict(all_files)
     if target.write_strategy == "override":
@@ -202,13 +214,17 @@ def build_plan(
             set(document) != {"services"}
             or not isinstance(document["services"], dict)
             or any(
-                not isinstance(v, dict) or set(v) != {"image"}
+                not isinstance(v, dict)
+                or "image" not in v
+                or set(v) - {"image", "labels"}
+                or not isinstance(v.get("labels", {}), dict)
+                or set(v.get("labels", {})) - set(MARKER_KEYS)
                 for v in document["services"].values()
             )
         ):
             raise SSHOperationError("plan", "override_not_owned_image_only_file")
         for service, image in targets.items():
-            document["services"][service] = {"image": image}
+            document["services"].setdefault(service, {})["image"] = image
         all_files[target.override_file] = override
         after[target.override_file] = (
             "# Managed by ReleaseTracker; include this file last when running Compose manually.\n"
@@ -232,6 +248,21 @@ def build_plan(
                 after[path] = _replace_variable(
                     after[path], row["variable"], _variable_value(row["expression"], image)
                 )
+    if markers:
+        selected = {"services": {s: rendered["services"][s] for s in targets}}
+        existing = extract_compose_service_markers(selected)
+        needs_markers = any(any(item.get(k) != v for k, v in markers.items()) for item in existing)
+        if needs_markers or target.write_strategy == "override":
+            # Preserve the single-file transaction boundary. Environment-only updates
+            # may proceed once enrolled; first enrollment uses an explicit override.
+            path = (
+                target.override_file
+                if target.write_strategy == "override"
+                else target.path(target.config_files[-1])
+            )
+            if any(p != path and after[p] != all_files.get(p) for p in after):
+                raise SSHOperationError("plan", "managed_markers_require_override_strategy")
+            after[path] = inject_managed_markers(after[path], markers, service_names=targets)
     changes = [
         FileChange(path, all_files.get(path), text)
         for path, text in after.items()
@@ -245,4 +276,4 @@ def build_plan(
             raise SSHOperationError("plan", "updated_file_limit_exceeded")
         if posixpath.commonpath([target.working_dir, change.path]) != target.working_dir:
             raise SSHOperationError("plan", "write_outside_project")
-    return ComposePlan(target, all_files, rendered, dict(targets), changes)
+    return ComposePlan(target, all_files, rendered, dict(targets), changes, markers)

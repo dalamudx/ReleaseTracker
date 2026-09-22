@@ -76,6 +76,9 @@ class FakeDockerContainerManager:
 
 
 class FakeDockerClient:
+    def info(self):
+        return {"ID": "11111111-2222-4333-8444-555555555555"}
+
     def __init__(self, containers, *, create_should_fail: bool = False):
         self.containers = FakeDockerContainerManager(
             containers,

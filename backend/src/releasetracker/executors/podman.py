@@ -12,6 +12,7 @@ from collections.abc import Iterator, Mapping
 from typing import Any
 
 from ..services.runtime_policy import runtime_operation_policy
+from ..services.deployment_plan import MANAGED_MARKERS
 from .base import (
     RuntimeMutationError,
     RuntimeUpdateResult,
@@ -19,8 +20,11 @@ from .base import (
 )
 from .compose_runtime_update import GroupedRuntimeRecreateSpec, build_grouped_runtime_recreate_spec
 from . import podman_compose
-from .container_runtime import _ContainerRuntimeAdapter
+from .container_runtime import _ContainerRuntimeAdapter, snapshot_recovery
+from . import container_recovery
 from .podman_payload_renderer import PodmanPayloadRenderer
+from ..services.deployment_plan import MARKER_KEYS
+from ..services.podman_target_lineage import ACTIVE_PODMAN_LINEAGE, normalize_members
 from .podman_pod_recovery import (
     PODMAN_NAMESPACE_PAYLOAD_KEYS,
     PODMAN_SNAPSHOT_POD_REFERENCE_KEYS,
@@ -59,6 +63,7 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
         target_ref: dict[str, Any],
         service_target_images: dict[str, str],
     ) -> RuntimeUpdateResult:
+        await self._verify_active_target_lineage(target_ref)
         return await podman_compose.update_compose_services(self, target_ref, service_target_images)
 
     def _should_expose_container(self, container) -> bool:
@@ -107,6 +112,7 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
 
         container = self._get_container(target_ref)
         old_image = self._extract_image(container)
+        await self._verify_active_target_lineage(target_ref)
 
         # Podman sets attrs["Pod"] to a non-empty string when the container
         # belongs to a pod. Recreating such a container independently would
@@ -187,6 +193,72 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
             return self._compose_snapshot_image_summary(service_images)
         return await super().get_current_image(target_ref)
 
+    async def get_target_lineage_members(
+        self, target_ref: dict[str, Any], planned_markers: dict[str, str]
+    ) -> list[dict[str, Any]]:
+        mode = target_ref.get("mode", "container")
+        if mode == "container":
+            containers = [(None, self._get_container(target_ref))]
+        elif mode == "docker_compose":
+            project = target_ref.get("project")
+            if not isinstance(project, str) or not project.strip():
+                raise ValueError("Podman Compose lineage requires a project")
+            grouped = self._find_compose_service_containers(project.strip())
+            containers = [
+                (service, container)
+                for service, replicas in sorted(grouped.items())
+                for container in replicas
+            ]
+            if not containers:
+                raise ValueError("Podman Compose target has no live replicas")
+        else:
+            raise ValueError("unsupported Podman target lineage mode")
+        members = []
+        approved = {key: planned_markers.get(key) for key in MARKER_KEYS}
+        for service, container in containers:
+            labels = self._compose_labels_for_container(container)
+            observed = {
+                key: labels[key]
+                for key in MARKER_KEYS
+                if isinstance(labels.get(key), str) and labels[key]
+            }
+            if observed and set(observed) != set(MARKER_KEYS):
+                raise ValueError("Podman target has incomplete managed markers")
+            if observed and observed != approved:
+                raise ValueError("Podman target managed markers do not match the approved target")
+            project = self._compose_project_for_container(container) if service else None
+            replica = None
+            if service:
+                replica = (
+                    labels.get("com.docker.compose.container-number")
+                    or labels.get("io.podman.compose.container-number")
+                    or str(getattr(container, "name", "") or "")
+                )
+            members.append(
+                {
+                    "container_id": getattr(container, "id", None),
+                    "name": getattr(container, "name", None),
+                    "project": project,
+                    "service": service,
+                    "replica": replica,
+                    "markers": observed or approved,
+                    "marker_state": ("managed" if observed else "approved_unmanaged"),
+                }
+            )
+        return members
+
+    async def _verify_active_target_lineage(self, target_ref: dict[str, Any]) -> None:
+        lineage = ACTIVE_PODMAN_LINEAGE.get()
+        if lineage is None:
+            return
+        expected = lineage.get("members")
+        if not isinstance(expected, list) or not expected:
+            raise ValueError("Podman target lineage has no members")
+        planned = expected[0].get("markers")
+        observed = normalize_members(await self.get_target_lineage_members(target_ref, planned))
+        if observed != expected:
+            raise ValueError("Podman target lineage changed immediately before mutation")
+
     async def capture_snapshot(
         self, target_ref: dict[str, Any], current_image: str
     ) -> dict[str, Any]:
@@ -228,6 +300,7 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
                 f"Podman container '{snapshot.get('container_id')}' is a member of pod '{pod_id}' and cannot be recreated independently"
             )
 
+    @snapshot_recovery
     async def recover_from_snapshot(
         self, target_ref: dict[str, Any], snapshot: dict[str, Any]
     ) -> RuntimeUpdateResult:
@@ -235,33 +308,20 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
             return await self._recover_compose_from_snapshot(target_ref, snapshot)
 
         await self.validate_snapshot(target_ref, snapshot)
+        await self._verify_active_target_lineage(target_ref)
 
         create_config = snapshot.get("create_config")
         if not isinstance(create_config, dict):
             raise ValueError("snapshot.create_config must be a dict")
 
         client = self._get_client()
+        self._inspect_recovery_conflict(create_config)
         recovered_image = snapshot.get("image") if isinstance(snapshot.get("image"), str) else None
-        images = getattr(client, "images", None)
-        if recovered_image and images is not None and hasattr(images, "pull"):
-            try:
-                images.pull(recovered_image)
-            except Exception:
-                pass
+        image_id = container_recovery.prepare_image(self, snapshot)
+        create_config = dict(create_config, image=image_id)
 
-        existing_container = self._cleanup_replacement_conflict(client, snapshot, create_config)
-        if existing_container is not None:
-            state = getattr(existing_container, "attrs", {}) or {}
-            is_running = bool((state.get("State") or {}).get("Running"))
-            if not is_running:
-                existing_container.start()
-            return RuntimeUpdateResult(
-                updated=True,
-                old_image=None,
-                new_image=recovered_image,
-                message="runtime recovered from snapshot",
-                new_container_id=getattr(existing_container, "id", None),
-            )
+        self._validate_snapshot_target_identity(target_ref, snapshot)
+        self._cleanup_replacement_conflict(client, snapshot, create_config)
 
         recovered_container = None
         create_config = self._podman_container_create_config(create_config)
@@ -275,11 +335,12 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
                 self._remove_container_if_present(recovered_container)
             raise
 
+        await container_recovery.verify_container(self, recovered_container, snapshot)
         return RuntimeUpdateResult(
             updated=True,
             old_image=None,
             new_image=recovered_image,
-            message="runtime recovered from snapshot",
+            message="runtime recovered from snapshot; native readiness verified",
             new_container_id=getattr(recovered_container, "id", None),
         )
 
@@ -305,6 +366,7 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
         target_ref: dict[str, Any],
         snapshot: dict[str, Any],
     ) -> RuntimeUpdateResult:
+        await self._verify_active_target_lineage(target_ref)
         return await podman_compose._recover_compose_from_snapshot(self, target_ref, snapshot)
 
     @staticmethod
@@ -323,15 +385,13 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
 
         try:
             existing_container = client.containers.get(container_name)
-        except Exception:
-            return None
+        except Exception as exc:
+            if self.is_target_missing_error(exc):
+                return None
+            raise
 
-        snapshot_container_id = snapshot.get("container_id")
-        recovered_image = snapshot.get("image") if isinstance(snapshot.get("image"), str) else None
-        existing_container_id = getattr(existing_container, "id", None)
-        existing_image = self._extract_image(existing_container)
-        if existing_container_id == snapshot_container_id and existing_image == recovered_image:
-            return existing_container
+        # A matching tag (or original ID) cannot prove complete configuration
+        # equality. Explicit recovery always recreates from the saved config.
 
         self._remove_container_if_present(existing_container)
         return None
@@ -376,28 +436,7 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
             raise
 
     def _remove_container_if_present(self, container) -> None:
-        # Force-remove so a still-running container doesn't block the
-        # create call with a confusing "name already in use" error.
-        # Older SDKs without the ``force`` keyword fall back to explicit
-        # stop+remove.
-        try:
-            container.remove(force=True)
-            return
-        except TypeError:
-            # SDK signature doesn't accept ``force``. Fall through.
-            pass
-        except Exception:
-            # Remove failed — most commonly because the container is
-            # still running. Fall through to stop+remove and let the
-            # final remove propagate its error.
-            pass
-
-        if self._container_looks_running(container):
-            try:
-                container.stop()
-            except Exception:
-                pass
-        container.remove()
+        self._remove_container_once(container)
 
     @staticmethod
     def _container_looks_running(container) -> bool:
@@ -539,6 +578,12 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
         return self._create_podman_container(client, create_config)
 
     def _create_podman_container(self, client, create_config: dict[str, Any]):
+        markers = MANAGED_MARKERS.get()
+        if markers:
+            create_config = dict(create_config)
+            labels = dict(create_config.get("labels") or create_config.get("Labels") or {})
+            labels.update(markers)
+            create_config["labels"] = labels
         create_kwargs = self._podman_container_create_config(create_config)
         source_named_volume_names = self._podman_source_named_volume_names(create_kwargs)
         payload = self._render_podman_create_payload(create_kwargs)

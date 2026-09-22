@@ -118,15 +118,49 @@ function TaskStateBadge({ state, phase }: { state: TaskState; phase?: string }) 
     }
 }
 
+function approvalErrorMessageKey(error: unknown): string {
+    const response = (error as { response?: { status?: number; data?: { detail?: unknown } } })?.response
+    const detail = typeof response?.data?.detail === "string" ? response.data.detail : ""
+    if (response?.status === 410 || detail.includes("expired")) return "tasks.approvalExpired"
+    if (detail === "target_already_owned" || detail.includes("ownership")) return "tasks.approvalConflict"
+    if (detail === "deployment_plan_changed" || detail.includes("changed")) return "tasks.approvalChanged"
+    if (detail === "approval_stale_or_blocked" || detail === "task_not_awaiting_approval") return "tasks.approvalStale"
+    return "tasks.approvalFailed"
+}
+
 function TaskItem({ task }: { task: QueueTask }) {
     const { t, i18n } = useTranslation()
     const [open, setOpen] = useState(false)
+    const [approvalError, setApprovalError] = useState<string | null>(null)
     const cache = useQueryClient()
     const detail = useQuery({
         queryKey: ["tasks", task.id],
         queryFn: () => api.getTask(task.id),
         enabled: open,
         refetchInterval: open ? 5000 : false,
+    })
+    const plan = useQuery({
+        queryKey: ["tasks", task.id, "deployment-plan"],
+        queryFn: () => api.getDeploymentPlan(task.id),
+        enabled: open && task.kind === "deploy" && task.approval_pending === true,
+    })
+    const approve = useMutation({
+        mutationFn: () => {
+            if (!plan.data) throw new Error("deployment_plan_unavailable")
+            return api.approveDeployment(task.id, { plan_id: plan.data.id, fingerprint: plan.data.fingerprint })
+        },
+        onSuccess: () => {
+            setApprovalError(null)
+            toast.success(t("tasks.planApproved"))
+            void cache.invalidateQueries({ queryKey: ["tasks"] })
+        },
+        onError: (error) => {
+            const messageKey = approvalErrorMessageKey(error)
+            setApprovalError(messageKey)
+            toast.error(t(messageKey))
+            void cache.invalidateQueries({ queryKey: ["tasks"] })
+            void cache.invalidateQueries({ queryKey: ["tasks", task.id, "deployment-plan"] })
+        },
     })
     const action = useMutation({
         mutationFn: (mode: "cancel" | "retry" | "resolve") =>
@@ -233,6 +267,38 @@ function TaskItem({ task }: { task: QueueTask }) {
                             )}
 
                             {detail.isError && <p role="alert" className="text-xs text-destructive">{t("common.unexpectedError")}</p>}
+
+                            {task.approval_pending && task.kind === "deploy" && (
+                                <div className="space-y-3 rounded-lg border border-warning/35 bg-warning/[0.06] p-3">
+                                    <div className="flex items-start gap-2">
+                                        <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
+                                        <div className="min-w-0 space-y-1">
+                                            <p className="text-sm font-semibold text-foreground">{t("tasks.approvalRequired")}</p>
+                                            <p className="text-xs leading-relaxed text-muted-foreground">{t("tasks.planReviewRequired")}</p>
+                                        </div>
+                                    </div>
+                                    {plan.isLoading && <p className="text-xs text-muted-foreground">{t("common.loading", { defaultValue: "Loading..." })}</p>}
+                                    {plan.data && (
+                                        <div className="grid gap-1.5 rounded-md border border-border/60 bg-background/50 p-2.5 text-xs">
+                                            <p>{t("tasks.planTarget", { target: plan.data.summary.target_label ?? task.target_label })}</p>
+                                            <p>{t("tasks.planIdentity", { identity: plan.data.summary.identity_key ?? "—" })}</p>
+                                            <p>{t("tasks.planRecovery", { scope: plan.data.summary.recovery_scope ?? "—" })}</p>
+                                            <p className="text-muted-foreground">{t("tasks.planNoData")}</p>
+                                        </div>
+                                    )}
+                                    {plan.isError && <p role="alert" className="text-xs text-destructive">{t("common.unexpectedError")}</p>}
+                                    {approvalError && <p role="alert" className="text-xs text-destructive">{t(approvalError)}</p>}
+                                    <div className="flex flex-wrap justify-end gap-2">
+                                        <Button size="sm" variant="outline" disabled={!plan.data || approve.isPending || plan.isFetching} onClick={() => void plan.refetch()}>
+                                            {t("tasks.reviewPlan")}
+                                        </Button>
+                                        <Button size="sm" disabled={!plan.data || approve.isPending} onClick={() => approve.mutate()}>
+                                            {approve.isPending && <Spinner className="size-3.5" />}
+                                            {t("tasks.approvePlan")}
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
 
                             {detail.data?.triggers && detail.data.triggers.length > 0 && (
                                 <div className="flex flex-wrap items-center gap-1.5 text-xs">

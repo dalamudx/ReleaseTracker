@@ -85,6 +85,11 @@ def test_redaction_recurses_into_nested_lists_and_dicts(redactor: SnapshotRedact
     assert result["deep"]["a"]["b"]["secret"] == REDACTED_MARKER
 
 
+def test_key_value_environment_entries_are_redacted(redactor: SnapshotRedactor):
+    result, _ = redactor.redact({"environment": ["APP_MODE=demo", "API_TOKEN=fictional-token"]})
+    assert result["environment"] == ["APP_MODE=demo", f"API_TOKEN={REDACTED_MARKER}"]
+
+
 def test_redaction_is_deterministic(redactor: SnapshotRedactor):
     payload = {
         "password": "hunter2",

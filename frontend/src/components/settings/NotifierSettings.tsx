@@ -408,6 +408,8 @@ function NotifierDialog({ open, onOpenChange, notifier }: NotifierDialogProps) {
 
     const availableEvents = [
         { id: "executor_health_check_result", label: t("settings.notifications.eventTypes.executor_health_check_result") },
+        { id: "executor_approval_required", label: t("settings.notifications.eventTypes.executor_approval_required") },
+        { id: "executor_deployment_blocked", label: t("settings.notifications.eventTypes.executor_deployment_blocked") },
         { id: "new_release", label: t("settings.notifications.eventTypes.new_release") },
         { id: "republish", label: t("settings.notifications.eventTypes.republish") },
         { id: "executor_run_success", label: t("settings.notifications.eventTypes.executor_run_success") },

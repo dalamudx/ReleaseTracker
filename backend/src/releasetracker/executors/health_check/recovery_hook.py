@@ -107,7 +107,9 @@ class RecoveryHookCoordinator:
         snapshot_data = snapshot.snapshot_data
 
         try:
-            verify_snapshot_integrity(snapshot)
+            integrity_status = verify_snapshot_integrity(snapshot)
+            if integrity_status != "verified":
+                raise SnapshotIntegrityError("snapshot integrity is not verified")
             await adapter.validate_snapshot(target_ref, snapshot_data)
         except NotImplementedError:
             logger.info(

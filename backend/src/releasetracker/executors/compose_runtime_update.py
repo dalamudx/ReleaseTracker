@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .container_recovery import capture_evidence
+
 DOCKER_CREATE_MOUNT_TYPES = {"bind", "volume", "tmpfs", "npipe"}
 
 
@@ -76,6 +78,7 @@ def build_grouped_runtime_recreate_spec(
 
     snapshot_payload = {
         "runtime_type": runtime_type,
+        "recovery_evidence": capture_evidence(container),
         "container_id": getattr(container, "id", None),
         "container_name": getattr(container, "name", None),
         "image": current_image,

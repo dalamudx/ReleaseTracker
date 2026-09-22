@@ -22,6 +22,7 @@ from .services.system_keys import (
     SystemKeyManager,
     recover_pending_encryption_key_rotation,
 )
+from .services.ssh_compose_snapshot import migrate_legacy_snapshots
 from .storage.sqlite import SQLiteStorage
 from .logger import LogConfig
 from .routers import (
@@ -79,6 +80,11 @@ async def lifespan(app: FastAPI):
     storage = SQLiteStorage(db_path, system_key_manager=system_key_manager)
     await storage.initialize()
     await recover_pending_encryption_key_rotation(storage, system_key_manager)
+    migrated_snapshots = await migrate_legacy_snapshots(storage)
+    if migrated_snapshots:
+        logging.getLogger(__name__).info(
+            "encrypted %s legacy executor snapshots", migrated_snapshots
+        )
     LogConfig.setup_logging(level=getattr(logging, await storage.get_system_log_level()))
     # Initialize configuration without AppConfig
 
@@ -111,8 +117,10 @@ async def lifespan(app: FastAPI):
 
     from .services.deployment_readiness import DeploymentReadiness
     from .services.executor_notification_outbox import ExecutorNotificationOutbox
+    from .services.deployment_admission_notifications import DeploymentAdmissionNotificationOutbox
 
     notification_outbox = ExecutorNotificationOutbox(storage, scheduler_host)
+    admission_notification_outbox = DeploymentAdmissionNotificationOutbox(storage, scheduler_host)
     executor_scheduler.notification_outbox = notification_outbox
 
     readiness = DeploymentReadiness(storage, executor_scheduler, scheduler_host)
@@ -140,6 +148,7 @@ async def lifespan(app: FastAPI):
     await task_queue.initialize()
     await readiness.initialize()
     await notification_outbox.initialize()
+    await admission_notification_outbox.initialize()
     await scheduler.initialize()
     await executor_scheduler.initialize()
     await repository_webhook_scheduler.initialize()
@@ -155,6 +164,7 @@ async def lifespan(app: FastAPI):
     await task_queue.shutdown()
     await readiness.shutdown()
     await notification_outbox.shutdown()
+    await admission_notification_outbox.shutdown()
     if executor_scheduler:
         await executor_scheduler.shutdown()
     if scheduler_host:

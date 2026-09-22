@@ -14,6 +14,7 @@ from releasetracker.executor_scheduler import ExecutorScheduler
 from releasetracker.services.fetch_tasks import FetchTasks
 from releasetracker.services.deploy_tasks import DeployTasks
 from releasetracker.services.task_queue import TaskQueue
+from releasetracker.storage.sqlite_deployment_admission import DeploymentAdmissionStore
 from releasetracker.trackers.base import BaseTracker
 from releasetracker.webhook_scheduler import RepositoryWebhookScheduler
 from test_repository_webhook_queue import setup_hook
@@ -93,6 +94,15 @@ async def run_one(storage, queue, kind="fetch"):
     assert task is not None
     await queue._run(task)
     return await storage.tasks.get(task["id"])
+
+
+async def approve_if_pending(storage, task_id):
+    task = await storage.tasks.get(task_id)
+    if task["approval_pending"]:
+        plan = await DeploymentAdmissionStore(storage).latest(task_id)
+        await DeploymentAdmissionStore(storage).approve(
+            task_id, plan["id"], plan["fingerprint"], "test-admin"
+        )
 
 
 async def test_real_fetch_partial_retries_without_fallback_or_projection(storage, monkeypatch):
@@ -180,6 +190,17 @@ async def test_queued_deploy_pins_target_and_retains_run_reference(storage, monk
     )
     scheduler = ExecutorScheduler(storage)
     handler = DeployTasks(storage, scheduler)
+    from releasetracker.services.deployment_plan import TargetEvidence
+
+    monkeypatch.setattr(
+        handler,
+        "_collect_admission_evidence",
+        AsyncMock(
+            return_value=TargetEvidence(
+                "test-runtime", "test-target", {"kind": "container"}, (), "container_config"
+            )
+        ),
+    )
     receipt = await handler.enqueue(executor_id, manual=True)
     assert receipt["status"] == "queued"
     task = await storage.tasks.get(receipt["task_id"])
@@ -204,6 +225,9 @@ async def test_queued_deploy_pins_target_and_retains_run_reference(storage, monk
     queue = TaskQueue(storage.tasks, MagicMock())
     queue.register("deploy", handler)
     done = await run_one(storage, queue, "deploy")
+    await approve_if_pending(storage, receipt["task_id"])
+    if done["state"] != "succeeded":
+        done = await run_one(storage, queue, "deploy")
     assert done["state"] == "succeeded", done
     assert observed == [("1.0.0", None)]
     assert done["result"]["run_id"]
@@ -279,11 +303,17 @@ async def test_native_deployment_queue_executes_and_distinguishes_preflight_fail
     queue = TaskQueue(storage.tasks, MagicMock())
     queue.register("deploy", handler)
     done = await run_one(storage, queue, "deploy")
-    assert done["state"] == ("failed" if invalid else "succeeded"), done
-    assert done["result"]["mutation_started"] is not invalid
-    assert (await storage.get_executor_run(done["result"]["run_id"])).status == (
-        "failed" if invalid else "success"
-    )
+    if invalid:
+        assert done["state"] == "queued", done
+        assert done["error_code"] == "admission_evidence_unavailable"
+        assert done["attempts"] == 0
+        return
+    await approve_if_pending(storage, receipt["task_id"])
+    if done["state"] != "succeeded":
+        done = await run_one(storage, queue, "deploy")
+    assert done["state"] == "succeeded", done
+    assert done["result"]["mutation_started"] is True
+    assert (await storage.get_executor_run(done["result"]["run_id"])).status == "success"
 
 
 async def test_task_api_redacts_private_payload_and_enforces_cancel_guard(storage, authed_client):

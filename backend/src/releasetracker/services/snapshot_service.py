@@ -103,12 +103,35 @@ class SnapshotRedactor:
             for key, value in node.items():
                 if isinstance(key, str) and self._is_sensitive_key(key):
                     redacted[key] = REDACTED_MARKER
+                elif isinstance(key, str) and key.lower() in {
+                    "env",
+                    "environment",
+                    "env_vars",
+                    "environment_variables",
+                }:
+                    redacted[key] = self._redact_environment_list(value)
                 else:
                     redacted[key] = self._walk(value)
             return redacted
         if isinstance(node, list):
             return [self._walk(entry) for entry in node]
         return node
+
+    def _redact_environment_list(self, value: Any) -> Any:
+        if not isinstance(value, list):
+            return self._walk(value)
+        result = []
+        for entry in value:
+            if not isinstance(entry, str) or "=" not in entry:
+                result.append(self._walk(entry))
+                continue
+            name, raw_value = entry.split("=", 1)
+            result.append(
+                f"{name}={REDACTED_MARKER}"
+                if self._is_sensitive_key(name)
+                else f"{name}={raw_value}"
+            )
+        return result
 
     @staticmethod
     def _is_sensitive_key(key: str) -> bool:

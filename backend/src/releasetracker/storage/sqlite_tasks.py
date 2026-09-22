@@ -22,6 +22,8 @@ def decode(row):
     for key in ("payload", "result"):
         if key in data:
             data[key] = json.loads(data[key]) if data[key] else None
+    if data.get("approval_pending") and data.get("state") == "queued":
+        data["state"] = "awaiting_approval"
     return data
 
 
@@ -140,7 +142,9 @@ class TaskStore:
         db = await self.storage._get_connection()
         rows = await (
             await db.execute(
-                """SELECT * FROM tasks WHERE cleared_at IS NULL AND (? IS NULL OR id<?) AND (? IS NULL OR state=?)
+                """SELECT * FROM tasks WHERE cleared_at IS NULL AND (? IS NULL OR id<?)
+                   AND (? IS NULL OR CASE WHEN approval_pending=1 AND state='queued'
+                       THEN 'awaiting_approval' ELSE state END=?)
                ORDER BY id DESC LIMIT ?""",
                 (before, before, state, state, min(100, max(1, limit))),
             )
@@ -179,7 +183,7 @@ class TaskStore:
             row = await (
                 await db.execute(
                     """SELECT t.* FROM tasks t WHERE kind=? AND state IN ('queued','retry_wait')
-                   AND due_at<=? AND NOT EXISTS (
+                   AND approval_pending=0 AND due_at<=? AND NOT EXISTS (
                      SELECT 1 FROM tasks active WHERE active.resource_key=t.resource_key
                      AND (active.state='running' OR (active.state='needs_attention' AND t.kind!='recover')))
                    ORDER BY due_at,id LIMIT 1""",
@@ -317,7 +321,12 @@ class TaskStore:
         now = time.time() if now is None else now
         async with self.transaction() as db:
             cursor = await db.execute(
-                "UPDATE tasks SET state='cancelled',updated_at=? WHERE id=? AND state IN ('queued','retry_wait')",
+                "UPDATE tasks SET state='cancelled',approval_pending=0,updated_at=? WHERE id=? AND state IN ('queued','retry_wait')",
                 (now, task_id),
             )
+            if cursor.rowcount == 1:
+                await db.execute(
+                    "UPDATE deployment_plans SET state='cancelled' WHERE task_id=? AND state IN ('pending','approved','blocked')",
+                    (task_id,),
+                )
             return cursor.rowcount == 1
