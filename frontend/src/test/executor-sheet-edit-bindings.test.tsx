@@ -135,6 +135,7 @@ function createExecutorConfig(overrides: Partial<ExecutorConfig> = {}): Executor
 
 describe("ExecutorSheet edit bindings", () => {
   beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn()
     analyzeSSHComposeMock.mockReset()
     discoverSSHComposeMock.mockReset()
     getExecutorConfigMock.mockReset()
@@ -163,6 +164,42 @@ describe("ExecutorSheet edit bindings", () => {
     expect(screen.getByText("sshExecutor.title")).toBeInTheDocument()
     expect(screen.queryByText("executors.sections.review")).not.toBeInTheDocument()
     expect(analyzeSSHComposeMock).not.toHaveBeenCalled()
+  })
+
+  it("does not rediscover the SSH target when navigating back from bindings", async () => {
+    discoverSSHComposeMock.mockResolvedValue({
+      items: [{ id: "0123456789abcdefabcd", engine: "docker", project: "sample", working_dir: "/srv/sample", config_files: ["compose.yml"], env_files: [], profiles: [], tool: "docker_compose", tool_choices: ["docker_compose"], write_strategy: "source", services: ["api"], warnings: [] }],
+      tools: [], warnings: [], truncated: false, read_only: true,
+    })
+    analyzeSSHComposeMock.mockResolvedValue({
+      tools: [], selected_tool: "docker_compose", requires_tool_selection: false,
+      services: [{ service: "api", image: "registry.example.test/team/api:1.0", expression: "registry.example.test/team/api:1.0", source: "compose", variable: null, write_file: "/srv/sample/compose.yml", safe_to_edit: true, warnings: [] }],
+    })
+
+    render(
+      <ExecutorSheet
+        open
+        onOpenChange={vi.fn()}
+        executorId={null}
+        runtimeConnections={[createRuntimeConnection({ id: 7, name: "example-ssh", type: "ssh" })]}
+        trackers={[createTracker()]}
+        systemTimezone="UTC"
+        onSuccess={vi.fn()}
+      />,
+    )
+
+    fireEvent.change(screen.getByLabelText("executors.fields.name"), { target: { value: "sample-executor" } })
+    await waitFor(() => expect(screen.getByRole("button", { name: "sshExecutor.refreshProjects" })).toBeEnabled())
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "sshExecutor.discoveredProjects" }), { key: "ArrowDown" })
+    fireEvent.click(await screen.findByRole("option", { name: "sample · docker · /srv/sample" }))
+    await waitFor(() => expect(screen.getByRole("button", { name: "executors.actions.continue" })).toBeEnabled(), { timeout: 3000 })
+
+    fireEvent.click(screen.getByRole("button", { name: "executors.actions.continue" }))
+    await waitFor(() => expect(screen.getByText("executors.sections.binding")).toBeVisible())
+    fireEvent.click(screen.getByRole("button", { name: "common.back" }))
+    expect(screen.getByText("sshExecutor.title")).toBeVisible()
+    expect(discoverSSHComposeMock).toHaveBeenCalledTimes(1)
+    expect(analyzeSSHComposeMock).toHaveBeenCalledTimes(1)
   })
 
   it("shows existing Kubernetes workload target and service binding when editing", async () => {

@@ -763,7 +763,7 @@ export function ExecutorSheet({
                                     </div>
                                 ) : (
                                     <div className="space-y-4">
-                                        {step === "target" ? (
+                                        <div hidden={step !== "target"}>
                                             <ExecutorSheetTargetSection
                                                 executorId={executorId}
                                                 form={form}
@@ -788,7 +788,7 @@ export function ExecutorSheet({
                                                  }}
                                                  onSSHReadinessChange={setSshTargetReady}
                                             />
-                                        ) : null}
+                                        </div>
 
                                         {step === "binding" ? (
                                             <ExecutorSheetBindingSection
