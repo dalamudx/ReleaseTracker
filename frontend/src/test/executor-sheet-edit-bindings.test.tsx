@@ -11,10 +11,14 @@ globalThis.ResizeObserver = class ResizeObserver {
 }
 
 const {
+  analyzeSSHComposeMock,
+  discoverSSHComposeMock,
   getExecutorConfigMock,
   tMock,
   updateExecutorMock,
 } = vi.hoisted(() => ({
+  analyzeSSHComposeMock: vi.fn(),
+  discoverSSHComposeMock: vi.fn(),
   getExecutorConfigMock: vi.fn(),
   tMock: (key: string, options?: Record<string, unknown>) => {
     if (key === "executors.discovery.runtimeSummary") {
@@ -30,6 +34,8 @@ const {
 
 vi.mock("@/api/client", () => ({
   api: {
+    analyzeSSHCompose: analyzeSSHComposeMock,
+    discoverSSHCompose: discoverSSHComposeMock,
     getExecutorConfig: getExecutorConfigMock,
     updateExecutor: updateExecutorMock,
   },
@@ -129,9 +135,34 @@ function createExecutorConfig(overrides: Partial<ExecutorConfig> = {}): Executor
 
 describe("ExecutorSheet edit bindings", () => {
   beforeEach(() => {
+    analyzeSSHComposeMock.mockReset()
+    discoverSSHComposeMock.mockReset()
     getExecutorConfigMock.mockReset()
     updateExecutorMock.mockReset()
     updateExecutorMock.mockResolvedValue(undefined)
+  })
+
+  it("blocks review navigation while SSH Compose analysis is pending", async () => {
+    discoverSSHComposeMock.mockReturnValue(new Promise(() => undefined))
+
+    render(
+      <ExecutorSheet
+        open
+        onOpenChange={vi.fn()}
+        executorId={null}
+        runtimeConnections={[createRuntimeConnection({ id: 7, name: "example-ssh", type: "ssh" })]}
+        trackers={[createTracker()]}
+        systemTimezone="UTC"
+        onSuccess={vi.fn()}
+      />,
+    )
+
+    const continueButton = screen.getByRole("button", { name: "executors.actions.continue" })
+    expect(continueButton).toBeDisabled()
+    fireEvent.click(screen.getByRole("button", { name: /executors.steps.review/ }))
+    expect(screen.getByText("sshExecutor.title")).toBeInTheDocument()
+    expect(screen.queryByText("executors.sections.review")).not.toBeInTheDocument()
+    expect(analyzeSSHComposeMock).not.toHaveBeenCalled()
   })
 
   it("shows existing Kubernetes workload target and service binding when editing", async () => {

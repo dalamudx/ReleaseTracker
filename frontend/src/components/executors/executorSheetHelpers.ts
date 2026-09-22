@@ -380,7 +380,9 @@ export function getPortainerStackServiceOptions(targetRef: ExecutorTargetRef): E
         }
 
         seenServices.add(normalizedService)
-        const image = stringifyTargetValue((item as { image?: unknown }).image) || null
+        const image = stringifyTargetValue((item as { image?: unknown }).image)
+            || stringifyTargetValue((item as { current_image?: unknown }).current_image)
+            || null
         options.push({ service, image })
     })
 

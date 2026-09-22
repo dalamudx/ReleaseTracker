@@ -2,8 +2,9 @@ import { fireEvent, render, screen } from "@testing-library/react"
 import { useForm } from "react-hook-form"
 import { describe, expect, it, vi } from "vitest"
 
-import type { RuntimeConnection, RuntimeTargetDiscoveryItem, TrackerStatus } from "@/api/types"
+import type { ExecutorTargetRef, RuntimeConnection, RuntimeTargetDiscoveryItem, TrackerStatus } from "@/api/types"
 import { ExecutorSheetBindingSection, ExecutorSheetReviewSection, ExecutorSheetTargetSection } from "@/components/executors/ExecutorSheetSections"
+import { getGroupedBindingServiceOptions } from "@/components/executors/executorSheetHelpers"
 import type { ExecutorFormValues } from "@/components/executors/executorSheetHelpers"
 import { Form } from "@/components/ui/form"
 
@@ -165,6 +166,11 @@ function renderTargetSection({
 }
 
 describe("ExecutorSheet Portainer grouping", () => {
+  it("renders the discovered current_image when the target was analyzed before persistence", () => {
+    expect(getGroupedBindingServiceOptions({ mode: "ssh_compose", services: [{ service: "api", current_image: "registry.example.test/team/api:1.0" }] } as unknown as ExecutorTargetRef)).toEqual([
+      { service: "api", image: "registry.example.test/team/api:1.0" },
+    ])
+  })
   it("renders kubernetes namespace selector from configured namespaces", () => {
     renderTargetSection({
       runtimeType: "kubernetes",

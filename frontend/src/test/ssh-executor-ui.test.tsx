@@ -51,7 +51,9 @@ it('locks project identity but permits service configuration on an existing exec
 
 it('automatically discovers projects then analyzes selection, preserving file order', async () => {
     const onChange = vi.fn()
-    render(<SSHComposeTargetFields connection={connection} value={{}} onChange={onChange} />)
+    const onReadinessChange = vi.fn()
+    render(<SSHComposeTargetFields connection={connection} value={{}} onChange={onChange} onReadinessChange={onReadinessChange} />)
+    expect(onReadinessChange).toHaveBeenLastCalledWith(false)
     expect(api.discoverSSHCompose).toHaveBeenCalledWith(1, expect.any(AbortSignal))
     expect(api.analyzeSSHCompose).not.toHaveBeenCalled()
     await selectProject()
@@ -59,6 +61,7 @@ it('automatically discovers projects then analyzes selection, preserving file or
     expect(api.analyzeSSHCompose).toHaveBeenCalledTimes(1)
     expect(api.analyzeSSHCompose).toHaveBeenCalledWith({runtime_connection_id: 1, target: expect.objectContaining({discovery_id: '0123456789abcdefabcd', config_files: ['compose.yml', 'production.yml'], env_files: ['prod.env']})}, expect.any(AbortSignal))
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({discovery_id: '0123456789abcdefabcd', services: [{service: 'web', image: 'app:1'}]}))
+    expect(onReadinessChange).toHaveBeenLastCalledWith(true)
     expect(screen.queryByRole('button', {name: 'sshExecutor.analyze'})).not.toBeInTheDocument()
     expect(screen.getByLabelText('sshExecutor.env_files')).toHaveTextContent('prod.env')
     expect(screen.queryByRole('textbox', {name: 'sshExecutor.env_files'})).not.toBeInTheDocument()

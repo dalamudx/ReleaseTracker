@@ -312,6 +312,7 @@ interface ExecutorSheetTargetSectionProps {
     onSelectRuntimeConnection: (value: string) => void
     onSelectTarget: (target: RuntimeTargetDiscoveryItem) => void
     onSSHChange?: (target: import("@/api/types").ExecutorTargetRef) => void
+    onSSHReadinessChange?: (ready: boolean) => void
 }
 
 interface ExecutorSheetPolicySectionProps {
@@ -721,6 +722,7 @@ export function ExecutorSheetTargetSection({
     onSelectRuntimeConnection,
     onSelectTarget,
     onSSHChange,
+    onSSHReadinessChange,
     executorId = null,
 }: ExecutorSheetTargetSectionProps) {
     const { t } = useTranslation()
@@ -730,7 +732,7 @@ export function ExecutorSheetTargetSection({
     if (runtimeType === "ssh" && selectedRuntimeConnection && onSSHChange) {
         return <div className="space-y-4">
             <ExecutorSheetRuntimeSection connectionLocked={executorId !== null} form={form} enabledRuntimeConnections={enabledRuntimeConnections} handleSelectRuntimeConnection={onSelectRuntimeConnection} />
-            <SSHComposeTargetFields executorId={executorId} key={selectedRuntimeConnection.id} connection={selectedRuntimeConnection} value={selectedTargetRef} onChange={onSSHChange} />
+            <SSHComposeTargetFields executorId={executorId} key={selectedRuntimeConnection.id} connection={selectedRuntimeConnection} value={selectedTargetRef} onChange={onSSHChange} onReadinessChange={onSSHReadinessChange} />
         </div>
     }
 

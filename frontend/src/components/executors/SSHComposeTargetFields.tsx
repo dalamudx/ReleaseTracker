@@ -51,11 +51,12 @@ const build = (next: Fields): SSHComposeExecutorTargetRef => ({
     tool: next.tool as SSHComposeExecutorTargetRef["tool"], write_strategy: next.write_strategy as "source" | "override",
 })
 
-export function SSHComposeTargetFields({connection, value, onChange, executorId = null}: {
+export function SSHComposeTargetFields({connection, value, onChange, onReadinessChange, executorId = null}: {
     executorId?: number | null
     connection: RuntimeConnection
     value: ExecutorTargetRef
     onChange: (value: ExecutorTargetRef) => void
+    onReadinessChange?: (ready: boolean) => void
 }) {
     const {t} = useTranslation()
     const id = useId()
@@ -85,6 +86,11 @@ export function SSHComposeTargetFields({connection, value, onChange, executorId 
         && selected.tool_choices.includes(fields.tool)
     ))
     const ready = discoveredConfigurationMatches && connection.enabled && fields.working_dir.startsWith("/") && /^[a-z0-9][a-z0-9_-]{0,127}$/.test(fields.project.trim()) && !!lines(fields.config_files).length && tools.some(tool => tool === fields.tool)
+    const analysisReady = ready && !busy && !error && !!result?.services.length
+
+    useEffect(() => {
+        onReadinessChange?.(analysisReady)
+    }, [analysisReady, onReadinessChange])
 
     useEffect(() => {
         const controller = new AbortController()

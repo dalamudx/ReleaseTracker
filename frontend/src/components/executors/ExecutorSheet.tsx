@@ -85,6 +85,7 @@ export function ExecutorSheet({
     const { t } = useTranslation()
     const [step, setStep] = useState<StepKey>("target")
     const [saving, setSaving] = useState(false)
+    const [sshTargetReady, setSshTargetReady] = useState(false)
     const [loadingConfig, setLoadingConfig] = useState(false)
     const [discovering, setDiscovering] = useState(false)
     const [discoveryMessage, setDiscoveryMessage] = useState<string | null>(null)
@@ -339,6 +340,7 @@ export function ExecutorSheet({
 
         void Promise.resolve().then(() => {
             setStep("target")
+            setSshTargetReady(false)
             setDiscoveryMessage(null)
             setDiscoveredTargets([])
             setSelectedTargetRef(EMPTY_TARGET_REF)
@@ -527,6 +529,7 @@ export function ExecutorSheet({
             form.setValue("runtime_type", connection.type, { shouldDirty: true })
         }
         setDiscoveredTargets([])
+        setSshTargetReady(connection?.type !== "ssh")
         setSelectedTargetRef(EMPTY_TARGET_REF)
         setSelectedSingleContainerImage(null)
         setServiceBindings([])
@@ -612,8 +615,20 @@ export function ExecutorSheet({
         setServiceBindings((current) => current.filter((_, bindingIndex) => bindingIndex !== index))
     }
 
+    const handleStepChange = (nextStep: StepKey) => {
+        if (runtimeType === "ssh" && nextStep !== "target" && !sshTargetReady) {
+            toast.error(t("sshExecutor.analysisIncomplete"))
+            return
+        }
+        setStep(nextStep)
+    }
+
     const handleNext = async () => {
         if (step === "target") {
+            if (runtimeType === "ssh" && !sshTargetReady) {
+                toast.error(t("sshExecutor.analysisIncomplete"))
+                return
+            }
             const valid = await form.trigger(["name", "runtime_connection_id"])
             if (!valid) {
                 return
@@ -736,7 +751,7 @@ export function ExecutorSheet({
                 </SheetHeader>
 
                 <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                    <ExecutorSheetStepTabs step={step} onStepChange={setStep} />
+                    <ExecutorSheetStepTabs step={step} onStepChange={handleStepChange} />
 
                     <Form {...form}>
                         <form onSubmit={handleImplicitFormSubmit} className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -771,6 +786,7 @@ export function ExecutorSheet({
                                                      }
                                                      setSelectedTargetRef(next)
                                                  }}
+                                                 onSSHReadinessChange={setSshTargetReady}
                                             />
                                         ) : null}
 
@@ -840,7 +856,7 @@ export function ExecutorSheet({
                                                 {executorId === null ? t("executors.actions.create") : t("common.save")}
                                             </Button>
                                         ) : (
-                                            <Button type="button" onClick={handleNext} disabled={loadingConfig}>
+                                            <Button type="button" onClick={handleNext} disabled={loadingConfig || (step === "target" && runtimeType === "ssh" && !sshTargetReady)}>
                                                 {t("executors.actions.continue")}
                                                 <ArrowRight className="ml-2 h-4 w-4" />
                                             </Button>
