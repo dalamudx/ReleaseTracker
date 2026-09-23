@@ -38,9 +38,14 @@ class ReleaseSchedulerRebuilds:
         result = await self._process_aggregate_tracker_local_rebuild(
             name, aggregate_tracker, config
         )
-        releases = result["releases"]
         if result["latest_version"]:
             latest_version = result["latest_version"]
+
+        # Rebuilding local views performs no fetch. Neither invent a failure
+        # for empty history nor clear a genuine previous fetch failure.
+        previous_error = current_status.error if current_status else None
+        if previous_error in {"No version information found", "Tracker is disabled"}:
+            previous_error = None
 
         status = TrackerStatus(
             name=name,
@@ -48,11 +53,7 @@ class ReleaseSchedulerRebuilds:
             enabled=True,
             last_check=preserved_last_check,
             last_version=latest_version,
-            error=(
-                result.get("error")
-                if releases or latest_version
-                else (result.get("error") or "No version information found")
-            ),
+            error=result.get("error") or previous_error,
             channel_count=_tracker_channel_count(config),
         )
         await self.storage.update_tracker_status(status)

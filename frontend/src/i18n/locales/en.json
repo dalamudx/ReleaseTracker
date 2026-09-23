@@ -1728,6 +1728,12 @@
       "bootstrap": "Bootstrap"
     },
     "errors": {
+      "registry_repository_not_found": "Image repository not found or not visible with these credentials. Check the image path; after a repository rename, build and push the image before fetching again.",
+      "registry_authentication_failed": "Image registry authentication failed. Check that the configured credentials are valid.",
+      "registry_access_denied": "Image registry access denied. Check repository read permissions.",
+      "upstream_http_401": "Upstream authentication failed. Check the access credentials.",
+      "upstream_http_403": "Upstream access denied. Check read permissions.",
+      "upstream_http_404": "Upstream resource not found or not visible with these credentials. Check the source URL and permissions.",
       "security_validation_failed": "Security validation failed",
       "upstream_timeout": "Upstream request timed out",
       "upstream_connection_failed": "Could not connect to upstream",

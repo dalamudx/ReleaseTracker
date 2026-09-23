@@ -50,6 +50,20 @@ describe("persistent task queue", () => {
         expect(api.getDeploymentPlan).toHaveBeenCalledWith(17)
     })
 
+    it.each(["zh", "en"])("explains missing images in the task and attempt history (%s)", async (language) => {
+        await i18n.changeLanguage(language)
+        const code = "registry_repository_not_found"
+        const failed = { ...task("failed"), error_code: code }
+        vi.mocked(api.getTasks).mockResolvedValue([failed])
+        vi.mocked(api.getTask).mockResolvedValue({ ...failed, attempt_history: [{ id: 1, attempt: 1, state: "failed", error_code: code, started_at: failed.created_at, finished_at: failed.updated_at }] })
+        show()
+        await screen.findByText("nginx-test")
+        fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.details", { id: 17 }) }))
+        await waitFor(() => expect(screen.getAllByText(i18n.t(`tasks.errors.${code}`))).toHaveLength(2))
+        expect(screen.queryByText(code)).not.toBeInTheDocument()
+        expect(screen.queryByText(i18n.t("tasks.errors.security_validation_failed"))).not.toBeInTheDocument()
+    })
+
     it("shows readiness wait while task remains running", async () => {
         const active = task("running", "deploy")
         active.result = { phase: "health_checking", health_check: { outcome: "pending", elapsed_seconds: 25, services: [{ service: "service-a", status: "pending", method: "native" }] } }

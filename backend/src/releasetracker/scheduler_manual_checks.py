@@ -78,7 +78,6 @@ class ReleaseSchedulerManualChecks:
                 trigger_mode="manual",
             )
 
-            releases = result["releases"]
             if result["latest_version"]:
                 latest_version = result["latest_version"]
             error = result.get("error")
@@ -93,11 +92,8 @@ class ReleaseSchedulerManualChecks:
                 ),
                 last_check=datetime.now(),
                 last_version=latest_version,
-                error=(
-                    error
-                    if releases or latest_version
-                    else (error or "No version information found")
-                ),
+                # A successful empty fetch is not a transport/source failure.
+                error=error,
                 channel_count=_tracker_channel_count(config),
                 manual_check_outcome="completed",
             )

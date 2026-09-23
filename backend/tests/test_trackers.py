@@ -1174,7 +1174,8 @@ async def test_local_rebuild_status_ignores_canonical_only_rows_without_redesign
     status = await scheduler.rebuild_tracker_views_from_storage("local-rebuild-canonical-only")
 
     assert status.last_version is None
-    assert status.error == "No version information found"
+    assert status.error is None
+    assert status.last_check is None
 
 
 @pytest.mark.asyncio

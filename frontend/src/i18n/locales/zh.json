@@ -1728,6 +1728,12 @@
       "bootstrap": "初始化"
     },
     "errors": {
+      "registry_repository_not_found": "未找到镜像仓库或当前凭证不可见。请核对镜像路径；仓库改名后需先构建并推送镜像，再重新拉取。",
+      "registry_authentication_failed": "镜像仓库认证失败，请检查配置的凭证是否有效。",
+      "registry_access_denied": "无权读取镜像仓库，请检查凭证的仓库读取权限。",
+      "upstream_http_401": "上游认证失败，请检查访问凭证。",
+      "upstream_http_403": "上游拒绝访问，请检查读取权限。",
+      "upstream_http_404": "上游资源不存在或当前凭证不可见，请检查来源地址和权限。",
       "security_validation_failed": "安全校验失败",
       "upstream_timeout": "上游请求超时",
       "upstream_connection_failed": "无法连接上游服务",

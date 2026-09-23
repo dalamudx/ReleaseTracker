@@ -13,6 +13,8 @@ from email.utils import parsedate_to_datetime
 
 import httpx
 
+from .registry_errors import RegistryTagListError
+
 from .outbound_http import (
     OutboundConnectError,
     OutboundDNSFailure,
@@ -51,13 +53,19 @@ def classify_fetch_error(error: BaseException) -> TaskResult:
         chain.append(error)
         error = error.__cause__ or error.__context__
     if any(
-        isinstance(
-            item, (ssl.SSLError, OutboundTLSFailure, OutboundURLRejected, OutboundRedirectRejected)
+        isinstance(item, (OutboundTLSFailure, OutboundURLRejected, OutboundRedirectRejected))
+        or (
+            isinstance(item, ssl.SSLError)
+            # Async TLS transports retain these ordinary I/O waits in timeout
+            # exception contexts. They are not certificate/handshake failures.
+            and not isinstance(item, (ssl.SSLWantReadError, ssl.SSLWantWriteError))
         )
         for item in chain
     ):
         return TaskResult("failed", "security_validation_failed")
     for item in chain:
+        if isinstance(item, RegistryTagListError):
+            return TaskResult("failed", item.code)
         if isinstance(item, httpx.HTTPStatusError):
             status = item.response.status_code
             retryable = status in {408, 425, 429, 500, 502, 503, 504}

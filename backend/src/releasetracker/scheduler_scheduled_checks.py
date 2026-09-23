@@ -62,11 +62,8 @@ class ReleaseSchedulerScheduledChecks:
                 enabled=True,
                 last_check=datetime.now(),
                 last_version=latest_version if releases or latest_version else None,
-                error=(
-                    error
-                    if releases or latest_version
-                    else (error or "No version information found")
-                ),
+                # A successful empty fetch is not a transport/source failure.
+                error=error,
             )
             await self.storage.update_tracker_status(status)
             return status

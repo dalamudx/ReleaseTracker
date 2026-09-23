@@ -14,6 +14,7 @@ from urllib.parse import urljoin
 import httpx
 
 from ..models import Release
+from ..services.registry_errors import RegistryTagListError
 from ..services.secure_urls import require_https_url, same_origin_https
 from .base import BaseTracker
 
@@ -437,6 +438,12 @@ class DockerTracker(BaseTracker):
                     client, "GET", url, headers=headers, timeout=self.timeout
                 )
                 resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                # A tag-list 404 includes OCI NAME_UNKNOWN and registries/proxies
+                # which return no JSON body. Never expose their raw response.
+                if exc.response.status_code in RegistryTagListError.DETAILS:
+                    raise RegistryTagListError(exc.response.status_code) from exc
+                raise
             except httpx.TimeoutException:
                 logger.error(f"DockerTracker: Registry request timed out. URL={url}")
                 raise ValueError("Container registry connection timed out")
