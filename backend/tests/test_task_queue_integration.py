@@ -338,8 +338,12 @@ async def test_task_api_redacts_private_payload_and_enforces_cancel_guard(storag
     assert authed_client.get("/api/tasks?state=failed").json()[0]["id"] == task["id"]
 
     approval_task = await storage.tasks.enqueue(
-        kind="deploy", resource_key="approval-resource", dedupe_key="approval-key",
-        payload={"executor_id": 1}, target_label="app", trigger_mode="manual",
+        kind="deploy",
+        resource_key="approval-resource",
+        dedupe_key="approval-key",
+        payload={"executor_id": 1},
+        target_label="app",
+        trigger_mode="manual",
     )
     async with storage.tasks.transaction() as db:
         await db.execute("UPDATE tasks SET approval_pending=1 WHERE id=?", (approval_task["id"],))
