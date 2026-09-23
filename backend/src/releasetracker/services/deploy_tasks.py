@@ -72,6 +72,9 @@ class DeployTasks:
                 runtime_identity, target_identity, configuration, tuple(markers), recovery
             )
 
+        from .runtime_credentials import materialize_runtime_connection_credentials
+
+        connection = await materialize_runtime_connection_credentials(self.storage, connection)
         adapter = self.scheduler._get_adapter(executor.id or -1, connection)
         await adapter.validate_target_ref(target_ref)
         markers = await adapter.get_managed_markers(target_ref)
