@@ -124,7 +124,13 @@ async def lifespan(app: FastAPI):
     app.state.instance_backup = instance_backup
 
     async def scheduled_backup():
-        await instance_backup.create(retain=backup_retain)
+        try:
+            await instance_backup.create(retain=backup_retain, scheduled=True)
+        except Exception:
+            # Status, metrics and a durable alert are recorded by the service.
+            logging.getLogger(__name__).error("Scheduled instance backup failed")
+        finally:
+            await storage.close_current_task_connection()
 
     if backup_hours:
         interval = backup_hours * 3600
@@ -160,7 +166,10 @@ async def lifespan(app: FastAPI):
     from .services.executor_notification_outbox import ExecutorNotificationOutbox
     from .services.deployment_admission_notifications import DeploymentAdmissionNotificationOutbox
 
+    from .services.release_notification_outbox import ReleaseNotificationOutbox
+
     notification_outbox = ExecutorNotificationOutbox(storage, scheduler_host)
+    release_notification_outbox = ReleaseNotificationOutbox(storage, scheduler_host)
     admission_notification_outbox = DeploymentAdmissionNotificationOutbox(storage, scheduler_host)
     executor_scheduler.notification_outbox = notification_outbox
 
@@ -189,6 +198,7 @@ async def lifespan(app: FastAPI):
     await task_queue.initialize()
     await readiness.initialize()
     await notification_outbox.initialize()
+    await release_notification_outbox.initialize()
     await admission_notification_outbox.initialize()
     await scheduler.initialize()
     await executor_scheduler.initialize()
@@ -205,6 +215,7 @@ async def lifespan(app: FastAPI):
     await task_queue.shutdown()
     await readiness.shutdown()
     await notification_outbox.shutdown()
+    await release_notification_outbox.shutdown()
     await admission_notification_outbox.shutdown()
     if executor_scheduler:
         await executor_scheduler.shutdown()

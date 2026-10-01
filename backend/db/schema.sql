@@ -720,6 +720,21 @@ CREATE TABLE tracker_release_history_tombstones (
     PRIMARY KEY (aggregate_tracker_id, identity_key),
     FOREIGN KEY (aggregate_tracker_id) REFERENCES aggregate_trackers(id) ON DELETE CASCADE
 );
+CREATE TABLE release_notification_outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    notifier_id INTEGER NOT NULL,
+    event TEXT NOT NULL,
+    dedupe_key TEXT NOT NULL,
+    release TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','sending','delivered','failed','discarded')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    available_at REAL NOT NULL,
+    created_at REAL NOT NULL,
+    delivered_at REAL,
+    UNIQUE(notifier_id, dedupe_key)
+);
+CREATE INDEX release_notification_outbox_due ON release_notification_outbox(status, available_at, id);
 -- Dbmate schema migrations
 INSERT INTO "schema_migrations" (version) VALUES
   ('20000101000001'),
@@ -744,4 +759,5 @@ INSERT INTO "schema_migrations" (version) VALUES
   ('20260922000002'),
   ('20260922000003'),
   ('20261001000001'),
-  ('20261002000001');
+  ('20261002000001'),
+  ('20261002000002');

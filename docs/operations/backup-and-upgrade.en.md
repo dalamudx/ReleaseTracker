@@ -18,6 +18,8 @@ ZIP files are **not encrypted** and include credentials, session state, and encr
 | `RELEASETRACKER_BACKUP_RETENTION` | `7` | Keep the newest 1–100 archives after each success; manual and automatic backups share retention |
 | `RELEASETRACKER_BACKUP_DIR` | `backups` beside the database | Protected directory; mount separate storage if desired |
 
+Every archive is read back after writing to verify checksums, SQLite integrity and credential decryption; corruption fails the backup. The Backups page shows the last successful backup, consecutive failures with their category, and an “overdue” warning when no backup succeeded within two intervals. Scheduled backup failures alert notifiers subscribed to the “error” event.
+
 Restoration is local CLI only and never overwrites a running database. Validate using the matching application image, stop all instances, then restore to a **nonexistent** directory. Validation checks ZIP members and size limits, SHA256, SQLite integrity, exact migration compatibility, and credential/snapshot decryption. Checksums detect corruption, not authenticity: restore only trusted archives.
 
 ```bash

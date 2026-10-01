@@ -118,6 +118,31 @@ async def test_started_mutation_is_never_retried(storage, monkeypatch):
     assert len(calls) == 1
 
 
+async def test_unreachable_target_stops_waiting_after_patience(storage, monkeypatch):
+    from releasetracker.services import deploy_tasks
+
+    executor_id, handler, queue, calls = await setup(storage, monkeypatch)
+    handler._collect_admission_evidence = AsyncMock(side_effect=OSError("unreachable"))
+    monkeypatch.setattr(deploy_tasks, "ADMISSION_EVIDENCE_PATIENCE", 3)
+    await handler.dispatch_pending()
+    states = []
+    for _ in range(3):
+        async with storage.tasks.transaction() as db:
+            await db.execute("UPDATE tasks SET due_at=0")
+        task = await storage.tasks.claim("deploy")
+        await queue._run(task)
+        current = await storage.tasks.get(task["id"])
+        states.append((current["state"], current["error_code"]))
+    assert states == [
+        ("queued", "admission_evidence_unavailable"),
+        ("queued", "admission_evidence_unavailable"),
+        ("needs_attention", "admission_evidence_stalled"),
+    ]
+    assert current["attempts"] == 0 and calls == []
+    # The operator now owns this target; automatic work stops instead of looping.
+    assert (await storage.get_executor_desired_state(executor_id)).pending is False
+
+
 async def test_manual_failure_is_not_retried(storage, monkeypatch):
     executor_id, handler, queue, calls = await setup(storage, monkeypatch)
     db = await storage._get_connection()

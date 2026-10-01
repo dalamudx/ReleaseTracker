@@ -17,5 +17,18 @@
   "retention": "Keep the latest {{count}} backups after each successful backup",
   "restoreTitle": "Restore offline",
   "restoreDescription": "Stop the instance first. Restore a trusted archive to a new directory with the matching application image, then switch the data mount. Existing data is never overwritten. Review pending deployments before restarting; restoring the database does not undo external updates.",
-  "configuration": "Configure scheduling with RELEASETRACKER_BACKUP_INTERVAL_HOURS (0–168; 0 disables it), retention with RELEASETRACKER_BACKUP_RETENTION (1–100), and a protected storage directory with RELEASETRACKER_BACKUP_DIR. Defaults: disabled, 7 copies, backups beside the database."
+  "configuration": "Configure scheduling with RELEASETRACKER_BACKUP_INTERVAL_HOURS (0–168; 0 disables it), retention with RELEASETRACKER_BACKUP_RETENTION (1–100), and a protected storage directory with RELEASETRACKER_BACKUP_DIR. Defaults: disabled, 7 copies, backups beside the database.",
+  "failing": "The last {{count}} backup(s) failed: {{reason}}. Notifiers subscribed to the “error” event were alerted.",
+  "overdue": "Automatic backups are overdue: the newest successful backup is older than two intervals.",
+  "lastSuccess": "Last successful backup: {{time}}",
+  "errors": {
+    "failed": "Unknown error",
+    "timeout": "Timed out",
+    "permission_denied": "Permission denied",
+    "storage_error": "Storage error (disk full or directory unavailable)",
+    "integrity_failed": "Integrity check failed",
+    "too_large": "Database exceeds the backup size limit",
+    "key_unavailable": "Keys unavailable or being rotated",
+    "validation_failed": "Validation failed"
+  }
 }

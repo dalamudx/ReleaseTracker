@@ -22,6 +22,10 @@ HTTP hosts must resolve to public addresses. Allowed ports are `80/8080` for HTT
 
 Default automatic checks use a 15-second grace period, 10-second attempt timeout, 5-second interval, and 180-second probe window. Adjust the grace period and window for slow startup; the window excludes the initial grace period. Failure can mark a run failed or degraded, but does not undo the update.
 
+## Failure policy {#failure-policy}
+
+Readiness observation honors the executor failure policy. `Mark failed` fails the task; `Mark degraded` keeps the update applied and finishes the task as “Deployment marked degraded”, with a `degraded:` run message so it is distinguishable from a hard failure (target changes or unobservable targets still require review). Failed HTTP/TCP application probes keep a categorized reason (timeout, connection refused, unexpected status, …) and the HTTP status code, never URLs or response bodies.
+
 ## Read-only observation after Kubernetes image pull failures {#image-pull}
 
 For newly submitted Kubernetes Deployments, ReleaseTracker reads waiting reasons on Pods matching the submitted workload and image. Confirmed transient pull timeouts, connection interruptions, or registry 5xx responses are checked **again at the original readiness deadline**; only a still-retrying pull receives a read-only grace period of up to one hour. No deployment is retried and no mutation attempt is spent. Checks run every 30–120 seconds during grace, with a deadline preserved across ReleaseTracker restarts. Missing/unauthorized images, container configuration failures, CrashLoopBackOff, and OOM are terminal; unknown or inaccessible evidence never extends the deadline. Raw Pod error messages may contain private registry URLs, so only categorized reason codes are saved.

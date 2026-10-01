@@ -201,7 +201,9 @@
     "copied": "已复制",
     "refresh": "刷新"
   },
-  "backups": { "tab": "备份" },
+  "backups": {
+    "tab": "备份"
+  },
   "sidebar": {
     "dashboard": "仪表盘",
     "history": "版本历史",
@@ -1588,7 +1590,36 @@
       "operator_reconciled": "管理员已人工核验",
       "worker_interrupted": "任务 Worker 已中断",
       "readiness_reconciled": "就绪观察已核验",
-      "readiness_baseline_unavailable": "无法获取更新前就绪基线"
+      "readiness_baseline_unavailable": "无法获取更新前就绪基线",
+      "incomplete_fetch": "部分来源返回的数据不完整",
+      "readiness_observation_unavailable": "无法观察就绪状态",
+      "admission_evidence_unavailable": "部署前无法检查目标",
+      "admission_evidence_stalled": "目标长时间不可达，部署需要人工处理",
+      "deployment_approval_required": "部署计划需要审批",
+      "deployment_blocked": "部署计划已被阻止",
+      "readiness_timeout": "就绪等待超时",
+      "readiness_unhealthy": "部署后不健康",
+      "readiness_unknown": "无法核验就绪状态",
+      "readiness_unsupported": "该目标不支持就绪检查",
+      "readiness_superseded": "就绪观察期间目标已变化",
+      "readiness_degraded": "部署已标记为降级",
+      "readiness_recheck_failed": "就绪复检失败",
+      "upstream_http_429": "上游限流",
+      "upstream_http_5xx": "上游服务器错误",
+      "admission_requires_unstarted_task": "部署准入需要新任务",
+      "task_lease_lost": "工作进程丢失任务租约",
+      "mutation_already_started": "部署已经开始",
+      "task_payload_changed": "准入期间任务已变化",
+      "approval_stale_or_blocked": "审批已过期或被阻止",
+      "deployment_plan_changed": "部署计划已变化",
+      "deployment_plan_not_approvable": "部署计划无法审批",
+      "installation_identity_missing": "缺少实例身份",
+      "managed_target_changed": "托管目标已变化",
+      "managed_target_missing": "托管目标缺失",
+      "plan_already_applied": "部署计划已执行",
+      "target_already_owned": "目标由其他实例托管",
+      "task_not_awaiting_approval": "任务不在等待审批状态",
+      "other": "其他错误"
     }
   },
   "readiness": {
@@ -1645,7 +1676,21 @@
       "readiness_recovered": "超时后就绪，已核对原部署目标",
       "running_no_healthcheck": "容器正在运行，但未配置 Healthcheck",
       "all_replicas_healthy": "所有目标副本均已运行并通过原生健康检查",
-      "other": "更多诊断信息请查看任务详情"
+      "other": "更多诊断信息请查看任务详情",
+      "probe_passed": "应用探针通过",
+      "probe_failed": "应用探针失败",
+      "probe_timeout": "应用探针超时",
+      "probe_connection_refused": "应用探针连接被拒绝",
+      "probe_dns_failure": "应用探针域名解析失败",
+      "probe_tls_error": "应用探针 TLS 错误",
+      "probe_network_unreachable": "应用探针网络不可达",
+      "probe_host_unresolvable": "应用探针无法解析主机",
+      "probe_status_mismatch": "应用探针返回非预期状态码",
+      "probe_body_mismatch": "应用探针响应内容不匹配",
+      "probe_runtime_api_error": "应用探针无法查询运行时",
+      "probe_other": "应用探针失败",
+      "application_probe": "应用探针",
+      "status_code": "HTTP {{code}}"
     }
   },
   "ssh": {

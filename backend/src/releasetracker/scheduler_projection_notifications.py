@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
 from .executor_trigger import enqueue_executor_binding_targets
 from .models import Release
-from .notifiers import SUPPORTED_NOTIFIER_TYPES, build_notifier
-from .notifiers.template_store import get_template
 from .notifiers.base import NotificationEvent
 
 logger = logging.getLogger(__name__)
@@ -113,13 +110,31 @@ class ReleaseSchedulerProjectionNotifications:
                 queued_count,
                 tracker_name,
             )
+        notified: set[str] = set()
         if winner_changed and current_best is not None:
-            if previous_best is not None and previous_best.version == current_best.version:
-                await self._send_notifications(NotificationEvent.REPUBLISH, current_best)
-            else:
-                await self._send_notifications(NotificationEvent.NEW_RELEASE, current_best)
+            await self._notify_change(previous_best, current_best)
+            notified.add(self._projection_release_identity(current_best))
+        if channels:
+            # A newer prerelease can own the tracker-wide winner while a stable
+            # channel also moves. Notify each changed channel winner once.
+            previous_by_channel = {r.channel_name: r for r in previous_projection if r.channel_name}
+            for release in projection_winners:
+                identity = self._projection_release_identity(release)
+                if not release.channel_name or identity in notified:
+                    continue
+                previous = previous_by_channel.get(release.channel_name)
+                if self._projection_release_changed(previous, release):
+                    release.tracker_name = tracker_name
+                    await self._notify_change(previous, release)
+                    notified.add(identity)
 
         return projection_winners, current_best.version if current_best is not None else None
+
+    async def _notify_change(self, previous: Release | None, current: Release) -> None:
+        if previous is not None and previous.version == current.version:
+            await self._send_notifications(NotificationEvent.REPUBLISH, current)
+        else:
+            await self._send_notifications(NotificationEvent.NEW_RELEASE, current)
 
     def _projection_release_identity(self, release: Release) -> str:
         # Notifications describe logical releases, not deployment artifacts. A new
@@ -147,46 +162,19 @@ class ReleaseSchedulerProjectionNotifications:
         )
 
     async def _send_notifications(self, event: str, release):
-        """Send a notification with fresh notifiers from the database each time."""
-        logger.info(
-            f"Preparing to send notifications for event: {event}, release: {release.version}"
-        )
+        """Queue durable, de-duplicated delivery; never send inline from a fetch."""
+        from .services.release_notification_outbox import enqueue_release_notification
 
-        active_notifiers = []
-
-        # Load directly from the database instead of self.notifiers cache to avoid duplicate sends
         try:
-            db_notifiers = await self.storage.get_notifiers()
-            logger.debug(f"Found {len(db_notifiers)} notifiers in DB")
-
-            for n in db_notifiers:
-                logger.debug(
-                    f"Checking notifier: {n.name}, enabled: {n.enabled}, type: {n.type}, events: {n.events}"
-                )
-                if n.enabled and n.type in SUPPORTED_NOTIFIER_TYPES and event in n.events:
-                    active_notifiers.append(
-                        build_notifier(
-                            notifier_type=n.type,
-                            name=n.name,
-                            url=n.url,
-                            events=n.events,
-                            language=n.language,
-                            template=await get_template(self.storage, n.template_id),
-                        )
-                    )
-        except Exception as e:
-            logger.error(f"Failed to load notifiers from DB: {e}")
-
-        logger.info(f"Active notifiers count: {len(active_notifiers)}")
-
-        if not active_notifiers:
-            logger.warning("No active notifiers found to send notification")
+            queued = await enqueue_release_notification(self.storage, event, release)
+        except Exception:
+            logger.error("Failed to queue release notification for %s", release.tracker_name)
             return
-
-        tasks = [notifier.notify(event, release) for notifier in active_notifiers]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for notifier, result in zip(active_notifiers, results, strict=True):
-            if isinstance(result, BaseException):
-                logger.error("Notifier delivery raised for %s: %s", notifier.name, result)
-            elif result is not True:
-                logger.error("Notifier delivery failed: %s", notifier.name)
+        if queued:
+            logger.info(
+                "Queued %s %s notification(s) for %s %s",
+                queued,
+                event,
+                release.tracker_name,
+                release.version,
+            )

@@ -17,5 +17,18 @@
   "retention": "每次备份成功后保留最近 {{count}} 份",
   "restoreTitle": "停机恢复",
   "restoreDescription": "先停止实例，使用匹配的应用镜像将可信备份恢复到全新目录，再切换数据挂载。不会覆盖现有数据。重新启动前请核对待部署任务；恢复数据库不会撤销外部应用更新。",
-  "configuration": "通过 RELEASETRACKER_BACKUP_INTERVAL_HOURS 设置频率（0–168，0 表示关闭），RELEASETRACKER_BACKUP_RETENTION 设置保留份数（1–100），RELEASETRACKER_BACKUP_DIR 指定私密存储目录。默认关闭自动备份、保留 7 份、存放于数据库旁的 backups 目录。"
+  "configuration": "通过 RELEASETRACKER_BACKUP_INTERVAL_HOURS 设置频率（0–168，0 表示关闭），RELEASETRACKER_BACKUP_RETENTION 设置保留份数（1–100），RELEASETRACKER_BACKUP_DIR 指定私密存储目录。默认关闭自动备份、保留 7 份、存放于数据库旁的 backups 目录。",
+  "failing": "最近 {{count}} 次备份失败：{{reason}}。已在配置了“错误”事件的通知渠道发送提醒。",
+  "overdue": "自动备份已过期：最近一次成功备份超过两个周期。",
+  "lastSuccess": "最近一次成功：{{time}}",
+  "errors": {
+    "failed": "未知错误",
+    "timeout": "超时",
+    "permission_denied": "没有写入权限",
+    "storage_error": "存储错误（空间不足或目录不可用）",
+    "integrity_failed": "完整性校验失败",
+    "too_large": "数据库超过备份大小上限",
+    "key_unavailable": "密钥不可用或正在轮换",
+    "validation_failed": "校验失败"
+  }
 }

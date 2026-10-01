@@ -228,6 +228,65 @@ async def test_backup_api_auth_confirmation_and_download(
     assert authed_client.get("/api/backups").status_code == 401
 
 
+@pytest.mark.asyncio
+async def test_scheduled_failure_records_status_and_alerts_once(
+    storage, system_key_manager, monkeypatch, authed_client
+):
+    from releasetracker.main import app
+
+    created = await storage.create_notifier(
+        {
+            "name": "ops",
+            "type": "webhook",
+            "url": "https://hooks.example/x",
+            "events": ["error"],
+            "enabled": True,
+        }
+    )
+    service = backup.InstanceBackup(storage, system_key_manager)
+    good = await service.create()
+    assert (await service.status())["consecutive_failures"] == 0
+
+    def fail(*args, **kwargs):
+        raise OSError("/secret/path disk full")
+
+    monkeypatch.setattr(backup, "_create_archive", fail)
+    for _ in range(2):
+        with pytest.raises(OSError):
+            await service.create(scheduled=True)
+    status = await service.status()
+    assert status["consecutive_failures"] == 2
+    assert status["last_error_code"] == "storage_error"
+    assert "secret" not in json.dumps(status)
+    db = await storage._get_connection()
+    alerts = await (
+        await db.execute("SELECT notifier_id,event,release FROM release_notification_outbox")
+    ).fetchall()
+    assert len(alerts) == 1 and alerts[0][0] == created.id and alerts[0][1] == "error"
+    assert "secret" not in alerts[0][2]
+
+    app.state.instance_backup = service
+    monkeypatch.setenv("RELEASETRACKER_BACKUP_INTERVAL_HOURS", "24")
+    listed = authed_client.get("/api/backups").json()
+    assert listed["consecutive_failures"] == 2 and listed["last_error_code"] == "storage_error"
+    assert listed["overdue"] is False and listed["last_success_at"] == pytest.approx(
+        good.stat().st_mtime
+    )
+
+
+@pytest.mark.asyncio
+async def test_corrupt_written_archive_is_reported(storage, system_key_manager, monkeypatch):
+    service = backup.InstanceBackup(storage, system_key_manager)
+
+    def corrupt(archive):
+        raise ValueError("Backup database integrity check failed")
+
+    monkeypatch.setattr(backup, "verify_archive", corrupt)
+    with pytest.raises(ValueError):
+        await service.create()
+    assert (await service.status())["last_error_code"] == "integrity_failed"
+
+
 @pytest.mark.parametrize("hours,retain", [("169", "7"), ("-1", "7"), ("x", "7"), ("24", "0")])
 def test_invalid_schedule_fails_closed(monkeypatch, hours, retain):
     monkeypatch.setenv("RELEASETRACKER_BACKUP_INTERVAL_HOURS", hours)

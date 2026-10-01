@@ -23,6 +23,8 @@ Republish means upstream content changed under the same version tag. Before enab
 
 ## Delivery behavior {#delivery}
 
-Rate limits and transport failures receive only bounded retries. Failed events are not stored in a durable replay queue. A successful test does not guarantee every future delivery.
+New-release, republish, executor result and scheduled-backup failure notifications are written to a durable queue before background delivery. Delivery resumes after restarts or interrupted sends and retries with 30 s, 2 min, 10 min and 30 min backoff, failing after 4 attempts. A notifier receives each release (including digest) only once. Queued messages are discarded if the notifier is disabled or unsubscribed. A successful test does not guarantee every future delivery.
+
+New-release notifications are evaluated **per channel**: when a newer prerelease is the tracker-wide winner, a new stable release still notifies on its own. Scheduled backup failures use the “error” event, alerting once per failure streak (a success resets it); alerts contain only an error category, never paths or keys.
 
 Disabling a notifier retains configuration and stops sending. Links in messages depend on [BASE URL](../reference/settings.md). For delivery failures, use [Notification troubleshooting](../reference/troubleshooting.md#notifications).

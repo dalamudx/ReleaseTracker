@@ -49,6 +49,27 @@ describe("instance backup controls", () => {
         expect(screen.getByRole("button", { name: "创建备份" })).toBeDisabled()
         expect(screen.queryByText("暂无备份，建议在升级或轮换密钥前创建。")).not.toBeInTheDocument()
     })
+    it("surfaces failing and overdue automatic backups", async () => {
+        vi.mocked(backupApi.list).mockResolvedValue({
+            items: [{ name: "old.zip", size: 1000, created_at: 100 }], interval_hours: 24, retention: 7, running: false,
+            last_success_at: 100, consecutive_failures: 3, last_error_code: "storage_error", overdue: true,
+        })
+        view()
+        const alert = await screen.findByRole("alert")
+        expect(alert).toHaveTextContent("最近 3 次备份失败：存储错误")
+        expect(alert).toHaveTextContent("自动备份已过期")
+        expect(alert).toHaveTextContent("最近一次成功")
+    })
+
+    it("hides the health banner when backups are healthy", async () => {
+        vi.mocked(backupApi.list).mockResolvedValue({
+            items: [], interval_hours: 24, retention: 7, running: false, consecutive_failures: 0, overdue: false,
+        })
+        view()
+        await screen.findByText("每 24 小时自动备份")
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument()
+    })
+
     it("uses the authenticated download API and reports failure", async () => {
         vi.mocked(backupApi.list).mockResolvedValue({ items: [{ name: "test.zip", size: 1000, created_at: 100 }], interval_hours: 24, retention: 7, running: false })
         vi.mocked(backupApi.download).mockRejectedValue(new Error("expired"))

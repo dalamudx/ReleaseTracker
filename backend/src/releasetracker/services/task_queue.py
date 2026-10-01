@@ -42,6 +42,7 @@ class TaskResult:
 class Deferred:
     until: float
     code: str
+    result: dict | None = None
 
 
 def classify_fetch_error(error: BaseException) -> TaskResult:
@@ -191,7 +192,14 @@ class TaskQueue:
                 else await handler.prepare(task)
             )
             if isinstance(prepared, Deferred):
-                await self.store.finish(task, "queued", code=prepared.code, due_at=prepared.until)
+                # Keep progress counters across retry-neutral deferrals.
+                await self.store.finish(
+                    task,
+                    "queued",
+                    code=prepared.code,
+                    due_at=prepared.until,
+                    result=prepared.result if prepared.result is not None else task.get("result"),
+                )
                 return
             if isinstance(prepared, TaskResult):
                 outcome = prepared

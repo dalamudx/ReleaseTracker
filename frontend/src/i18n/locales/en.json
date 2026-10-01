@@ -201,7 +201,9 @@
     "copied": "Copied",
     "refresh": "Refresh"
   },
-  "backups": { "tab": "Backups" },
+  "backups": {
+    "tab": "Backups"
+  },
   "sidebar": {
     "dashboard": "Dashboard",
     "history": "Version History",
@@ -1588,7 +1590,36 @@
       "operator_reconciled": "Manually reconciled by operator",
       "worker_interrupted": "Worker was interrupted",
       "readiness_reconciled": "Readiness observation was reconciled",
-      "readiness_baseline_unavailable": "Could not capture the pre-update readiness baseline"
+      "readiness_baseline_unavailable": "Could not capture the pre-update readiness baseline",
+      "incomplete_fetch": "Some sources returned incomplete data",
+      "readiness_observation_unavailable": "Readiness could not be observed",
+      "admission_evidence_unavailable": "Target could not be inspected before deployment",
+      "admission_evidence_stalled": "Target unreachable for too long; deployment needs review",
+      "deployment_approval_required": "Deployment plan requires approval",
+      "deployment_blocked": "Deployment plan is blocked",
+      "readiness_timeout": "Readiness timed out",
+      "readiness_unhealthy": "Deployment is unhealthy",
+      "readiness_unknown": "Readiness could not be verified",
+      "readiness_unsupported": "Readiness checks are not supported for this target",
+      "readiness_superseded": "Target changed during readiness observation",
+      "readiness_degraded": "Deployment marked degraded",
+      "readiness_recheck_failed": "Readiness recheck failed",
+      "upstream_http_429": "Upstream rate limited the request",
+      "upstream_http_5xx": "Upstream server error",
+      "admission_requires_unstarted_task": "Deployment admission requires a new task",
+      "task_lease_lost": "Worker lost its task lease",
+      "mutation_already_started": "Deployment had already started",
+      "task_payload_changed": "Task changed during admission",
+      "approval_stale_or_blocked": "Approval is stale or blocked",
+      "deployment_plan_changed": "Deployment plan changed",
+      "deployment_plan_not_approvable": "Deployment plan cannot be approved",
+      "installation_identity_missing": "Installation identity is missing",
+      "managed_target_changed": "Managed target changed",
+      "managed_target_missing": "Managed target is missing",
+      "plan_already_applied": "Deployment plan was already applied",
+      "target_already_owned": "Target is managed by another installation",
+      "task_not_awaiting_approval": "Task is not awaiting approval",
+      "other": "Other error"
     }
   },
   "readiness": {
@@ -1645,7 +1676,21 @@
       "readiness_recovered": "Ready after timeout; original target verified",
       "running_no_healthcheck": "Running; no healthcheck configured",
       "all_replicas_healthy": "All target replicas are running and healthy",
-      "other": "Additional diagnostics available in the task details"
+      "other": "Additional diagnostics available in the task details",
+      "probe_passed": "Application probe passed",
+      "probe_failed": "Application probe failed",
+      "probe_timeout": "Application probe timed out",
+      "probe_connection_refused": "Application probe connection refused",
+      "probe_dns_failure": "Application probe DNS lookup failed",
+      "probe_tls_error": "Application probe TLS error",
+      "probe_network_unreachable": "Application probe network unreachable",
+      "probe_host_unresolvable": "Application probe host could not be resolved",
+      "probe_status_mismatch": "Application probe returned an unexpected status",
+      "probe_body_mismatch": "Application probe response did not match",
+      "probe_runtime_api_error": "Application probe could not query the runtime",
+      "probe_other": "Application probe failed",
+      "application_probe": "Application probe",
+      "status_code": "HTTP {{code}}"
     }
   },
   "ssh": {

@@ -19,9 +19,10 @@ export function ReadinessSummary({ result, recheck = false }: { result?: unknown
         {recheck && <p className="text-muted-foreground">{t("readiness.recheckHelp")}</p>}
         {services.length > 0 && <ul className="space-y-1 text-muted-foreground">
             {services.map((service, index) => <li key={index}>
-                {typeof service.service === "string" ? service.service : "—"}: {typeof service.status === "string" ? t(`readiness.outcome.${service.status}`, { defaultValue: t("readiness.outcome.unknown") }) : "—"}
+                {typeof service.service === "string" ? (service.service === "Application probe" ? t("readiness.messages.application_probe") : service.service) : "—"}: {typeof service.status === "string" ? t(`readiness.outcome.${service.status}`, { defaultValue: t("readiness.outcome.unknown") }) : "—"}
                 {typeof service.method === "string" && service.method ? ` · ${t(`readiness.method.${service.method}`, { defaultValue: fallback(service.method, "method") })}` : ""}
                 {typeof service.message === "string" && service.message ? ` — ${translateReason(service.message)}` : ""}
+                {typeof service.status_code === "number" ? ` (${t("readiness.messages.status_code", { code: service.status_code })})` : ""}
             </li>)}
         </ul>}
     </div>

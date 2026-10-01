@@ -19,6 +19,20 @@ from ..executor_scheduler_run_lifecycle import ExecutorRunOutcome
 
 logger = logging.getLogger(__name__)
 DEFAULTS = {"timeout": 600, "interval": 5, "attempt_timeout": 10, "stable": 10}
+PROBE_REASONS = frozenset(
+    {
+        "timeout",
+        "connection_refused",
+        "dns_failure",
+        "tls_error",
+        "network_unreachable",
+        "host_unresolvable",
+        "status_mismatch",
+        "body_mismatch",
+        "runtime_api_error",
+        "other",
+    }
+)
 
 
 def readiness_grace_seconds():
@@ -366,11 +380,19 @@ class DeploymentReadiness:
             "service": "Application probe",
             "method": executor.health_check.strategy,
             "status": "healthy" if extra.healthy else "pending",
-            "message": "Application probe passed" if extra.healthy else "Application probe pending",
+            # Finite reason codes only: probe errors may contain URLs or headers.
+            "message": (
+                "probe_passed"
+                if extra.healthy
+                else f"probe_{extra.error_category if extra.error_category in PROBE_REASONS else 'failed'}"
+            ),
         }
+        status_code = (extra.detail or {}).get("http_last_status")
+        if not extra.healthy and isinstance(status_code, int):
+            service["status_code"] = status_code
         result = result | {"services": [*result.get("services", []), service]}
         if not extra.healthy:
-            return result | {"outcome": "pending", "message": "Application probe pending"}
+            return result | {"outcome": "pending", "message": service["message"]}
         return result
 
     async def _observe(self, row):
@@ -589,6 +611,17 @@ class DeploymentReadiness:
                 else result.get("message") or f"Readiness {result['outcome']}"
             )
         )
+        degraded = (
+            status == "failed"
+            and not partial
+            and result["outcome"] in {"unhealthy", "timeout"}
+            and executor.health_check.failure_policy == "mark_degraded"
+        )
+        if degraded:
+            # Same contract as the legacy runner: the update stays applied and is
+            # reported as degraded, distinguishable from a hard readiness failure.
+            result["failure_policy"] = "mark_degraded"
+            final["message"] = f"degraded: {final['message']}"
         final["last_error"] = None if status == "success" else final["message"]
         if status == "success" and executor.target_ref.get("mode") == "ssh_compose":
             snapshot_id = final["diagnostics"].get("snapshot_id")
@@ -704,7 +737,11 @@ class DeploymentReadiness:
                 (
                     task_state,
                     json.dumps(task_result),
-                    None if status == "success" else f"readiness_{result['outcome']}",
+                    (
+                        None
+                        if status == "success"
+                        else "readiness_degraded" if degraded else f"readiness_{result['outcome']}"
+                    ),
                     final["message"],
                     now,
                     row["task_id"],

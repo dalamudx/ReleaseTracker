@@ -18,6 +18,9 @@ from .deployment_plan import MANAGED_MARKERS, TargetEvidence, fingerprint, manag
 from ..storage.sqlite_deployment_admission import AdmissionConflict, DeploymentAdmissionStore
 
 PRE_MUTATION_RETRIES = 2
+# Consecutive read-only inspection failures (30 s apart, only counted while the
+# task is otherwise eligible to run) before an operator must look at the target.
+ADMISSION_EVIDENCE_PATIENCE = 120
 PRE_MUTATION_RETRY_SECONDS = 300
 
 
@@ -295,8 +298,21 @@ class DeployTasks:
             )
         except Exception:
             # Remote inspection is read-only and retry-neutral; do not consume a
-            # deployment attempt while a target is temporarily unavailable.
-            return Deferred(time.time() + 30, "admission_evidence_unavailable")
+            # deployment attempt while a target is temporarily unavailable, but
+            # never wait silently forever for an unreachable target.
+            previous = task.get("result") or {}
+            failures = int(previous.get("admission_evidence_failures", 0)) + 1
+            if failures >= ADMISSION_EVIDENCE_PATIENCE:
+                return TaskResult(
+                    "needs_attention",
+                    "admission_evidence_stalled",
+                    message="target could not be inspected for an extended period",
+                )
+            return Deferred(
+                time.time() + 30,
+                "admission_evidence_unavailable",
+                result=previous | {"admission_evidence_failures": failures},
+            )
         if plan["state"] != "approved":
             return TaskResult(
                 "awaiting_approval",

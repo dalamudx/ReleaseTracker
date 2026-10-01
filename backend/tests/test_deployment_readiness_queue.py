@@ -531,6 +531,79 @@ async def test_pull_recovers_at_grace_deadline_without_false_failure(storage, mo
     ] is True
 
 
+async def test_mark_degraded_policy_is_honored_by_readiness(storage, monkeypatch):
+    import json
+
+    _, _, observer, probe, now, task, run_id = await setup(
+        storage, monkeypatch, stable=0, timeout=30
+    )
+    db = await storage._get_connection()
+    row = await (
+        await db.execute(
+            "SELECT executor_config FROM deployment_observations WHERE task_id=?", (task["id"],)
+        )
+    ).fetchone()
+    config = json.loads(row[0])
+    config["health_check"].update(
+        strategy="auto",
+        failure_policy="mark_degraded",
+        probe_window_seconds=60,
+        interval_seconds=5,
+        attempt_timeout_seconds=5,
+    )
+    await db.execute(
+        "UPDATE deployment_observations SET executor_config=? WHERE task_id=?",
+        (json.dumps(config), task["id"]),
+    )
+    await db.commit()
+    probe.return_value = {"outcome": "unhealthy", "services": []}
+    await observe(storage, observer, task["id"])
+    done = await storage.tasks.get(task["id"])
+    assert done["state"] == "failed"
+    assert done["error_code"] == "readiness_degraded"
+    run = await storage.get_executor_run(run_id)
+    assert run.message.startswith("degraded:")
+    assert run.diagnostics["health_check"]["failure_policy"] == "mark_degraded"
+
+
+async def test_application_probe_failure_keeps_safe_reason(storage, monkeypatch):
+    from types import SimpleNamespace
+    from releasetracker.executors.health_check.types import ProbeAttemptResult
+    from releasetracker.executors.health_check import factory
+
+    _, scheduler, observer, _, _, _, _ = await setup(storage, monkeypatch)
+    attempt = AsyncMock(
+        return_value=ProbeAttemptResult(
+            healthy=False,
+            error_category="status_mismatch",
+            detail={"http_last_status": 503, "url": "https://user:secret@internal"},
+            last_error="GET https://user:secret@internal returned 503",
+        )
+    )
+    monkeypatch.setattr(
+        factory.ProbeFactory, "build", lambda self, *args: SimpleNamespace(attempt=attempt)
+    )
+    monkeypatch.setattr(storage, "get_runtime_connection", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        "releasetracker.services.runtime_credentials.materialize_runtime_connection_credentials",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(scheduler, "_get_adapter", MagicMock())
+    executor = SimpleNamespace(
+        id=1,
+        runtime_connection_id=1,
+        target_ref={"mode": "container"},
+        health_check=SimpleNamespace(strategy="manual_http"),
+    )
+    result = await observer._supplement(
+        executor, {"run_id": 1}, {"outcome": "healthy", "services": []}, 5
+    )
+    assert result["outcome"] == "pending"
+    assert result["message"] == "probe_status_mismatch"
+    assert result["services"][-1]["status_code"] == 503
+    assert "secret" not in str(result)
+
+
 async def test_waiting_observation_blocks_delete_until_terminal(storage, monkeypatch):
     executor, _, observer, _, _, task, _ = await setup(storage, monkeypatch, stable=0)
     assert not await storage.delete_executor_config(executor.id)

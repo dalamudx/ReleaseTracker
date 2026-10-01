@@ -2,6 +2,7 @@
 
 import logging
 import re
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -36,10 +37,19 @@ def entry(path: Path):
 async def list_backups(request: Request):
     backup = service(request)
     hours, retain = backup_options()
+    status = await backup.status()
+    latest = backup.latest_archive_time()
     return {
         "interval_hours": hours,
         "retention": retain,
         "running": backup.lock.locked(),
+        "last_success_at": latest,
+        "last_failure_at": status.get("last_failure_at"),
+        "last_error_code": status.get("last_error_code"),
+        "consecutive_failures": int(status.get("consecutive_failures") or 0),
+        # Overdue when scheduled backups exist but the newest archive is older
+        # than twice the interval (one missed run tolerated).
+        "overdue": bool(hours) and (latest is None or time.time() - latest > hours * 7200),
         "items": [
             entry(p)
             for p in sorted(backup.directory.glob("releasetracker-*.zip"), reverse=True)

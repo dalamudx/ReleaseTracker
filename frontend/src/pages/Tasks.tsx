@@ -4,6 +4,7 @@ import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router"
 import { useTranslation } from "react-i18next"
+import { taskErrorLabel } from "@/lib/task-errors"
 import "@/i18n/version-policy"
 import {
     AlertTriangle,
@@ -252,7 +253,7 @@ function TaskItem({ task }: { task: QueueTask }) {
                     <CollapsibleContent>
                         <div className="mt-2 space-y-3 border-t border-border/60 pt-3">
                             {waiting && <div className="flex items-center gap-1 text-xs text-muted-foreground"><Clock className="size-3" aria-hidden="true" /><time dateTime={new Date(task.created_at * 1000).toISOString()}>{time(task.created_at)}</time></div>}
-                            {task.error_code && <p className="break-words text-xs font-medium text-destructive">{t(`tasks.errors.${task.error_code}`, { defaultValue: task.error_code })}</p>}
+                            {task.error_code && <p className="break-words text-xs font-medium text-destructive">{taskErrorLabel(t, task.error_code)}</p>}
                             {task.message && <p className="whitespace-pre-wrap break-words text-xs text-muted-foreground">{task.message}</p>}
                             {task.state === "needs_attention" && (
                                 <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
@@ -330,7 +331,7 @@ function TaskItem({ task }: { task: QueueTask }) {
                                                 <time className="text-muted-foreground/80">{time(attempt.started_at)}</time>
                                                 {attempt.error_code && (
                                                     <span className="rounded bg-destructive/10 px-1 py-0.5 text-[11px] text-destructive break-all">
-                                                        {t(`tasks.errors.${attempt.error_code}`, { defaultValue: attempt.error_code })}
+                                                        {taskErrorLabel(t, attempt.error_code)}
                                                     </span>
                                                 )}
                                             </li>

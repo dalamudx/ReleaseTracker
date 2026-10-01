@@ -4,6 +4,7 @@ import { Link } from "react-router"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
+import { taskErrorLabel } from "@/lib/task-errors"
 import { formatDistanceToNow } from "date-fns"
 import { enUS, zhCN } from "date-fns/locale"
 import {
@@ -260,7 +261,7 @@ export function TaskNotificationPopover() {
                                 <ReadinessSummary result={task.result?.health_recheck} recheck />
                                 {task.error_code && (
                                     <div className="mt-0.5 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] text-destructive truncate">
-                                        {t(`tasks.errors.${task.error_code}`, { defaultValue: task.error_code })}
+                                        {taskErrorLabel(t, task.error_code)}
                                     </div>
                                 )}
                             </div>

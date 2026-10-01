@@ -152,6 +152,37 @@ def pre_migration_backup(db_path, keys_path, directory, migrations_dir):
     return _create_archive(db_path, keys, directory, reason="pre_migration")
 
 
+BACKUP_STATUS_SETTING = "system.instance_backup_status"
+
+
+def _failure_code(error: BaseException) -> str:
+    """Finite codes only; exception text may contain paths or key material."""
+    if isinstance(error, TimeoutError):
+        return "timeout"
+    if isinstance(error, PermissionError):
+        return "permission_denied"
+    if isinstance(error, OSError):
+        return "storage_error"
+    if isinstance(error, ValueError):
+        text = str(error)
+        if "already running" in text:
+            return "already_running"
+        if "integrity" in text:
+            return "integrity_failed"
+        if "size limit" in text:
+            return "too_large"
+        if "rotation" in text or "key" in text.lower():
+            return "key_unavailable"
+        return "validation_failed"
+    return "failed"
+
+
+def verify_archive(archive) -> None:
+    """Read the written ZIP back: checksums, SQLite integrity and decryption."""
+    with tempfile.TemporaryDirectory(prefix=".verify-", dir=Path(archive).parent) as temporary:
+        validate_archive(archive, temporary)
+
+
 class InstanceBackup:
     def __init__(self, storage, key_manager, directory=None):
         self.storage = storage
@@ -173,12 +204,63 @@ class InstanceBackup:
             return None
         return max(times, default=None)
 
-    async def create(self, *, retain=7):
+    async def status(self):
+        raw = await self.storage.get_setting(BACKUP_STATUS_SETTING)
         try:
-            return await self._create(retain=retain)
-        except Exception:
+            value = json.loads(raw) if raw else {}
+        except ValueError:
+            value = {}
+        return value if isinstance(value, dict) else {}
+
+    async def _record(self, **changes):
+        await self.storage.set_setting(
+            BACKUP_STATUS_SETTING, json.dumps((await self.status()) | changes)
+        )
+
+    async def create(self, *, retain=7, scheduled=False):
+        try:
+            archive = await self._create(retain=retain)
+            # Detect a corrupt write before it becomes the only restore point.
+            await asyncio.to_thread(verify_archive, archive)
+        except Exception as error:
             self.failures += 1
+            code = _failure_code(error)
+            if code != "already_running":
+                await self._failed(code, scheduled=scheduled)
             raise
+        await self._record(
+            last_success_at=time.time(),
+            last_verified_at=time.time(),
+            consecutive_failures=0,
+            last_error_code=None,
+        )
+        return archive
+
+    async def _failed(self, code, *, scheduled):
+        status = await self.status()
+        failures = int(status.get("consecutive_failures") or 0) + 1
+        await self._record(
+            last_failure_at=time.time(), last_error_code=code, consecutive_failures=failures
+        )
+        if not scheduled:
+            return  # The administrator saw the failure in the UI already.
+        from .release_notification_outbox import enqueue_system_alert
+
+        try:
+            await enqueue_system_alert(
+                self.storage,
+                # One alert per failure streak; a success resets the streak.
+                f"backup_failed:{status.get('last_success_at') or 0}",
+                {
+                    "tracker_name": "ReleaseTracker",
+                    "entity": "instance_backup",
+                    "error": f"Scheduled backup failed ({code})",
+                    "reason": code,
+                    "consecutive_failures": failures,
+                },
+            )
+        except Exception:
+            pass  # Alerting must never mask the original backup failure.
 
     async def _create(self, *, retain):
         if not 1 <= retain <= 100:

@@ -52,6 +52,22 @@ export function BackupSettings() {
             </CardHeader>
             <CardContent className="flex min-w-0 flex-col gap-6">
                 <p className="text-sm text-warning">{t("sensitive")}</p>
+                {query.data && (query.data.consecutive_failures || query.data.overdue) ? (
+                    <div role="alert" className="flex flex-col gap-1 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
+                        {query.data.consecutive_failures ? (
+                            <p className="font-medium text-destructive">
+                                {t("failing", {
+                                    count: query.data.consecutive_failures,
+                                    reason: t(`errors.${query.data.last_error_code ?? "failed"}`, { defaultValue: t("errors.failed") }),
+                                })}
+                            </p>
+                        ) : null}
+                        {query.data.overdue ? <p className="text-destructive">{t("overdue")}</p> : null}
+                        {query.data.last_success_at ? (
+                            <p className="text-muted-foreground tabular-nums">{t("lastSuccess", { time: new Date(query.data.last_success_at * 1000).toLocaleString(i18n.language) })}</p>
+                        ) : null}
+                    </div>
+                ) : null}
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex flex-col gap-1 text-sm text-muted-foreground">
                         {query.data ? <>
