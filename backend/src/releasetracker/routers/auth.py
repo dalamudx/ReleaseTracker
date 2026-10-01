@@ -12,7 +12,7 @@ from ..dependencies import (
     get_auth_service,
     get_current_admin_user,
     get_current_user,
-    oauth2_scheme,
+    get_auth_token,
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -85,7 +85,7 @@ async def login_for_access_token(
 
 @router.post("/logout")
 async def logout(
-    token: Annotated[str, Depends(oauth2_scheme)],
+    token: Annotated[str, Depends(get_auth_token)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ):
     await auth_service.logout(token)
@@ -95,7 +95,7 @@ async def logout(
 @router.post("/change-password")
 async def change_password(
     req: ChangePasswordRequest,
-    token: Annotated[str, Depends(oauth2_scheme)],
+    token: Annotated[str, Depends(get_auth_token)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ):
     try:

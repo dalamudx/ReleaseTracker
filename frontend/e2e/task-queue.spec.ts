@@ -4,7 +4,7 @@ for (const width of [1280, 390]) {
     test(`clear finished tasks and consistent navigation at ${width}px`, async ({ page }) => {
         await page.setViewportSize({width, height: 900})
         await page.addInitScript(() => {
-            localStorage.setItem("token", "e2e-access-token")
+            document.cookie = "releasetracker-csrf=fixture-csrf; path=/"
             localStorage.setItem("language", "zh")
         })
         const errors: string[] = []
@@ -51,7 +51,7 @@ for (const width of [1280, 390]) {
 
     test(`header task popover interaction at ${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 900 })
-        await page.addInitScript(() => localStorage.setItem("token", "e2e-access-token"))
+        await page.addInitScript(() => document.cookie = "releasetracker-csrf=fixture-csrf; path=/")
         const errors: string[] = []
         page.on("pageerror", error => errors.push(error.message))
         const task = { id: 18, kind: "fetch", state: "running", target_label: "header-smoke", attempts: 1, max_retries: 3, due_at: 1789705000, created_at: 1789704900, updated_at: 1789705000, error_code: null, result: {}, target: { tracker_name: "header-smoke" }, attempt_history: [], triggers: [{ trigger_mode: "webhook", created_at: 1789704900 }] }
@@ -77,7 +77,7 @@ for (const width of [1280, 390]) {
 
     test(`task queue receipt and cancellation at ${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 900 })
-        await page.addInitScript(() => localStorage.setItem("token", "e2e-access-token"))
+        await page.addInitScript(() => document.cookie = "releasetracker-csrf=fixture-csrf; path=/")
         const errors: string[] = []
         page.on("pageerror", error => errors.push(error.message))
         const task = { id: 17, kind: "fetch", state: "retry_wait", target_label: "queue-smoke", attempts: 1, max_retries: 3, due_at: 1789705000, created_at: 1789704900, updated_at: 1789705000, error_code: "upstream_timeout", result: { source_fetch_run_ids: { "2": 88 } }, target: { tracker_name: "queue-smoke" }, attempt_history: [], triggers: [{ trigger_mode: "webhook", created_at: 1789704900 }] }
@@ -105,7 +105,7 @@ for (const width of [1280, 390]) {
     test(`review and approve a deployment plan at ${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 900 })
         await page.addInitScript(() => {
-            localStorage.setItem("token", "e2e-access-token")
+            document.cookie = "releasetracker-csrf=fixture-csrf; path=/"
             localStorage.setItem("language", "zh")
         })
         const errors: string[] = []
@@ -163,7 +163,7 @@ for (const width of [1280, 390]) {
         await page.goto("/tasks")
         await expect(page.getByText("sample-api deployment", { exact: true })).toBeVisible()
         await page.getByRole("button", { name: "任务 #42 详情", exact: true }).click()
-        await expect(page.getByText("需要确认部署计划", { exact: true })).toBeVisible()
+        await expect(page.getByRole("main").last().getByText("需要确认部署计划", { exact: true })).toBeVisible()
         await expect(page.getByText("运行时身份：sample-runtime/sample-api", { exact: true })).toBeVisible()
         await page.getByRole("button", { name: "确认并继续部署", exact: true }).click()
         await expect.poll(() => approvalRequest).toMatchObject({
@@ -171,7 +171,7 @@ for (const width of [1280, 390]) {
             fingerprint: "sample-plan-fingerprint",
             plan_reviewed: true,
         })
-        await expect(page.getByText("需要确认部署计划", { exact: true })).toHaveCount(0)
+        await expect(page.getByRole("main").last().getByText("需要确认部署计划", { exact: true })).toHaveCount(0)
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
         expect(errors).toEqual([])
     })
@@ -179,7 +179,7 @@ for (const width of [1280, 390]) {
     test(`surfaces stale and ownership-conflict approval responses at ${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 900 })
         await page.addInitScript(() => {
-            localStorage.setItem("token", "e2e-access-token")
+            document.cookie = "releasetracker-csrf=fixture-csrf; path=/"
             localStorage.setItem("language", "zh")
         })
         const tasks = [

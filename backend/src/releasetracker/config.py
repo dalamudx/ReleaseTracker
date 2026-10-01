@@ -998,6 +998,7 @@ class ExecutorConfig(BaseModel):
     ] = "replace_tag_on_current_image"
     image_reference_mode: Literal["digest", "tag"] = "digest"
     update_mode: Literal["manual", "maintenance_window", "immediate"] = "manual"
+    auto_update_policy: Literal["all", "minor", "patch"] = "all"
     target_ref: dict[str, Any] = Field(default_factory=dict)
     service_bindings: list[ExecutorServiceBinding] = Field(default_factory=list)
     maintenance_window: MaintenanceWindowConfig | None = None

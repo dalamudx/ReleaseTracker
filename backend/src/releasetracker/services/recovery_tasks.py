@@ -48,9 +48,10 @@ class RecoveryTasks(DeployTasks):
         executor = await self.storage.get_executor_config(task["payload"]["executor_id"])
         if executor is None or await self.identity(executor) != task["payload"]["config_identity"]:
             return TaskResult("superseded", "configuration_changed")
-        await self.storage.tasks.bind_mutation_scope(
+        if not await self.storage.tasks.bind_mutation_scope(
             task, await mutation_resource_key(self.storage, self.scheduler, executor)
-        )
+        ):
+            return Deferred(time.time() + 5, "target_awaiting_readiness")
         observer = getattr(self.scheduler, "readiness", None)
         if observer is not None and await observer.conflicts(executor, include_blocked=False):
             return Deferred(time.time() + 5, "target_awaiting_readiness")

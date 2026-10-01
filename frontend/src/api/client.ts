@@ -1,6 +1,7 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
 import type { QueueTask, TaskReceipt } from "./task-types"
 import { appPath } from "@/lib/base-path"
+import { getCsrfToken, withSessionLock } from "@/lib/browser-session"
 import type {
     AggregateTracker,
     ReleaseStats,
@@ -33,7 +34,6 @@ import type {
     UpdateExecutorRequest,
     CreateRuntimeConnectionRequest,
     UpdateRuntimeConnectionRequest,
-    TokenPair,
     PaginatedSnapshots,
     SnapshotDetail,
     DeleteSnapshotResponse,
@@ -57,20 +57,27 @@ const API_BASE = appPath("")
 
 export const apiClient = axios.create({
     baseURL: API_BASE,
+    withCredentials: true,
     headers: {
         'Content-Type': 'application/json',
     },
 })
 
 const AUTH_REDIRECT_HEADER = 'x-auth-skip-redirect'
-const AUTH_REFRESH_ENDPOINT = '/api/auth/refresh'
+const AUTH_REFRESH_ENDPOINT = '/api/auth/browser/refresh'
 const AUTH_REDIRECT_EXCLUDED_PATHS = new Set([
     appPath('/api/auth/login'),
+    appPath('/api/auth/browser/login'),
+    appPath('/api/auth/browser/migrate'),
     appPath('/api/auth/register'),
 ])
 const AUTH_REFRESH_EXCLUDED_PATHS = new Set([
     appPath('/api/auth/login'),
+    appPath('/api/auth/browser/login'),
+    appPath('/api/auth/browser/migrate'),
     appPath('/api/auth/logout'),
+    appPath('/api/auth/browser/logout'),
+    appPath('/api/auth/browser/refresh'),
     appPath('/api/auth/refresh'),
 ])
 
@@ -79,6 +86,7 @@ type RetryableRequestConfig = InternalAxiosRequestConfig & {
 }
 
 let refreshPromise: Promise<void> | null = null
+let migrationPromise: Promise<void> | null = null
 
 function shouldSkipAuthRedirect(error: AxiosError): boolean {
     const headerValue = error.config?.headers?.[AUTH_REDIRECT_HEADER]
@@ -136,13 +144,6 @@ function shouldAttemptTokenRefresh(error: AxiosError): boolean {
     return !AUTH_REFRESH_EXCLUDED_PATHS.has(requestPath)
 }
 
-function persistTokenPair(tokenPair: TokenPair): void {
-    localStorage.setItem('token', tokenPair.access_token)
-    if (tokenPair.refresh_token) {
-        localStorage.setItem('refresh_token', tokenPair.refresh_token)
-    }
-}
-
 export function clearAuthStorage(): void {
     localStorage.removeItem('token')
     localStorage.removeItem('refresh_token')
@@ -166,40 +167,30 @@ function handleTerminalUnauthorized(error: AxiosError): void {
 }
 
 async function refreshAccessToken(): Promise<void> {
-    const storedRefreshToken = localStorage.getItem('refresh_token')
-    if (!storedRefreshToken) {
-        clearAuthStorage()
-        throw new Error('Missing refresh token')
-    }
-
+    const previousCsrf = getCsrfToken()
+    if (!previousCsrf) throw new Error('Missing browser session')
     if (!refreshPromise) {
-        refreshPromise = (async () => {
+        refreshPromise = withSessionLock(async () => {
+            if (getCsrfToken() !== previousCsrf) return // Another tab already rotated.
             try {
-                const refreshResponse = await apiClient.post<TokenPair>(
-                    AUTH_REFRESH_ENDPOINT,
-                    { refresh_token: storedRefreshToken },
-                    {
-                        headers: { [AUTH_REDIRECT_HEADER]: 'true' },
-                    }
-                )
-                persistTokenPair(refreshResponse.data)
+                await apiClient.post(AUTH_REFRESH_ENDPOINT, undefined, {
+                    headers: { [AUTH_REDIRECT_HEADER]: 'true', 'X-ReleaseTracker-Browser': '1' },
+                })
             } catch (error) {
+                if (getCsrfToken() && getCsrfToken() !== previousCsrf) return
                 clearAuthStorage()
                 throw error
-            } finally {
-                refreshPromise = null
             }
-        })()
+        }).finally(() => { refreshPromise = null })
     }
-
     await refreshPromise
 }
 
-// Request interceptor: add token
+// HttpOnly session credentials are sent by the browser, never read by JS.
 apiClient.interceptors.request.use((config) => {
-    const token = localStorage.getItem('token')
-    if (token) {
-        config.headers.Authorization = `Bearer ${token}`
+    if (!['get', 'head', 'options'].includes(config.method?.toLowerCase() ?? 'get')) {
+        const csrf = getCsrfToken()
+        if (csrf) config.headers['X-CSRF-Token'] = csrf
     }
     return config
 })
@@ -322,7 +313,19 @@ export const api = {
     getRepositoryWebhookDeliveries: (id: string) => apiClient.get<RepositoryWebhookDelivery[]>(`/api/webhooks/repositories/${id}/deliveries`).then(res => res.data),
 
     // Auth
-    login: (data: AuthLoginRequest) => apiClient.post('/api/auth/login', data).then(res => res.data),
+    login: (data: AuthLoginRequest) => apiClient.post<{user: User}>('/api/auth/browser/login', data, {headers:{'X-ReleaseTracker-Browser':'1'}}).then(res => res.data),
+    logout: () => apiClient.post('/api/auth/browser/logout', undefined, {headers:{'X-ReleaseTracker-Browser':'1'}}).then(res => res.data),
+    migrateSession: () => {
+        if (!migrationPromise) {
+            migrationPromise = withSessionLock(async () => {
+                const refresh = localStorage.getItem('refresh_token')
+                clearAuthStorage()
+                if (getCsrfToken()) return // Cookie sessions win over stale local credentials.
+                if (refresh) await apiClient.post('/api/auth/browser/migrate', {refresh_token: refresh}, {headers:{'X-ReleaseTracker-Browser':'1', [AUTH_REDIRECT_HEADER]:'true'}})
+            }).finally(() => { migrationPromise = null })
+        }
+        return migrationPromise
+    },
     register: (data: AuthRegisterRequest) => apiClient.post('/api/auth/register', data).then(res => res.data),
     getCurrentUser: (options?: { suppressAuthRedirect?: boolean }) =>
         apiClient.get<User>('/api/auth/me', {

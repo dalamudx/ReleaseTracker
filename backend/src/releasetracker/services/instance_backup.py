@@ -242,6 +242,12 @@ def restore_to_new_directory(archive, destination):
     with tempfile.TemporaryDirectory(prefix=".restore-", dir=destination.parent) as temporary:
         root = Path(temporary)
         manifest = validate_archive(archive, root)
+        # A restored point must not resurrect already revoked browser/API
+        # sessions or replay a stale OIDC callback. Preserve the original ZIP.
+        with closing(sqlite3.connect(root / "releases.db")) as db:
+            db.execute("DELETE FROM sessions")
+            db.execute("DELETE FROM oauth_states")
+            db.commit()
         # Validation includes decryption with the archived keys.
         for file in root.iterdir():
             with file.open("rb") as handle:

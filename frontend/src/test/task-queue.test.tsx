@@ -50,6 +50,17 @@ describe("persistent task queue", () => {
         expect(api.getDeploymentPlan).toHaveBeenCalledWith(17)
     })
 
+    it("explains version-limited deployment approval", async () => {
+        const pending = { ...task("queued", "deploy"), approval_pending: true }
+        vi.mocked(api.getTasks).mockResolvedValue([pending])
+        vi.mocked(api.getTask).mockResolvedValue(pending)
+        vi.mocked(api.getDeploymentPlan).mockResolvedValue({id:9, task_id:17, fingerprint:"policy-plan", state:"pending", reason:"version_policy_requires_approval", expires_at:1789706800, summary:{}})
+        show()
+        await screen.findByText("nginx-test")
+        fireEvent.click(screen.getByRole("button", {name:i18n.t("tasks.details", {id:17})}))
+        expect(await screen.findByText(i18n.t("versionPolicy:approval"))).toBeVisible()
+    })
+
     it.each(["zh", "en"])("explains missing images in the task and attempt history (%s)", async (language) => {
         await i18n.changeLanguage(language)
         const code = "registry_repository_not_found"

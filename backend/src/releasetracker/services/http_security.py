@@ -95,6 +95,7 @@ class LoginRateLimitMiddleware:
             in {
                 "/api/auth/login",
                 "/api/auth/token",
+                "/api/auth/browser/login",
             }
         ):
             peer = (scope.get("client") or ("unknown",))[0]
@@ -151,5 +152,10 @@ def configure_http_security(app):
             allow_origins=origins,
             allow_credentials=True,
             allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-            allow_headers=["Authorization", "Content-Type"],
+            allow_headers=[
+                "Authorization",
+                "Content-Type",
+                "X-CSRF-Token",
+                "X-ReleaseTracker-Browser",
+            ],
         )

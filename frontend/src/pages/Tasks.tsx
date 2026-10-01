@@ -4,6 +4,7 @@ import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router"
 import { useTranslation } from "react-i18next"
+import "@/i18n/version-policy"
 import {
     AlertTriangle,
     ArrowDownToLine,
@@ -280,6 +281,7 @@ function TaskItem({ task }: { task: QueueTask }) {
                                     {plan.isLoading && <p className="text-xs text-muted-foreground">{t("common.loading", { defaultValue: "Loading..." })}</p>}
                                     {plan.data && (
                                         <div className="grid gap-1.5 rounded-md border border-border/60 bg-background/50 p-2.5 text-xs">
+                                            {plan.data.reason === "version_policy_requires_approval" && <p className="font-medium">{t("versionPolicy:approval")}</p>}
                                             <p>{t("tasks.planTarget", { target: plan.data.summary.target_label ?? task.target_label })}</p>
                                             <p>{t("tasks.planIdentity", { identity: plan.data.summary.identity_key ?? "—" })}</p>
                                             <p>{t("tasks.planRecovery", { scope: plan.data.summary.recovery_scope ?? "—" })}</p>

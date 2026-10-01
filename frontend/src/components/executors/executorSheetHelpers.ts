@@ -32,6 +32,7 @@ export interface ExecutorFormValues {
     channel_name: string
     enabled: boolean
     update_mode: ExecutorUpdateMode
+    auto_update_policy?: ExecutorConfig["auto_update_policy"]
     image_selection_mode: ImageSelectionMode
     image_reference_mode: ImageReferenceMode
     description: string
@@ -969,6 +970,7 @@ export function createDefaultExecutorValues(defaultRuntimeConnection?: RuntimeCo
         channel_name: "",
         enabled: true,
         update_mode: "manual",
+        auto_update_policy: "all",
         image_selection_mode: "replace_tag_on_current_image",
         image_reference_mode: "digest",
         description: "",
@@ -1017,6 +1019,7 @@ export function buildExecutorFormValues(config: ExecutorConfig): ExecutorFormVal
         channel_name: config.channel_name ?? "",
         enabled: config.enabled,
         update_mode: config.update_mode,
+        auto_update_policy: config.auto_update_policy ?? "all",
         image_selection_mode: config.image_selection_mode ?? "replace_tag_on_current_image",
         image_reference_mode: config.image_reference_mode ?? "digest",
         description: config.description ?? "",
@@ -1432,6 +1435,7 @@ export function buildExecutorPayload({
         channel_name: usesGroupedServiceBindings(selectedTargetRef) ? (serviceBindings[0]?.channel_name || null) : (values.channel_name || null),
         enabled: values.enabled,
         update_mode: values.update_mode,
+        auto_update_policy: values.auto_update_policy ?? "all",
         image_selection_mode: values.image_selection_mode,
         image_reference_mode: values.image_reference_mode,
         target_ref: selectedTargetRef.mode === "ssh_compose"

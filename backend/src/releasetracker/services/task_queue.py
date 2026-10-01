@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import ssl
 import time
@@ -122,7 +123,14 @@ class TaskQueue:
         self.store = store
         self.scheduler_host = scheduler_host
         self.handlers = {}
-        self.capacity = {"fetch": 3, "deploy": 1, "recover": 1}
+        self.mutation_capacity = int(os.environ.get("RELEASETRACKER_MUTATION_CONCURRENCY", "1"))
+        if not 1 <= self.mutation_capacity <= 3:
+            raise ValueError("Mutation concurrency must be between 1 and 3")
+        self.capacity = {
+            "fetch": 3,
+            "deploy": self.mutation_capacity,
+            "recover": self.mutation_capacity,
+        }
         self.workers = {}
         self.stopping = False
         self.dispatch_lock = asyncio.Lock()
@@ -144,7 +152,7 @@ class TaskQueue:
                     continue
                 running = sum(1 for work_kind, _ in self.workers.values() if work_kind == kind)
                 for _ in range(capacity - running):
-                    task = await self.store.claim(kind)
+                    task = await self.store.claim(kind, mutation_capacity=self.mutation_capacity)
                     if not task:
                         break
                     worker = asyncio.create_task(self._run(task), name=f"task-{task['id']}")

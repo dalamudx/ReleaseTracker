@@ -698,7 +698,7 @@ class User(BaseModel):
     id: int | None = None
     username: str
     email: str
-    password_hash: str | None = None  # Nullable for legacy OIDC-only rows
+    password_hash: str | None = Field(default=None, exclude=True)  # Never serialize password hashes
     oauth_provider: str | None = None  # Legacy OIDC provider slug
     oauth_sub: str | None = None  # OIDC Subject（unique identifier）
     avatar_url: str | None = None

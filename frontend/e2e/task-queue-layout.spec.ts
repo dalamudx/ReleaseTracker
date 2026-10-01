@@ -5,7 +5,7 @@ for (const width of [1280, 1920, 390]) {
         test(`compact task summaries ${width}px ${language}`, async ({page}) => {
             await page.setViewportSize({width, height: 900})
             await page.addInitScript(language => {
-                localStorage.setItem("token", "test-token")
+                document.cookie = "releasetracker-csrf=fixture-csrf; path=/"
                 localStorage.setItem("language", language)
             }, language)
             const tasks = ["retry_wait", "needs_attention", "succeeded"].map((state, i) => ({

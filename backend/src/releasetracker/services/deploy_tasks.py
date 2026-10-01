@@ -127,6 +127,10 @@ class DeployTasks:
         payload = {
             "executor_id": executor_id,
             "manual": manual,
+            "auto_update_policy": executor.auto_update_policy,
+            "policy_bindings": [
+                binding.model_dump(mode="json") for binding in executor.service_bindings
+            ],
             "config_identity": identity,
             "desired_revision": desired_revision,
             "targets": targets,

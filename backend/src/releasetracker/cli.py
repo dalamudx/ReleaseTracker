@@ -71,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 manifest = restore_to_new_directory(args.archive, args.destination)
                 print(
-                    "Restored to a new directory. Keep the old volume; review pending tasks before enabling deployment."
+                    "Restored to a new directory; sessions and OAuth states revoked. Keep the old volume; review pending tasks before enabling deployment."
                 )
             print(json.dumps(manifest, indent=2))
             return 0

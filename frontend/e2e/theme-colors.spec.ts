@@ -11,7 +11,7 @@ for (const palette of cases) {
     test(`semantic palette ${palette.mode} ${palette.color} ${palette.width}`, async ({ page }) => {
         await page.setViewportSize({ width: palette.width, height: 900 })
         await page.addInitScript(config => {
-            localStorage.setItem("token", "example-token")
+            document.cookie = "releasetracker-csrf=fixture-csrf; path=/"
             localStorage.setItem("language", "en")
             localStorage.setItem("vite-ui-theme-config", JSON.stringify({ ...config, radius: 0.5, zoom: "default" }))
         }, palette)

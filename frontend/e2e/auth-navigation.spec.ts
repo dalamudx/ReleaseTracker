@@ -32,13 +32,12 @@ async function installApiFixture(page: Page, latestReleases: unknown[] = []) {
             body: JSON.stringify(json),
         })
 
-        if (path === "/api/auth/login") {
-            return fulfill({
-                user: e2eUser,
-                token: {
-                    access_token: "e2e-access-token",
-                    refresh_token: "e2e-refresh-token",
-                },
+        if (path === "/api/auth/browser/login") {
+            return route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                headers: { "set-cookie": "releasetracker-csrf=fixture-csrf; Path=/; SameSite=Lax" },
+                body: JSON.stringify({ user: e2eUser }),
             })
         }
 
@@ -72,7 +71,7 @@ test("renders lazy release notes from the production bundle", async ({ page }) =
     const pageErrors: string[] = []
     page.on("pageerror", error => pageErrors.push(error.message))
     await page.addInitScript(() => {
-        localStorage.setItem("token", "e2e-access-token")
+        document.cookie = "releasetracker-csrf=fixture-csrf; path=/"
     })
     await installApiFixture(page, [{
         tracker_release_history_id: 101,
@@ -129,9 +128,11 @@ test("logs in through the form and restores the protected tracker route", async 
     await expect(page.getByRole("main").last()).toBeVisible()
     await expect.poll(() => requests.some(request => request.path === "/api/trackers")).toBe(true)
 
-    await expect(page.evaluate(() => localStorage.getItem("token"))).resolves.toBe("e2e-access-token")
+    await expect(page.evaluate(() => localStorage.getItem("token"))).resolves.toBeNull()
+    await expect(page.evaluate(() => localStorage.getItem("refresh_token"))).resolves.toBeNull()
+    await expect(page.evaluate(() => document.cookie)).resolves.toContain("releasetracker-csrf=")
 
-    const loginRequest = requests.find(request => request.path === "/api/auth/login")
+    const loginRequest = requests.find(request => request.path === "/api/auth/browser/login")
     expect(loginRequest?.method).toBe("POST")
     expect(JSON.parse(loginRequest?.body ?? "{}"))
         .toEqual({ username: e2eUser.username, password: "e2e-password" })

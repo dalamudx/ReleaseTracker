@@ -777,6 +777,7 @@ export interface ExecutorConfig {
     channel_name?: string | null
     enabled: boolean
     update_mode: ExecutorUpdateMode
+    auto_update_policy?: "all" | "minor" | "patch"
     image_selection_mode?: ImageSelectionMode | null
     image_reference_mode?: ImageReferenceMode | null
     target_ref: ExecutorTargetRef
@@ -902,6 +903,7 @@ export interface ExecutorDetail {
     tracker_name: string
     enabled: boolean
     update_mode: ExecutorUpdateMode
+    auto_update_policy?: "all" | "minor" | "patch"
     image_selection_mode?: ImageSelectionMode | null
     image_reference_mode?: ImageReferenceMode | null
     runtime_connection_id: number

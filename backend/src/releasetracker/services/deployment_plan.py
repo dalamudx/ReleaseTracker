@@ -86,6 +86,8 @@ def plan_fingerprint(task: dict, evidence: TargetEvidence) -> str:
             "task_id": task["id"],
             "config_identity": task["payload"]["config_identity"],
             "targets": task["payload"].get("targets", []),
+            "version_policy": task["payload"].get("auto_update_policy", "all"),
+            "policy_bindings": task["payload"].get("policy_bindings", []),
             "identity": evidence.identity_key,
             "evidence": evidence.evidence_hash,
             "markers": sorted(

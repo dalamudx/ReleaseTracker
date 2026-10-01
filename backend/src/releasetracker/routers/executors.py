@@ -146,6 +146,9 @@ async def _validate_executor_payload(
     update_mode = executor_data.get(
         "update_mode", existing_executor.update_mode if existing_executor else "manual"
     )
+    auto_update_policy = executor_data.get(
+        "auto_update_policy", existing_executor.auto_update_policy if existing_executor else "all"
+    )
     image_selection_mode = executor_data.get(
         "image_selection_mode",
         (
@@ -425,6 +428,7 @@ async def _validate_executor_payload(
         image_selection_mode=image_selection_mode,
         image_reference_mode=image_reference_mode,
         update_mode=update_mode,
+        auto_update_policy=auto_update_policy,
         target_ref=normalized_target_ref,
         service_bindings=service_bindings,
         maintenance_window=maintenance_window,
@@ -650,6 +654,7 @@ async def get_executor_status_detail(
         "service_bindings": [binding.model_dump() for binding in executor.service_bindings],
         "enabled": executor.enabled,
         "update_mode": executor.update_mode,
+        "auto_update_policy": executor.auto_update_policy,
         "image_selection_mode": executor.image_selection_mode,
         "image_reference_mode": executor.image_reference_mode,
         "runtime_connection_id": executor.runtime_connection_id,
@@ -744,6 +749,7 @@ async def create_executor(
         return {
             "message": f"Executor {executor.name} created",
             "id": executor_id,
+            "auto_update_policy": executor.auto_update_policy,
             "health_check": executor.health_check.model_dump(mode="json"),
         }
     except HTTPException:
@@ -781,6 +787,7 @@ async def update_executor(
         await scheduler.refresh_executor(executor_id)
         return {
             "message": f"Executor {executor.name} updated",
+            "auto_update_policy": executor.auto_update_policy,
             "health_check": executor.health_check.model_dump(mode="json"),
         }
     except HTTPException:

@@ -17,7 +17,7 @@ async function fits(page: Page, region?: Locator) {
 for (const width of [1280, 390]) {
   test(`readiness pending tasks and service evidence at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })
-    await page.addInitScript(() => { localStorage.setItem("token", "fixture-token"); localStorage.setItem("language", "en") })
+    await page.addInitScript(() => { document.cookie = "releasetracker-csrf=fixture-csrf; path=/"; localStorage.setItem("language", "en") })
     const errors: string[] = []
     page.on("pageerror", error => errors.push(error.message))
     const task = { id: 71, kind: "deploy", state: "running", target_label: "service-a deployment", attempts: 1, max_retries: 0, due_at: 1789705000, created_at: 1789704900, updated_at: 1789705000, result: { phase: "health_checking", health_check: health("pending") }, target: {}, attempt_history: [], triggers: [] }
@@ -68,7 +68,7 @@ for (const width of [1280, 390]) {
 
   test(`health notification defaults off and persists opt-in at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })
-    await page.addInitScript(() => { localStorage.setItem("token", "fixture-token"); localStorage.setItem("language", "en") })
+    await page.addInitScript(() => { document.cookie = "releasetracker-csrf=fixture-csrf; path=/"; localStorage.setItem("language", "en") })
     const errors: string[] = []
     page.on("pageerror", error => errors.push(error.message))
     let config: Record<string, unknown> = { id: 1, name: "service-a executor", runtime_type: "docker", runtime_connection_id: 1, tracker_name: "sample-tracker", tracker_source_id: 9, channel_name: "stable", enabled: true, update_mode: "manual", image_selection_mode: "replace_tag_on_current_image", image_reference_mode: "digest", current_image: image, target_ref: { mode: "container", container_id: "fixture-container", container_name: "service-a" }, service_bindings: [] }

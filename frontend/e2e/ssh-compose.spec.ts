@@ -6,7 +6,7 @@ test(`creates an SSH Compose executor from analyzed services (${width}px)`, asyn
     const errors: string[] = []
     page.on("pageerror", error => errors.push(error.message))
     await page.addInitScript(() => {
-        localStorage.setItem("token", "e2e-token")
+        document.cookie = "releasetracker-csrf=fixture-csrf; path=/"
         localStorage.setItem("language", "en")
     })
     let saved: Record<string, unknown> | null = null

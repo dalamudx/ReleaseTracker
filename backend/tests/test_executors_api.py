@@ -2493,6 +2493,47 @@ async def test_delete_executor_snapshot_returns_409_for_in_flight_snapshot(authe
 
 
 @pytest.mark.asyncio
+async def test_executor_version_policy_roundtrips_api(authed_client, storage):
+    runtime_id = await _create_runtime_connection(storage, name="policy-api")
+    await _create_tracker(storage, name="policy-api")
+    source_id = await _get_tracker_source_id(storage, "policy-api")
+    payload = {
+        "name": "policy-api",
+        "runtime_type": "docker",
+        "runtime_connection_id": runtime_id,
+        "tracker_name": "policy-api",
+        "tracker_source_id": source_id,
+        "channel_name": "stable",
+        "enabled": False,
+        "update_mode": "manual",
+        "target_ref": {"mode": "container", "container_id": "policy-api"},
+        "auto_update_policy": "patch",
+    }
+    created = authed_client.post("/api/executors", json=payload)
+    assert created.status_code == 200
+    assert created.json()["auto_update_policy"] == "patch"
+    executor_id = created.json()["id"]
+    assert (
+        authed_client.get(f"/api/executors/{executor_id}").json()["auto_update_policy"] == "patch"
+    )
+    assert authed_client.get("/api/executors").json()["items"][0]["auto_update_policy"] == "patch"
+    for update, expected in [
+        ({"auto_update_policy": "minor"}, "minor"),
+        ({"description": "preserve policy"}, "minor"),
+    ]:
+        response = authed_client.put(f"/api/executors/{executor_id}", json=update)
+        assert response.status_code == 200
+        assert response.json()["auto_update_policy"] == expected
+    assert (
+        authed_client.put(
+            f"/api/executors/{executor_id}", json={"auto_update_policy": "invalid"}
+        ).status_code
+        == 400
+    )
+    assert (await storage.get_executor_config(executor_id)).auto_update_policy == "minor"
+
+
+@pytest.mark.asyncio
 async def test_create_executor_defaults_health_check_to_strategy_none(
     authed_client, storage, monkeypatch
 ):

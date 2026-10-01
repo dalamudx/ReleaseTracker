@@ -4,13 +4,13 @@ import hashlib
 import logging
 import secrets
 from typing import Annotated
-from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import RedirectResponse
 
 from ..services.oidc_service import OIDCService, generate_pkce_pair
 from ..services.auth import AuthService
+from ..services.browser_sessions import set_session_cookies
 from ..storage.sqlite import SQLiteStorage
 from ..dependencies import get_storage, get_auth_service
 from ..services.secure_urls import require_canonical_https_base_url
@@ -190,17 +190,9 @@ async def oidc_callback(
         logger.error(f"OIDC callback unexpected error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="OIDC authentication failed")
 
-    # 5. Redirect to the frontend with the token in the URL hash so it does not appear in server logs
+    # Tokens travel only in HttpOnly cookies, never in the redirect URL.
     frontend_url = await _get_public_base_url(storage)
-    callback_payload = urlencode(
-        {
-            "token": token_pair.access_token,
-            "access_token": token_pair.access_token,
-            "refresh_token": token_pair.refresh_token,
-            "token_type": token_pair.token_type,
-            "expires_in": str(token_pair.expires_in),
-        }
-    )
-    response = RedirectResponse(url=f"{frontend_url}/#{callback_payload}")
+    response = RedirectResponse(url=f"{frontend_url}/#oidc=success")
+    await set_session_cookies(response, request, storage, token_pair)
     _clear_browser_binding_cookie(response)
     return response

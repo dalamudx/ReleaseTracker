@@ -13,7 +13,17 @@ from releasetracker.main import app
 
 
 @pytest.mark.asyncio
-async def test_online_snapshot_and_restore(storage, system_key_manager, tmp_path):
+async def test_online_snapshot_and_restore(storage, system_key_manager, tmp_path, auth_service):
+    from releasetracker.models import LoginRequest
+    from releasetracker.services.auth import pwd_context
+
+    await auth_service.ensure_admin_user()
+    admin = await storage.get_user_by_username("admin")
+    await storage.update_user_password(admin.id, pwd_context.hash("backup-password"))
+    await auth_service.login(LoginRequest(username="admin", password="backup-password"))
+    await storage.save_oauth_state(
+        "restore-state", "provider", "verifier", "nonce", "login", "hash"
+    )
     await storage.set_setting("backup-probe", "snapshot")
     service = backup.InstanceBackup(storage, system_key_manager)
     archive = await service.create()
@@ -27,6 +37,8 @@ async def test_online_snapshot_and_restore(storage, system_key_manager, tmp_path
     ).read_bytes() == system_key_manager.secrets_path.read_bytes()
     db = sqlite3.connect(destination / "releases.db")
     try:
+        assert db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM oauth_states").fetchone()[0] == 0
         assert (
             db.execute("SELECT value FROM settings WHERE key='backup-probe'").fetchone()[0]
             == "snapshot"

@@ -36,6 +36,12 @@ A maintenance window is not a fixed release schedule. A run can be skipped when 
 
 Image fields do not apply to Helm releases, which select chart versions. A matching Git tag does not guarantee that an image tag exists; check the repository and build publication rules.
 
+## Automatic version limits {#version-policy}
+
+The executor form offers no version limit (default), minor-and-patch only, or patch only. The latter two compare the running version with the target using stable SemVer. Changes outside the limit, downgrades, prereleases, and tags/digests that cannot be mapped to a version require deployment-plan approval without spending deployment retries. Approval is bound to configuration, targets, and policy; changed evidence requires approval again. Managed baselines do not bypass the limit.
+
+Containers use image tags; Helm uses chart versions, not appVersion. Groups compare bound services only, excluding sidecars. Paths without a reliable running version, such as SSH Compose, require approval. Manual deployments are exempt from automatic limits but still obey ownership, security, and recovery conditions.
+
 ## Verify one update {#verify}
 
 Before running, check the target version, image policy, and service bindings. Afterwards, inspect run status, target versions, and per-service diagnostics in execution history, then check application availability.

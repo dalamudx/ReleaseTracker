@@ -96,6 +96,10 @@ livenessProbe:
 
 后台任务默认每 2 秒轮询。如更重视空闲资源占用，可设置 `RELEASETRACKER_WORKER_POLL_SECONDS=5`（整数 1–60）；会同时增加任务派发、就绪观察、通知和 Webhook 处理的延迟，不改变追踪器检查或每日清理频率。此选项不引入多实例或并行部署支持。
 
+部署与恢复默认串行。可设置 `RELEASETRACKER_DEPLOYMENT_CONCURRENCY=2` 启用有界并发（1–3，启动时生效），两类任务共享名额；同一目标、同一执行器和身份未知的任务仍不能并行。不会因此支持多实例共享 SQLite。请先完成备份、核实目标范围并观察维护窗口，资源不足或存在争用时改回 `1`。
+
+浏览器会话采用 HttpOnly Cookie，不再将 JWT 存入 localStorage 或 OIDC URL。HTTPS 使用 `Secure`、`__Host-` 和 `SameSite=Lax`；本地 HTTP 开发使用非 Secure Cookie。生产应配置正确的 HTTPS 系统访问地址和可信代理，使 Cookie 的协议判断正确。写操作须携带与会话绑定的 CSRF Cookie/Header；续期会轮换刷新令牌，浏览器标签页通过 Web Locks 串行化续期（不支持时退回当前标签页单飞）。升级会尝试将旧刷新令牌迁移成 Cookie 后清除本地令牌；过期会话需要重新登录。CLI/API 的 `/api/auth/token` 与 Bearer 协议保持兼容，不依赖浏览器 Cookie；此模式不支持任意跨站前端通过 Cookie 登录。
+
 构建时 dbmate 与 Helm 下载会核对固定 SHA256；覆盖 `DBMATE_VERSION` 或 `HELM_VERSION` 时，必须同时提供经过独立验证的 `DBMATE_SHA256` 或 `HELM_SHA256`。
 
 ## 首次登录 {#3}

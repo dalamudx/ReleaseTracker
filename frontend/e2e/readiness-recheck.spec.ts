@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test"
 
 for (const width of [1280, 390]) test(`explicit read-only recheck keeps original outcome at ${width}px`, async ({ page }) => {
   await page.setViewportSize({ width, height: 900 })
-  await page.addInitScript(() => { localStorage.setItem("token", "fixture-token"); localStorage.setItem("language", "en") })
+  await page.addInitScript(() => { document.cookie = "releasetracker-csrf=fixture-csrf; path=/"; localStorage.setItem("language", "en") })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   const writes: string[] = []

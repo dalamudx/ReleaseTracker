@@ -239,46 +239,65 @@ class TaskStore:
     async def bind_mutation_scope(self, task, resource_key):
         """Revalidate the domain under a live lease before any remote mutation.
 
-        Running mutations remain globally serialized. Only uncertain *finished*
-        work is isolated, and only when both targets have proven identities.
-        Legacy/unknown domains retain their conservative global fence.
+        A freshly resolved domain must also be free of running mutations.
+        Legacy/unknown domains retain their conservative global fence, and
+        the same executor cannot escape a fence by changing runtime identity.
         """
         async with self.transaction() as db:
-            cursor = await db.execute(
-                "UPDATE tasks SET resource_key=? WHERE id=? AND owner=? "
-                "AND state='running' AND lease_until>?",
-                (resource_key, task["id"], task["owner"], time.time()),
-            )
-            if cursor.rowcount != 1:
+            leased = await (
+                await db.execute(
+                    "SELECT 1 FROM tasks WHERE id=? AND owner=? AND state='running' AND lease_until>?",
+                    (task["id"], task["owner"], time.time()),
+                )
+            ).fetchone()
+            if leased is None:
                 raise RuntimeError("Task lease lost")
-            task["resource_key"] = resource_key
-            if task["kind"] == "recover":
-                return True
             row = await (
                 await db.execute(
-                    """SELECT 1 FROM tasks WHERE state='needs_attention'
+                    """SELECT 1 FROM tasks WHERE (
+                         (state='running' AND owner IS NOT NULL) OR
+                         (state='needs_attention' AND ?='deploy'))
                        AND kind IN ('deploy','recover') AND id!=? AND (
                          resource_key=? OR resource_key='deployment-mutations' OR
                          ?='deployment-mutations' OR json_extract(payload,'$.executor_id')=?
                        ) LIMIT 1""",
-                    (task["id"], resource_key, resource_key, task["payload"]["executor_id"]),
+                    (
+                        task["kind"],
+                        task["id"],
+                        resource_key,
+                        resource_key,
+                        task["payload"]["executor_id"],
+                    ),
                 )
             ).fetchone()
-            return row is None
+            if row is not None:
+                return False
+            await db.execute(
+                "UPDATE tasks SET resource_key=? WHERE id=?", (resource_key, task["id"])
+            )
+            task["resource_key"] = resource_key
+            return True
 
-    async def claim(self, kind, *, lease_seconds=60, now=None):
+    async def claim(self, kind, *, lease_seconds=60, now=None, mutation_capacity=1):
+        if not 1 <= mutation_capacity <= 3:
+            raise ValueError("Mutation capacity must be between 1 and 3")
         now = time.time() if now is None else now
         owner = uuid.uuid4().hex
         async with self.transaction() as db:
             row = await (
                 await db.execute(
                     """SELECT t.* FROM tasks t WHERE kind=? AND state IN ('queued','retry_wait')
-                   AND approval_pending=0 AND due_at<=? AND NOT EXISTS (
+                   AND approval_pending=0 AND due_at<=?
+                   AND (t.kind='fetch' OR (SELECT COUNT(*) FROM tasks
+                        WHERE kind IN ('deploy','recover') AND state='running'
+                        AND owner IS NOT NULL) < ?) AND NOT EXISTS (
                      SELECT 1 FROM tasks active WHERE
-                     (active.state='running' AND (
+                     (active.state='running' AND active.owner IS NOT NULL AND (
                        active.resource_key=t.resource_key OR
                        (active.kind IN ('deploy','recover') AND t.kind IN ('deploy','recover')
-                        AND active.resource_key LIKE 'deployment-mutations%')))
+                        AND (?=1 OR active.resource_key='deployment-mutations' OR
+                             t.resource_key='deployment-mutations' OR
+                             json_extract(active.payload,'$.executor_id')=json_extract(t.payload,'$.executor_id')))))
                      OR (active.state='needs_attention' AND t.kind='deploy'
                        AND active.kind IN ('deploy','recover') AND (
                          active.resource_key=t.resource_key OR
@@ -287,7 +306,7 @@ class TaskStore:
                          json_extract(active.payload,'$.executor_id')=json_extract(t.payload,'$.executor_id')
                        )))
                    ORDER BY due_at,id LIMIT 1""",
-                    (kind, now),
+                    (kind, now, mutation_capacity, mutation_capacity),
                 )
             ).fetchone()
             if not row:

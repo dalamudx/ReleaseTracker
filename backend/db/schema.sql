@@ -1,4 +1,4 @@
-CREATE TABLE schema_migrations (version TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS "schema_migrations" (version varchar(128) primary key);
 CREATE TABLE settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -109,7 +109,8 @@ CREATE TABLE executors (
     maintenance_window TEXT,
     description TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL, image_selection_mode TEXT NOT NULL DEFAULT 'replace_tag_on_current_image', channel_name TEXT, tracker_source_id INTEGER, image_reference_mode TEXT NOT NULL DEFAULT 'digest', health_check TEXT NOT NULL DEFAULT '{"strategy":"none","use_default_strategy":false,"failure_policy":"mark_failed","grace_period_seconds":0,"attempt_timeout_seconds":0,"interval_seconds":0,"probe_window_seconds":0,"services":null,"http":null,"tcp":null}',
+    updated_at TEXT NOT NULL, image_selection_mode TEXT NOT NULL DEFAULT 'replace_tag_on_current_image', channel_name TEXT, tracker_source_id INTEGER, image_reference_mode TEXT NOT NULL DEFAULT 'digest', health_check TEXT NOT NULL DEFAULT '{"strategy":"none","use_default_strategy":false,"failure_policy":"mark_failed","grace_period_seconds":0,"attempt_timeout_seconds":0,"interval_seconds":0,"probe_window_seconds":0,"services":null,"http":null,"tcp":null}', auto_update_policy TEXT NOT NULL DEFAULT 'all'
+CHECK(auto_update_policy IN ('all','minor','patch')),
     FOREIGN KEY (runtime_connection_id) REFERENCES runtime_connections(id) ON DELETE CASCADE
 );
 CREATE TABLE executor_status (
@@ -733,4 +734,5 @@ INSERT INTO "schema_migrations" (version) VALUES
   ('20260921000001'),
   ('20260922000001'),
   ('20260922000002'),
-  ('20260922000003');
+  ('20260922000003'),
+  ('20261001000001');

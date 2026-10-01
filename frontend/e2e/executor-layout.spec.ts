@@ -4,7 +4,7 @@ for (const language of ["zh", "en"]) for (const width of [1280, 390]) {
   test(`executor layout and safe actions ${width}px ${language}`, async ({ page }) => {
     await page.setViewportSize({width, height: 900})
     await page.addInitScript(language => {
-      localStorage.setItem("token", "e2e-token")
+      document.cookie = "releasetracker-csrf=fixture-csrf; path=/"
       localStorage.setItem("language", language)
     }, language)
     const errors: string[] = []

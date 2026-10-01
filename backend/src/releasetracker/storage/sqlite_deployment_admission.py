@@ -6,9 +6,12 @@ import json
 import time
 import uuid
 
+from ..services.version_policy import version_policy_reason
 from ..services.deployment_plan import TargetEvidence, plan_fingerprint, public_summary
 
-APPROVABLE = frozenset({"unmanaged", "marker_missing", "configuration_drift"})
+APPROVABLE = frozenset(
+    {"unmanaged", "marker_missing", "configuration_drift", "version_policy_requires_approval"}
+)
 
 
 class AdmissionConflict(ValueError):
@@ -109,6 +112,10 @@ class DeploymentAdmissionStore:
             elif reason is None and target["baseline"] != evidence.evidence_hash:
                 reason = "configuration_drift"
 
+            policy_reason = version_policy_reason(task, evidence)
+            if policy_reason and reason is None:
+                reason = policy_reason
+
             old = await (
                 await db.execute(
                     "SELECT * FROM deployment_plans WHERE task_id=? ORDER BY id DESC LIMIT 1",
@@ -129,7 +136,11 @@ class DeploymentAdmissionStore:
                     reason = marker_reason
             blocked = reason is not None and reason not in APPROVABLE
             approved = bool(
-                old and old["state"] == "approved" and old["expires_at"] > now and not blocked
+                old
+                and old["state"] == "approved"
+                and old["expires_at"] > now
+                and not blocked
+                and (not policy_reason or old["approved_by"] != "managed_baseline")
             )
             authorized = reason is None or approved
             state = "approved" if authorized else ("blocked" if blocked else "pending")

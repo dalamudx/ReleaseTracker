@@ -6,7 +6,7 @@ for (const [width, mode, language] of [[1280, 'light', 'en'], [390, 'dark', 'zh'
         page.on('pageerror', error => errors.push(error.message))
         await page.setViewportSize({ width, height: 900 })
         await page.addInitScript(({ mode, language }) => {
-            localStorage.setItem('token', 'example-token')
+            document.cookie = "releasetracker-csrf=fixture-csrf; path=/"
             localStorage.setItem('language', language)
             localStorage.setItem('vite-ui-theme-config', JSON.stringify({ mode, color: 'blue', radius: 0.5, zoom: 'default' }))
         }, { mode, language })

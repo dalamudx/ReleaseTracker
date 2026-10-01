@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { StrictMode } from "react"
 import { cleanup, render, screen, waitFor } from "@testing-library/react"
 import type { AxiosAdapter, AxiosResponse, InternalAxiosRequestConfig } from "axios"
 import { AxiosError } from "axios"
@@ -47,11 +48,10 @@ vi.mock("@/pages/Trackers", () => ({
 
 import App from "@/App"
 import { apiClient } from "@/api/client"
-import type { TokenPair } from "@/api/types"
 import "@/i18n/config"
 import { AuthProvider } from "@/providers/AuthProvider"
 
-const REFRESH_ENDPOINT = "/api/auth/refresh"
+const REFRESH_ENDPOINT = "/api/auth/browser/refresh"
 
 type MockState = {
   accessTokenValid: boolean
@@ -106,19 +106,20 @@ function createMockAdapter(state: MockState): AxiosAdapter {
     const path = resolvePath(config.url) ?? ""
     recordCall(state, path)
 
+    if (path === "/api/auth/browser/migrate") {
+      state.accessTokenValid = true
+      document.cookie = "releasetracker-csrf=csrf-migrated; path=/"
+      return createResponse(config, 200, {user:{id:1, username:"test"}})
+    }
+
     if (path === REFRESH_ENDPOINT) {
       if (!state.refreshTokenValid) {
         throw createError(config, 401, { detail: "refresh invalid" })
       }
 
       state.accessTokenValid = true
-      const tokenPair: TokenPair = {
-        access_token: state.nextAccessToken,
-        refresh_token: state.nextRefreshToken,
-        token_type: "bearer",
-        expires_in: 1800,
-      }
-      return createResponse(config, 200, tokenPair)
+      document.cookie = "releasetracker-csrf=csrf-next; path=/"
+      return createResponse(config, 200, {user:{id:1, username:"test"}})
     }
 
     if (path === "/api/auth/me") {
@@ -159,6 +160,7 @@ describe("protected app auth continuity", () => {
     cleanup()
     consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
     localStorage.clear()
+    document.cookie = "releasetracker-csrf=; max-age=0; path=/"
     localStorage.setItem("language", "en")
     state = {
       accessTokenValid: false,
@@ -175,12 +177,12 @@ describe("protected app auth continuity", () => {
     consoleErrorSpy.mockRestore()
     apiClient.defaults.adapter = originalAdapter
     localStorage.clear()
+    document.cookie = "releasetracker-csrf=; max-age=0; path=/"
     window.history.pushState({}, "", "/")
   })
 
   it("keeps the requested protected route accessible after lazy refresh succeeds", async () => {
-    localStorage.setItem("token", "access-old")
-    localStorage.setItem("refresh_token", "refresh-old")
+    document.cookie = "releasetracker-csrf=csrf-old; path=/"
 
     renderAppAt("/trackers")
 
@@ -189,31 +191,50 @@ describe("protected app auth continuity", () => {
       expect(window.location.pathname).toBe("/trackers")
     })
 
-    expect(state.calls["/api/auth/refresh"]).toBe(1)
+    expect(state.calls[REFRESH_ENDPOINT]).toBe(1)
     expect(state.calls["/api/auth/me"]).toBe(2)
-    expect(localStorage.getItem("token")).toBe("access-next")
-    expect(localStorage.getItem("refresh_token")).toBe("refresh-next")
+    expect(localStorage.getItem("token")).toBeNull()
+    expect(localStorage.getItem("refresh_token")).toBeNull()
   })
 
-  it("stores refresh token from OIDC callback hash", async () => {
+  it("loads the HttpOnly OIDC session without accepting URL tokens", async () => {
     state.accessTokenValid = true
 
-    renderAppAt("/trackers", "#token=access-oidc&refresh_token=refresh-oidc")
+    document.cookie = "releasetracker-csrf=csrf-oidc; path=/"
+    renderAppAt("/trackers", "#oidc=success")
 
     expect(await screen.findByText("Trackers Page")).toBeInTheDocument()
     await waitFor(() => {
       expect(window.location.hash).toBe("")
     })
 
-    expect(localStorage.getItem("token")).toBe("access-oidc")
-    expect(localStorage.getItem("refresh_token")).toBe("refresh-oidc")
+    expect(localStorage.getItem("token")).toBeNull()
+    expect(localStorage.getItem("refresh_token")).toBeNull()
     expect(state.calls["/api/auth/me"]).toBe(1)
+  })
+
+  it("does not authenticate using a forged legacy token fragment", async () => {
+    renderAppAt("/trackers", "#token=attacker&refresh_token=attacker-refresh")
+    expect(await screen.findByText("Login Page")).toBeInTheDocument()
+    expect(window.location.hash).toBe("")
+    expect(localStorage.getItem("token")).toBeNull()
+    expect(state.calls["/api/auth/me"]).toBeUndefined()
+  })
+
+  it("migrates an old session once even in StrictMode and erases local JWTs", async () => {
+    localStorage.setItem("token", "legacy-access")
+    localStorage.setItem("refresh_token", "legacy-refresh")
+    window.history.pushState({}, "", "/trackers")
+    render(<StrictMode><AuthProvider><App /></AuthProvider></StrictMode>)
+    expect(await screen.findByText("Trackers Page")).toBeInTheDocument()
+    expect(state.calls["/api/auth/browser/migrate"]).toBe(1)
+    expect(localStorage.getItem("token")).toBeNull()
+    expect(localStorage.getItem("refresh_token")).toBeNull()
   })
 
   it("redirects to login after refresh failure leaves the session unauthenticated", async () => {
     state.refreshTokenValid = false
-    localStorage.setItem("token", "access-old")
-    localStorage.setItem("refresh_token", "refresh-old")
+    document.cookie = "releasetracker-csrf=csrf-old; path=/"
     localStorage.setItem("user", JSON.stringify({ username: "stale" }))
 
     renderAppAt("/trackers")
@@ -223,7 +244,7 @@ describe("protected app auth continuity", () => {
       expect(window.location.pathname).toBe("/login")
     })
 
-    expect(state.calls["/api/auth/refresh"]).toBe(1)
+    expect(state.calls[REFRESH_ENDPOINT]).toBe(1)
     expect(state.calls["/api/auth/me"]).toBe(1)
     expect(localStorage.getItem("token")).toBeNull()
     expect(localStorage.getItem("refresh_token")).toBeNull()

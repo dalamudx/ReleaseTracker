@@ -96,6 +96,10 @@ Login endpoints allow 10 unsuccessful requests per client address per minute, wi
 
 Background workers poll every 2 seconds by default. Set `RELEASETRACKER_WORKER_POLL_SECONDS=5` (integer 1–60) to reduce idle polling at the cost of dispatch, readiness, notification, and webhook latency. Tracker check schedules and daily cleanup are unchanged. This does not enable multiple instances or parallel deployment mutations.
 
+Deployments and recovery are serial by default. Set `RELEASETRACKER_DEPLOYMENT_CONCURRENCY=2` for bounded concurrency (1–3, read at startup), sharing slots between both kinds of work. The same target, executor, and unverified identities remain serialized. This does not enable multiple instances sharing SQLite. Back up, verify target scopes, and observe a maintenance window first; return to `1` if resources or contention are a concern.
+
+Browser sessions use HttpOnly cookies instead of JWTs in localStorage or OIDC URLs. HTTPS uses `Secure`, `__Host-`, and `SameSite=Lax`; local HTTP development uses non-Secure cookies. Configure the production HTTPS base URL and trusted proxy settings so the protocol is inferred correctly. Writes require a session-bound CSRF cookie/header. Refresh rotates tokens; tabs serialize renewal using Web Locks where available, otherwise falling back to per-tab single-flight. Upgrades attempt to migrate the old refresh token into cookies and erase local tokens; expired sessions require sign-in. CLI/API `/api/auth/token` and Bearer authentication remain compatible and do not depend on browser cookies. This mode does not support arbitrary cross-site cookie-authenticated frontends.
+
 Image builds verify fixed SHA256 digests for dbmate and Helm. Overriding `DBMATE_VERSION` or `HELM_VERSION` also requires an independently verified `DBMATE_SHA256` or `HELM_SHA256`.
 
 ## First login {#3-first-login}

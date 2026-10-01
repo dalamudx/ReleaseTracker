@@ -10,7 +10,7 @@ Run these commands from the deployment directory, assuming data is mounted from 
 
 Administrators can create and download ZIP archives under **System Settings → Backups** after confirming the sensitive-data warning. Backups use SQLite's online snapshot API and exclude concurrent key rotation. Each archive includes `releases.db`, `system-secrets.json`, and a checksum manifest. Failed backups never prune previous archives. Databases are limited to 2 GiB and snapshots to 120 seconds; larger instances should use the stopped-directory procedure below.
 
-ZIP files are **not encrypted** and include credentials, session tokens, and encryption keys. Download only over HTTPS and store privately. Archives default to `backups` beside the database, not off-host storage. Keep an externally encrypted off-host copy. Environment variables, Kubernetes Secrets, external kubeconfig/SSH files, and container images are not included; retain deployment configuration and image digests separately.
+ZIP files are **not encrypted** and include credentials, session state, and encryption keys. Download only over HTTPS and store privately. Archives default to `backups` beside the database, not off-host storage. Keep an externally encrypted off-host copy. Environment variables, Kubernetes Secrets, external kubeconfig/SSH files, and container images are not included; retain deployment configuration and image digests separately.
 
 | Variable | Default | Behavior |
 | --- | --- | --- |
@@ -28,7 +28,7 @@ python -m releasetracker.cli restore-backup /backups/BACKUP.zip \
   --destination /restore/new-data --confirm-stopped
 ```
 
-Keep the old volume and mount the new directory as application data. A custom `RELEASETRACKER_DB_PATH` must point to `releases.db` inside it. Restoration neither starts the instance nor undoes external deployments. Before restarting, isolate executor network access or runtime credentials and review pending work against actual running versions to avoid replaying old tasks. Session state is also restored; rotate the session signing key afterwards. Restore older data with its matching image first, then upgrade through normal migrations.
+Keep the old volume and mount the new directory as application data. A custom `RELEASETRACKER_DB_PATH` must point to `releases.db` inside it. Restoration neither starts the instance nor undoes external deployments. Before restarting, isolate executor network access or runtime credentials and review pending work against actual running versions to avoid replaying old tasks. Restoration clears sessions and transient OAuth states so revoked sessions cannot be resurrected; sign in again. The original ZIP is not modified. Restore older data with its matching image first, then upgrade through normal migrations.
 
 ## Operational metrics {#metrics}
 

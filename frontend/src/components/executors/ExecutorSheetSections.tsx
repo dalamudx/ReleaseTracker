@@ -1,3 +1,4 @@
+import { AutomaticVersionPolicyField } from "./AutomaticVersionPolicyField"
 import { ExecutorServiceImageChange } from "./ExecutorServiceImageChange"
 import { SSHComposeTargetFields } from "./SSHComposeTargetFields"
 import { AlertTriangle, CheckCircle2, Layers3, Loader2, Plus, Search, Trash2 } from "lucide-react"
@@ -868,6 +869,8 @@ export function ExecutorSheetPolicySection({
                         </FormItem>
                     )}
                 />
+
+                {updateMode !== "manual" && <AutomaticVersionPolicyField form={form} />}
 
                 {!helmReleaseTarget ? (
                     <>

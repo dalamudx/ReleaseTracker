@@ -293,6 +293,9 @@ def _row_to_executor_config(
         ),
         "image_reference_mode": row["image_reference_mode"],
         "update_mode": row["update_mode"],
+        "auto_update_policy": (
+            row["auto_update_policy"] if "auto_update_policy" in row.keys() else "all"
+        ),
         "target_ref": normalized_target_ref,
         "service_bindings": service_bindings or [],
         "maintenance_window": maintenance_window,
@@ -580,8 +583,8 @@ async def _create_executor_config(storage: "SQLiteStorage", executor_config: Exe
         """
         INSERT INTO executors
         (name, runtime_type, runtime_connection_id, tracker_name, tracker_source_id, channel_name, enabled, image_selection_mode,
-         image_reference_mode, update_mode, target_ref, maintenance_window, description, health_check, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         image_reference_mode, update_mode, target_ref, maintenance_window, description, health_check, auto_update_policy, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             executor_config.name,
@@ -602,6 +605,7 @@ async def _create_executor_config(storage: "SQLiteStorage", executor_config: Exe
             ),
             executor_config.description,
             storage._dump_json(executor_config.health_check.model_dump(mode="json")),
+            executor_config.auto_update_policy,
             now,
             now,
         ),
@@ -778,7 +782,7 @@ async def _update_executor_config(
         SET name = ?, runtime_type = ?, runtime_connection_id = ?, tracker_name = ?,
             tracker_source_id = ?, channel_name = ?, enabled = ?, image_selection_mode = ?, image_reference_mode = ?, update_mode = ?,
             target_ref = ?, maintenance_window = ?,
-            description = ?, health_check = ?, updated_at = ?
+            description = ?, health_check = ?, auto_update_policy = ?, updated_at = ?
         WHERE id = ?
         """,
         (
@@ -800,6 +804,7 @@ async def _update_executor_config(
             ),
             executor_config.description,
             storage._dump_json(executor_config.health_check.model_dump(mode="json")),
+            executor_config.auto_update_policy,
             datetime.now().isoformat(),
             executor_id,
         ),

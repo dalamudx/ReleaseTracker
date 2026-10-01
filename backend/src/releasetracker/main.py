@@ -31,7 +31,7 @@ from .logger import LogConfig
 from .paths import database_path, system_secrets_path
 from .services.http_security import configure_http_security
 from .services.instance_backup import InstanceBackup, backup_options
-from .routers import backups, metrics
+from .routers import backups, metrics, browser_auth
 from .routers import (
     auth,
     notifiers,
@@ -218,6 +218,7 @@ app.add_middleware(StorageConnectionCleanupMiddleware)
 # ==================== Route registration ====================
 
 app.include_router(auth.router)
+app.include_router(browser_auth.router)
 app.include_router(notifiers.router)
 app.include_router(notification_templates.router)
 app.include_router(webhooks.router)

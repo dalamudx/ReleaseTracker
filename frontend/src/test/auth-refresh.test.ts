@@ -2,9 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import type { AxiosAdapter, AxiosResponse, InternalAxiosRequestConfig } from "axios"
 import { AxiosError } from "axios"
 import { api, apiClient } from "@/api/client"
-import type { TokenPair } from "@/api/types"
 
-const REFRESH_ENDPOINT = "/api/auth/refresh"
+const REFRESH_ENDPOINT = "/api/auth/browser/refresh"
 
 type MockState = {
   accessTokenValid: boolean
@@ -88,13 +87,8 @@ function createMockAdapter(state: MockState): AxiosAdapter {
         throw createError(config, 401, { detail: "refresh invalid" })
       }
       state.accessTokenValid = true
-      const tokenPair: TokenPair = {
-        access_token: state.nextAccessToken,
-        refresh_token: state.nextRefreshToken,
-        token_type: "bearer",
-        expires_in: 1800,
-      }
-      return createResponse(config, 200, tokenPair)
+      document.cookie = "releasetracker-csrf=csrf-next; path=/"
+      return createResponse(config, 200, {user:{id:1, username:"test"}})
     }
 
     if (path === "/api/auth/me") {
@@ -126,6 +120,7 @@ describe("auth refresh-on-401 contract", () => {
 
   beforeEach(() => {
     localStorage.clear()
+    document.cookie = "releasetracker-csrf=; max-age=0; path=/"
     originalLocation = window.location
     delete (window as { location?: Location }).location
     ;(window as { location: Location }).location = createMockLocation(originalLocation.href)
@@ -144,37 +139,37 @@ describe("auth refresh-on-401 contract", () => {
   afterEach(() => {
     apiClient.defaults.adapter = originalAdapter
     localStorage.clear()
+    document.cookie = "releasetracker-csrf=; max-age=0; path=/"
     delete (window as { location?: Location }).location
     ;(window as { location: Location }).location = originalLocation
   })
 
   it("replays the original request after a single refresh", async () => {
-    localStorage.setItem("token", "access-old")
-    localStorage.setItem("refresh_token", "refresh-old")
+    document.cookie = "releasetracker-csrf=csrf-old; path=/"
 
     const response = await apiClient.get("/api/protected")
 
     expect(response.data).toEqual({ ok: true })
-    expect(state.calls["/api/auth/refresh"]).toBe(1)
+    expect(state.calls[REFRESH_ENDPOINT]).toBe(1)
     expect(state.calls["/api/protected"]).toBe(2)
     expect(state.refreshRequestConfig?.url).toBe(REFRESH_ENDPOINT)
     expect(state.refreshRequestConfig?.params).toBeUndefined()
-    expect(JSON.parse(String(state.refreshRequestConfig?.data))).toEqual({
-      refresh_token: "refresh-old",
-    })
-    expect(localStorage.getItem("token")).toBe("access-next")
-    expect(localStorage.getItem("refresh_token")).toBe("refresh-next")
+    expect(state.refreshRequestConfig?.data).toBeUndefined()
+    expect(state.refreshRequestConfig?.headers["X-CSRF-Token"]).toBe("csrf-old")
+    expect(state.refreshRequestConfig?.headers.Authorization).toBeUndefined()
+    expect(state.refreshRequestConfig?.withCredentials).toBe(true)
+    expect(localStorage.getItem("token")).toBeNull()
+    expect(localStorage.getItem("refresh_token")).toBeNull()
   })
 
   it("clears auth state when refresh fails", async () => {
     state.refreshTokenValid = false
-    localStorage.setItem("token", "access-old")
-    localStorage.setItem("refresh_token", "refresh-old")
+    document.cookie = "releasetracker-csrf=csrf-old; path=/"
     localStorage.setItem("user", "{}")
 
     await expect(apiClient.get("/api/protected")).rejects.toBeInstanceOf(AxiosError)
 
-    expect(state.calls["/api/auth/refresh"]).toBe(1)
+    expect(state.calls[REFRESH_ENDPOINT]).toBe(1)
     expect(state.calls["/api/protected"]).toBe(1)
     expect(localStorage.getItem("token")).toBeNull()
     expect(localStorage.getItem("refresh_token")).toBeNull()
@@ -183,8 +178,7 @@ describe("auth refresh-on-401 contract", () => {
 
   it("redirects to login when a protected request cannot refresh", async () => {
     state.refreshTokenValid = false
-    localStorage.setItem("token", "access-old")
-    localStorage.setItem("refresh_token", "refresh-old")
+    document.cookie = "releasetracker-csrf=csrf-old; path=/"
     window.location.pathname = "/trackers"
 
     await expect(apiClient.get("/api/protected")).rejects.toBeInstanceOf(AxiosError)
@@ -194,14 +188,13 @@ describe("auth refresh-on-401 contract", () => {
 
   it("clears auth state and redirects when the replayed protected request still returns 401", async () => {
     state.protectedRequestStillUnauthorizedAfterRefresh = true
-    localStorage.setItem("token", "access-old")
-    localStorage.setItem("refresh_token", "refresh-old")
+    document.cookie = "releasetracker-csrf=csrf-old; path=/"
     localStorage.setItem("user", "{}")
     window.location.pathname = "/trackers"
 
     await expect(apiClient.get("/api/protected")).rejects.toBeInstanceOf(AxiosError)
 
-    expect(state.calls["/api/auth/refresh"]).toBe(1)
+    expect(state.calls[REFRESH_ENDPOINT]).toBe(1)
     expect(state.calls["/api/protected"]).toBe(2)
     expect(localStorage.getItem("token")).toBeNull()
     expect(localStorage.getItem("refresh_token")).toBeNull()
@@ -210,8 +203,7 @@ describe("auth refresh-on-401 contract", () => {
   })
 
   it("single-flights concurrent 401 refresh attempts", async () => {
-    localStorage.setItem("token", "access-old")
-    localStorage.setItem("refresh_token", "refresh-old")
+    document.cookie = "releasetracker-csrf=csrf-old; path=/"
 
     const responses = await Promise.all([
       apiClient.get("/api/protected"),
@@ -222,19 +214,18 @@ describe("auth refresh-on-401 contract", () => {
     responses.forEach((response) => {
       expect(response.data).toEqual({ ok: true })
     })
-    expect(state.calls["/api/auth/refresh"]).toBe(1)
+    expect(state.calls[REFRESH_ENDPOINT]).toBe(1)
     expect(state.calls["/api/protected"]).toBe(6)
   })
 
   it("recovers /api/auth/me via refresh before logout", async () => {
-    localStorage.setItem("token", "access-old")
-    localStorage.setItem("refresh_token", "refresh-old")
+    document.cookie = "releasetracker-csrf=csrf-old; path=/"
 
     const user = await api.getCurrentUser({ suppressAuthRedirect: true })
 
     expect(user).toMatchObject({ username: "test" })
-    expect(state.calls["/api/auth/refresh"]).toBe(1)
+    expect(state.calls[REFRESH_ENDPOINT]).toBe(1)
     expect(state.calls["/api/auth/me"]).toBe(2)
-    expect(localStorage.getItem("token")).toBe("access-next")
+    expect(localStorage.getItem("token")).toBeNull()
   })
 })

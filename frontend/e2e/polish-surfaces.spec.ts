@@ -26,7 +26,7 @@ const runtimeConnections = [
 async function prepare(page: Page, mode: "light" | "dark", width: number) {
     await page.setViewportSize({ width, height: 900 })
     await page.addInitScript(config => {
-        localStorage.setItem("token", "example-token")
+        document.cookie = "releasetracker-csrf=fixture-csrf; path=/"
         localStorage.setItem("language", "en")
         localStorage.setItem("vite-ui-theme-config", JSON.stringify({ mode: config.mode, color: "blue", radius: 0.5, zoom: "default" }))
     }, { mode })

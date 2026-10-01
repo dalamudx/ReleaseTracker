@@ -5,6 +5,7 @@ from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 
 from .models import User
+from .services.browser_sessions import cookie_value, validate_csrf
 from .services.auth import AuthService
 from .services.system_keys import SystemKeyManager
 
@@ -16,7 +17,22 @@ from .scheduler import ReleaseScheduler
 from .scheduler_host import SchedulerHost
 from .executor_scheduler import ExecutorScheduler
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/token", auto_error=False)
+
+
+async def get_auth_token(
+    request: Request, bearer: Annotated[str | None, Depends(oauth2_scheme)]
+) -> str:
+    if bearer is not None:
+        return bearer  # Explicit API authentication never falls back to cookies.
+    token = cookie_value(request, "access")
+    if token:
+        if request.method not in {"GET", "HEAD", "OPTIONS"}:
+            validate_csrf(request)
+        return token
+    raise HTTPException(
+        status_code=401, detail="Not authenticated", headers={"WWW-Authenticate": "Bearer"}
+    )
 
 
 def get_storage(request: Request) -> SQLiteStorage:
@@ -66,7 +82,7 @@ def get_auth_service(
 
 
 async def get_current_user(
-    token: Annotated[str, Depends(oauth2_scheme)],
+    token: Annotated[str, Depends(get_auth_token)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ):
     """Get the current authenticated user"""

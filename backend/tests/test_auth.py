@@ -665,7 +665,9 @@ async def test_oauth_state_is_consumed_atomically_across_storage_instances(stora
 
 
 @pytest.mark.asyncio
-async def test_oidc_callback_redirect_includes_refresh_token_payload(client, auth_service, storage):
+async def test_oidc_callback_sets_httponly_session_without_url_tokens(
+    client, auth_service, storage
+):
     await auth_service.ensure_admin_user()
     user = await storage.get_user_by_username("admin")
     assert user is not None
@@ -703,10 +705,22 @@ async def test_oidc_callback_redirect_includes_refresh_token_payload(client, aut
     assert redirect.scheme == "https"
     assert redirect.netloc == "example.com"
     assert redirect.path == "/releasetracker/"
-    fragment = parse_qs(redirect.fragment)
-    assert fragment["token"][0]
-    assert fragment["access_token"][0] == fragment["token"][0]
-    assert fragment["refresh_token"][0]
-    assert fragment["token_type"] == ["Bearer"]
-    assert int(fragment["expires_in"][0]) > 0
+    assert parse_qs(redirect.fragment) == {"oidc": ["success"]}
+    cookies = response.headers.get_list("set-cookie")
+    access = [
+        value
+        for value in cookies
+        if value.startswith("__Host-releasetracker-access=") and "Max-Age=604800" in value
+    ]
+    refresh = [
+        value
+        for value in cookies
+        if value.startswith("__Host-releasetracker-refresh=") and "Max-Age=604800" in value
+    ]
+    assert len(access) == len(refresh) == 1
+    assert all(
+        "HttpOnly" in value and "Secure" in value and "Path=/" in value
+        for value in access + refresh
+    )
+    assert "access_token=" not in response.headers["location"]
     assert f'{OIDC_BROWSER_COOKIE_NAME}=""' in response.headers["set-cookie"]

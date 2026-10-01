@@ -4,7 +4,7 @@ for (const theme of ["light", "dark"]) for (const width of [1280, 390]) {
   test(`executor selection stays aligned ${theme} ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })
     await page.addInitScript(theme => {
-      localStorage.setItem("token", "example-token")
+      document.cookie = "releasetracker-csrf=fixture-csrf; path=/"
       localStorage.setItem("language", "zh")
       localStorage.setItem("vite-ui-theme-config", JSON.stringify({ mode: theme, color: "neutral", radius: 0.5, zoom: "default" }))
     }, theme)
