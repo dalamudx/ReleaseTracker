@@ -1,3 +1,3 @@
 """ReleaseTracker - lightweight release tracking software"""
 
-__version__ = "1.1.12"
+__version__ = "1.1.13"
