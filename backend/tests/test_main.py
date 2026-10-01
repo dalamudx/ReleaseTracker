@@ -125,7 +125,9 @@ class FakeExecutorScheduler:
 
 
 @pytest.mark.asyncio
-async def test_lifespan_starts_without_identity_drift_repair(monkeypatch, storage):
+@pytest.mark.parametrize("backup_hours", [0, 24])
+async def test_lifespan_starts_without_identity_drift_repair(monkeypatch, storage, backup_hours):
+    monkeypatch.setenv("RELEASETRACKER_BACKUP_INTERVAL_HOURS", str(backup_hours))
     database_path = storage.db_path
     fake_storage_holder = {}
     fake_auth_holder = {}
@@ -179,7 +181,9 @@ async def test_lifespan_starts_without_identity_drift_repair(monkeypatch, storag
         assert main_module.app.state.scheduler_host is scheduler_host
         assert auth.ensure_admin_called is True
         assert scheduler_host.start_called is True
-        assert scheduler_host.interval_jobs == [
+        assert scheduler_host.interval_jobs == (
+            [("maintenance", "instance_backup", backup_hours * 3600)] if backup_hours else []
+        ) + [
             ("maintenance", "fetch_retention", 86400),
             ("tasks", "dispatch", 2),
             ("readiness", "observe", 2),

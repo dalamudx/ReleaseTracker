@@ -201,6 +201,7 @@
     "copied": "Copied",
     "refresh": "Refresh"
   },
+  "backups": { "tab": "Backups" },
   "systemSettings": {
     "system": {
       "title": "System Settings",
@@ -269,49 +270,6 @@
           "title": "Storage & Retention",
           "description": "Manage retention thresholds for releases and snapshots, and trigger manual cleanup."
         }
-      }
-    },
-    "securityKeys": {
-      "title": "Security keys",
-      "description": "Manage application-owned session and encryption keys. Raw key values are never displayed.",
-      "rotate": "Rotate",
-      "generate": "Generate on server",
-      "manual": "Manual value",
-      "confirmRotate": "Rotate key",
-      "undecryptable": "Undecryptable: {{count}}",
-      "blocked": "Found {{count}} Fernet-looking values that cannot be decrypted with the current key. Fix those records before rotating the encryption key.",
-      "summary": {
-        "activeSessions": "Active sessions",
-        "credentialsToken": "Credential tokens",
-        "credentialsSecrets": "Credential secrets",
-        "oidcSecrets": "OIDC secrets",
-        "runtimeSecrets": "Runtime secrets",
-        "undecryptable": "Undecryptable"
-      },
-      "inventory": {
-        "credentialsToken": "Credential tokens: {{count}}",
-        "credentialsSecrets": "Credential secrets: {{count}}",
-        "oidcSecrets": "OIDC secrets: {{count}}",
-        "runtimeSecrets": "Runtime secrets: {{count}}"
-      },
-      "jwt": {
-        "title": "Session key",
-        "description": "Signs access and refresh tokens. Rotating it immediately invalidates all current sessions.",
-        "activeSessions": "Active sessions: {{count}}",
-        "rotateTitle": "Rotate session key",
-        "rotateDescription": "Use a generated secret or provide a strong manual value.",
-        "warning": "All users, including you, will be logged out immediately after rotation.",
-        "manualLabel": "New session key",
-        "rotated": "Session key rotated. Invalidated sessions: {{count}}"
-      },
-      "encryption": {
-        "title": "Encryption key",
-        "description": "Encrypts credentials, OIDC client secrets, and runtime connection secrets stored in the database.",
-        "rotateTitle": "Rotate encryption key",
-        "rotateDescription": "Existing encrypted data will be re-encrypted with the new Fernet key.",
-        "warning": "Rotation aborts if any Fernet-looking value cannot be decrypted with the current key.",
-        "manualLabel": "New Fernet encryption key",
-        "rotated": "Encryption key rotated. Plaintext values re-encrypted: {{count}}"
       }
     },
     "general": {

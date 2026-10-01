@@ -5,6 +5,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
+import json
+import sqlite3
+import tempfile
+import zipfile
 
 from .paths import database_path, system_secrets_path
 from .services.auth import AuthService
@@ -37,14 +41,45 @@ def main(argv: list[str] | None = None) -> int:
         "reset-admin-password",
         help="interactively reset the stable local administrator password",
     )
+    inspect_parser = subcommands.add_parser(
+        "inspect-backup", help="validate a trusted backup without restoring"
+    )
+    inspect_parser.add_argument("archive")
+    restore_parser = subcommands.add_parser(
+        "restore-backup", help="restore to a NEW directory; never overwrite live data"
+    )
+    restore_parser.add_argument("archive")
+    restore_parser.add_argument("--destination", required=True)
+    restore_parser.add_argument(
+        "--confirm-stopped",
+        action="store_true",
+        help="confirm the application is stopped before switching data volumes",
+    )
     args = parser.parse_args(argv)
 
     try:
+        if args.command in {"inspect-backup", "restore-backup"}:
+            from .services.instance_backup import validate_archive, restore_to_new_directory
+
+            if args.command == "inspect-backup":
+                with tempfile.TemporaryDirectory(prefix="rt-inspect-") as temporary:
+                    manifest = validate_archive(args.archive, temporary)
+            else:
+                if not args.confirm_stopped:
+                    raise ValueError(
+                        "Stop the application and pass --confirm-stopped before restoring"
+                    )
+                manifest = restore_to_new_directory(args.archive, args.destination)
+                print(
+                    "Restored to a new directory. Keep the old volume; review pending tasks before enabling deployment."
+                )
+            print(json.dumps(manifest, indent=2))
+            return 0
         if args.command == "reset-admin-password":
             asyncio.run(_reset_admin_password())
             print("Administrator password reset complete; existing sessions were revoked.")
             return 0
-    except ValueError as exc:
+    except (ValueError, OSError, KeyError, sqlite3.Error, zipfile.BadZipFile) as exc:
         parser.exit(1, f"error: {exc}\n")
     return 1
 

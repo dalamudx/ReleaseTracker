@@ -1,0 +1,21 @@
+{
+  "title": "实例备份",
+  "description": "无需停止实例，一致备份数据库及其加密密钥。",
+  "sensitive": "备份包含凭证、会话令牌及加密密钥，ZIP 本身不加密。请私密保存，并保留一份异机副本。",
+  "create": "创建备份",
+  "confirmTitle": "确认包含敏感凭证？",
+  "confirm": "确认并创建",
+  "creating": "正在创建备份…",
+  "created": "备份已创建，请下载副本并异机保存。",
+  "createFailed": "备份失败或已有备份正在执行。请刷新列表并检查服务端日志，再决定是否重试。",
+  "download": "下载",
+  "downloadFailed": "下载失败，备份可能已过期；请刷新列表后重试。",
+  "loadFailed": "无法加载备份列表，请刷新重试。",
+  "empty": "暂无备份，建议在升级或轮换密钥前创建。",
+  "schedule": "每 {{hours}} 小时自动备份",
+  "manualOnly": "自动备份未启用",
+  "retention": "每次备份成功后保留最近 {{count}} 份",
+  "restoreTitle": "停机恢复",
+  "restoreDescription": "先停止实例，使用匹配的应用镜像将可信备份恢复到全新目录，再切换数据挂载。不会覆盖现有数据。重新启动前请核对待部署任务；恢复数据库不会撤销外部应用更新。",
+  "configuration": "通过 RELEASETRACKER_BACKUP_INTERVAL_HOURS 设置频率（0–168，0 表示关闭），RELEASETRACKER_BACKUP_RETENTION 设置保留份数（1–100），RELEASETRACKER_BACKUP_DIR 指定私密存储目录。默认关闭自动备份、保留 7 份、存放于数据库旁的 backups 目录。"
+}

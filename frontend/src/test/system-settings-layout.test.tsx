@@ -5,7 +5,8 @@ import { SystemSettingsPage } from "@/pages/SystemSettings"
 import zhLocale from "@/i18n/locales/zh.json"
 import enLocale from "@/i18n/locales/en.json"
 
-vi.mock("react-i18next", () => ({
+vi.mock("react-i18next", async (importOriginal) => ({
+  ...await importOriginal<typeof import("react-i18next")>(),
   useTranslation: () => ({
     t: (key: string) => {
       const parts = key.split(".")

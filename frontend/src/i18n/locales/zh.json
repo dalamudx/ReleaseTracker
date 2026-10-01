@@ -201,6 +201,7 @@
     "copied": "已复制",
     "refresh": "刷新"
   },
+  "backups": { "tab": "备份" },
   "systemSettings": {
     "system": {
       "title": "系统设置",
@@ -269,49 +270,6 @@
           "title": "存储与历史保留",
           "description": "配置发布版本与执行器快照的保留策略，并支持手动清理历史数据。"
         }
-      }
-    },
-    "securityKeys": {
-      "title": "安全密钥",
-      "description": "管理应用持有的会话密钥与加密密钥，页面不会展示密钥原文。",
-      "rotate": "轮换",
-      "generate": "服务端生成",
-      "manual": "手工输入",
-      "confirmRotate": "确认轮换",
-      "undecryptable": "不可解密：{{count}}",
-      "blocked": "发现 {{count}} 条看起来像 Fernet token 但无法用当前密钥解密的数据。请先修复这些数据后再轮换加密密钥。",
-      "summary": {
-        "activeSessions": "活跃会话",
-        "credentialsToken": "凭据 token",
-        "credentialsSecrets": "凭据 secrets",
-        "oidcSecrets": "OIDC 密钥",
-        "runtimeSecrets": "运行时密钥",
-        "undecryptable": "不可解密"
-      },
-      "inventory": {
-        "credentialsToken": "凭据 token：{{count}}",
-        "credentialsSecrets": "凭据 secrets：{{count}}",
-        "oidcSecrets": "OIDC 密钥：{{count}}",
-        "runtimeSecrets": "运行时密钥：{{count}}"
-      },
-      "jwt": {
-        "title": "会话密钥",
-        "description": "用于签发访问令牌和刷新令牌，轮换后会立即让所有当前会话失效。",
-        "activeSessions": "活跃会话：{{count}}",
-        "rotateTitle": "轮换会话密钥",
-        "rotateDescription": "可以由服务端生成，也可以手工输入强密钥。",
-        "warning": "轮换成功后所有用户都会立即退出登录，包括当前用户。",
-        "manualLabel": "新的会话密钥",
-        "rotated": "会话密钥已轮换，失效会话数：{{count}}"
-      },
-      "encryption": {
-        "title": "加密密钥",
-        "description": "用于加密数据库中的凭据、OIDC 客户端密钥和运行时连接密钥。",
-        "rotateTitle": "轮换加密密钥",
-        "rotateDescription": "已有加密数据会使用新的 Fernet key 重新加密。",
-        "warning": "如果存在看起来像 Fernet token 但不能用当前密钥解密的数据，轮换会中止。",
-        "manualLabel": "新的 Fernet 加密密钥",
-        "rotated": "加密密钥已轮换，重新加密明文数量：{{count}}"
       }
     },
     "general": {

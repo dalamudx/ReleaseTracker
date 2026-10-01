@@ -1,6 +1,8 @@
 """Full workload spec recovery stays atomic and excludes external resources/data."""
 
 from copy import deepcopy
+from itertools import count
+from types import SimpleNamespace
 import json
 from unittest.mock import Mock
 
@@ -16,6 +18,12 @@ from test_kubernetes_recovery_rollout import ready_model
 
 @pytest.fixture(autouse=True)
 def fast(monkeypatch):
+    # Test serialization and rollout state, not host scheduling latency. Advance
+    # only this module's clock; do not patch asyncio's global monotonic clock.
+    ticks = count()
+    monkeypatch.setattr(
+        kubernetes_recovery, "time", SimpleNamespace(monotonic=lambda: next(ticks) * 0.001)
+    )
     monkeypatch.setattr(kubernetes_recovery, "VERIFY_INTERVAL", 0)
     monkeypatch.setattr(kubernetes_recovery, "VERIFY_TIMEOUT", 0.1)
 

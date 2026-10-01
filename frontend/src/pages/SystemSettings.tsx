@@ -5,6 +5,10 @@ import { useTranslation } from "react-i18next"
 import { appPath } from "@/lib/base-path"
 import { toast } from "sonner"
 
+import i18nInstance from "@/i18n/config"
+import securityEnglish from "@/i18n/locales/security-keys.en.json"
+import securityChinese from "@/i18n/locales/security-keys.zh.json"
+import { BackupSettings } from "@/components/settings/BackupSettings"
 import { OIDCProvidersManagement } from "@/components/admin/OIDCProvidersManagement"
 import { clearAuthStorage } from "@/api/client"
 import { Button } from "@/components/ui/button"
@@ -38,6 +42,9 @@ import {
     useSettings,
     useUpdateSetting,
 } from "@/hooks/queries"
+
+i18nInstance.addResourceBundle("en", "translation", { systemSettings: { securityKeys: securityEnglish } }, true)
+i18nInstance.addResourceBundle("zh", "translation", { systemSettings: { securityKeys: securityChinese } }, true)
 
 export const SYSTEM_TIMEZONE_SETTING_KEY = "system.timezone"
 export const SYSTEM_LOG_LEVEL_SETTING_KEY = "system.log_level"
@@ -855,10 +862,11 @@ export function SystemSettingsPage() {
     return (
         <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col gap-4">
             <Tabs defaultValue="general" className="flex min-h-0 flex-1 flex-col gap-4">
-                <TabsList className="w-full justify-start sm:w-fit">
+                <TabsList className="h-auto w-full flex-wrap justify-start sm:w-fit">
                     <TabsTrigger value="general">{t("systemSettings.tabs.general")}</TabsTrigger>
                     <TabsTrigger value="security">{t("systemSettings.tabs.security")}</TabsTrigger>
                     <TabsTrigger value="oidc">{t("systemSettings.tabs.oidc")}</TabsTrigger>
+                    <TabsTrigger value="backups">{t("backups.tab")}</TabsTrigger>
                 </TabsList>
 
                 <div className="min-h-0 flex-1 overflow-y-auto pr-1">
@@ -971,6 +979,10 @@ export function SystemSettingsPage() {
                             </Button>
                         </div>
                     </TabsContent>
+
+                <TabsContent value="backups" className="mt-0">
+                    <BackupSettings />
+                </TabsContent>
 
                 <TabsContent value="security" className="mt-0">
                     <Card className="border-border/60 bg-card/80">

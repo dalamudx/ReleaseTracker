@@ -6,6 +6,7 @@ from html import escape
 from pathlib import Path
 from urllib.parse import urlsplit
 import logging
+import os
 import re
 import secrets
 
@@ -29,6 +30,8 @@ from .storage.sqlite_retention import prune_fetch_runs
 from .logger import LogConfig
 from .paths import database_path, system_secrets_path
 from .services.http_security import configure_http_security
+from .services.instance_backup import InstanceBackup, backup_options
+from .routers import backups, metrics
 from .routers import (
     auth,
     notifiers,
@@ -113,6 +116,19 @@ async def lifespan(app: FastAPI):
 
     # Initialize schedulers
     scheduler_host = SchedulerHost()
+    backup_hours, backup_retain = backup_options()
+    instance_backup = InstanceBackup(
+        storage, system_key_manager, directory=os.environ.get("RELEASETRACKER_BACKUP_DIR")
+    )
+    app.state.instance_backup = instance_backup
+
+    async def scheduled_backup():
+        await instance_backup.create(retain=backup_retain)
+
+    if backup_hours:
+        scheduler_host.add_interval_job(
+            "maintenance", "instance_backup", scheduled_backup, seconds=backup_hours * 3600
+        )
 
     async def prune_old_fetch_runs():
         try:
@@ -206,6 +222,8 @@ app.include_router(notifiers.router)
 app.include_router(notification_templates.router)
 app.include_router(webhooks.router)
 app.include_router(settings.router)
+app.include_router(backups.router)
+app.include_router(metrics.router)
 app.include_router(trackers.router)
 app.include_router(credentials.router)
 app.include_router(runtime_connections.router)

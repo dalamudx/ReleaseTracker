@@ -1,0 +1,21 @@
+{
+  "title": "Instance backups",
+  "description": "Create a consistent copy of the database and encryption keys without stopping the instance.",
+  "sensitive": "Backups contain credentials, session tokens and encryption keys. The ZIP is not encrypted. Store it privately and keep an off-host copy.",
+  "create": "Create backup",
+  "confirmTitle": "Include sensitive credentials?",
+  "confirm": "Confirm and create",
+  "creating": "Creating backup…",
+  "created": "Backup created. Download a copy for off-host storage.",
+  "createFailed": "Backup failed or another backup is running. Refresh the list and check the server logs before retrying.",
+  "download": "Download",
+  "downloadFailed": "Download failed. The backup may have expired; refresh the list and try again.",
+  "loadFailed": "Could not load backups. Refresh to retry.",
+  "empty": "No backups yet. Create one before upgrading or rotating keys.",
+  "schedule": "Automatic backup every {{hours}} hours",
+  "manualOnly": "Automatic backups are disabled",
+  "retention": "Keep the latest {{count}} backups after each successful backup",
+  "restoreTitle": "Restore offline",
+  "restoreDescription": "Stop the instance first. Restore a trusted archive to a new directory with the matching application image, then switch the data mount. Existing data is never overwritten. Review pending deployments before restarting; restoring the database does not undo external updates.",
+  "configuration": "Configure scheduling with RELEASETRACKER_BACKUP_INTERVAL_HOURS (0–168; 0 disables it), retention with RELEASETRACKER_BACKUP_RETENTION (1–100), and a protected storage directory with RELEASETRACKER_BACKUP_DIR. Defaults: disabled, 7 copies, backups beside the database."
+}
