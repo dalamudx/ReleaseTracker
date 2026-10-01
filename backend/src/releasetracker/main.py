@@ -1,6 +1,7 @@
 """FastAPI application entry point"""
 
 from contextlib import asynccontextmanager
+import time
 from datetime import datetime, timedelta
 from html import escape
 from pathlib import Path
@@ -126,8 +127,18 @@ async def lifespan(app: FastAPI):
         await instance_backup.create(retain=backup_retain)
 
     if backup_hours:
+        interval = backup_hours * 3600
+        latest = instance_backup.latest_archive_time()
+        now = time.time()
+        # Resume from the newest archive: a process restarted more often than
+        # the interval must still back up. Overdue backups run shortly after start.
+        due = now + 300 if latest is None or latest + interval <= now else latest + interval
         scheduler_host.add_interval_job(
-            "maintenance", "instance_backup", scheduled_backup, seconds=backup_hours * 3600
+            "maintenance",
+            "instance_backup",
+            scheduled_backup,
+            seconds=interval,
+            next_run_time=datetime.fromtimestamp(due),
         )
 
     async def prune_old_fetch_runs():

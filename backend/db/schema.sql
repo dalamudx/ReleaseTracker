@@ -712,6 +712,14 @@ CREATE TABLE podman_target_lineage_transitions (
  UNIQUE(executor_id,to_generation)
 );
 CREATE INDEX podman_lineage_transition_executor ON podman_target_lineage_transitions(executor_id,id);
+CREATE TABLE tracker_release_history_tombstones (
+    aggregate_tracker_id INTEGER NOT NULL,
+    identity_key TEXT NOT NULL,
+    retention_count INTEGER NOT NULL,
+    pruned_at TEXT NOT NULL,
+    PRIMARY KEY (aggregate_tracker_id, identity_key),
+    FOREIGN KEY (aggregate_tracker_id) REFERENCES aggregate_trackers(id) ON DELETE CASCADE
+);
 -- Dbmate schema migrations
 INSERT INTO "schema_migrations" (version) VALUES
   ('20000101000001'),
@@ -735,4 +743,5 @@ INSERT INTO "schema_migrations" (version) VALUES
   ('20260922000001'),
   ('20260922000002'),
   ('20260922000003'),
-  ('20261001000001');
+  ('20261001000001'),
+  ('20261002000001');

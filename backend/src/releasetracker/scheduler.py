@@ -2,7 +2,8 @@
 
 import asyncio
 import logging
-from datetime import datetime
+import random
+from datetime import datetime, timedelta
 from typing import Any
 
 from .config import TrackerConfig
@@ -183,7 +184,22 @@ class ReleaseScheduler(
             self._check_tracker,
             seconds=interval_seconds,
             args=[tracker_config.name],
+            next_run_time=await self._next_tracker_check(tracker_config.name, interval_seconds),
+            # Spread trackers configured or restarted together across time.
+            jitter=max(1, min(300, interval_seconds // 20)),
         )
+
+    async def _next_tracker_check(self, name: str, interval_seconds: int) -> datetime:
+        """Resume from the last check; restarts and edits must not reset the clock."""
+        now = datetime.now()
+        status = await self.storage.get_tracker_status(name)
+        last = status.last_check if status is not None else None
+        if last is not None and last.tzinfo is not None:
+            last = last.astimezone().replace(tzinfo=None)
+        if last is None or last + timedelta(seconds=interval_seconds) <= now:
+            # Overdue: catch up soon, but do not start every tracker at once.
+            return now + timedelta(seconds=random.uniform(5, min(120, interval_seconds)))
+        return last + timedelta(seconds=interval_seconds)
 
     async def start(self):
         """Start the scheduler"""

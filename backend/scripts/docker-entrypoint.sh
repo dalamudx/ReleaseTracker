@@ -6,6 +6,9 @@ DATABASE_URL="${DATABASE_URL:-sqlite://${DB_PATH}}"
 DBMATE_MIGRATIONS_DIR="${DBMATE_MIGRATIONS_DIR:-/app/backend/dbmate/migrations}"
 
 run_migrate() {
+  # Keep a restore point for the exact pre-upgrade schema. Set
+  # RELEASETRACKER_PRE_MIGRATION_BACKUP=0 only if another tool already does this.
+  python -m releasetracker.cli pre-migration-backup
   dbmate --url "$DATABASE_URL" --migrations-dir "$DBMATE_MIGRATIONS_DIR" migrate
 }
 

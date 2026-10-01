@@ -17,6 +17,9 @@ from .task_effects import MUTATION_GUARD
 from .deployment_plan import MANAGED_MARKERS, TargetEvidence, fingerprint, managed_markers
 from ..storage.sqlite_deployment_admission import AdmissionConflict, DeploymentAdmissionStore
 
+PRE_MUTATION_RETRIES = 2
+PRE_MUTATION_RETRY_SECONDS = 300
+
 
 class DeployTasks:
     def __init__(self, storage, scheduler):
@@ -124,6 +127,11 @@ class DeployTasks:
         from .deployment_readiness import snapshot_readiness_profile
 
         identity = await self.identity(executor)
+        trigger_key = None
+        if not manual:
+            base_key = f"desired:{executor_id}:{desired_revision}:{identity}"
+            retries = await self._pre_mutation_failures(base_key)
+            trigger_key = base_key if retries == 0 else f"{base_key}:retry{retries}"
         payload = {
             "executor_id": executor_id,
             "manual": manual,
@@ -143,7 +151,7 @@ class DeployTasks:
             target_label=executor.name,
             payload=payload,
             trigger_mode="manual" if manual else "automatic",
-            trigger_key=None if manual else f"desired:{executor_id}:{desired_revision}:{identity}",
+            trigger_key=trigger_key,
             max_retries=0,
             join_running=True,
             # Only the current desired state may wait for a maintenance window;
@@ -151,6 +159,57 @@ class DeployTasks:
             supersede_pending=not manual,
         )
         return {"task_id": task["id"], "status": task["state"]}
+
+    async def _pre_mutation_failures(self, base_key):
+        """Automatic attempts for this exact desired target that never mutated."""
+        db = await self.storage._get_connection()
+        row = await (
+            await db.execute(
+                """SELECT COUNT(DISTINCT t.id) FROM tasks t JOIN task_triggers g ON g.task_id=t.id
+                   WHERE (g.trigger_key=? OR g.trigger_key LIKE ? ESCAPE '\\')
+                     AND t.kind='deploy' AND t.state='failed'
+                     AND json_extract(t.result,'$.mutation_started')=0""",
+                (
+                    base_key,
+                    base_key.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    + ":retry%",
+                ),
+            )
+        ).fetchone()
+        return int(row[0])
+
+    async def _schedule_pre_mutation_retry(self, task):
+        """Retry automatic work only if the runtime was never touched.
+
+        Deployment admission is bound to an unstarted task, so a retry is a new
+        task for the same desired revision rather than a second attempt.
+        """
+        payload = task["payload"]
+        if (
+            payload.get("manual", True)
+            or task["state"] != "failed"
+            or (task.get("result") or {}).get("mutation_started") is not False
+        ):
+            return False
+        base_key = f"desired:{payload['executor_id']}:{payload['desired_revision']}:{payload['config_identity']}"
+        failures = await self._pre_mutation_failures(base_key)
+        if failures > PRE_MUTATION_RETRIES:
+            return False
+        delay = PRE_MUTATION_RETRY_SECONDS * failures
+        now = datetime.now()
+        db = await self.storage._get_connection()
+        cursor = await db.execute(
+            "UPDATE executor_desired_state SET next_eligible_at=?,updated_at=? "
+            "WHERE executor_id=? AND desired_state_revision=? AND pending=1",
+            (
+                (now + timedelta(seconds=delay)).isoformat(),
+                now.isoformat(),
+                payload["executor_id"],
+                payload["desired_revision"],
+            ),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
 
     async def dispatch_pending(self):
         states = await self.storage.list_pending_executor_desired_states(limit=100)
@@ -355,6 +414,8 @@ class DeployTasks:
         if task["state"] not in {"succeeded", "skipped", "needs_attention", "failed", "cancelled"}:
             return
         revision = task["payload"].get("desired_revision")
+        if revision and await self._schedule_pre_mutation_retry(task):
+            return
         if revision:
             await self.storage.complete_executor_desired_state(
                 task["payload"]["executor_id"],

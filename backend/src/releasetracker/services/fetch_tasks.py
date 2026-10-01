@@ -174,8 +174,9 @@ class FetchTasks:
             latest_version = result.get("latest_version")
 
             def projection_identity(releases):
+                # Row IDs are storage details; compare the observable release content.
                 return {
-                    (r.id, r.version, r.channel_name, r.commit_sha, r.artifact_digest)
+                    (r.version, r.tag_name, r.channel_name, r.commit_sha, r.artifact_digest)
                     for r in releases
                 }
 

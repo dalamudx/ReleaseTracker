@@ -58,7 +58,11 @@ class SchedulerHost:
         *,
         seconds: int,
         args: Sequence[Any] | None = None,
+        next_run_time=None,
+        jitter: int | None = None,
     ) -> str:
+        """``next_run_time`` lets callers resume from persisted history instead of
+        restarting a full interval every time the process starts."""
         job_id = self.namespaced_job_id(namespace, key)
         if seconds == 2 and namespace.strip() in {
             "tasks",
@@ -75,6 +79,8 @@ class SchedulerHost:
             args=list(args or []),
             id=job_id,
             replace_existing=True,
+            **({"next_run_time": next_run_time} if next_run_time is not None else {}),
+            **({"jitter": jitter} if jitter else {}),
         )
         return job_id
 

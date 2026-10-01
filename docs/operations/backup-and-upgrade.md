@@ -14,7 +14,7 @@ ZIP **不加密**，包含凭证、会话状态和加密密钥；只通过 HTTPS
 
 | 环境变量 | 默认值 | 含义 |
 | --- | --- | --- |
-| `RELEASETRACKER_BACKUP_INTERVAL_HOURS` | `0` | 0 关闭，1–168 为自动备份间隔小时数；启动后等待一个周期，不立即执行 |
+| `RELEASETRACKER_BACKUP_INTERVAL_HOURS` | `0` | 0 关闭，1–168 为自动备份间隔小时数；按最新一份备份的时间续算，重启不会重新计时；没有备份或已过期时，启动约 5 分钟后补做一次 |
 | `RELEASETRACKER_BACKUP_RETENTION` | `7` | 每次成功后保留最近 1–100 份，手动和自动备份共享保留策略 |
 | `RELEASETRACKER_BACKUP_DIR` | 数据库旁的 `backups` | 受保护的备份目录，可挂载独立存储 |
 
@@ -126,4 +126,4 @@ scrape_configs:
 | `migrate` | 只迁移；排查前先停止其他实例并备份 |
 | `serve` | 只启动；要求 schema 已就绪 |
 
-数据库 schema 由 dbmate 管理，不建议手工改表。相关错误见[启动与迁移排障](../reference/troubleshooting.md#startup)。
+`migrate` / `migrate-and-serve` 在检测到待执行迁移时，会先在备份目录生成一份 `reason: pre_migration` 的一致性归档（数据库 + 密钥），失败则中止迁移；该归档只能用升级前的镜像恢复，并参与保留份数轮换，需要长期保存时请及时下载。确有其他备份机制时可设置 `RELEASETRACKER_PRE_MIGRATION_BACKUP=0` 关闭。数据库 schema 由 dbmate 管理，不建议手工改表。相关错误见[启动与迁移排障](../reference/troubleshooting.md#startup)。

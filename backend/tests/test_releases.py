@@ -745,7 +745,7 @@ async def test_cleanup_release_history_without_authoritative_channels_keeps_sing
 
 
 @pytest.mark.asyncio
-async def test_cleanup_release_history_falls_back_to_global_retention_and_deletes_orphan_sources(
+async def test_cleanup_release_history_falls_back_to_global_retention_and_keeps_listed_sources(
     storage,
 ):
     aggregate_tracker = await storage.create_aggregate_tracker(
@@ -787,12 +787,14 @@ async def test_cleanup_release_history_falls_back_to_global_retention_and_delete
 
     assert before_counts["source_release_history"] == 4
     assert result["tracker_release_history_deleted"] == 2
-    assert result["source_release_history_deleted"] == 2
-    assert result["source_release_run_observations_deleted"] == 2
+    # Still listed by the latest successful source run: deleting this truth only
+    # made the next fetch re-insert it. Upstream removals are covered separately.
+    assert result["source_release_history_deleted"] == 0
+    assert result["source_release_run_observations_deleted"] == 0
     assert result["wal_checkpoint_performed"] is True
     after_counts = await _fetch_release_surface_counts(storage, "cleanup-global-retention")
     assert after_counts == {
-        "source_release_history": 2,
+        "source_release_history": 4,
         "tracker_release_history": 2,
         "tracker_current_releases": 2,
     }

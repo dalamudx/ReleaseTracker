@@ -281,6 +281,8 @@ class ReleaseSchedulerAggregateChecks:
                 ],
                 source_type=release.tracker_type,
             )
+            if tracker_release_history_id is None:
+                continue
             await self.storage.merge_tracker_release_history_sources(
                 aggregate_tracker_id=aggregate_tracker.id,
                 canonical_tracker_release_history_id=tracker_release_history_id,

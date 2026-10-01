@@ -45,6 +45,10 @@ def main(argv: list[str] | None = None) -> int:
         "inspect-backup", help="validate a trusted backup without restoring"
     )
     inspect_parser.add_argument("archive")
+    subcommands.add_parser(
+        "pre-migration-backup",
+        help="back up the database and keys if dbmate migrations are pending",
+    )
     restore_parser = subcommands.add_parser(
         "restore-backup", help="restore to a NEW directory; never overwrite live data"
     )
@@ -74,6 +78,23 @@ def main(argv: list[str] | None = None) -> int:
                     "Restored to a new directory; sessions and OAuth states revoked. Keep the old volume; review pending tasks before enabling deployment."
                 )
             print(json.dumps(manifest, indent=2))
+            return 0
+        if args.command == "pre-migration-backup":
+            import os
+
+            from .paths import backend_dir
+            from .services.instance_backup import pre_migration_backup
+
+            if os.environ.get("RELEASETRACKER_PRE_MIGRATION_BACKUP", "1").strip() == "0":
+                print("Pre-migration backup disabled by RELEASETRACKER_PRE_MIGRATION_BACKUP=0")
+                return 0
+            db_path = database_path()
+            directory = os.environ.get("RELEASETRACKER_BACKUP_DIR") or db_path.parent / "backups"
+            migrations = (
+                os.environ.get("DBMATE_MIGRATIONS_DIR") or backend_dir() / "dbmate" / "migrations"
+            )
+            archive = pre_migration_backup(db_path, system_secrets_path(), directory, migrations)
+            print(f"Pre-migration backup: {archive}" if archive else "No pending migrations")
             return 0
         if args.command == "reset-admin-password":
             asyncio.run(_reset_admin_password())

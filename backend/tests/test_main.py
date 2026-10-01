@@ -64,8 +64,10 @@ class FakeSchedulerHost:
         self.schedulers: list[object] = []
         self.interval_jobs: list[tuple[str, str, int]] = []
 
-    def add_interval_job(self, namespace, job_id, func, *, seconds):
+    def add_interval_job(self, namespace, job_id, func, *, seconds, **options):
         del func
+        self.options = getattr(self, "options", {})
+        self.options[(namespace, job_id)] = options
         self.interval_jobs.append((namespace, job_id, seconds))
 
     def remove_job(self, namespace, job_id):

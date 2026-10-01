@@ -46,6 +46,10 @@ def _digest(path):
 
 
 def _versions(db):
+    if not db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+    ).fetchone():
+        return []
     return sorted(str(row[0]) for row in db.execute("SELECT version FROM schema_migrations"))
 
 
@@ -70,7 +74,7 @@ def _sync_directory(path):
         os.close(fd)
 
 
-def _create_archive(db_path, keys, destination):
+def _create_archive(db_path, keys, destination, *, reason="manual_or_scheduled"):
     destination = Path(destination)
     destination.mkdir(mode=0o700, parents=True, exist_ok=True)
     name = f"releasetracker-{time.time_ns()}-{uuid.uuid4().hex[:8]}.zip"
@@ -101,6 +105,7 @@ def _create_archive(db_path, keys, destination):
             "version": __version__,
             "created_at": time.time(),
             "migrations": migrations,
+            "reason": reason,
             "sha256": {name: _digest(root / name) for name in MEMBERS - {"manifest.json"}},
         }
         (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -117,14 +122,56 @@ def _create_archive(db_path, keys, destination):
     return result
 
 
+def pending_migrations(db_path, migrations_dir):
+    """Migration versions present in the image but not applied to this database."""
+    available = {
+        path.name.split("_", 1)[0]
+        for path in Path(migrations_dir).glob("*.sql")
+        if path.name.split("_", 1)[0].isdigit()
+    }
+    database = Path(db_path)
+    if not database.is_file():
+        return []  # Fresh installation: nothing to protect.
+    with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+        applied = set(_versions(db))
+    return sorted(available - applied)
+
+
+def pre_migration_backup(db_path, keys_path, directory, migrations_dir):
+    """Create a restore point before schema changes; returns the archive or None."""
+    pending = pending_migrations(db_path, migrations_dir)
+    if not pending:
+        return None
+    keys_file = Path(keys_path)
+    if not keys_file.is_file():
+        raise ValueError("Database exists but system-secrets.json is missing; refusing to migrate")
+    keys = keys_file.read_bytes()
+    if len(keys) > MAX_KEY_BYTES:
+        raise ValueError("Invalid key file size")
+    _validate_keys(keys)
+    return _create_archive(db_path, keys, directory, reason="pre_migration")
+
+
 class InstanceBackup:
     def __init__(self, storage, key_manager, directory=None):
         self.storage = storage
         self.key_manager = key_manager
         self.directory = Path(directory) if directory else Path(storage.db_path).parent / "backups"
         self.lock = asyncio.Lock()
-        self.last_success = 0.0
+        self.last_success = self.latest_archive_time() or 0.0
         self.failures = 0
+
+    def latest_archive_time(self):
+        """Newest complete archive time; persisted across restarts by the files."""
+        try:
+            times = [
+                path.stat().st_mtime
+                for path in self.directory.glob("releasetracker-*.zip")
+                if path.is_file() and not path.is_symlink()
+            ]
+        except OSError:
+            return None
+        return max(times, default=None)
 
     async def create(self, *, retain=7):
         try:

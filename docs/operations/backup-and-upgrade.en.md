@@ -14,7 +14,7 @@ ZIP files are **not encrypted** and include credentials, session state, and encr
 
 | Variable | Default | Behavior |
 | --- | --- | --- |
-| `RELEASETRACKER_BACKUP_INTERVAL_HOURS` | `0` | Disabled at 0; 1–168 hours otherwise. First automatic backup runs after one full interval, not immediately on startup |
+| `RELEASETRACKER_BACKUP_INTERVAL_HOURS` | `0` | Disabled at 0; 1–168 hours otherwise. Scheduling resumes from the newest archive, so restarts do not reset it; with no backup or an overdue one, a backup runs about 5 minutes after startup |
 | `RELEASETRACKER_BACKUP_RETENTION` | `7` | Keep the newest 1–100 archives after each success; manual and automatic backups share retention |
 | `RELEASETRACKER_BACKUP_DIR` | `backups` beside the database | Protected directory; mount separate storage if desired |
 
@@ -126,4 +126,4 @@ Back up before using **System Settings → Security Keys**, then take another co
 | `migrate` | Migrate only; stop other instances and back up before diagnosis |
 | `serve` | Start only; requires a ready schema |
 
-Database schema is managed by dbmate; avoid manual table edits. See [Startup and migration troubleshooting](../reference/troubleshooting.md#startup).
+When migrations are pending, `migrate` / `migrate-and-serve` first writes a consistent `reason: pre_migration` archive (database + keys) to the backup directory and aborts the migration if that fails. Restore it only with the pre-upgrade image; it shares the retention count, so download it if it must be kept long term. Set `RELEASETRACKER_PRE_MIGRATION_BACKUP=0` only if another mechanism already provides this. Database schema is managed by dbmate; avoid manual table edits. See [Startup and migration troubleshooting](../reference/troubleshooting.md#startup).

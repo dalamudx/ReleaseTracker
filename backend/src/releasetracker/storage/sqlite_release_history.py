@@ -710,7 +710,7 @@ async def upsert_tracker_release_history(
     primary_source_release_history_id: int,
     supporting_source_release_history_ids: list[int] | None = None,
     source_type: str | None = None,
-) -> tuple[int, bool]:
+) -> tuple[int | None, bool]:
     db = await storage._get_connection()
     db.row_factory = aiosqlite.Row
 
@@ -718,6 +718,18 @@ async def upsert_tracker_release_history(
     digest = storage._release_digest_value(release, source_type=source_type)
     version, _, _ = storage._release_version_metadata(release, source_type=source_type)
     timestamp = datetime.now().isoformat()
+
+    existing = await (
+        await db.execute(
+            "SELECT 1 FROM tracker_release_history WHERE aggregate_tracker_id=? AND immutable_key=?",
+            (aggregate_tracker_id, identity_key),
+        )
+    ).fetchone()
+    if existing is None and await storage.is_release_history_tombstoned(
+        aggregate_tracker_id, identity_key
+    ):
+        # Retention removed it on purpose; source truth is still kept.
+        return None, False
 
     cursor = await db.execute(
         """

@@ -1183,6 +1183,7 @@ class SQLiteStorage:
             ),
         )
         await db.commit()
+        await self.clear_release_history_tombstones(config.name)
 
     async def get_all_tracker_configs(self) -> list:
         """Get all tracker configurations."""
@@ -1322,7 +1323,33 @@ class SQLiteStorage:
         return [self._row_to_source_release_observation(row) for row in rows]
 
     async def update_aggregate_tracker(self, tracker: AggregateTracker) -> AggregateTracker:
-        return await sqlite_aggregate_trackers.update_aggregate_tracker(self, tracker)
+        updated = await sqlite_aggregate_trackers.update_aggregate_tracker(self, tracker)
+        await self.clear_release_history_tombstones(updated.name)
+        return updated
+
+    async def clear_release_history_tombstones(self, tracker_name: str) -> None:
+        """Channel/source changes can make pruned releases relevant again."""
+        db = await self._get_connection()
+        await db.execute(
+            """DELETE FROM tracker_release_history_tombstones WHERE aggregate_tracker_id IN
+               (SELECT id FROM aggregate_trackers WHERE name=?)""",
+            (tracker_name,),
+        )
+        await db.commit()
+
+    async def is_release_history_tombstoned(
+        self, aggregate_tracker_id: int, identity_key: str
+    ) -> bool:
+        db = await self._get_connection()
+        row = await (
+            await db.execute(
+                """SELECT retention_count FROM tracker_release_history_tombstones
+                   WHERE aggregate_tracker_id=? AND identity_key=?""",
+                (aggregate_tracker_id, identity_key),
+            )
+        ).fetchone()
+        # A larger retention setting deliberately lets pruned releases return.
+        return bool(row) and int(row[0]) >= await self.get_release_history_retention_count()
 
     async def delete_aggregate_tracker(self, name: str) -> None:
         await sqlite_aggregate_trackers.delete_aggregate_tracker(self, name)
@@ -2021,7 +2048,7 @@ class SQLiteStorage:
         primary_source_release_history_id: int,
         supporting_source_release_history_ids: list[int] | None = None,
         source_type: str | None = None,
-    ) -> tuple[int, bool]:
+    ) -> tuple[int | None, bool]:
         return await sqlite_release_history.upsert_tracker_release_history(
             self,
             aggregate_tracker_id,
@@ -2293,6 +2320,17 @@ class SQLiteStorage:
             ).fetchall()
             source_ids_before.update(int(row[0]) for row in primary_source_rows)
 
+            # Remember intentionally pruned identities so a later fetch that still
+            # sees them upstream does not resurrect and re-prune them forever.
+            await db.execute(
+                f"""
+                INSERT OR REPLACE INTO tracker_release_history_tombstones
+                (aggregate_tracker_id, identity_key, retention_count, pruned_at)
+                SELECT aggregate_tracker_id, identity_key, ?, ?
+                FROM tracker_release_history WHERE id IN ({placeholders})
+                """,
+                (retention, datetime.now().isoformat(), *delete_ids),
+            )
             cursor = await db.execute(
                 f"DELETE FROM tracker_release_history_sources WHERE tracker_release_history_id IN ({placeholders})",
                 tuple(delete_ids),
@@ -2320,6 +2358,17 @@ class SQLiteStorage:
                           AND NOT EXISTS (
                               SELECT 1 FROM tracker_release_history_sources trhs
                               WHERE trhs.source_release_history_id = source_release_history.id
+                          )
+                          -- Keep source truth that is still listed upstream: deleting it
+                          -- only causes the next fetch to insert it again with a new ID.
+                          AND NOT EXISTS (
+                              SELECT 1 FROM source_release_run_observations obs
+                              WHERE obs.source_release_history_id = source_release_history.id
+                                AND obs.source_fetch_run_id = (
+                                    SELECT MAX(run.id) FROM source_fetch_runs run
+                                    WHERE run.tracker_source_id = source_release_history.tracker_source_id
+                                      AND run.status = 'success'
+                                )
                           )
                         """,
                         tuple(source_ids_before),
