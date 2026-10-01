@@ -7,6 +7,7 @@ capture_deployment_target. Missing identity evidence is unknown, never healthy.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 
 # Timed-out read-only SDK calls cannot be killed by asyncio. Keep at most one
@@ -176,10 +177,22 @@ async def _capture(storage, scheduler, executor):
                     "metadata": {
                         k: (w.get("metadata") or {}).get(k) for k in ("uid", "generation")
                     },
+                    "template_fingerprint": (
+                        hashlib.sha256(
+                            json.dumps(
+                                (w.get("spec") or {}).get("template") or {},
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ).encode()
+                        ).hexdigest()
+                        if (w.get("spec") or {}).get("template")
+                        else None
+                    ),
                     "spec": {
                         k: v
                         for k, v in (w.get("spec") or {}).items()
-                        if k in {"replicas", "updateStrategy", "update_strategy"}
+                        if k
+                        in {"replicas", "strategy", "updateStrategy", "update_strategy", "selector"}
                     },
                     "status": {
                         k: v
@@ -226,7 +239,10 @@ async def capture_deployment_target(storage, scheduler, executor) -> dict:
                 return {
                     "kind": "kubernetes_workload",
                     "workloads": {
-                        key: {"metadata": {k: metadata.get(k) for k in ("uid", "generation")}}
+                        key: {
+                            "metadata": {k: metadata.get(k) for k in ("uid", "generation")},
+                            "template_fingerprint": submitted.get("template_fingerprint"),
+                        }
                     },
                     "submitted_images": submitted.get("images") or {},
                 }
@@ -236,14 +252,28 @@ async def capture_deployment_target(storage, scheduler, executor) -> dict:
     return await capture_deployment_baseline(storage, scheduler, executor)
 
 
-def _workload_status(current, target, expected):
+def _workload_status(current, target, expected, *, strict_progress_deadline=False):
     meta, spec, status = (current.get(k) or {} for k in ("metadata", "spec", "status"))
     target_meta = target.get("metadata") or {}
     uid, generation = target_meta.get("uid"), target_meta.get("generation")
     if not uid or not isinstance(generation, int):
         return "unknown", "submitted workload UID/generation missing"
-    if meta.get("uid") != uid or meta.get("generation") != generation:
-        return "superseded", "workload identity or generation changed after submission"
+    if meta.get("uid") != uid or meta.get("generation", 0) < generation:
+        return "superseded", "workload identity or submitted generation changed"
+    fingerprint = target.get("template_fingerprint")
+    if fingerprint and (
+        (
+            hashlib.sha256(
+                json.dumps(spec["template"], sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            if isinstance(spec.get("template"), dict)
+            else current.get("template_fingerprint")
+        )
+        != fingerprint
+    ):
+        return "superseded", "submitted workload template changed"
+    if not fingerprint and meta.get("generation") != generation:
+        return "superseded", "legacy workload generation changed"
     images = {c["name"]: c.get("image") for c in current.get("containers", [])}
     if not expected:
         return "unknown", "expected target images missing"
@@ -263,13 +293,12 @@ def _workload_status(current, target, expected):
     updated = _field(status, "updatedReplicas", "updated_replicas", 0)
     if kind == "Deployment":
         conditions = status.get("conditions") or []
-        if any(
+        timed_out = any(
             c.get("type") == "Progressing"
             and c.get("status") == "False"
             and c.get("reason") == "ProgressDeadlineExceeded"
             for c in conditions
-        ):
-            return "unhealthy", "deployment progress deadline exceeded"
+        )
         done = any(
             c.get("type") == "Progressing"
             and c.get("status") == "True"
@@ -278,11 +307,15 @@ def _workload_status(current, target, expected):
         )
         ok = (
             n > 0
-            and done
+            and (done or timed_out)
             and updated == ready == status.get("replicas") == n
             and _field(status, "availableReplicas", "available_replicas", 0) == n
             and not _field(status, "unavailableReplicas", "unavailable_replicas", 0)
         )
+        if timed_out and (strict_progress_deadline or not ok):
+            # The controller retries after its progress deadline. If all new
+            # replicas later converge, the condition may remain stale.
+            return "pending", "deployment progress deadline exceeded"
     elif kind == "StatefulSet":
         revision = _field(status, "updateRevision", "update_revision")
         submitted = _field(target.get("status") or {}, "updateRevision", "update_revision")
@@ -513,6 +546,8 @@ async def _probe_deployment(storage, scheduler, executor, verification: dict) ->
         ):
             return _result("superseded", message="submitted image targets differ from finalization")
         rows = []
+        retryable_pull = False
+        interruption_risk = False
         if "workloads" in current:
             if current["kind"] == "helm_release":
                 release, submitted = current.get("release") or {}, target.get("release") or {}
@@ -568,10 +603,63 @@ async def _probe_deployment(storage, scheduler, executor, verification: dict) ->
                 if current["kind"] == "helm_release":
                     images = {c["name"]: c["image"] for c in submitted.get("containers", [])}
                 status, message = _workload_status(workload, submitted, images)
+                if (
+                    status == "pending"
+                    and current["kind"] == "kubernetes_workload"
+                    and workload.get("kind") == "Deployment"
+                ):
+                    from .kubernetes_pod_diagnostics import pod_evidence
+
+                    adapter = await _adapter(storage, scheduler, executor)
+                    reason = await pod_evidence(
+                        adapter,
+                        executor.target_ref["namespace"],
+                        workload,
+                        images,
+                        verification.get("submitted_at"),
+                    )
+                    if reason in {"invalid_image", "container_start_failed", "oom_killed"}:
+                        status, message = "unhealthy", reason
+                    elif reason == "image_pull_retrying":
+                        retryable_pull = True
+                        message = reason
+                        if (workload.get("spec") or {}).get("strategy", {}).get(
+                            "type"
+                        ) == "Recreate":
+                            interruption_risk = True
+                if (
+                    status == "healthy"
+                    and current["kind"] == "kubernetes_workload"
+                    and any(
+                        isinstance(image, str) and "@sha256:" in image for image in images.values()
+                    )
+                ):
+                    from .kubernetes_pod_diagnostics import verify_pod_digests
+
+                    adapter = await _adapter(storage, scheduler, executor)
+                    digest_status = await verify_pod_digests(
+                        adapter,
+                        executor.target_ref["namespace"],
+                        workload,
+                        images,
+                        verification.get("submitted_at"),
+                    )
+                    if digest_status != "confirmed":
+                        status = "superseded" if digest_status == "superseded" else "unknown"
+                        message = (
+                            "image_digest_mismatch"
+                            if digest_status == "superseded"
+                            else "image_digest_unverified"
+                        )
                 rows.append(_service(name, status, message, "kubernetes_rollout"))
         else:
             return _probe_containers(current, verification, expected)
-        return _aggregate(rows)
+        result = _aggregate(rows)
+        if retryable_pull and result["outcome"] == "pending":
+            result["retryable_pull"] = True
+            if interruption_risk:
+                result["service_interruption_risk"] = True
+        return result
     except NotImplementedError:
         return _result("unsupported", message="native readiness unsupported for target")
     except Exception:

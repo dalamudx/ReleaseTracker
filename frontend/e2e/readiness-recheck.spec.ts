@@ -21,13 +21,13 @@ for (const width of [1280, 390]) test(`explicit read-only recheck keeps original
     if (path === "/api/settings") data = []
     if (path === "/api/executors") data = { items: [executor], total: 1 }
     if (path === "/api/executors/1") data = executor
-    if (path.endsWith("/history")) data = { items: [{ id: 101, executor_id: 1, status: "failed", started_at: "2026-09-19T12:00:00Z", finished_at: "2026-09-19T12:00:12Z", from_version: "registry.example.test/team/service-a:1.2.0", to_version: "registry.example.test/team/service-a:1.2.0", diagnostics: { health_check: { outcome: "timeout" }, health_recheck: latest, health_rechecks: [latest] } }], total: 1 }
+    if (path.endsWith("/history")) data = { items: [{ id: 101, executor_id: 1, status: latest?.outcome === "healthy" ? "success" : "failed", started_at: "2026-09-19T12:00:00Z", finished_at: "2026-09-19T12:00:12Z", from_version: "registry.example.test/team/service-a:1.2.0", to_version: "registry.example.test/team/service-a:1.2.0", diagnostics: { initial_readiness_failure: { outcome: "timeout" }, health_check: latest?.outcome === "healthy" ? latest : { outcome: "timeout" }, health_recheck: latest, health_rechecks: [latest] } }], total: 1 }
     await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) })
   })
   await page.goto("/tasks")
   await page.getByRole("button", { name: /71/ }).click()
   expect(writes).toEqual([])
-  await expect(page.getByText("Read-only check; does not redeploy or change the original result.")).toBeVisible()
+  await expect(page.getByText("Read-only verification; never redeploys. Recovery of the same target updates the original task while preserving its failed attempt.")).toBeVisible()
   await page.getByRole("button", { name: "Recheck readiness", exact: true }).click()
   await expect(page.getByText("Readiness recheck for “service-a” queued.", { exact: true })).toBeVisible()
   expect(writes).toEqual(["POST /api/tasks/71/recheck"])
@@ -41,10 +41,10 @@ for (const width of [1280, 390]) test(`explicit read-only recheck keeps original
   await page.getByRole("button", { name: "View execution history", exact: true }).click()
   const dialog = page.getByRole("dialog")
   const row = dialog.getByTestId("executor-history-item")
-  await expect(row.getByText("Failed", { exact: true })).toBeVisible()
-  await expect(row.getByText("Readiness: Timed out", { exact: true })).toBeVisible()
+  await expect(row.getByText("Success", { exact: true })).toBeVisible()
+  await expect(row.getByText("Readiness: Healthy", { exact: true })).toBeVisible()
   await expect(row.getByText("Latest readiness recheck: Healthy", { exact: true })).toBeVisible()
-  await expect(row.getByText("Read-only check; does not redeploy or change the original result.")).toBeVisible()
+  await expect(row.getByText("Read-only verification; never redeploys. Recovery of the same target updates the original task while preserving its failed attempt.")).toBeVisible()
   expect(await row.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true)
   expect(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)

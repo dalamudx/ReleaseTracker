@@ -6,6 +6,8 @@ import { appPath } from "@/lib/base-path"
 import { toast } from "sonner"
 
 import i18nInstance from "@/i18n/config"
+import settingsEnglish from "@/i18n/locales/system-settings.en.json"
+import settingsChinese from "@/i18n/locales/system-settings.zh.json"
 import securityEnglish from "@/i18n/locales/security-keys.en.json"
 import securityChinese from "@/i18n/locales/security-keys.zh.json"
 import { BackupSettings } from "@/components/settings/BackupSettings"
@@ -43,8 +45,8 @@ import {
     useUpdateSetting,
 } from "@/hooks/queries"
 
-i18nInstance.addResourceBundle("en", "translation", { systemSettings: { securityKeys: securityEnglish } }, true)
-i18nInstance.addResourceBundle("zh", "translation", { systemSettings: { securityKeys: securityChinese } }, true)
+i18nInstance.addResourceBundle("en", "translation", { systemSettings: { ...settingsEnglish, securityKeys: securityEnglish } }, true)
+i18nInstance.addResourceBundle("zh", "translation", { systemSettings: { ...settingsChinese, securityKeys: securityChinese } }, true)
 
 export const SYSTEM_TIMEZONE_SETTING_KEY = "system.timezone"
 export const SYSTEM_LOG_LEVEL_SETTING_KEY = "system.log_level"

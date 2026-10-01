@@ -160,7 +160,9 @@ async def verify_rollout(adapter, target_ref, submitted, expected, previous, exp
             validate_strategy(current)
             if expected_spec is not None and current.get("api_spec") != expected_spec:
                 raise ValueError("Restored workload configuration changed during rollout")
-            status, message = _workload_status(current, target, expected)
+            status, message = _workload_status(
+                current, target, expected, strict_progress_deadline=True
+            )
             if status not in {"healthy", "pending"}:
                 raise RuntimeError(f"Kubernetes recovery rollout {status}: {message}")
             if time.monotonic() >= deadline:

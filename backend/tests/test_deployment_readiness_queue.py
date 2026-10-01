@@ -231,7 +231,7 @@ async def test_durable_queue_path_defers_success_until_native_ready(storage, mon
     assert await intent_count(storage) == before + 1
 
 
-async def test_readonly_recheck_preserves_original_failure(storage, monkeypatch):
+async def test_readonly_recheck_reconciles_latest_failure(storage, monkeypatch):
     from releasetracker.services.recovery_tasks import RecoveryTasks
 
     executor, scheduler, observer, probe, now, task, run_id = await setup(
@@ -257,15 +257,278 @@ async def test_readonly_recheck_preserves_original_failure(storage, monkeypatch)
     assert (await storage.tasks.get(recheck["id"]))["state"] == "running"
     await observe(storage, observer, recheck["id"])
     updated = await storage.get_executor_run(run_id)
-    assert updated.status == "failed"
-    assert updated.finished_at == original.finished_at
+    assert updated.status == "success"
+    assert updated.finished_at != original.finished_at
     assert updated.diagnostics["health_check"]["outcome"] == "unknown"
     assert updated.diagnostics["health_recheck"]["outcome"] == "healthy"
     assert len(updated.diagnostics["health_rechecks"]) == 1
     assert (await storage.tasks.get(recheck["id"]))["state"] == "succeeded"
-    assert (await storage.tasks.get(task["id"]))["error_code"] == "readiness_reconciled"
+    reconciled_task = await storage.tasks.get(task["id"])
+    assert reconciled_task["state"] == "succeeded" and reconciled_task["error_code"] is None
+    assert reconciled_task["result"]["initial_readiness_failure"]["outcome"] == "unknown"
+    assert (await storage.get_executor_status(executor.id)).last_result == "success"
     assert not await observer.conflicts(executor)
     scheduler._run_executor_with_overlap_guard.assert_not_awaited()
+
+
+async def test_retryable_kubernetes_pull_gets_bounded_readonly_grace_and_recovers(
+    storage, monkeypatch
+):
+    import json
+    from releasetracker.services.deploy_tasks import DeployTasks
+
+    executor, scheduler, observer, probe, now, task, run_id = await setup(
+        storage, monkeypatch, stable=0, timeout=30
+    )
+    monkeypatch.setattr(
+        DeployTasks, "identity", AsyncMock(return_value=task["payload"]["config_identity"])
+    )
+    db = await storage._get_connection()
+    row = await (
+        await db.execute(
+            "SELECT executor_config,verification FROM deployment_observations WHERE task_id=?",
+            (task["id"],),
+        )
+    ).fetchone()
+    config = json.loads(row[0])
+    config["runtime_type"] = "kubernetes"
+    config["service_bindings"] = [
+        {
+            "service": "service-a",
+            "tracker_source_id": executor.tracker_source_id,
+            "channel_name": "stable",
+        }
+    ]
+    config["target_ref"] = {
+        "mode": "kubernetes_workload",
+        "namespace": "test",
+        "kind": "Deployment",
+        "name": "app",
+    }
+    verification = json.loads(row[1])
+    verification["pull_grace_seconds"] = 600
+    await db.execute(
+        "UPDATE deployment_observations SET executor_config=?,verification=? WHERE task_id=?",
+        (json.dumps(config), json.dumps(verification), task["id"]),
+    )
+    await db.commit()
+    probe.return_value = {
+        "outcome": "pending",
+        "services": [
+            {
+                "service": "app",
+                "status": "pending",
+                "message": "image_pull_retrying",
+                "method": "kubernetes_rollout",
+            }
+        ],
+        "retryable_pull": True,
+    }
+    await observe(storage, observer, task["id"])
+    now[0] += 31
+    await observe(storage, observer, task["id"])
+    state = await storage.tasks.get(task["id"])
+    assert state["state"] == "running" and state["owner"] is None
+    row = await (
+        await db.execute(
+            "SELECT deadline,verification,due_at FROM deployment_observations WHERE task_id=?",
+            (task["id"],),
+        )
+    ).fetchone()
+    assert row[0] == pytest.approx(now[0] - 31 + 30 + 600)
+    assert json.loads(row[1])["initial_deadline"] == pytest.approx(now[0] - 1)
+    now[0] += 40
+    probe.return_value = {"outcome": "healthy", "services": []}
+    await observe(storage, observer, task["id"])
+    assert (await storage.tasks.get(task["id"]))["state"] == "succeeded"
+    run = await storage.get_executor_run(run_id)
+    assert run.status == "success" and run.diagnostics["health_check"]["late_recovery"]
+    scheduler._run_executor_with_overlap_guard = AsyncMock(
+        side_effect=AssertionError("must not deploy again")
+    )
+    scheduler._run_executor_with_overlap_guard.assert_not_awaited()
+
+
+async def test_nonretryable_pull_does_not_extend_deadline(storage, monkeypatch):
+    import json
+    from releasetracker.services.deploy_tasks import DeployTasks
+
+    executor, _, observer, probe, now, task, _ = await setup(
+        storage, monkeypatch, stable=0, timeout=30
+    )
+    monkeypatch.setattr(
+        DeployTasks, "identity", AsyncMock(return_value=task["payload"]["config_identity"])
+    )
+    db = await storage._get_connection()
+    row = await (
+        await db.execute(
+            "SELECT executor_config,verification FROM deployment_observations WHERE task_id=?",
+            (task["id"],),
+        )
+    ).fetchone()
+    config = json.loads(row[0])
+    config["runtime_type"] = "kubernetes"
+    config["service_bindings"] = [
+        {
+            "service": "service-a",
+            "tracker_source_id": executor.tracker_source_id,
+            "channel_name": "stable",
+        }
+    ]
+    config["target_ref"] = {
+        "mode": "kubernetes_workload",
+        "namespace": "test",
+        "kind": "Deployment",
+        "name": "app",
+    }
+    verification = json.loads(row[1])
+    verification["pull_grace_seconds"] = 600
+    await db.execute(
+        "UPDATE deployment_observations SET executor_config=?,verification=? WHERE task_id=?",
+        (json.dumps(config), json.dumps(verification), task["id"]),
+    )
+    await db.commit()
+    probe.return_value = {"outcome": "pending", "services": []}
+    await observe(storage, observer, task["id"])
+    now[0] += 31
+    await observe(storage, observer, task["id"])
+    assert (await storage.tasks.get(task["id"]))["state"] == "failed"
+    assert probe.await_count == 1  # No extra mutation or observation after the deadline.
+
+
+async def kube_pull_observation(storage, monkeypatch, *, timeout=30):
+    import json
+    from releasetracker.services.deploy_tasks import DeployTasks
+
+    executor, scheduler, observer, probe, now, task, run_id = await setup(
+        storage, monkeypatch, stable=0, timeout=timeout
+    )
+    monkeypatch.setattr(
+        DeployTasks, "identity", AsyncMock(return_value=task["payload"]["config_identity"])
+    )
+    db = await storage._get_connection()
+    row = await (
+        await db.execute(
+            "SELECT executor_config,verification FROM deployment_observations WHERE task_id=?",
+            (task["id"],),
+        )
+    ).fetchone()
+    config = json.loads(row[0])
+    config["runtime_type"] = "kubernetes"
+    config["service_bindings"] = [
+        {
+            "service": "service-a",
+            "tracker_source_id": executor.tracker_source_id,
+            "channel_name": "stable",
+        }
+    ]
+    config["target_ref"] = {
+        "mode": "kubernetes_workload",
+        "namespace": "test",
+        "kind": "Deployment",
+        "name": "app",
+    }
+    verification = json.loads(row[1])
+    verification["pull_grace_seconds"] = 60
+    await db.execute(
+        "UPDATE deployment_observations SET executor_config=?,verification=? WHERE task_id=?",
+        (json.dumps(config), json.dumps(verification), task["id"]),
+    )
+    await db.commit()
+    probe.return_value = {
+        "outcome": "pending",
+        "services": [{"service": "app", "status": "pending", "message": "image_pull_retrying"}],
+        "retryable_pull": True,
+    }
+    return executor, scheduler, observer, probe, now, task, run_id
+
+
+async def test_pull_recovers_at_original_deadline_without_stale_snapshot(storage, monkeypatch):
+    _, _, observer, probe, now, task, run_id = await kube_pull_observation(storage, monkeypatch)
+    await observe(storage, observer, task["id"])
+    now[0] += 31
+    probe.return_value = {"outcome": "healthy", "services": []}
+    await observe(storage, observer, task["id"])
+    assert probe.await_count == 2
+    assert (await storage.tasks.get(task["id"]))["state"] == "succeeded"
+    assert (await storage.get_executor_run(run_id)).diagnostics["health_check"]["late_recovery"]
+
+
+async def test_pull_error_changes_to_terminal_at_deadline(storage, monkeypatch):
+    _, _, observer, probe, now, task, run_id = await kube_pull_observation(storage, monkeypatch)
+    await observe(storage, observer, task["id"])
+    now[0] += 31
+    probe.return_value = {
+        "outcome": "unhealthy",
+        "services": [{"service": "app", "status": "unhealthy", "message": "invalid_image"}],
+    }
+    await observe(storage, observer, task["id"])
+    assert (await storage.tasks.get(task["id"]))["state"] == "failed"
+    assert (await storage.get_executor_run(run_id)).status == "failed"
+    assert probe.await_count == 2
+
+
+async def test_pull_identity_change_at_deadline_never_extends(storage, monkeypatch):
+    from releasetracker.services.deploy_tasks import DeployTasks
+
+    _, _, observer, probe, now, task, _ = await kube_pull_observation(storage, monkeypatch)
+    await observe(storage, observer, task["id"])
+    probe.reset_mock()
+    monkeypatch.setattr(DeployTasks, "identity", AsyncMock(return_value="different-configuration"))
+    now[0] += 31
+    await observe(storage, observer, task["id"])
+    assert probe.await_count == 0
+    assert (await storage.tasks.get(task["id"]))["state"] == "needs_attention"
+
+
+async def test_pull_grace_expires_even_after_restart(storage, monkeypatch):
+    import json
+
+    _, scheduler, observer, probe, now, task, run_id = await kube_pull_observation(
+        storage, monkeypatch
+    )
+    await observe(storage, observer, task["id"])
+    now[0] += 31
+    await observe(storage, observer, task["id"])
+    db = await storage._get_connection()
+    record = await (
+        await db.execute(
+            "SELECT deadline,verification FROM deployment_observations WHERE task_id=?",
+            (task["id"],),
+        )
+    ).fetchone()
+    assert json.loads(record[1])["initial_deadline"] == now[0] - 1
+    resumed = DeploymentReadiness(
+        storage, scheduler, MagicMock(), probe=probe, clock=lambda: now[0]
+    )
+    now[0] = record[0] + 1
+    await observe(storage, resumed, task["id"])
+    assert (await storage.tasks.get(task["id"]))["state"] == "failed"
+    assert (await storage.get_executor_run(run_id)).status == "failed"
+    assert probe.await_count == 3  # One final read-only probe before failing at the hard limit
+
+
+async def test_pull_recovers_at_grace_deadline_without_false_failure(storage, monkeypatch):
+    _, _, observer, probe, now, task, run_id = await kube_pull_observation(storage, monkeypatch)
+    await observe(storage, observer, task["id"])
+    now[0] += 31
+    await observe(storage, observer, task["id"])
+    db = await storage._get_connection()
+    deadline = (
+        await (
+            await db.execute(
+                "SELECT deadline FROM deployment_observations WHERE task_id=?", (task["id"],)
+            )
+        ).fetchone()
+    )[0]
+    now[0] = deadline
+    probe.return_value = {"outcome": "healthy", "services": []}
+    await observe(storage, observer, task["id"])
+    assert probe.await_count == 3
+    assert (await storage.tasks.get(task["id"]))["state"] == "succeeded"
+    assert (await storage.get_executor_run(run_id)).diagnostics["health_check"][
+        "late_recovery"
+    ] is True
 
 
 async def test_waiting_observation_blocks_delete_until_terminal(storage, monkeypatch):

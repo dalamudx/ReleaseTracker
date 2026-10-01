@@ -202,140 +202,6 @@
     "refresh": "刷新"
   },
   "backups": { "tab": "备份" },
-  "systemSettings": {
-    "system": {
-      "title": "系统设置",
-      "description": "管理全局应用配置与集成"
-    },
-    "tabs": {
-      "general": "全局配置",
-      "security": "安全密钥",
-      "oidc": "OIDC"
-    },
-    "global": {
-      "title": "全局设置",
-      "description": "这些配置会影响整个应用，后续新增的全局选项也会集中在这里管理。",
-      "baseUrl": {
-        "title": "BASE URL",
-        "label": "应用公开访问地址",
-        "description": "用于反向代理、OIDC 回调和登录完成跳转；如果部署在子路径下，请包含完整子路径。",
-        "placeholder": "https://example.com/releasetracker",
-        "invalid": "请输入有效的 http(s) 地址。"
-      },
-      "timezone": {
-        "title": "时区",
-        "label": "系统时区",
-        "description": "执行器维护窗口和统计图表统一使用这里配置的 IANA 时区，例如 Asia/Shanghai。"
-      },
-      "logLevel": {
-        "title": "日志级别",
-        "label": "后端日志级别",
-        "description": "控制应用启动后的后端日志输出级别。"
-      },
-      "releaseHistoryCount": {
-        "title": "版本历史数量",
-        "label": "每个发布渠道保留版本数",
-        "description": "每个发布渠道保留最新 N 个版本；清理会在执行器维护窗口完成后执行，如果没有维护窗口，则每天 02:00 执行。",
-        "invalid": "请输入 1 到 1000 之间的整数。",
-        "cleanupSuccess": "版本历史清理完成，已删除 {{count}} 条记录。"
-      },
-      "snapshotHistoryCount": {
-        "title": "快照历史数量",
-        "label": "每个执行器保留快照数",
-        "description": "每个执行器保留最新 N 个快照；新快照写入后会按数量裁剪旧快照。",
-        "invalid": "请输入 1 到 1000 之间的整数。",
-        "cleanupSuccess": "快照历史清理完成，已删除 {{count}} 个快照。"
-      },
-      "cleanup": {
-        "cleanNow": "立即清理",
-        "cleaning": "清理中..."
-      },
-      "ociRegistryRedirects": {
-        "title": "OCI 镜像仓库跳转",
-        "label": "启用镜像仓库跳转兼容",
-        "description": "仅在你的镜像仓库需要通过跳转访问标签、manifest、token 或 blob 时开启。",
-        "enabledHint": "跳转兼容已启用，后续开始的容器源检查会使用该策略。",
-        "disabledHint": "跳转支持已关闭。镜像仓库返回跳转时会在跟随前被拒绝。"
-      },
-      "sections": {
-        "basic": {
-          "title": "基础运行环境",
-          "description": "配置系统访问地址、时区及后端日志输出级别。"
-        },
-        "fetchAndReadiness": {
-          "title": "版本抓取与就绪策略",
-          "description": "控制镜像拉取容错、网络策略及执行器更新后的就绪观察默认参数。"
-        },
-        "storageAndRetention": {
-          "title": "存储与历史保留",
-          "description": "配置发布版本与执行器快照的保留策略，并支持手动清理历史数据。"
-        }
-      }
-    },
-    "general": {
-      "title": "通用设置",
-      "description": "管理版本排序与数据抓取偏好",
-      "versionSortMode": "版本排序模式",
-      "versionSortModeDesc": "选择系统如何从 API 返回的历史记录中挑选最新版本",
-      "sortPublishedAt": "按发布时间排序 (默认)",
-      "sortSemver": "按系统语义化版本 (SemVer) 排序",
-      "fetchLimit": "单次抓取深度",
-      "fetchLimitDesc": "后台轮询时每次向源站获取的最大记录数，适用于频繁发布预览版的项目"
-    },
-    "oidc": {
-      "title": "OIDC 登录提供商",
-      "description": "配置第三方登录提供商（OpenID Connect）",
-      "add": "添加提供商",
-      "addTitle": "添加 OIDC 提供商",
-      "editTitle": "编辑 OIDC 提供商",
-      "dialogDesc": "配置 OpenID Connect 提供商，用户可通过该提供商登录",
-      "empty": "暂无配置 OIDC 提供商",
-      "manualEndpoints": "[手动配置端点]",
-      "requiredFields": "请填写必填字段",
-      "secretRequired": "创建时必须提供客户端密钥",
-      "secretHint": "不修改则留空",
-      "secretPlaceholder": "不修改则留空",
-      "created": "OIDC 提供商已创建",
-      "updated": "OIDC 提供商已更新",
-      "deleted": "OIDC 提供商已删除",
-      "loadFailed": "加载提供商列表失败",
-      "saveFailed": "保存失败",
-      "deleteFailed": "删除失败",
-      "deleteTitle": "确认删除",
-      "deleteDesc": "确定要删除提供商\"{{name}}\"？警告：已有用户将无法通过该提供商登录。",
-      "fields": {
-        "name": "显示名称",
-        "slug": "Slug（URL 标识符）",
-        "clientId": "Client ID",
-        "clientSecret": "Client Secret",
-        "issuerUrl": "Issuer URL",
-        "discoveryEnabled": "启用 OIDC Discovery",
-        "discoveryDesc": "自动发现端点配置（推荐）",
-        "authorizationUrl": "Authorization URL",
-        "tokenUrl": "Token URL",
-        "userinfoUrl": "Userinfo URL",
-        "scopes": "Scopes",
-        "iconUrl": "图标 URL",
-        "description": "描述",
-        "enabled": "启用该提供商"
-      },
-      "bindingTitle": "管理员 OIDC 绑定",
-      "bindingDescription": "只有明确绑定的 OIDC 身份可以作为管理员登录。",
-      "bindingBound": "已绑定",
-      "bindingUnbound": "未绑定",
-      "bindingSubject": "Subject：{{subject}}",
-      "bind": "绑定 OIDC 身份",
-      "unbind": "解绑 OIDC 身份",
-      "bindingPasswordTitle": "确认管理员密码",
-      "bindingPasswordDescription": "修改 OIDC 绑定前，请重新输入本地管理员密码。",
-      "currentPassword": "当前密码",
-      "bindingStarted": "正在跳转到身份提供商……",
-      "bound": "管理员 OIDC 身份绑定成功",
-      "unbound": "管理员 OIDC 身份已解绑",
-      "bindingFailed": "OIDC 绑定操作失败",
-      "noProviderForBinding": "尚未配置 OIDC 提供商"
-    }
-  },
   "sidebar": {
     "dashboard": "仪表盘",
     "history": "版本历史",
@@ -843,10 +709,12 @@
     "results": {
       "queued": "排队中",
       "running": "运行中",
+      "health_checking": "等待部署就绪",
       "success": "成功",
       "failed": "失败",
       "skipped": "跳过",
-      "idle": "空闲"
+      "idle": "空闲",
+      "unknown": "状态未知"
     },
     "status": {
       "invalid": "失效"
@@ -1742,7 +1610,7 @@
     "updateElapsed": "更新耗时 {{count}} 秒",
     "elapsed": "就绪等待 {{count}} 秒",
     "recheck": "重新核验",
-    "recheckHelp": "只读检查当前就绪状态，不会覆盖原部署结果。",
+    "recheckHelp": "只读核验当前就绪状态，不会再次部署。相同目标恢复时会修正原任务状态并保留失败尝试记录。",
     "recheckQueued": "「{{name}}」的就绪重新核验任务已入队",
     "recheckFailed": "就绪重新核验入队失败。",
     "event": "健康检查结果",
@@ -1763,11 +1631,21 @@
       "kubernetes_rollout": "Kubernetes 滚动更新",
       "helm_status": "Helm 发布状态",
       "http": "HTTP 探针",
-      "tcp": "TCP 探针"
+      "tcp": "TCP 探针",
+      "other": "其他健康检查"
     },
     "messages": {
+      "image_pull_retrying": "镜像拉取暂时失败，正在只读复检（不会再次部署）",
+      "recreate_interruption": "Recreate 策略可能导致服务中断。请立即检查镜像仓库和集群。",
+      "invalid_image": "镜像不存在、名称无效或仓库拒绝访问",
+      "container_start_failed": "容器启动失败，请检查配置及 Secret",
+      "oom_killed": "容器因内存不足退出",
+      "image_digest_unverified": "无法核实 Pod 实际运行的镜像摘要，暂不判定成功",
+      "image_digest_mismatch": "Pod 实际运行的镜像摘要与提交目标不符",
+      "readiness_recovered": "超时后就绪，已核对原部署目标",
       "running_no_healthcheck": "容器正在运行，但未配置 Healthcheck",
-      "all_replicas_healthy": "所有目标副本均已运行并通过原生健康检查"
+      "all_replicas_healthy": "所有目标副本均已运行并通过原生健康检查",
+      "other": "更多诊断信息请查看任务详情"
     }
   },
   "ssh": {

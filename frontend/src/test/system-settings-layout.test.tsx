@@ -3,14 +3,15 @@ import { describe, it, expect, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { SystemSettingsPage } from "@/pages/SystemSettings"
 import zhLocale from "@/i18n/locales/zh.json"
-import enLocale from "@/i18n/locales/en.json"
+import zhSettings from "@/i18n/locales/system-settings.zh.json"
+import enSettings from "@/i18n/locales/system-settings.en.json"
 
 vi.mock("react-i18next", async (importOriginal) => ({
   ...await importOriginal<typeof import("react-i18next")>(),
   useTranslation: () => ({
     t: (key: string) => {
       const parts = key.split(".")
-      let cur: unknown = zhLocale
+      let cur: unknown = { ...zhLocale, systemSettings: zhSettings }
       for (const p of parts) {
         if (!cur) return key
         cur = (cur as Record<string, unknown>)[p]
@@ -69,13 +70,13 @@ describe("SystemSettingsPage Layout and Sections", () => {
   })
 
   it("ensures section translations are complete in both zh and en locales", () => {
-    expect(zhLocale.systemSettings.global.sections.basic.title).toBe("基础运行环境")
-    expect(enLocale.systemSettings.global.sections.basic.title).toBe("Basic Environment")
+    expect(zhSettings.global.sections.basic.title).toBe("基础运行环境")
+    expect(enSettings.global.sections.basic.title).toBe("Basic Environment")
 
-    expect(zhLocale.systemSettings.global.sections.fetchAndReadiness.title).toBe("版本抓取与就绪策略")
-    expect(enLocale.systemSettings.global.sections.fetchAndReadiness.title).toBe("Fetch & Readiness Strategy")
+    expect(zhSettings.global.sections.fetchAndReadiness.title).toBe("版本抓取与就绪策略")
+    expect(enSettings.global.sections.fetchAndReadiness.title).toBe("Fetch & Readiness Strategy")
 
-    expect(zhLocale.systemSettings.global.sections.storageAndRetention.title).toBe("存储与历史保留")
-    expect(enLocale.systemSettings.global.sections.storageAndRetention.title).toBe("Storage & Retention")
+    expect(zhSettings.global.sections.storageAndRetention.title).toBe("存储与历史保留")
+    expect(enSettings.global.sections.storageAndRetention.title).toBe("Storage & Retention")
   })
 })

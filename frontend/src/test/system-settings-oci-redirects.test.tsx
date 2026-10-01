@@ -2,8 +2,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { SettingItem } from "@/api/types"
-import enLocale from "@/i18n/locales/en.json"
-import zhLocale from "@/i18n/locales/zh.json"
+import enSettings from "@/i18n/locales/system-settings.en.json"
+import zhSettings from "@/i18n/locales/system-settings.zh.json"
 
 const {
   cleanupReleaseHistoryMock,
@@ -130,13 +130,13 @@ describe("SystemSettingsPage OCI registry redirects", () => {
     })
     expect(toggle).not.toBeChecked()
     expect(screen.getByText("systemSettings.global.ociRegistryRedirects.description")).toBeInTheDocument()
-    expect(zhLocale.systemSettings.global.ociRegistryRedirects.description).toBe(
+    expect(zhSettings.global.ociRegistryRedirects.description).toBe(
       "仅在你的镜像仓库需要通过跳转访问标签、manifest、token 或 blob 时开启。",
     )
-    expect(enLocale.systemSettings.global.ociRegistryRedirects.description).toBe(
+    expect(enSettings.global.ociRegistryRedirects.description).toBe(
       "Keep this disabled unless your registry requires redirects for tag, manifest, token, or blob access.",
     )
-    expect(zhLocale.systemSettings.global.ociRegistryRedirects.description).not.toContain(
+    expect(zhSettings.global.ociRegistryRedirects.description).not.toContain(
       "允许 Docker/OCI 镜像仓库请求使用项目内置的有界手动跳转策略。",
     )
     expect(screen.queryByText("允许 Docker/OCI 镜像仓库请求使用项目内置的有界手动跳转策略。")).not.toBeInTheDocument()

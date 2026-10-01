@@ -308,7 +308,7 @@ export function ExecutorList({
                                                     >
                                                         {lastResult ? STATUS_ICON_MAP[lastResult] : null}
                                                         {lastResult
-                                                            ? t(`executors.results.${lastResult}`)
+                                                            ? t(`executors.results.${lastResult}`, { defaultValue: t("executors.results.unknown") })
                                                             : t("executors.results.idle")}
                                                     </Badge>
                                                 )}

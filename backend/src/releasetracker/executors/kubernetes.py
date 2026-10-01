@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import date, datetime
 from typing import Any
+import hashlib
 import importlib
 import json
 import logging
@@ -298,7 +299,16 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
 
         # Preserve the API response identity, not a later GET that may observe an
         # external writer. The durable handoff consumes this before releasing ownership.
+        submitted_spec = self._readiness_fields(getattr(submitted, "spec", None))
+        template = submitted_spec.get("template") or {}
         self._readiness_submission = {
+            "template_fingerprint": (
+                hashlib.sha256(
+                    json.dumps(template, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest()
+                if template
+                else None
+            ),
             "namespace": namespace,
             "kind": kind,
             "name": name,

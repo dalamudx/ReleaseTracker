@@ -43,7 +43,7 @@ describe("read-only readiness recheck", () => {
     fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.details", { id: 17 }) }))
     const button = screen.getByRole("button", { name: "Recheck readiness" })
     expect(api.recheckTask).not.toHaveBeenCalled()
-    expect(screen.getByText(/Read-only check/)).toBeVisible()
+    expect(screen.getByText(/Read-only verification/)).toBeVisible()
     fireEvent.click(button)
     await waitFor(() => expect(button).toBeDisabled())
     expect(api.recheckTask).toHaveBeenCalledExactlyOnceWith(17)

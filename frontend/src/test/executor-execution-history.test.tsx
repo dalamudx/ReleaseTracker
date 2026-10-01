@@ -90,7 +90,7 @@ describe("ExecutorExecutionHistoryPanel image rendering", () => {
     render(<ExecutorExecutionHistoryPanel executor={createExecutor()} refreshKey={0} />)
     expect(await screen.findByText("readiness.waiting")).toBeVisible()
     expect(screen.getByTestId("executor-history-image-change-list")).toHaveTextContent("registry.example.test/team/service-a:1.2.0")
-    expect(screen.getByRole("status")).toHaveTextContent("service-a: readiness.outcome.pending · native — starting")
+    expect(screen.getByRole("status")).toHaveTextContent("service-a: readiness.outcome.pending · readiness.method.native — readiness.messages.starting")
   })
   it("renders backend from/to image refs verbatim under image columns", async () => {
     getExecutorHistoryMock.mockResolvedValue({

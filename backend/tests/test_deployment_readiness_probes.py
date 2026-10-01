@@ -42,7 +42,7 @@ def workload(kind="Deployment"):
                     {"type": "Progressing", "status": "False", "reason": "ProgressDeadlineExceeded"}
                 ]
             },
-            "unhealthy",
+            "healthy",
         ),
     ],
 )
@@ -58,6 +58,46 @@ def test_subsequent_generation_or_recreated_workload_is_superseded(field, value)
     submitted = workload()
     current = deepcopy(submitted)
     current["metadata"][field] = value
+    assert probes._workload_status(current, submitted, {"service-a": IMAGE})[0] == "superseded"
+
+
+def test_progress_deadline_does_not_mask_eventual_full_readiness():
+    submitted = workload()
+    current = deepcopy(submitted)
+    current["status"]["conditions"] = [
+        {"type": "Progressing", "status": "False", "reason": "ProgressDeadlineExceeded"}
+    ]
+    current["status"]["updatedReplicas"] = 0
+    assert probes._workload_status(current, submitted, {"service-a": IMAGE})[0] == "pending"
+    current["status"]["updatedReplicas"] = 2
+    assert probes._workload_status(current, submitted, {"service-a": IMAGE})[0] == "healthy"
+
+
+def test_scale_change_with_same_template_does_not_supersede_rollout():
+    import hashlib
+    import json
+
+    submitted = workload()
+    template = {"spec": {"containers": [{"name": "app", "image": IMAGE}]}}
+    submitted["template_fingerprint"] = hashlib.sha256(
+        json.dumps(template, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    current = deepcopy(submitted)
+    current["metadata"]["generation"] = 5
+    current["spec"]["replicas"] = 3
+    current["spec"]["template"] = template
+    current["status"].update(
+        observedGeneration=5, replicas=3, updatedReplicas=3, readyReplicas=3, availableReplicas=3
+    )
+    assert probes._workload_status(current, submitted, {"service-a": IMAGE})[0] == "healthy"
+    current["spec"]["template"]["spec"]["containers"][0]["image"] = "elsewhere:2"
+    assert probes._workload_status(current, submitted, {"service-a": IMAGE})[0] == "superseded"
+
+
+def test_scale_change_without_pinned_template_remains_conservative():
+    submitted = workload()
+    current = deepcopy(submitted)
+    current["metadata"]["generation"] += 1
     assert probes._workload_status(current, submitted, {"service-a": IMAGE})[0] == "superseded"
 
 
@@ -234,6 +274,67 @@ async def test_kubernetes_post_capture_generation_is_exactly_next(monkeypatch, g
         },
     )
     assert result["outcome"] == outcome
+
+
+@pytest.mark.asyncio
+async def test_probe_uses_pod_waiting_reason_and_recovers_without_redeploying(monkeypatch):
+    from datetime import datetime, timezone
+    from unittest.mock import MagicMock
+
+    submitted_at = datetime.now(timezone.utc)
+    before = workload()
+    before["metadata"]["generation"] = 3
+    submitted = workload()
+    current = deepcopy(submitted)
+    current["status"].update(updatedReplicas=0, readyReplicas=0, availableReplicas=0)
+    current["status"]["conditions"] = [
+        {"type": "Progressing", "status": "False", "reason": "ProgressDeadlineExceeded"}
+    ]
+    current["spec"]["selector"] = {"match_labels": {"app": "test"}}
+    current["spec"]["strategy"] = {"type": "Recreate"}
+    snapshot = {"kind": "kubernetes_workload", "workloads": {"Deployment/service-a": current}}
+    monkeypatch.setattr(probes, "_capture", AsyncMock(return_value=snapshot))
+    adapter = MagicMock()
+    pod = SimpleNamespace(
+        metadata=SimpleNamespace(creation_timestamp=submitted_at),
+        spec=SimpleNamespace(containers=[SimpleNamespace(name="service-a", image=IMAGE)]),
+        status=SimpleNamespace(
+            container_statuses=[
+                SimpleNamespace(
+                    state=SimpleNamespace(
+                        waiting=SimpleNamespace(
+                            reason="ImagePullBackOff",
+                            message="net/http: request timeout https://private/secret",
+                        ),
+                        terminated=None,
+                    )
+                )
+            ]
+        ),
+    )
+    adapter._get_core_api.return_value.list_namespaced_pod.return_value.items = [pod]
+    monkeypatch.setattr(probes, "_adapter", AsyncMock(return_value=adapter))
+    verification = {
+        "baseline": {"workloads": {"Deployment/service-a": before}},
+        "target": {"workloads": {"Deployment/service-a": submitted}},
+        "services": [{"service": "service-a", "to_version": IMAGE}],
+        "submitted_at": submitted_at.timestamp(),
+    }
+    executor = SimpleNamespace(target_ref={"mode": "kubernetes_workload", "namespace": "test"})
+    result = await probes.probe_deployment(None, None, executor, verification)
+    assert result["outcome"] == "pending" and result["retryable_pull"]
+    assert result["service_interruption_risk"] is True
+    assert "private" not in str(result)
+    adapter._get_core_api.return_value.list_namespaced_pod.assert_called_once()
+    pod.status.container_statuses[0].state.waiting.message = (
+        "manifest unknown https://private/secret"
+    )
+    result = await probes.probe_deployment(None, None, executor, verification)
+    assert result["outcome"] == "unhealthy"
+    assert result["services"][0]["message"] == "invalid_image"
+    current["status"].update(updatedReplicas=2, readyReplicas=2, availableReplicas=2)
+    result = await probes.probe_deployment(None, None, executor, verification)
+    assert result["outcome"] == "healthy"  # stale ProgressDeadlineExceeded is not failure
 
 
 @pytest.mark.asyncio

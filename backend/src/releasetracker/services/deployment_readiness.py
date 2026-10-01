@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from datetime import datetime
 
@@ -18,6 +19,14 @@ from ..executor_scheduler_run_lifecycle import ExecutorRunOutcome
 
 logger = logging.getLogger(__name__)
 DEFAULTS = {"timeout": 600, "interval": 5, "attempt_timeout": 10, "stable": 10}
+
+
+def readiness_grace_seconds():
+    try:
+        value = int(os.environ.get("RELEASETRACKER_READINESS_PULL_GRACE_SECONDS", "1800"))
+    except ValueError:
+        value = 1800
+    return value if 0 <= value <= 3600 else 1800
 
 
 async def snapshot_readiness_profile(storage, executor):
@@ -103,6 +112,8 @@ class DeploymentReadiness:
             target = {"capture_error": True}
         verification = {
             "baseline": baseline,
+            "pull_grace_seconds": readiness_grace_seconds(),
+            "submitted_at": now,
             "target": target,
             "run_id": run_id,
             "diagnostics": diagnostics,
@@ -387,10 +398,45 @@ class DeploymentReadiness:
             }
         elif now >= row["deadline"]:
             previous = json.loads(row["result"] or "{}")
-            result = previous | {
-                "outcome": "unknown" if previous.get("outcome") == "unknown" else "timeout",
-                "message": "Readiness deadline exceeded",
-            }
+            if (
+                previous.get("outcome") == "pending"
+                and previous.get("retryable_pull") is True
+                and verification.get("pull_grace_seconds", 0) > 0
+                and executor.target_ref.get("mode") == "kubernetes_workload"
+            ):
+                # Never extend based on stale Pod evidence: the image may have
+                # become invalid or the workload may have changed since last tick.
+                try:
+                    from .deployment_readiness_probes import probe_deployment
+
+                    probe = self.probe or probe_deployment
+                    budget = profile.get("readiness_attempt_timeout_seconds", 10)
+                    async with asyncio.timeout(budget):
+                        result = dict(
+                            await probe(self.storage, self.scheduler, executor, verification)
+                        )
+                    if result.get("outcome") == "healthy" and not verification.get(
+                        "initial_deadline"
+                    ):
+                        verification["deadline_pull_recheck"] = True
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    result = {
+                        "outcome": "unknown",
+                        "services": [],
+                        "message": "Runtime observation unavailable",
+                    }
+                if result.get("outcome") == "pending" and not result.get("retryable_pull"):
+                    result = result | {
+                        "outcome": "timeout",
+                        "message": "Readiness deadline exceeded",
+                    }
+            else:
+                result = previous | {
+                    "outcome": "unknown" if previous.get("outcome") == "unknown" else "timeout",
+                    "message": "Readiness deadline exceeded",
+                }
         else:
             try:
                 from .deployment_readiness_probes import probe_deployment
@@ -412,6 +458,26 @@ class DeploymentReadiness:
                 }
         verification.update(result.pop("verification_update", {}))
         now = self.clock()
+        deadline = row["deadline"]
+        if (
+            now >= deadline
+            and result.get("outcome") in {"pending", "healthy"}
+            and (
+                result.get("retryable_pull") is True
+                or verification.pop("deadline_pull_recheck", False)
+            )
+            and not verification.get("initial_deadline")
+            and not task["payload"].get("observation_task_id")
+            and executor.target_ref.get("mode") == "kubernetes_workload"
+            and verification.get("pull_grace_seconds", 0) > 0
+        ):
+            verification["initial_deadline"] = deadline
+            deadline = deadline + verification["pull_grace_seconds"]
+            if result["outcome"] == "pending":
+                result["message"] = "image_pull_retrying"
+        if verification.get("initial_deadline") and result.get("outcome") == "healthy":
+            result["late_recovery"] = True
+            result["message"] = "readiness_recovered"
         result["elapsed_seconds"] = max(0, round(now - row["started_at"], 1))
         result["duration_seconds"] = result["elapsed_seconds"]
         if not task["payload"].get("observation_task_id"):
@@ -434,20 +500,28 @@ class DeploymentReadiness:
         else:
             stable_since = None
         # Transient transport failures are re-observed, never re-deployed.
-        if outcome == "healthy" and now > row["deadline"]:
+        if outcome == "healthy" and now > deadline:
             outcome = result["outcome"] = "timeout"
             result["message"] = "Readiness deadline exceeded"
         terminal = outcome in {"healthy", "unhealthy", "unsupported", "superseded", "timeout"}
-        if not terminal and now >= row["deadline"]:
+        if not terminal and now >= deadline:
             result["outcome"] = "unknown" if outcome == "unknown" else "timeout"
             terminal = True
         state = "finalizing" if terminal else "waiting"
-        due = min(row["deadline"], now + profile.get("readiness_interval_seconds", 5))
+        due = min(
+            deadline,
+            now
+            + (
+                min(120, max(30, profile.get("readiness_interval_seconds", 5)))
+                if verification.get("initial_deadline")
+                else profile.get("readiness_interval_seconds", 5)
+            ),
+        )
         finalization = json.loads(row["finalization"])
         diagnostics = finalization.get("diagnostics", {}) | {"health_check": result}
         async with self.storage.tasks.transaction() as db:
             await db.execute(
-                "UPDATE deployment_observations SET state=?,result=?,stable_since=?,due_at=?,outcome=?,verification=? WHERE task_id=? AND state='waiting'",
+                "UPDATE deployment_observations SET state=?,result=?,stable_since=?,due_at=?,outcome=?,verification=?,deadline=? WHERE task_id=? AND state='waiting'",
                 (
                     state,
                     json.dumps(result),
@@ -455,6 +529,7 @@ class DeploymentReadiness:
                     due,
                     result["outcome"],
                     json.dumps(verification),
+                    deadline,
                     row["task_id"],
                 ),
             )
@@ -537,28 +612,78 @@ class DeploymentReadiness:
                 ]
                 checks.append({"task_id": row["task_id"], "finished_at": self.clock(), **result})
                 diagnostics.update(health_recheck=result, health_rechecks=checks)
-                await db.execute(
-                    "UPDATE executor_run_history SET diagnostics=? WHERE id=?",
-                    (json.dumps(diagnostics), row["run_id"]),
-                )
+                latest = await (
+                    await db.execute(
+                        "SELECT MAX(id) FROM executor_run_history WHERE executor_id=?",
+                        (executor.id,),
+                    )
+                ).fetchone()
+                current_run = latest and latest[0] == row["run_id"]
+                reconciled = bool(healthy and status == "success" and current_run)
+                if reconciled:
+                    # The original attempt failed at the deadline, but the *same*
+                    # immutable target later reached readiness. Keep that evidence
+                    # and the failed attempt; correct the final run/task/status.
+                    parent = await (
+                        await db.execute(
+                            "SELECT result FROM tasks WHERE id=?", (final["recheck_of"],)
+                        )
+                    ).fetchone()
+                    if parent:
+                        parent_result = json.loads(parent[0] or "{}")
+                        parent_result.setdefault(
+                            "initial_readiness_failure", parent_result.get("health_check")
+                        )
+                        parent_result.update(health_check=result, health_recheck=result)
+                        await db.execute(
+                            """UPDATE tasks SET state='succeeded',result=?,error_code=NULL,
+                               message='Deployment ready after recheck',updated_at=?
+                               WHERE id=? AND state IN ('failed','needs_attention')""",
+                            (json.dumps(parent_result), self.clock(), final["recheck_of"]),
+                        )
+                    await db.execute(
+                        """UPDATE executor_status SET last_result='success',last_error=NULL,updated_at=?
+                           WHERE executor_id=? AND last_result IN ('failed','health_checking')""",
+                        (datetime.fromtimestamp(self.clock()).isoformat(), executor.id),
+                    )
+                    await db.execute(
+                        """UPDATE executor_run_history SET status='success',finished_at=?,
+                           message='Deployment ready after recheck',diagnostics=? WHERE id=?""",
+                        (
+                            datetime.fromtimestamp(self.clock()).isoformat(),
+                            json.dumps(diagnostics),
+                            row["run_id"],
+                        ),
+                    )
+                else:
+                    await db.execute(
+                        "UPDATE executor_run_history SET diagnostics=? WHERE id=?",
+                        (json.dumps(diagnostics), row["run_id"]),
+                    )
                 from .executor_notification_outbox import write_notification_intent
 
-                await write_notification_intent(
-                    db,
-                    {
-                        "entity": "executor_health_recheck",
-                        "executor_id": executor.id,
-                        "executor_name": executor.name,
-                        "run_id": row["run_id"],
-                        "runtime_type": executor.runtime_type,
-                        "target_mode": executor.target_ref.get("mode"),
-                        "from_version": final.get("from_version"),
-                        "to_version": final.get("to_version"),
-                        "status": "readiness_recovered" if healthy else "readiness_recheck_failed",
-                        "health_check": result,
-                    },
-                    notify_health_result=executor.health_check.notify_result,
-                )
+                if not current_run:
+                    # Never send a recovered notice about an obsolete deployment.
+                    pass
+                else:
+                    await write_notification_intent(
+                        db,
+                        {
+                            "entity": "executor_health_recheck",
+                            "executor_id": executor.id,
+                            "executor_name": executor.name,
+                            "run_id": row["run_id"],
+                            "runtime_type": executor.runtime_type,
+                            "target_mode": executor.target_ref.get("mode"),
+                            "from_version": final.get("from_version"),
+                            "to_version": final.get("to_version"),
+                            "status": (
+                                "readiness_recovered" if healthy else "readiness_recheck_failed"
+                            ),
+                            "health_check": result,
+                        },
+                        notify_health_result=executor.health_check.notify_result,
+                    )
         else:
             await self.scheduler._finalize_run(executor, row["run_id"], **final)
         now = self.clock()

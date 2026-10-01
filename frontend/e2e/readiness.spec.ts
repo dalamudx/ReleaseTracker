@@ -42,7 +42,7 @@ for (const width of [1280, 390]) {
     await page.getByRole("button", { name: "Task notifications", exact: true }).click()
     const popover = page.locator('[data-slot="popover-content"]')
     await expect(popover.getByText("Waiting for readiness", { exact: true })).toBeVisible()
-    await expect(popover.getByRole("status")).toContainText("runtime_state")
+    await expect(popover.getByRole("status")).toContainText("Runtime state")
     await expect(popover.getByText("Succeeded", { exact: true })).toHaveCount(0)
     await fits(page, popover)
     await page.screenshot({ path: `/tmp/rt-readiness-tasks-${width}.png` })
@@ -56,7 +56,7 @@ for (const width of [1280, 390]) {
     for (const [index, label] of ["Waiting for readiness", "Healthy", "Timed out", "Unknown"].entries()) {
       const row = rows.nth(index)
       await expect(row).toContainText(`Readiness: ${label}`)
-      await expect(row.getByRole("listitem").filter({ hasText: serviceName })).toContainText(`${serviceName}: ${label} · runtime_state — Running; no healthcheck configured`)
+      await expect(row.getByRole("listitem").filter({ hasText: serviceName })).toContainText(`${serviceName}: ${label} · Runtime state — Running; no healthcheck configured`)
       await expect(row).not.toContainText(/business.*healthy|application.*healthy/i)
       await row.scrollIntoViewIfNeeded()
       expect(await row.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true)
