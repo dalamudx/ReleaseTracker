@@ -4696,6 +4696,76 @@ async def test_helm_release_executor_upgrades_chart_version_from_helm_source(sto
     assert updated_config.target_ref["chart_digest"] == "sha256:" + "a" * 64
 
 
+@pytest.mark.asyncio
+async def test_helm_desired_revision_tracks_chart_digest(storage):
+    from releasetracker.executor_trigger import enqueue_executor_binding_targets
+
+    await storage.save_tracker_config(
+        TrackerConfig(
+            name="chart-revision",
+            type="helm",
+            enabled=True,
+            repo="https://charts.example",
+            chart="chart-revision",
+            channels=[config_module.Channel(name="stable", enabled=True, type="release")],
+        )
+    )
+    await _create_bound_helm_release(
+        storage,
+        "chart-revision",
+        app_version="2.0.0",
+        chart_version="0.8.0",
+        published_at=datetime(2026, 3, 25, tzinfo=timezone.utc),
+        commit_sha="sha256:" + "a" * 64,
+    )
+    source_id = await _get_tracker_source_id(storage, "chart-revision")
+    runtime_id = await storage.create_runtime_connection(
+        RuntimeConnectionConfig(
+            name="chart-revision",
+            type="kubernetes",
+            enabled=True,
+            config={"namespace": "apps", "in_cluster": True},
+            secrets={},
+        )
+    )
+    executor_id = await storage.save_executor_config(
+        ExecutorConfig(
+            name="chart-revision",
+            runtime_type="kubernetes",
+            runtime_connection_id=runtime_id,
+            tracker_name="chart-revision",
+            tracker_source_id=source_id,
+            channel_name="stable",
+            enabled=True,
+            update_mode="immediate",
+            target_ref={
+                "mode": "helm_release",
+                "namespace": "apps",
+                "release_name": "chart-revision",
+                "chart_name": "chart-revision",
+            },
+        )
+    )
+    executor = await storage.get_executor_config(executor_id)
+    assert await enqueue_executor_binding_targets(storage, executor)
+    first = await storage.get_executor_desired_state(executor_id)
+    assert first.desired_target["binding_targets"][0]["chart_version"] == "0.8.0"
+    assert first.desired_target["binding_targets"][0]["chart_digest"] == "sha256:" + "a" * 64
+    assert not await enqueue_executor_binding_targets(storage, executor)
+    await _create_bound_helm_release(
+        storage,
+        "chart-revision",
+        app_version="2.0.0",
+        chart_version="0.8.0",
+        published_at=datetime(2026, 3, 26, tzinfo=timezone.utc),
+        commit_sha="sha256:" + "b" * 64,
+    )
+    assert await enqueue_executor_binding_targets(storage, executor)
+    second = await storage.get_executor_desired_state(executor_id)
+    assert second.desired_state_revision != first.desired_state_revision
+    assert second.desired_target["binding_targets"][0]["chart_digest"] == "sha256:" + "b" * 64
+
+
 @pytest.mark.parametrize("digest_matches", [True, False])
 @pytest.mark.asyncio
 async def test_helm_release_executor_compares_same_chart_version_by_digest(storage, digest_matches):

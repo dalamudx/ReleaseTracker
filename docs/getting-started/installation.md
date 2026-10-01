@@ -12,6 +12,10 @@ title: 安装与首次运行
 - 将数据目录持久化到 `/app/backend/data`，允许进程读写。
 - 允许实例访问需要追踪的上游服务。
 - 仅运行一个实例，不要把同一数据目录挂载给多个活动副本。
+- Kubernetes 可配置就绪探针 `GET /api/health/ready` 和存活探针 `GET /api/health/live`（端口 8000）。镜像自带 Docker HEALTHCHECK；请根据负载为 Pod 设置资源请求和限制。
+- 默认仅允许同源请求；如需分离前端地址，可将 `RELEASETRACKER_CORS_ORIGINS` 设为逗号分隔的完整 HTTP(S) 来源（不可使用 `*`）。`RELEASETRACKER_DB_PATH` 可覆盖数据库路径，密钥文件位于其同目录。
+- 每日最多清理 500 条超过 90 天、未被版本历史及 Webhook 收据引用的抓取记录。任务及其触发键作为审计和去重证据保留；定期备份数据目录。
+- 当前镜像仍以 root 运行：已有数据卷可能属于 root；切换到非 root 前必须先备份并迁移数据卷权限，不能直接更改 Pod 的 `runAsUser`。
 
 !!! warning "保留数据和密钥"
     数据目录包含数据库与 `system-secrets.json`。容器重建时必须复用该目录；丢失密钥会导致加密凭证无法解密。
@@ -55,6 +59,44 @@ title: 安装与首次运行
     ```
 
 `migrate-and-serve` 先执行数据库迁移再启动；其他[入口命令](../operations/backup-and-upgrade.md#entry-commands){#_2}用于维护。生产环境建议将 `latest` 换成已验证的版本标签。
+
+## Kubernetes 探针与资源 {#kubernetes-probes}
+
+为单副本 Deployment 的容器配置以下探针和资源基线；这不是完整部署清单。数据库迁移较慢时增大启动探针等待时间，资源上限按抓取量与部署负载调整。保持 `replicas: 1` 并使用 `strategy.type: Recreate`，避免升级时两个进程同时访问数据卷。
+
+```yaml
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+startupProbe:
+  httpGet:
+    path: /api/health/live
+    port: 8000
+  periodSeconds: 5
+  failureThreshold: 60
+readinessProbe:
+  httpGet:
+    path: /api/health/ready
+    port: 8000
+  periodSeconds: 10
+  timeoutSeconds: 3
+livenessProbe:
+  httpGet:
+    path: /api/health/live
+    port: 8000
+  periodSeconds: 30
+  timeoutSeconds: 3
+```
+
+登录接口按客户端地址限制为每分钟 10 次未成功请求，并有全局每分钟 100 次预算；返回 `429` 时遵循 `Retry-After`。仅信任 ASGI 客户端地址，不自行读取任意 `X-Forwarded-For`；代理部署应正确配置 Uvicorn 的可信代理地址。
+
+后台任务默认每 2 秒轮询。如更重视空闲资源占用，可设置 `RELEASETRACKER_WORKER_POLL_SECONDS=5`（整数 1–60）；会同时增加任务派发、就绪观察、通知和 Webhook 处理的延迟，不改变追踪器检查或每日清理频率。此选项不引入多实例或并行部署支持。
+
+构建时 dbmate 与 Helm 下载会核对固定 SHA256；覆盖 `DBMATE_VERSION` 或 `HELM_VERSION` 时，必须同时提供经过独立验证的 `DBMATE_SHA256` 或 `HELM_SHA256`。
 
 ## 首次登录 {#3}
 

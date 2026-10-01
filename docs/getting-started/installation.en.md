@@ -12,6 +12,10 @@ Goal: start an instance, sign in, and find a project's versions. Use Docker or D
 - Persist `/app/backend/data` in a directory writable by the process.
 - Allow outbound access to the upstream services you track.
 - Run one instance; do not share its data directory between active replicas.
+- On Kubernetes, use `GET /api/health/ready` for readiness and `GET /api/health/live` for liveness (port 8000). The image includes a Docker HEALTHCHECK. Set Pod resource requests and limits for your workload.
+- Only same-origin requests are allowed by default. For a separate frontend, set `RELEASETRACKER_CORS_ORIGINS` to comma-separated explicit HTTP(S) origins (not `*`). `RELEASETRACKER_DB_PATH` overrides the database path; the key file stays beside it.
+- Daily maintenance removes up to 500 fetch runs older than 90 days if no release-history or webhook receipt references them. Tasks and trigger keys remain as audit and deduplication evidence; back up the data directory regularly.
+- The image still runs as root: existing volumes may be root-owned. Back up and migrate volume permissions before switching to a non-root `runAsUser`; do not change it on existing Pods without this step.
 
 !!! warning "Keep the database and keys"
     The data directory contains the database and `system-secrets.json`. Reuse it when recreating containers. Losing the key file makes encrypted credentials unreadable.
@@ -55,6 +59,44 @@ These examples bind to the host loopback address for local access or a proxy on 
     ```
 
 `migrate-and-serve` migrates the database before starting. Other [entry commands](../operations/backup-and-upgrade.md#entry-commands){#entry-commands} are for maintenance. Pin a tested release tag instead of `latest` in production.
+
+## Kubernetes probes and resources {#kubernetes-probes}
+
+Apply this probe and resource baseline to the container in a single-replica Deployment; it is not a complete deployment manifest. Increase the startup allowance for slow migrations and tune resources for fetch and deployment workloads. Keep `replicas: 1` and `strategy.type: Recreate` to avoid two processes sharing the volume during upgrades.
+
+```yaml
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+startupProbe:
+  httpGet:
+    path: /api/health/live
+    port: 8000
+  periodSeconds: 5
+  failureThreshold: 60
+readinessProbe:
+  httpGet:
+    path: /api/health/ready
+    port: 8000
+  periodSeconds: 10
+  timeoutSeconds: 3
+livenessProbe:
+  httpGet:
+    path: /api/health/live
+    port: 8000
+  periodSeconds: 30
+  timeoutSeconds: 3
+```
+
+Login endpoints allow 10 unsuccessful requests per client address per minute, with a global budget of 100 per minute. Honor `Retry-After` on `429` responses. The limiter uses the ASGI peer, not arbitrary `X-Forwarded-For` headers; configure trusted proxy addresses in Uvicorn when deploying behind a proxy.
+
+Background workers poll every 2 seconds by default. Set `RELEASETRACKER_WORKER_POLL_SECONDS=5` (integer 1–60) to reduce idle polling at the cost of dispatch, readiness, notification, and webhook latency. Tracker check schedules and daily cleanup are unchanged. This does not enable multiple instances or parallel deployment mutations.
+
+Image builds verify fixed SHA256 digests for dbmate and Helm. Overriding `DBMATE_VERSION` or `HELM_VERSION` also requires an independently verified `DBMATE_SHA256` or `HELM_SHA256`.
 
 ## First login {#3-first-login}
 

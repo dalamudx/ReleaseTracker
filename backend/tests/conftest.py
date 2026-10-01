@@ -140,6 +140,16 @@ def client(storage, system_key_manager):
     app.router.lifespan_context = mock_lifespan
 
     with TestClient(app) as c:
+        # Production rate limits are process-scoped; test cases use independent
+        # clients and must not inherit failed attempts from preceding fixtures.
+        from releasetracker.services.http_security import LoginRateLimitMiddleware
+
+        middleware = app.middleware_stack
+        while middleware is not None:
+            if isinstance(middleware, LoginRateLimitMiddleware):
+                middleware.limiter.attempts.clear()
+                break
+            middleware = getattr(middleware, "app", None)
         cast(Any, c).executor_scheduler = executor_scheduler
         yield c
 

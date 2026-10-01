@@ -7,6 +7,7 @@ import json
 
 from .deploy_tasks import DeployTasks
 from .task_queue import Deferred, TaskResult
+from .mutation_scope import mutation_resource_key
 import time
 
 
@@ -33,7 +34,7 @@ class RecoveryTasks(DeployTasks):
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         task = await self.storage.tasks.enqueue(
             kind="recover",
-            resource_key="deployment-mutations",
+            resource_key=await mutation_resource_key(self.storage, self.scheduler, executor),
             dedupe_key=f"recover:{digest}",
             target_label=executor.name,
             payload=payload,
@@ -47,6 +48,9 @@ class RecoveryTasks(DeployTasks):
         executor = await self.storage.get_executor_config(task["payload"]["executor_id"])
         if executor is None or await self.identity(executor) != task["payload"]["config_identity"]:
             return TaskResult("superseded", "configuration_changed")
+        await self.storage.tasks.bind_mutation_scope(
+            task, await mutation_resource_key(self.storage, self.scheduler, executor)
+        )
         observer = getattr(self.scheduler, "readiness", None)
         if observer is not None and await observer.conflicts(executor, include_blocked=False):
             return Deferred(time.time() + 5, "target_awaiting_readiness")

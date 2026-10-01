@@ -36,12 +36,18 @@ async def test_tls_io_wait_does_not_hide_timeout(wait_type):
     assert result.message is None
 
 
-@pytest.mark.parametrize("error_type", [ssl.SSLCertVerificationError, ssl.SSLError])
-async def test_real_tls_failure_still_wins_over_timeout(error_type):
-    error = timeout_chain(error_type)
-    result = classify_fetch_error(error)
+async def test_certificate_failure_still_wins_over_timeout():
+    result = classify_fetch_error(timeout_chain(ssl.SSLCertVerificationError))
     assert result.code == "security_validation_failed"
     assert result.retryable is False
+
+
+@pytest.mark.parametrize("error_type", [ssl.SSLError, ssl.SSLEOFError, ssl.SSLZeroReturnError])
+async def test_transport_tls_failure_wins_over_timeout_and_retries(error_type):
+    result = classify_fetch_error(timeout_chain(error_type))
+    assert result.code == "upstream_tls_failed"
+    assert result.retryable is True
+    assert result.message is None
 
 
 @pytest.mark.parametrize(

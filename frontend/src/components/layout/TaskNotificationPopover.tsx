@@ -1,7 +1,8 @@
 import { ReadinessSummary } from "@/components/executors/ReadinessSummary"
-import { useState } from "react"
+import { useEffect, useId, useState } from "react"
 import { Link } from "react-router"
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
 import { formatDistanceToNow } from "date-fns"
 import { enUS, zhCN } from "date-fns/locale"
@@ -15,6 +16,7 @@ import {
     Rocket,
     ShieldAlert,
     Timer,
+    ListX,
 } from "lucide-react"
 import { api } from "@/api/client"
 import type { QueueTask, TaskState } from "@/api/task-types"
@@ -23,6 +25,7 @@ import { Badge } from "@/components/ui/badge"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
+import { isSettledTask, isUnreadTask, useTaskNotificationRead } from "@/hooks/use-task-notification-read"
 
 function getKindIcon(kind: QueueTask["kind"]) {
     switch (kind) {
@@ -45,10 +48,7 @@ function MiniStateBadge({ state, phase }: { state: TaskState; phase?: string }) 
         case "running":
             return (
                 <span className="inline-flex items-center gap-1 text-[11px] font-medium text-info">
-                    <span className="relative flex h-1.5 w-1.5">
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-info/45 opacity-75" />
-                        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-info" />
-                    </span>
+                    <span className="size-1.5 rounded-full bg-info" aria-hidden="true" />
                     {label}
                 </span>
             )
@@ -87,6 +87,17 @@ function MiniStateBadge({ state, phase }: { state: TaskState; phase?: string }) 
 export function TaskNotificationPopover() {
     const { t, i18n } = useTranslation()
     const [open, setOpen] = useState(false)
+    const descriptionId = useId()
+    const cache = useQueryClient()
+    const { read, markRead } = useTaskNotificationRead()
+    const clearRead = useMutation({
+        mutationFn: (readTasks: Array<{ id: number; updated_at: number }>) => api.clearFinishedTasks(readTasks),
+        onSuccess: async ({ cleared }) => {
+            toast.success(t("tasks.clearedRead", { count: cleared }))
+            await cache.invalidateQueries({ queryKey: ["tasks"] })
+        },
+        onError: () => toast.error(t("tasks.clearFailed")),
+    })
 
     const tasksQuery = useQuery({
         queryKey: ["tasks", "recent-popover"],
@@ -98,9 +109,33 @@ export function TaskNotificationPopover() {
     const recentTasks = tasks.slice(0, 5)
 
     const runningCount = tasks.filter((t) => t.state === "running").length
-    const attentionCount = tasks.filter((t) => ["needs_attention", "failed"].includes(t.state)).length
+    const attentionCount = tasks.filter((task) => task.state === "needs_attention").length
+    const unread = tasks.filter((task) => isUnreadTask(task, read))
+    const unreadFailures = unread.some((task) => task.state === "failed")
+    const approvalCount = tasks.filter((task) => task.state === "awaiting_approval" || task.approval_pending).length
     const retryCount = tasks.filter((t) => t.state === "retry_wait").length
     const activeCount = tasks.filter((t) => ["queued", "running", "retry_wait"].includes(t.state)).length
+
+    const readTasks = tasks.filter((task) => isSettledTask(task.state) &&
+        read[task.id] !== undefined && task.updated_at <= read[task.id])
+    const indicator = attentionCount > 0 || unreadFailures ? "attention"
+        : approvalCount > 0 || retryCount > 0 ? "warning"
+        : unread.length > 0 ? "unread"
+        : runningCount > 0 ? "running" : null
+    const indicatorDescription = attentionCount > 0 ? t("tasks.attentionNotifications", { count: attentionCount })
+        : unreadFailures ? t("tasks.unreadTasks", { count: unread.length })
+        : approvalCount > 0 ? t("tasks.approvalRequired")
+        : retryCount > 0 ? t("tasks.state.retry_wait")
+        : unread.length > 0 ? t("tasks.unreadTasks", { count: unread.length })
+        : runningCount > 0 ? t("tasks.state.running") : t("tasks.allRead")
+
+    useEffect(() => {
+        // Only the rows actually presented in the popover become read. New
+        // results received while closed or outside this five-row list do not.
+        if (open && !tasksQuery.isError && Array.isArray(tasksQuery.data)) {
+            markRead(tasksQuery.data.slice(0, 5))
+        }
+    }, [open, tasksQuery.data, tasksQuery.isError, markRead])
 
     const formatRelative = (seconds: number): string => {
         try {
@@ -118,33 +153,30 @@ export function TaskNotificationPopover() {
             <PopoverTrigger asChild>
                 <Button
                     variant="ghost"
-                    size="icon"
-                    className="relative h-8 w-8 text-foreground/80 hover:text-foreground"
+                    size="icon-sm"
+                    className="relative"
                     aria-label={t("tasks.notifications")}
+                    aria-describedby={descriptionId}
                 >
                     <Bell className="size-4" />
 
-                    {runningCount > 0 ? (
-                        <span className="absolute top-1.5 right-1.5 flex h-2 w-2">
-                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-info/45 opacity-75" />
-                            <span className="relative inline-flex h-2 w-2 rounded-full bg-info" />
-                        </span>
-                    ) : attentionCount > 0 ? (
-                        <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-destructive shadow-xs" />
-                    ) : retryCount > 0 ? (
-                        <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-warning shadow-xs" />
-                    ) : activeCount > 0 ? (
-                        <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-primary/70" />
-                    ) : null}
-
-                    <span className="sr-only">{t("tasks.notifications")}</span>
+                    {indicator && (
+                        <span
+                            aria-hidden="true"
+                            data-indicator={indicator}
+                            className={cn("pointer-events-none absolute right-1 top-1 size-1.5 rounded-full ring-2 ring-background",
+                                indicator === "attention" ? "bg-destructive" : indicator === "warning" ? "bg-warning" : "bg-info")}
+                        />
+                    )}
+                    <span id={descriptionId} className="sr-only">{indicatorDescription}</span>
                 </Button>
             </PopoverTrigger>
 
             <PopoverContent
                 align="end"
                 sideOffset={8}
-                className="w-80 sm:w-96 p-0 shadow-lg border-border/80 bg-popover/95 backdrop-blur-sm"
+                collisionPadding={16}
+                className="w-80 max-w-[calc(100vw-2rem)] p-0 sm:w-96"
             >
                 <div className="flex items-center justify-between border-b border-border/60 px-3.5 py-2.5">
                     <div className="flex items-center gap-2">
@@ -158,13 +190,12 @@ export function TaskNotificationPopover() {
 
                     <Button
                         variant="ghost"
-                        size="icon"
-                        className="size-6 text-muted-foreground hover:text-foreground"
+                        size="icon-sm"
                         disabled={tasksQuery.isFetching}
                         onClick={() => void tasksQuery.refetch()}
                         aria-label={t("tasks.refresh")}
                     >
-                        <RefreshCw className={cn("size-3", tasksQuery.isFetching && "animate-spin text-primary")} />
+                        <RefreshCw className={cn("size-3", tasksQuery.isFetching && "motion-safe:animate-spin")} />
                     </Button>
                 </div>
 
@@ -173,6 +204,10 @@ export function TaskNotificationPopover() {
                         <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
                             <Spinner className="size-4" />
                             <span>{t("common.loading", { defaultValue: "Loading..." })}</span>
+                        </div>
+                    ) : tasksQuery.isError ? (
+                        <div role="alert" className="px-3 py-8 text-center text-xs text-destructive">
+                            {t("tasks.loadFailed")}
                         </div>
                     ) : recentTasks.length === 0 ? (
                         <div className="py-8 text-center text-xs text-muted-foreground">
@@ -233,12 +268,21 @@ export function TaskNotificationPopover() {
                     )}
                 </div>
 
-                <div className="border-t border-border/60 p-1.5 bg-muted/20">
+                <div className="flex items-center justify-between gap-2 border-t border-border/60 p-1.5">
                     <Button
                         variant="ghost"
-                        size="sm"
+                        size="xs"
+                        disabled={clearRead.isPending || tasksQuery.isError || readTasks.length === 0}
+                        title={t("tasks.clearReadDescription")}
+                        onClick={() => clearRead.mutate(readTasks.map((task) => ({ id: task.id, updated_at: task.updated_at })))}
+                    >
+                        {clearRead.isPending ? <Spinner className="size-3.5" /> : <ListX className="size-3.5" aria-hidden="true" />}
+                        {t("tasks.clearRead")}
+                    </Button>
+                    <Button
+                        variant="ghost"
+                        size="xs"
                         asChild
-                        className="w-full justify-between h-7 text-xs text-muted-foreground hover:text-foreground"
                     >
                         <Link to="/tasks" onClick={() => setOpen(false)}>
                             <span>{t("tasks.viewAll")}</span>

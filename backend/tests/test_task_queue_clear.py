@@ -85,6 +85,58 @@ async def test_clear_api_preserves_attempts_and_protected_deployment(storage, au
     assert await storage.tasks.claim("deploy") is None
 
 
+@pytest.mark.asyncio
+async def test_clear_read_only_dismisses_tasks_settled_before_cutoff(storage, authed_client):
+    seen = await enqueue(storage, "failed", key="seen")
+    later = await enqueue(storage, "succeeded", key="later")
+    running = await enqueue(storage, "running", key="running")
+    async with storage.tasks.transaction() as db:
+        await db.execute(
+            "UPDATE tasks SET updated_at=100 WHERE id IN (?,?)", (seen["id"], running["id"])
+        )
+        await db.execute("UPDATE tasks SET updated_at=200 WHERE id=?", (later["id"],))
+    response = authed_client.post("/api/tasks/clear", params={"settled_before": 150})
+    assert response.json() == {"cleared": 1}
+    assert {t["id"] for t in authed_client.get("/api/tasks").json()} == {later["id"], running["id"]}
+    assert authed_client.post("/api/tasks/clear", params={"settled_before": -1}).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_clear_read_restricts_ids_and_each_observed_version(storage, authed_client):
+    seen = await enqueue(storage, "failed", key="seen-id")
+    unseen = await enqueue(storage, "succeeded", key="unseen-id")
+    changed = await enqueue(storage, "succeeded", key="changed-id")
+    protected = await enqueue(storage, "needs_attention", kind="deploy", key="protected-id")
+    active = await enqueue(storage, "running", key="active-id")
+    async with storage.tasks.transaction() as db:
+        await db.execute("UPDATE tasks SET updated_at=100")
+        await db.execute("UPDATE tasks SET updated_at=200 WHERE id=?", (changed["id"],))
+    read_tasks = [{"id": t["id"], "updated_at": 100} for t in [seen, changed, protected, active]]
+    response = authed_client.post("/api/tasks/clear", json={"read_tasks": read_tasks})
+    assert response.status_code == 200
+    assert response.json() == {"cleared": 1}
+    assert {t["id"] for t in authed_client.get("/api/tasks").json()} == {
+        unseen["id"],
+        changed["id"],
+        protected["id"],
+        active["id"],
+    }
+    assert (await storage.tasks.detail(seen["id"]))["triggers"]
+    assert authed_client.post("/api/tasks/clear", json={"read_tasks": []}).json() == {"cleared": 0}
+    assert authed_client.post("/api/tasks/clear", json={"read_tasks": read_tasks}).json() == {
+        "cleared": 0
+    }
+    assert (
+        authed_client.post(
+            "/api/tasks/clear", json={"read_tasks": [{"id": 0, "updated_at": 100}]}
+        ).status_code
+        == 422
+    )
+    assert (
+        authed_client.post("/api/tasks/clear", params={"settled_before": "inf"}).status_code == 422
+    )
+
+
 def test_clear_api_requires_authentication(client):
     assert client.post("/api/tasks/clear").status_code == 401
 

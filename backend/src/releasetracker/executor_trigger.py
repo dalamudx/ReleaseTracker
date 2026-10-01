@@ -27,6 +27,11 @@ async def enqueue_executor_binding_targets(
 
     Grouped executors use a stable vector, so a release in one channel cannot
     be hidden by a newer release in another channel of the same tracker.
+
+    ``tracker_name`` only selects which executors are affected by a tracker
+    check. The desired revision always covers every binding: deriving it from
+    the checked tracker's subset made executors bound to several trackers
+    flip revisions on every check and queue duplicate deployments.
     """
     if executor_config.id is None:
         return False
@@ -50,6 +55,7 @@ async def enqueue_executor_binding_targets(
         ]
 
     targets: list[dict[str, str | int | None]] = []
+    relevant = tracker_name is None
     for context in contexts:
         if context.tracker_source_id is None:
             bound_tracker_name = executor_config.tracker_name
@@ -63,8 +69,8 @@ async def enqueue_executor_binding_targets(
                 continue
             bound_tracker_name = aggregate_tracker.name
             source_type = source.source_type
-        if tracker_name is not None and bound_tracker_name != tracker_name:
-            continue
+        if bound_tracker_name == tracker_name:
+            relevant = True
         target = await _resolve_tracker_latest_target_details_from_storage(
             storage,
             bound_tracker_name,
@@ -87,11 +93,13 @@ async def enqueue_executor_binding_targets(
                 "deploy_alias": target.deploy_alias,
                 "aliases": list(target.aliases),
                 "digest": digest,
+                "chart_version": (target.chart_version if source_type == "helm" else None),
+                "chart_digest": (target.chart_digest if source_type == "helm" else None),
                 "identity_key": _target_identity_key(version, digest),
             }
         )
 
-    if not targets:
+    if not relevant or not targets:
         return False
 
     targets.sort(
@@ -109,6 +117,8 @@ async def enqueue_executor_binding_targets(
             "tracker_source_id": target["tracker_source_id"],
             "channel_name": target["channel_name"],
             "identity_key": target["identity_key"],
+            "chart_version": target["chart_version"],
+            "chart_digest": target["chart_digest"],
         }
         for target in targets
     ]
@@ -117,7 +127,7 @@ async def enqueue_executor_binding_targets(
         "bindings:" + hashlib.sha256(serialized_identity.encode("utf-8")).hexdigest()
     )
     primary_target = targets[0]
-    queued_tracker_name = tracker_name or str(primary_target["tracker_name"])
+    queued_tracker_name = str(primary_target["tracker_name"])
     existing_state = await storage.get_executor_desired_state(executor_config.id)
     if (
         existing_state is not None

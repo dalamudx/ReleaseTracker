@@ -5,15 +5,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
-from pathlib import Path
 
+from .paths import database_path, system_secrets_path
 from .services.auth import AuthService
 from .services.system_keys import SystemKeyManager
 from .storage.sqlite import SQLiteStorage
-
-
-def _backend_dir() -> Path:
-    return Path(__file__).resolve().parents[2]
 
 
 async def _reset_admin_password() -> None:
@@ -22,10 +18,9 @@ async def _reset_admin_password() -> None:
     if password != confirmation:
         raise ValueError("Administrator passwords do not match")
 
-    data_dir = _backend_dir() / "data"
-    key_manager = SystemKeyManager(data_dir / "system-secrets.json")
+    key_manager = SystemKeyManager(system_secrets_path())
     await key_manager.initialize()
-    storage = SQLiteStorage(str(data_dir / "releases.db"), system_key_manager=key_manager)
+    storage = SQLiteStorage(str(database_path()), system_key_manager=key_manager)
     try:
         await storage.initialize()
         auth_service = AuthService(storage, key_manager)

@@ -64,8 +64,16 @@ class TaskStore:
         max_retries=None,
         join_running=False,
         initial_attempts=0,
+        supersede_pending=False,
         now=None,
     ):
+        """Enqueue or coalesce work.
+
+        ``supersede_pending`` marks the new/joined task as the only current work
+        for its dedupe key: older pending tasks that were triggered solely in the
+        same mode (e.g. automatic desired-state work waiting for a maintenance
+        window) are superseded instead of accumulating behind it.
+        """
         now = time.time() if now is None else now
         retries = (
             await self.retry_count()
@@ -81,8 +89,17 @@ class TaskStore:
                         (trigger_key,),
                     )
                 ).fetchone()
-                if row:
+                if row and row["state"] != "superseded":
+                    if supersede_pending and row["state"] in ("queued", "retry_wait", "running"):
+                        await self._supersede_pending(db, dedupe_key, row["id"], trigger_mode, now)
                     return decode(row)
+                if row:
+                    # A superseded task never ran this trigger. If the same work
+                    # becomes current again, release its key for a fresh task.
+                    await db.execute(
+                        "UPDATE task_triggers SET trigger_key=NULL WHERE trigger_key=?",
+                        (trigger_key,),
+                    )
             states = "'queued','retry_wait','running'" if join_running else "'queued','retry_wait'"
             # Only identical immutable payloads may coalesce. Running event work never
             # absorbs a later event: that event may describe data not seen by its scan.
@@ -116,9 +133,39 @@ class TaskStore:
                 "INSERT INTO task_triggers(task_id,trigger_mode,trigger_key,created_at) VALUES (?,?,?,?)",
                 (task_id, trigger_mode, trigger_key, now),
             )
+            if supersede_pending:
+                await self._supersede_pending(db, dedupe_key, task_id, trigger_mode, now)
             return decode(
                 await (await db.execute("SELECT * FROM tasks WHERE id=?", (task_id,))).fetchone()
             )
+
+    @staticmethod
+    async def _supersede_pending(db, dedupe_key, current_id, trigger_mode, now):
+        rows = await (
+            await db.execute(
+                """SELECT t.id FROM tasks t WHERE t.dedupe_key=? AND t.id!=?
+                   AND t.state IN ('queued','retry_wait')
+                   AND NOT EXISTS (SELECT 1 FROM task_triggers g
+                       WHERE g.task_id=t.id AND g.trigger_mode!=?)""",
+                (dedupe_key, current_id, trigger_mode),
+            )
+        ).fetchall()
+        stale = [row[0] for row in rows]
+        if not stale:
+            return 0
+        marks = ",".join("?" for _ in stale)
+        await db.execute(
+            f"""UPDATE tasks SET state='superseded',error_code='target_replaced',
+                approval_pending=0,owner=NULL,lease_until=NULL,due_at=?,updated_at=?
+                WHERE id IN ({marks}) AND state IN ('queued','retry_wait')""",
+            (now, now, *stale),
+        )
+        await db.execute(
+            f"""UPDATE deployment_plans SET state='superseded'
+                WHERE task_id IN ({marks}) AND state IN ('pending','approved','blocked')""",
+            tuple(stale),
+        )
+        return len(stale)
 
     async def get(self, task_id):
         db = await self.storage._get_connection()
@@ -126,15 +173,28 @@ class TaskStore:
             await (await db.execute("SELECT * FROM tasks WHERE id=?", (task_id,))).fetchone()
         )
 
-    async def clear_finished(self):
-        """Dismiss settled tasks without deleting execution evidence or trigger keys."""
+    async def clear_finished(self, *, settled_before=None, read_tasks=None):
+        """Hide settled rows while retaining audit data and trigger deduplication.
+
+        Each read row carries its last observed server timestamp, preventing a
+        concurrent update or an unseen older task from being dismissed.
+        No filters retains the existing task-page clear-all behavior.
+        """
+        if read_tasks is not None and not read_tasks:
+            return 0
+        condition = ""
+        params = [time.time(), settled_before, settled_before]
+        if read_tasks is not None:
+            condition = " AND (" + " OR ".join("(id=? AND updated_at<=?)" for _ in read_tasks) + ")"
+            for task_id, updated_at in read_tasks:
+                params.extend((task_id, updated_at))
         async with self.transaction() as db:
             cursor = await db.execute(
                 """UPDATE tasks SET cleared_at=?
                    WHERE cleared_at IS NULL AND state IN (
                        'succeeded','no_change','skipped','failed','cancelled','superseded'
-                   )""",
-                (time.time(),),
+                   ) AND (? IS NULL OR updated_at<=?)""" + condition,
+                params,
             )
             return cursor.rowcount
 
@@ -176,6 +236,36 @@ class TaskStore:
         ]
         return task
 
+    async def bind_mutation_scope(self, task, resource_key):
+        """Revalidate the domain under a live lease before any remote mutation.
+
+        Running mutations remain globally serialized. Only uncertain *finished*
+        work is isolated, and only when both targets have proven identities.
+        Legacy/unknown domains retain their conservative global fence.
+        """
+        async with self.transaction() as db:
+            cursor = await db.execute(
+                "UPDATE tasks SET resource_key=? WHERE id=? AND owner=? "
+                "AND state='running' AND lease_until>?",
+                (resource_key, task["id"], task["owner"], time.time()),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Task lease lost")
+            task["resource_key"] = resource_key
+            if task["kind"] == "recover":
+                return True
+            row = await (
+                await db.execute(
+                    """SELECT 1 FROM tasks WHERE state='needs_attention'
+                       AND kind IN ('deploy','recover') AND id!=? AND (
+                         resource_key=? OR resource_key='deployment-mutations' OR
+                         ?='deployment-mutations' OR json_extract(payload,'$.executor_id')=?
+                       ) LIMIT 1""",
+                    (task["id"], resource_key, resource_key, task["payload"]["executor_id"]),
+                )
+            ).fetchone()
+            return row is None
+
     async def claim(self, kind, *, lease_seconds=60, now=None):
         now = time.time() if now is None else now
         owner = uuid.uuid4().hex
@@ -184,8 +274,18 @@ class TaskStore:
                 await db.execute(
                     """SELECT t.* FROM tasks t WHERE kind=? AND state IN ('queued','retry_wait')
                    AND approval_pending=0 AND due_at<=? AND NOT EXISTS (
-                     SELECT 1 FROM tasks active WHERE active.resource_key=t.resource_key
-                     AND (active.state='running' OR (active.state='needs_attention' AND t.kind!='recover')))
+                     SELECT 1 FROM tasks active WHERE
+                     (active.state='running' AND (
+                       active.resource_key=t.resource_key OR
+                       (active.kind IN ('deploy','recover') AND t.kind IN ('deploy','recover')
+                        AND active.resource_key LIKE 'deployment-mutations%')))
+                     OR (active.state='needs_attention' AND t.kind='deploy'
+                       AND active.kind IN ('deploy','recover') AND (
+                         active.resource_key=t.resource_key OR
+                         active.resource_key='deployment-mutations' OR
+                         t.resource_key='deployment-mutations' OR
+                         json_extract(active.payload,'$.executor_id')=json_extract(t.payload,'$.executor_id')
+                       )))
                    ORDER BY due_at,id LIMIT 1""",
                     (kind, now),
                 )

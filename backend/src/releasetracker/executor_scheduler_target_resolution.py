@@ -35,6 +35,8 @@ class ResolvedTrackerTarget:
     deploy_alias: str
     digest: str | None
     aliases: tuple[str, ...] = ()
+    chart_version: str | None = None
+    chart_digest: str | None = None
 
 
 async def _resolve_tracker_binding_by_source_id_from_storage(
@@ -222,7 +224,7 @@ async def _resolve_tracker_latest_target_details_from_storage(
             scoped_channels = bound_source.release_channels
 
     bound_channels = scoped_channels
-    if channel_name:
+    if channel_name and (scoped_channels or tracker_source_type != "helm"):
         bound_channels = [ch for ch in scoped_channels if ch.name == channel_name and ch.enabled]
         if not bound_channels:
             return None
@@ -233,14 +235,36 @@ async def _resolve_tracker_latest_target_details_from_storage(
     )
     if bound_source is not None and channel_name and explicit_pattern:
         winners = storage.select_best_releases_for_tracker_channel(
-            releases, bound_source, sort_mode=sort_mode
+            releases,
+            bound_source,
+            sort_mode=sort_mode,
+            use_immutable_identity=tracker_source_type == "helm",
         )
         for channel_rank, channel in enumerate(bound_source.release_channels):
             if channel.name == channel_name and channel.enabled:
                 best_release = winners.get(storage._channel_selection_key(channel, channel_rank))
                 break
+    elif tracker_source_type == "helm" and bound_channels:
+        # Chart channels match the source type; the generic selector filters
+        # release channels without that context and can drop every Helm chart.
+        winners = storage.select_best_releases_by_channel(
+            releases,
+            bound_channels,
+            sort_mode=sort_mode,
+            channel_source_type="helm",
+            use_immutable_identity=True,
+        )
+        if winners:
+            best_release = max(
+                winners.values(), key=lambda release: storage._release_order_key(release, sort_mode)
+            )
     else:
-        best_release = storage.select_best_release(releases, bound_channels, sort_mode=sort_mode)
+        best_release = storage.select_best_release(
+            releases,
+            bound_channels,
+            sort_mode=sort_mode,
+            use_immutable_identity=tracker_source_type == "helm",
+        )
     if best_release is None:
         return None
 
@@ -279,6 +303,8 @@ async def _resolve_tracker_latest_target_details_from_storage(
         deploy_alias=best_release.version,
         digest=digest,
         aliases=aliases,
+        chart_version=best_release.chart_version or best_release.tag_name,
+        chart_digest=best_release.commit_sha or best_release.artifact_digest,
     )
 
 
@@ -465,57 +491,16 @@ class ExecutorSchedulerTargetResolution:
                 if isinstance(version, str) and version.strip()
                 else None
             )
-        releases = await self._load_bound_releases(
+        target = await _resolve_tracker_latest_target_details_from_storage(
+            self.storage,
             tracker_name,
+            channel_name,
             tracker_source_id=tracker_source_id,
             tracker_source_type=tracker_source_type,
         )
-        if not releases:
+        if target is None or not target.chart_version:
             return None
-
-        tracker_config = await self.storage.get_tracker_config(tracker_name)
-        sort_mode = tracker_config.version_sort_mode if tracker_config else "published_at"
-        scoped_channels = tracker_config.channels if tracker_config else []
-        if tracker_source_id is not None:
-            bound_source = await self.storage.get_tracker_source(tracker_source_id)
-            if bound_source is not None and bound_source.release_channels:
-                scoped_channels = bound_source.release_channels
-
-        bound_channels = scoped_channels
-        if channel_name and scoped_channels:
-            bound_channels = [
-                ch for ch in scoped_channels if ch.name == channel_name and ch.enabled
-            ]
-            if not bound_channels:
-                return None
-
-        if bound_channels:
-            channel_winners = self.storage.select_best_releases_by_channel(
-                releases,
-                bound_channels,
-                sort_mode=sort_mode,
-                channel_source_type=tracker_source_type,
-            )
-            if not channel_winners:
-                return None
-            best_release = max(
-                channel_winners.values(),
-                key=lambda release: self.storage._release_order_key(release, sort_mode),
-            )
-        else:
-            best_release = self.storage.select_best_release(
-                releases,
-                bound_channels,
-                sort_mode=sort_mode,
-            )
-        if best_release is None:
-            return None
-        chart_version = best_release.chart_version or best_release.tag_name
-        if not isinstance(chart_version, str) or not chart_version.strip():
-            return None
-        digest_value = best_release.commit_sha or best_release.artifact_digest
-        digest = digest_value.strip() if isinstance(digest_value, str) else None
-        return {"version": chart_version.strip(), "digest": digest or None}
+        return {"version": target.chart_version, "digest": target.chart_digest}
 
     async def _resolve_tracker_latest_chart_version(
         self,

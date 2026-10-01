@@ -6,9 +6,10 @@ from html import escape
 from pathlib import Path
 from urllib.parse import urlsplit
 import logging
+import re
+import secrets
 
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
@@ -24,7 +25,10 @@ from .services.system_keys import (
 )
 from .services.ssh_compose_snapshot import migrate_legacy_snapshots
 from .storage.sqlite import SQLiteStorage
+from .storage.sqlite_retention import prune_fetch_runs
 from .logger import LogConfig
+from .paths import database_path, system_secrets_path
+from .services.http_security import configure_http_security
 from .routers import (
     auth,
     notifiers,
@@ -70,11 +74,9 @@ async def lifespan(app: FastAPI):
     """Application lifecycle management"""
 
     # Initialize storage
-    # data/releases.db relative to backend root
-    base_dir = Path(__file__).resolve().parent.parent.parent
-    db_path = str(base_dir / "data" / "releases.db")
+    db_path = str(database_path())
 
-    system_key_manager = SystemKeyManager(base_dir / "data" / "system-secrets.json")
+    system_key_manager = SystemKeyManager(system_secrets_path())
     await system_key_manager.initialize()
 
     storage = SQLiteStorage(db_path, system_key_manager=system_key_manager)
@@ -111,6 +113,18 @@ async def lifespan(app: FastAPI):
 
     # Initialize schedulers
     scheduler_host = SchedulerHost()
+
+    async def prune_old_fetch_runs():
+        try:
+            removed = await prune_fetch_runs(storage)
+            if removed:
+                logging.getLogger(__name__).info("Pruned %s old fetch runs", removed)
+        finally:
+            await storage.close_current_task_connection()
+
+    scheduler_host.add_interval_job(
+        "maintenance", "fetch_retention", prune_old_fetch_runs, seconds=86400
+    )
     scheduler = ReleaseScheduler(storage, scheduler_host=scheduler_host)
     executor_scheduler = ExecutorScheduler(storage, scheduler_host=scheduler_host)
     repository_webhook_scheduler = RepositoryWebhookScheduler(storage, scheduler, scheduler_host)
@@ -181,14 +195,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS configuration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins in development
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+configure_http_security(app)
 app.add_middleware(StorageConnectionCleanupMiddleware)
 
 
@@ -243,7 +250,22 @@ async def _render_static_index(request: Request, index_template: str) -> HTMLRes
     base_url = await storage.get_system_base_url() if storage is not None else None
     base_path = _frontend_base_path(base_url, request.scope.get("root_path", ""))
     base_tag = f'<base href="{escape(base_path, quote=True)}">'
-    return HTMLResponse(index_template.replace("<!-- APP_BASE_HREF -->", base_tag))
+    nonce = secrets.token_urlsafe(24)
+    html = index_template.replace("<!-- APP_BASE_HREF -->", base_tag)
+    html = re.sub(r"<script\b", f'<script nonce="{nonce}"', html, flags=re.IGNORECASE)
+    # Allow the trusted theme bootstrap without allowing arbitrary inline JS.
+    policy = (
+        "default-src 'self'; "
+        f"script-src 'self' 'nonce-{nonce}'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' data: https://fonts.gstatic.com; "
+        "img-src 'self' data: https: http:; "
+        "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; "
+        "object-src 'none'; form-action 'self'"
+    )
+    return HTMLResponse(
+        html, headers={"Content-Security-Policy": policy, "Cache-Control": "no-store"}
+    )
 
 
 def configure_static_frontend(application: FastAPI, static_root: Path) -> None:

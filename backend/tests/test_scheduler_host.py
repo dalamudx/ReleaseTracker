@@ -81,3 +81,37 @@ async def test_release_and_executor_schedulers_share_one_scheduler_host(storage)
 
     await executor_scheduler.shutdown()
     await scheduler_host.shutdown()
+
+
+def test_worker_poll_setting_only_changes_short_worker_intervals(monkeypatch):
+    monkeypatch.setenv("RELEASETRACKER_WORKER_POLL_SECONDS", "5")
+    host = SchedulerHost()
+
+    async def tick():
+        pass
+
+    for namespace in (
+        "tasks",
+        "readiness",
+        "executor_notifications",
+        "deployment_admission_notifications",
+        "repository_webhooks",
+    ):
+        host.add_interval_job(namespace, "tick", tick, seconds=2)
+        assert host.get_job(namespace, "tick").trigger.interval.total_seconds() == 5
+    host.add_interval_job("repository_webhooks", "cleanup", tick, seconds=86400)
+    assert host.get_job("repository_webhooks", "cleanup").trigger.interval.total_seconds() == 86400
+    host.add_interval_job("tracker", "check", tick, seconds=2)
+    assert host.get_job("tracker", "check").trigger.interval.total_seconds() == 2
+
+
+@pytest.mark.parametrize("value", ["0", "61", "nan", "2.5", ""])
+def test_worker_poll_setting_rejects_invalid_values(monkeypatch, value):
+    monkeypatch.setenv("RELEASETRACKER_WORKER_POLL_SECONDS", value)
+    with pytest.raises(ValueError, match="RELEASETRACKER_WORKER_POLL_SECONDS"):
+        SchedulerHost()
+
+
+def test_worker_poll_setting_preserves_default(monkeypatch):
+    monkeypatch.delenv("RELEASETRACKER_WORKER_POLL_SECONDS", raising=False)
+    assert SchedulerHost().worker_poll_seconds == 2

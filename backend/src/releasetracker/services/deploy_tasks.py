@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 from ..executor_trigger import _binding_contexts
 from ..executor_scheduler_target_resolution import QUEUED_TARGETS
 from .task_queue import Deferred, TaskResult
+from .mutation_scope import mutation_resource_key
+from .deployment_targets import resolve_deployment_targets
 from .task_effects import MUTATION_GUARD
 from .deployment_plan import MANAGED_MARKERS, TargetEvidence, fingerprint, managed_markers
 from ..storage.sqlite_deployment_admission import AdmissionConflict, DeploymentAdmissionStore
@@ -116,49 +118,9 @@ class DeployTasks:
         executor = await self.storage.get_executor_config(executor_id)
         if not executor or not executor.enabled:
             raise ValueError("Executor is missing or disabled")
-        targets = []
-        for binding in _binding_contexts(executor):
-            resolved = await self.scheduler._resolve_tracker_binding_by_source_id(
-                binding.tracker_source_id
-            )
-            if resolved is None:
-                raise ValueError("Executor source is unavailable")
-            name, source = resolved
-            args = dict(tracker_source_id=source.id, tracker_source_type=source.source_type)
-            target = await self.scheduler._resolve_tracker_latest_target(
-                name, binding.channel_name, **args
-            )
-            chart_target = (
-                await self.scheduler._resolve_tracker_latest_chart_target(
-                    name, binding.channel_name, **args
-                )
-                if source.source_type == "helm"
-                else None
-            )
-            targets.append(
-                {
-                    "tracker_name": name,
-                    "source_id": source.id,
-                    "channel": binding.channel_name,
-                    "target": list(target) if target else None,
-                    "chart_version": chart_target["version"] if chart_target else None,
-                    "chart_digest": chart_target["digest"] if chart_target else None,
-                }
-            )
-        if not targets:
-            target = await self.scheduler._resolve_tracker_latest_target(
-                executor.tracker_name, executor.channel_name
-            )
-            targets.append(
-                {
-                    "tracker_name": executor.tracker_name,
-                    "source_id": None,
-                    "channel": executor.channel_name,
-                    "target": list(target) if target else None,
-                    "chart_version": None,
-                    "chart_digest": None,
-                }
-            )
+        targets = await resolve_deployment_targets(
+            self.storage, executor, manual=manual, desired_revision=desired_revision
+        )
         from .deployment_readiness import snapshot_readiness_profile
 
         identity = await self.identity(executor)
@@ -172,7 +134,7 @@ class DeployTasks:
         }
         task = await self.storage.tasks.enqueue(
             kind="deploy",
-            resource_key="deployment-mutations",
+            resource_key=await mutation_resource_key(self.storage, self.scheduler, executor),
             dedupe_key=f"deploy:{executor_id}",
             target_label=executor.name,
             payload=payload,
@@ -180,6 +142,9 @@ class DeployTasks:
             trigger_key=None if manual else f"desired:{executor_id}:{desired_revision}:{identity}",
             max_retries=0,
             join_running=True,
+            # Only the current desired state may wait for a maintenance window;
+            # older automatic work for this executor is already obsolete.
+            supersede_pending=not manual,
         )
         return {"task_id": task["id"], "status": task["state"]}
 
@@ -246,6 +211,10 @@ class DeployTasks:
                         ),
                         "maintenance_window",
                     )
+        if not await self.storage.tasks.bind_mutation_scope(
+            task, await mutation_resource_key(self.storage, self.scheduler, executor)
+        ):
+            return Deferred(time.time() + 30, "target_awaiting_readiness")
         observer = getattr(self.scheduler, "readiness", None)
         if observer is not None and await observer.conflicts(executor):
             return Deferred(time.time() + 5, "target_awaiting_readiness")
@@ -321,6 +290,10 @@ class DeployTasks:
                 or await self.identity(current) != task["payload"]["config_identity"]
             ):
                 raise asyncio.CancelledError("Deployment configuration changed")
+            if not await self.storage.tasks.bind_mutation_scope(
+                task, await mutation_resource_key(self.storage, self.scheduler, executor)
+            ):
+                raise asyncio.CancelledError("Target requires operator verification")
             # Re-read runtime evidence immediately before the first mutation.
             # The plan fingerprint binds approval to this exact read-only state.
             live_evidence = await self._collect_admission_evidence(executor)

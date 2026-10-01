@@ -372,7 +372,39 @@ async def test_projection_change_enqueues_grouped_executor_for_non_primary_servi
     assert queued_count == 1
     assert desired_state is not None
     assert desired_state.pending is True
-    assert desired_state.desired_target["tracker_name"] == "compose-worker-trigger"
+    # The revision covers every binding, not only the checked tracker's subset.
+    assert desired_state.desired_target["tracker_name"] == "compose-api-trigger"
+    assert {target["service"] for target in desired_state.desired_target["binding_targets"]} == {
+        "api",
+        "worker",
+    }
+
+    # A later check of the other bound tracker must not flip the revision and
+    # queue duplicate deployment work for unchanged targets.
+    assert (
+        await scheduler._emit_executor_trigger_work_for_projection_change(
+            tracker_name="compose-api-trigger",
+            previous_version="1.0.0",
+            current_version="1.0.0",
+            previous_identity_key="1.0.0",
+            current_identity_key="1.0.0",
+        )
+        == 0
+    )
+    assert (
+        await storage.get_executor_desired_state(executor_id)
+    ).desired_state_revision == desired_state.desired_state_revision
+    # Trackers that the executor is not bound to never touch its desired state.
+    assert (
+        await scheduler._emit_executor_trigger_work_for_projection_change(
+            tracker_name="unrelated-tracker",
+            previous_version=None,
+            current_version="9.0.0",
+            previous_identity_key=None,
+            current_identity_key="9.0.0",
+        )
+        == 0
+    )
 
     async def _fake_alias_metadata_change(_storage, tracker_name, *_args, **_kwargs):
         version = "2.0.0" if tracker_name == "compose-worker-trigger" else "1.0.0"

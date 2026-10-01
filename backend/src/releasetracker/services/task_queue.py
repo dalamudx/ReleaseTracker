@@ -53,7 +53,15 @@ def classify_fetch_error(error: BaseException) -> TaskResult:
         chain.append(error)
         error = error.__cause__ or error.__context__
     if any(
-        isinstance(item, (OutboundTLSFailure, OutboundURLRejected, OutboundRedirectRejected))
+        isinstance(
+            item, (ssl.SSLCertVerificationError, OutboundURLRejected, OutboundRedirectRejected)
+        )
+        for item in chain
+    ):
+        # Certificate and destination policy failures are deterministic.
+        return TaskResult("failed", "security_validation_failed")
+    if any(
+        isinstance(item, OutboundTLSFailure)
         or (
             isinstance(item, ssl.SSLError)
             # Async TLS transports retain these ordinary I/O waits in timeout
@@ -62,7 +70,10 @@ def classify_fetch_error(error: BaseException) -> TaskResult:
         )
         for item in chain
     ):
-        return TaskResult("failed", "security_validation_failed")
+        # Other TLS errors (EOF/reset during handshake, protocol alerts) are
+        # usually transient transport failures; the bounded retry budget still
+        # ends persistent misconfiguration as a failed fetch.
+        return TaskResult("failed", "upstream_tls_failed", retryable=True)
     for item in chain:
         if isinstance(item, RegistryTagListError):
             return TaskResult("failed", item.code)

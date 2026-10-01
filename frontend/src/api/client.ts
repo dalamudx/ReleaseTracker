@@ -253,7 +253,7 @@ function normalizeLatestCurrentReleaseSummary(item: LatestCurrentReleaseSummary)
 
 export const api = {
     getTasks: (params?: { before?: number; state?: string }) => apiClient.get<QueueTask[]>("/api/tasks", { params }).then(res => res.data),
-    clearFinishedTasks: () => apiClient.post<{ cleared: number }>("/api/tasks/clear").then(res => res.data),
+    clearFinishedTasks: (readTasks?: Array<{ id: number; updated_at: number }>) => apiClient.post<{ cleared: number }>("/api/tasks/clear", readTasks === undefined ? undefined : { read_tasks: readTasks }).then(res => res.data),
     getTask: (id: number) => apiClient.get<QueueTask>(`/api/tasks/${id}`).then(res => res.data),
     getDeploymentPlan: (id: number) => apiClient.get<import("./task-types").DeploymentPlan>(`/api/tasks/${id}/deployment-plan`).then(res => res.data),
     approveDeployment: (id: number, plan: { plan_id: number; fingerprint: string }) => apiClient.post<TaskReceipt>(`/api/tasks/${id}/approve`, { ...plan, plan_reviewed: true }).then(res => res.data),

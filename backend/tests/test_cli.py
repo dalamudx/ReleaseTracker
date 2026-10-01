@@ -31,7 +31,7 @@ async def test_interactive_admin_reset_uses_local_data_and_revokes_marker(tmp_pa
     await storage.close()
 
     answers = iter(["new-operator-password", "new-operator-password"])
-    monkeypatch.setattr(cli, "_backend_dir", lambda: tmp_path)
+    monkeypatch.setenv("RELEASETRACKER_DB_PATH", str(data_dir / "releases.db"))
     monkeypatch.setattr(cli.getpass, "getpass", lambda _prompt: next(answers))
 
     await cli._reset_admin_password()

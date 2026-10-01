@@ -195,7 +195,11 @@ async def test_tcp_probe_timeout_classified():
 
 
 @pytest.mark.asyncio
-async def test_tcp_probe_dns_failure():
+async def test_tcp_probe_dns_failure(monkeypatch):
+    async def fail_resolution(host, port):
+        raise socket.gaierror(socket.EAI_NONAME, "name not known")
+
+    monkeypatch.setattr(asyncio, "open_connection", fail_resolution)
     profile = _make_profile(port=80, attempt_timeout_seconds=2)
     ctx = _context(
         profile,
@@ -203,10 +207,7 @@ async def test_tcp_probe_dns_failure():
     )
     result = await TCPProbe().attempt(ctx)
     assert result.healthy is False
-    # Either gaierror (dns_failure) or, on some resolvers, OSError wrapped
-    # as network_unreachable. Both are acceptable non-OK transport
-    # classifications for DNS failures.
-    assert result.error_category in {"dns_failure", "network_unreachable"}
+    assert result.error_category == "dns_failure"
 
 
 @pytest.mark.asyncio

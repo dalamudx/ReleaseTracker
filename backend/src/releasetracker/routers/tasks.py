@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 from datetime import datetime
 import time
 import json
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from ..models import User
 from ..dependencies import get_executor_scheduler
 
@@ -55,9 +55,31 @@ async def list_tasks(
     ]
 
 
+class ReadTask(BaseModel):
+    id: int = Field(gt=0)
+    updated_at: float = Field(ge=0, allow_inf_nan=False)
+
+
+class ClearReadTasks(BaseModel):
+    read_tasks: list[ReadTask] = Field(max_length=100)
+
+
 @router.post("/clear")
-async def clear_finished_tasks(storage: Annotated[SQLiteStorage, Depends(get_storage)]):
-    return {"cleared": await storage.tasks.clear_finished()}
+async def clear_finished_tasks(
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    request: ClearReadTasks | None = None,
+    settled_before: float | None = Query(None, ge=0, allow_inf_nan=False),
+):
+    return {
+        "cleared": await storage.tasks.clear_finished(
+            settled_before=settled_before,
+            read_tasks=(
+                [(item.id, item.updated_at) for item in request.read_tasks]
+                if request is not None
+                else None
+            ),
+        )
+    }
 
 
 @router.get("/{task_id}")

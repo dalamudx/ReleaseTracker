@@ -233,6 +233,40 @@ async def test_queued_deploy_pins_target_and_retains_run_reference(storage, monk
     assert done["result"]["run_id"]
 
 
+async def test_automatic_deploy_uses_desired_target_not_newer_release(storage):
+    from releasetracker.executor_trigger import enqueue_executor_binding_targets
+
+    await save_docker_tracker_config(storage, name="desired-snapshot", image="acme/app")
+    await seed_docker_release(storage, tracker_name="desired-snapshot", version="1.0.0")
+    tracker = await storage.get_aggregate_tracker("desired-snapshot")
+    connection_id = await create_runtime_connection(storage)
+    executor_id = await storage.create_executor_config(
+        ExecutorConfig(
+            name="desired-snapshot",
+            tracker_name=tracker.name,
+            tracker_source_id=tracker.sources[0].id,
+            channel_name="stable",
+            runtime_connection_id=connection_id,
+            runtime_type="docker",
+            target_ref={"mode": "container", "container_id": "app"},
+            update_mode="immediate",
+        )
+    )
+    executor = await storage.get_executor_config(executor_id)
+    assert await enqueue_executor_binding_targets(storage, executor)
+    desired = await storage.get_executor_desired_state(executor_id)
+    await seed_docker_release(storage, tracker_name="desired-snapshot", version="2.0.0")
+    scheduler = ExecutorScheduler(storage)
+    handler = DeployTasks(storage, scheduler)
+    receipt = await handler.enqueue(
+        executor_id, manual=False, desired_revision=desired.desired_state_revision
+    )
+    task = await storage.tasks.get(receipt["task_id"])
+    assert task["payload"]["targets"][0]["target"] == ["1.0.0", None]
+    with pytest.raises(ValueError, match="revision changed"):
+        await handler.enqueue(executor_id, manual=False, desired_revision="stale")
+
+
 async def test_worker_does_not_block_other_fetches(storage):
     gate = asyncio.Event()
 

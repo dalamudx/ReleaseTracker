@@ -180,6 +180,7 @@ async def test_lifespan_starts_without_identity_drift_repair(monkeypatch, storag
         assert auth.ensure_admin_called is True
         assert scheduler_host.start_called is True
         assert scheduler_host.interval_jobs == [
+            ("maintenance", "fetch_retention", 86400),
             ("tasks", "dispatch", 2),
             ("readiness", "observe", 2),
             ("executor_notifications", "tick", 2),
@@ -261,3 +262,32 @@ def test_static_frontend_uses_configured_base_url_for_runtime_assets(tmp_path):
 
     assert response.status_code == 200
     assert '<base href="/releasetracker/">' in response.text
+
+
+def test_static_frontend_csp_nonce_is_unique_and_matches_scripts(tmp_path):
+    import re
+
+    static_root = tmp_path / "static"
+    (static_root / "assets").mkdir(parents=True)
+    (static_root / "index.html").write_text(
+        '<html><head><!-- APP_BASE_HREF --><script>window.theme = "dark";</script>'
+        '</head><body><script type="module" src="/assets/app.js"></script></body></html>',
+        encoding="utf-8",
+    )
+    app = FastAPI()
+    from releasetracker.services.http_security import configure_http_security
+
+    configure_http_security(app)
+    main_module.configure_static_frontend(app, static_root)
+    with TestClient(app) as client:
+        first = client.get("/")
+        second = client.get("/trackers")
+    nonces = re.findall(r'<script nonce="([^"]+)"', first.text)
+    assert len(nonces) == 2 and nonces[0] == nonces[1]
+    policy = first.headers["Content-Security-Policy"]
+    assert f"script-src 'self' 'nonce-{nonces[0]}'" in policy
+    assert "connect-src 'self'" in policy
+    assert "'unsafe-inline'" not in policy.split("script-src ")[1].split(";")[0]
+    assert nonces[0] not in second.text
+    assert first.headers["Cache-Control"] == "no-store"
+    assert first.headers["X-Content-Type-Options"] == "nosniff"

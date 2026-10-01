@@ -49,6 +49,75 @@ async def test_new_event_after_start_is_not_lost(storage):
     assert (await storage.tasks.claim("fetch", now=104))["id"] == next_task["id"]
 
 
+async def deploy(storage, revision, *, mode="automatic", trigger=True, supersede=True):
+    return await storage.tasks.enqueue(
+        kind="deploy",
+        resource_key="deployment-mutations",
+        dedupe_key="deploy:1",
+        target_label="app",
+        payload={"executor_id": 1, "manual": mode == "manual", "desired_revision": revision},
+        trigger_mode=mode,
+        trigger_key=f"desired:1:{revision}" if trigger and mode == "automatic" else None,
+        max_retries=0,
+        join_running=True,
+        supersede_pending=supersede and mode == "automatic",
+        now=100,
+    )
+
+
+async def pending_ids(storage):
+    return sorted(
+        task["id"]
+        for task in await storage.tasks.list(limit=100)
+        if task["state"] in {"queued", "retry_wait", "awaiting_approval"}
+    )
+
+
+async def test_new_desired_revision_supersedes_waiting_deploy(storage):
+    manual = await deploy(storage, None, mode="manual")
+    first = await deploy(storage, "rev-1")
+    second = await deploy(storage, "rev-2")
+    assert second["id"] != first["id"]
+    assert await pending_ids(storage) == sorted([manual["id"], second["id"]])
+    stale = await storage.tasks.get(first["id"])
+    assert (stale["state"], stale["error_code"]) == ("superseded", "target_replaced")
+
+    # Re-dispatching the current revision stays deduplicated.
+    assert (await deploy(storage, "rev-2"))["id"] == second["id"]
+    # A superseded revision that becomes current again gets fresh work instead
+    # of resolving to the superseded task forever.
+    third = await deploy(storage, "rev-1")
+    assert third["id"] not in {first["id"], second["id"]}
+    assert await pending_ids(storage) == sorted([manual["id"], third["id"]])
+
+
+async def test_redispatch_cleans_up_existing_duplicate_deploys(storage):
+    first = await deploy(storage, "rev-1", supersede=False)
+    second = await deploy(storage, "rev-2", supersede=False)
+    assert await pending_ids(storage) == [first["id"], second["id"]]
+    assert (await deploy(storage, "rev-2"))["id"] == second["id"]
+    assert await pending_ids(storage) == [second["id"]]
+
+
+async def test_superseding_waiting_deploy_retires_its_plan(storage):
+    first = await deploy(storage, "rev-1")
+    db = await storage._get_connection()
+    await db.execute("UPDATE tasks SET approval_pending=1 WHERE id=?", (first["id"],))
+    await db.execute(
+        """INSERT INTO deployment_plans(task_id,executor_id,target_id,fingerprint,identity_key,
+           evidence_hash,summary,state,reason,created_at,expires_at)
+           VALUES (?,1,'t','f','i','e','{}','pending','approval',100,200)""",
+        (first["id"],),
+    )
+    await db.commit()
+    await deploy(storage, "rev-2")
+    row = await (
+        await db.execute("SELECT state FROM deployment_plans WHERE task_id=?", (first["id"],))
+    ).fetchone()
+    assert row[0] == "superseded"
+    assert (await storage.tasks.get(first["id"]))["state"] == "superseded"
+
+
 async def test_manual_click_joins_running(storage):
     task = await enqueue(storage)
     await storage.tasks.claim("fetch", now=101)
@@ -166,7 +235,7 @@ async def test_error_classification_preserves_security_and_retry_after():
         assert classify_fetch_error(exc).retryable
     try:
         try:
-            raise ssl.SSLError("bad certificate")
+            raise ssl.SSLCertVerificationError("bad certificate")
         except ssl.SSLError as exc:
             raise httpx.ConnectError("failed") from exc
     except httpx.ConnectError as exc:

@@ -13,6 +13,7 @@ import time
 from datetime import datetime
 
 from ..config import ExecutorConfig
+from .mutation_scope import mutation_resource_key
 from ..executor_scheduler_run_lifecycle import ExecutorRunOutcome
 
 logger = logging.getLogger(__name__)
@@ -212,7 +213,7 @@ class DeploymentReadiness:
         }
         task = await self.storage.tasks.enqueue(
             kind="recover",
-            resource_key="deployment-mutations",
+            resource_key=await mutation_resource_key(self.storage, self.scheduler, executor),
             dedupe_key=f"readiness-recheck:{row['run_id']}",
             target_label=executor.name,
             payload=payload,

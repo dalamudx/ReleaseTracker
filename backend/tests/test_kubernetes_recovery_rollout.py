@@ -233,7 +233,8 @@ async def test_real_recovery_task_only_releases_blocked_deployment_after_rollout
     await storage.tasks.finish(claimed, "needs_attention")
     tasks = RecoveryTasks(storage, scheduler)
     queued = await tasks.enqueue_recovery(executor, snapshot_id, "rollback", actor="fixture-admin")
-    task = await storage.tasks.get(queued["task_id"])
+    task = await storage.tasks.claim("recover")
+    assert task["id"] == queued["task_id"]
     assert await tasks.prepare(task) is None
     result = await tasks.execute(task)
     persisted = await storage.tasks.get(blocked["id"])

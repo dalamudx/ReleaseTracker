@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import os
 from typing import Any, Callable
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -14,6 +15,16 @@ class SchedulerHost:
 
     def __init__(self, scheduler: AsyncIOScheduler | None = None):
         self._scheduler = scheduler or AsyncIOScheduler()
+        try:
+            self.worker_poll_seconds = int(
+                os.environ.get("RELEASETRACKER_WORKER_POLL_SECONDS", "2")
+            )
+        except ValueError as exc:
+            raise ValueError(
+                "RELEASETRACKER_WORKER_POLL_SECONDS must be an integer from 1 to 60"
+            ) from exc
+        if not 1 <= self.worker_poll_seconds <= 60:
+            raise ValueError("RELEASETRACKER_WORKER_POLL_SECONDS must be an integer from 1 to 60")
 
     @property
     def scheduler(self) -> AsyncIOScheduler:
@@ -49,6 +60,14 @@ class SchedulerHost:
         args: Sequence[Any] | None = None,
     ) -> str:
         job_id = self.namespaced_job_id(namespace, key)
+        if seconds == 2 and namespace.strip() in {
+            "tasks",
+            "readiness",
+            "executor_notifications",
+            "deployment_admission_notifications",
+            "repository_webhooks",
+        }:
+            seconds = self.worker_poll_seconds
         self._scheduler.add_job(
             func,
             "interval",
