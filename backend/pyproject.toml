@@ -28,6 +28,9 @@ dependencies = [
     "asyncssh>=2.21,<3",
 ]
 
+[tool.uv]
+constraint-dependencies = ["oauthlib>=4.0.0", "urllib3>=2.8.0"]
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4.0",
