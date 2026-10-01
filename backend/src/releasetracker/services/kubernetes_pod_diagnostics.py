@@ -83,6 +83,71 @@ def _diagnose(pods, desired_images, submitted_at):
     )
 
 
+async def pod_stability_fingerprint(adapter, namespace, workload, images, submitted_at):
+    """Stable only while the same ready Pods have unchanged restart counts."""
+    import hashlib
+    import json
+
+    spec = workload.get("spec") or {}
+    selector_spec = spec.get("selector") or {}
+    labels = selector_spec.get("matchLabels") or selector_spec.get("match_labels") or {}
+    replicas = spec.get("replicas", 1)
+    if not labels or not submitted_at or not isinstance(replicas, int) or not 0 < replicas <= 100:
+        return None
+    try:
+
+        def read():
+            adapter._authorize_namespace(namespace)
+            return (
+                adapter._get_core_api()
+                .list_namespaced_pod(
+                    namespace,
+                    label_selector=",".join(f"{k}={v}" for k, v in sorted(labels.items())),
+                    limit=100,
+                    _request_timeout=3,
+                )
+                .items
+            )
+
+        pods = await asyncio.wait_for(asyncio.to_thread(read), timeout=4)
+        samples = []
+        for pod in pods[:100]:
+            metadata = getattr(pod, "metadata", None)
+            if getattr(metadata, "deletion_timestamp", None):
+                continue
+            created = _timestamp(getattr(metadata, "creation_timestamp", None))
+            if created is None or created < submitted_at - 30:
+                continue
+            containers = {
+                c.name: c.image
+                for c in getattr(getattr(pod, "spec", None), "containers", None) or []
+            }
+            if not images or any(containers.get(k) != v for k, v in images.items()):
+                continue
+            uid = getattr(metadata, "uid", None)
+            statuses = {
+                s.name: s
+                for s in getattr(getattr(pod, "status", None), "container_statuses", None) or []
+            }
+            if not uid or any(
+                k not in statuses or not getattr(statuses[k], "ready", False) for k in images
+            ):
+                return None
+            counts = [(k, getattr(statuses[k], "restart_count", None)) for k in sorted(images)]
+            if any(not isinstance(n, int) or n < 0 for _, n in counts):
+                return None
+            samples.append((uid, counts))
+        if len(samples) != replicas:
+            return None
+        return hashlib.sha256(
+            json.dumps(sorted(samples), separators=(",", ":")).encode()
+        ).hexdigest()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return None
+
+
 async def verify_pod_digests(adapter, namespace, workload, images, submitted_at):
     """Confirm actual running manifest digests for immutable image references.
 

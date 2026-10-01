@@ -83,6 +83,28 @@ async def dispatch_and_run(storage, handler, queue, *, now=None):
     return current
 
 
+async def test_final_guard_rechecks_window_without_interrupting_started_mutation():
+    storage, scheduler = MagicMock(), MagicMock()
+    storage.tasks.get = AsyncMock(return_value={"result": {"mutation_started": False}})
+    scheduler._refresh_system_timezone = AsyncMock()
+    scheduler._within_maintenance_window.return_value = False
+    handler = DeployTasks(storage, scheduler)
+    executor = SimpleNamespace(
+        update_mode="maintenance_window", maintenance_window={"start": "02:00", "end": "05:00"}
+    )
+    task = {"id": 1, "payload": {"manual": False}}
+    with pytest.raises(ValueError, match="window closed"):
+        await handler._verify_mutation_window(task, executor)
+    scheduler._refresh_system_timezone.assert_awaited_once()
+    storage.tasks.get.return_value = {"result": {"mutation_started": True}}
+    await handler._verify_mutation_window(task, executor)
+    assert scheduler._refresh_system_timezone.await_count == 1
+    task["payload"]["manual"] = True
+    storage.tasks.get.return_value = {"result": {"mutation_started": False}}
+    await handler._verify_mutation_window(task, executor)
+    assert scheduler._refresh_system_timezone.await_count == 1
+
+
 async def test_pre_mutation_failure_creates_bounded_fresh_retries(storage, monkeypatch):
     executor_id, handler, queue, calls = await setup(storage, monkeypatch)
     seen = []

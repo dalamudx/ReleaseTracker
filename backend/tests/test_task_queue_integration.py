@@ -128,6 +128,18 @@ async def test_real_fetch_partial_retries_without_fallback_or_projection(storage
     assert await storage.get_tracker_current_releases(tracker.id)
 
 
+async def test_successful_fetch_reconciles_executor_targets_once(storage, monkeypatch):
+    from releasetracker import executor_trigger
+
+    tracker, scheduler, _, _, queue = await sources(storage, monkeypatch)
+    enqueue = AsyncMock()
+    monkeypatch.setattr(executor_trigger, "enqueue_executor_binding_targets", enqueue)
+    monkeypatch.setattr(storage, "get_all_executor_configs", AsyncMock(return_value=[object()]))
+    await scheduler.check_tracker_now_v2(tracker.name)
+    assert (await run_one(storage, queue))["state"] == "succeeded"
+    assert enqueue.await_count == 1
+
+
 async def test_source_config_change_supersedes_before_io(storage, monkeypatch):
     tracker, scheduler, adapters, handler, queue = await sources(storage, monkeypatch)
     await handler.enqueue(tracker.name)

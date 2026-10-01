@@ -8,7 +8,7 @@ A successful update command does not prove application availability. Health chec
 
 ## Choose a health check {#health-checks}
 
-Post-update probing in the normal update flow currently covers Docker / Podman single containers. Probe configuration or adapter methods alone do not mean a grouped target has a fully integrated pipeline; see the [support matrix](../reference/support.md#runtimes).
+Production queued deployments use persistent readiness observation; see the [support matrix](../reference/support.md#runtimes) for runtime capabilities and limits. Legacy probe profiles map to the readiness switch. Explicitly disabling readiness clears the legacy strategy, rather than silently running inline checks. The inline runner remains for compatibility callers.
 
 | Strategy | Use when |
 | --- | --- |
@@ -20,7 +20,7 @@ Post-update probing in the normal update flow currently covers Docker / Podman s
 
 HTTP hosts must resolve to public addresses. Allowed ports are `80/8080` for HTTP and `443/8443/9443` for HTTPS. Redirects are rejected. Without explicit status codes, the matcher accepts 200–399, but redirect responses are still blocked; prefer explicit values such as `200,204`.
 
-Default automatic checks use a 15-second grace period, 10-second attempt timeout, 5-second interval, and 180-second probe window. Adjust the grace period and window for slow startup; the window excludes the initial grace period. Failure can mark a run failed or degraded, but does not undo the update.
+Default readiness observation uses a 600-second overall deadline, 10-second attempt timeout, 5-second interval and 10-second stable window; executors may inherit system defaults or override them. Failure marks a run failed or degraded without undoing the update. New Kubernetes observations also track target Pod UIDs and restart counts: replacement or increased restarts reset the stable window, and inaccessible Pods cannot prove stable readiness. Pull-grace deadline rechecks must also pass any configured HTTP/TCP application probe.
 
 ## Failure policy {#failure-policy}
 
@@ -33,6 +33,14 @@ For newly submitted Kubernetes Deployments, ReleaseTracker reads waiting reasons
 `RELEASETRACKER_READINESS_PULL_GRACE_SECONDS` defaults to 1800 seconds and accepts 0–3600 (for example, `3600` is one hour; 0 disables). A restart affects **newly submitted** work only. Previously failed tasks are not replayed; use the task page's read-only readiness recheck. At the deadline, current evidence is checked again. Executor identity and a workload template fingerprint prevent crediting someone else's update as this deployment, while pure scaling is not mistaken for a different template. Full new-replica availability can supersede a stale Kubernetes `ProgressDeadlineExceeded` condition. Immutable `@sha256:` references also compare actual Pod manifest digests across all target replicas; missing Pod RBAC or unrecognizable ImageIDs cannot be reported as success. Mutable tags cannot prove that a republished tag still refers to the originally selected build; use digest references when exact provenance matters.
 
 If the rollout becomes ready during grace, the original task, executor and run are marked successful while preserving initial delay/failure evidence. Only expiration without readiness produces a final timeout. Manual recheck is read-only and reconciles a failed run only if it is still the latest, unreplaced run. An unavailable image under a Deployment `Recreate` strategy can cause an outage; the diagnostics panel shows a prominent warning. Pair this with cluster alerting rather than treating grace as an availability guarantee. Automatic grace currently applies only to new Kubernetes Deployments, not StatefulSets, DaemonSets, Helm or other runtimes. Operators should assess live replicas and application state before considering rollback.
+
+## Read-only post-deployment monitoring {#runtime-watch}
+
+Set `RELEASETRACKER_RUNTIME_HEALTH_INTERVAL_SECONDS` to opt in: default `0` disables, enabled values are 300–86400 seconds. Only the latest enabled, unchanged successful run with persisted target evidence is eligible. Executors without verified readiness, with readiness disabled, or legacy data lacking target evidence are skipped. Scheduling runs every minute with at most 16 due targets per pass; the interval is a minimum, not a real-time SLA. Active deployments/recovery, waiting observations and operator-blocked shared targets are skipped. Configuration and run identity are rechecked before and after network I/O.
+
+Monitoring includes configured HTTP/TCP probes. Three consecutive unavailable, drifted, unhealthy, or restarting/replaced-Pod checks enqueue a durable notice to error-event subscribers. An incident is deduplicated; a healthy check resets the streak and permits a later incident to alert. State survives restarts. Monitoring never deploys, rolls back, repairs, or rewrites a previously successful deployment as failed. There is no dedicated monitoring UI yet, and this is not a replacement for cluster/application monitoring.
+
+Automatic maintenance windows constrain the **first remote write**: if admission/network reads outlast the window, the first mutation is prevented. Already-started multi-step updates and read-only observation may finish beyond the window rather than leaving a workload half-modified. Manual deployment retains its window override.
 
 ## Snapshots and retention {#snapshots}
 

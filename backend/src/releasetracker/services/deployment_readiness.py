@@ -128,6 +128,7 @@ class DeploymentReadiness:
             "baseline": baseline,
             "pull_grace_seconds": readiness_grace_seconds(),
             "submitted_at": now,
+            "observe_pod_stability": True,
             "target": target,
             "run_id": run_id,
             "diagnostics": diagnostics,
@@ -437,6 +438,7 @@ class DeploymentReadiness:
                         result = dict(
                             await probe(self.storage, self.scheduler, executor, verification)
                         )
+                        result = await self._supplement(executor, verification, result, budget)
                     if result.get("outcome") == "healthy" and not verification.get(
                         "initial_deadline"
                     ):
@@ -513,6 +515,11 @@ class DeploymentReadiness:
             item.get("method") == "runtime_state" for item in result.get("services", [])
         )
         stable_since = row["stable_since"]
+        pod_stability = result.get("pod_stability")
+        if pod_stability is not None:
+            if verification.get("pod_stability") != pod_stability:
+                stable_since = None
+            verification["pod_stability"] = pod_stability
         outcome = result.get("outcome", "unknown")
         if outcome == "healthy":
             stable_since = now if stable_since is None else stable_since

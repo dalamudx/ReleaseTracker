@@ -117,6 +117,47 @@ async def test_pinned_digest_checks_actual_ready_pods_and_fails_closed():
 
 
 @pytest.mark.asyncio
+async def test_pod_stability_changes_on_restart_or_replacement():
+    from releasetracker.services.kubernetes_pod_diagnostics import pod_stability_fingerprint
+
+    now = datetime.now(timezone.utc)
+    adapter = MagicMock()
+    api = adapter._get_core_api.return_value
+    sample = pod(now)
+    sample.metadata.uid = "first-pod"
+    sample.metadata.deletion_timestamp = None
+    status = sample.status.container_statuses[0]
+    status.name = "app"
+    status.ready = True
+    status.restart_count = 0
+    api.list_namespaced_pod.return_value.items = [sample]
+    target = {"spec": {"replicas": 1, "selector": {"match_labels": {"app": "test"}}}}
+    first = await pod_stability_fingerprint(
+        adapter, "test", target, {"app": "example:v2"}, now.timestamp()
+    )
+    assert first
+    assert first == await pod_stability_fingerprint(
+        adapter, "test", target, {"app": "example:v2"}, now.timestamp()
+    )
+    status.restart_count = 1
+    second = await pod_stability_fingerprint(
+        adapter, "test", target, {"app": "example:v2"}, now.timestamp()
+    )
+    assert second and second != first
+    sample.metadata.uid = "replacement-pod"
+    assert second != await pod_stability_fingerprint(
+        adapter, "test", target, {"app": "example:v2"}, now.timestamp()
+    )
+    status.ready = False
+    assert (
+        await pod_stability_fingerprint(
+            adapter, "test", target, {"app": "example:v2"}, now.timestamp()
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
 async def test_tagged_images_need_no_additional_digest_rbac():
     adapter = MagicMock()
     assert (

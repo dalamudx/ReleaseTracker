@@ -326,6 +326,15 @@ class DeployTasks:
             )
         return None
 
+    async def _verify_mutation_window(self, task, executor):
+        if not task["payload"]["manual"] and executor.update_mode == "maintenance_window":
+            fresh = await self.storage.tasks.get(task["id"])
+            if fresh and fresh["result"].get("mutation_started"):
+                return  # Never interrupt a multi-step mutation already in progress.
+            await self.scheduler._refresh_system_timezone()
+            if not self.scheduler._within_maintenance_window(executor.maintenance_window):
+                raise ValueError("maintenance window closed before mutation")
+
     async def execute(self, task):
         executor = await self.storage.get_executor_config(task["payload"]["executor_id"])
         from ..config import HealthCheckProfile
@@ -384,6 +393,7 @@ class DeployTasks:
                 )
                 if baseline.get("error"):
                     raise ValueError("readiness_baseline_unavailable")
+            await self._verify_mutation_window(task, current)
             if not await self.storage.tasks.checkpoint(
                 task,
                 {"run_id": run_id, "mutation_started": True},

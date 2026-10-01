@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import closing
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -177,10 +178,89 @@ def _failure_code(error: BaseException) -> str:
     return "failed"
 
 
-def verify_archive(archive) -> None:
+def verify_archive(archive, allow_older_schema=False) -> None:
     """Read the written ZIP back: checksums, SQLite integrity and decryption."""
     with tempfile.TemporaryDirectory(prefix=".verify-", dir=Path(archive).parent) as temporary:
-        validate_archive(archive, temporary)
+        validate_archive(archive, temporary, allow_older_schema=allow_older_schema)
+
+
+def retention_tiers():
+    """Opt-in daily/weekly points in addition to the most recent N archives."""
+    try:
+        days = int(os.environ.get("RELEASETRACKER_BACKUP_DAILY_RETENTION", "0"))
+        weeks = int(os.environ.get("RELEASETRACKER_BACKUP_WEEKLY_RETENTION", "0"))
+    except ValueError as exc:
+        raise ValueError("Backup retention tiers must be integers") from exc
+    if not 0 <= days <= 90 or not 0 <= weeks <= 52:
+        raise ValueError("Backup daily retention must be 0–90 and weekly retention 0–52")
+    return days, weeks
+
+
+def archive_created_at(path):
+    """Generated IDs include creation nanoseconds; copying/touching is not a backup."""
+    parts = path.stem.split("-")
+    if (
+        len(parts) == 3
+        and parts[0] == "releasetracker"
+        and parts[1].isdigit()
+        and 18 <= len(parts[1]) <= 20
+    ):
+        return int(parts[1]) / 1e9
+    return path.stat().st_mtime  # Compatibility with externally named legacy archives.
+
+
+def retention_candidates(paths, retain, days, weeks, *, now=None):
+    """Keep newest per UTC calendar bucket, never count symlinks as restore points."""
+    now = time.time() if now is None else now
+    archives = sorted(
+        (p for p in paths if p.is_file() and not p.is_symlink()),
+        key=lambda p: (archive_created_at(p), p.name),
+        reverse=True,
+    )
+    keep = set(archives[:retain])
+    daily, weekly = set(), set()
+    for path in archives:
+        stamp = archive_created_at(path)
+        date = datetime.fromtimestamp(stamp, timezone.utc)
+        day, week = date.date(), date.isocalendar()[:2]
+        age = max(0, now - stamp)
+        if days and age <= days * 86400 and day not in daily:
+            keep.add(path)
+            daily.add(day)
+        if weeks and age <= weeks * 7 * 86400 and week not in weekly:
+            keep.add(path)
+            weekly.add(week)
+    return [p for p in archives if p not in keep]
+
+
+def _create_verified_archive(db_path, keys, destination):
+    """An unverified ZIP is private and cannot displace a working restore point."""
+    destination = Path(destination)
+    destination.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".unverified-", dir=destination) as temporary:
+        archive = _create_archive(db_path, keys, temporary)
+        verify_archive(archive)
+        result = destination / archive.name
+        os.replace(archive, result)
+        _sync_directory(destination)
+        return result
+
+
+async def _finish_thread(function, *args):
+    """Cancellation must not release the file lock while a native worker is active."""
+    worker = asyncio.create_task(asyncio.to_thread(function, *args))
+    cancelled = False
+    while True:
+        try:
+            result = await asyncio.shield(worker)
+            break
+        except asyncio.CancelledError:
+            cancelled = True
+            if worker.cancelled():
+                raise
+    if cancelled:
+        raise asyncio.CancelledError
+    return result
 
 
 class InstanceBackup:
@@ -196,7 +276,7 @@ class InstanceBackup:
         """Newest complete archive time; persisted across restarts by the files."""
         try:
             times = [
-                path.stat().st_mtime
+                archive_created_at(path)
                 for path in self.directory.glob("releasetracker-*.zip")
                 if path.is_file() and not path.is_symlink()
             ]
@@ -218,29 +298,75 @@ class InstanceBackup:
         )
 
     async def create(self, *, retain=7, scheduled=False):
-        try:
-            archive = await self._create(retain=retain)
-            # Detect a corrupt write before it becomes the only restore point.
-            await asyncio.to_thread(verify_archive, archive)
-        except Exception as error:
-            self.failures += 1
-            code = _failure_code(error)
-            if code != "already_running":
-                await self._failed(code, scheduled=scheduled)
-            raise
-        await self._record(
-            last_success_at=time.time(),
-            last_verified_at=time.time(),
-            consecutive_failures=0,
-            last_error_code=None,
-        )
-        return archive
+        if self.lock.locked():
+            raise ValueError("A backup is already running")
+        async with self.lock:
+            try:
+                days, weeks = retention_tiers()
+                archive = await self._create(retain=retain)
+                # No cleanup or success timestamp until ZIP, DB and keys verify.
+                self.last_success = time.time()
+                await self._record(
+                    last_success_at=self.last_success,
+                    last_verified_at=self.last_success,
+                    consecutive_failures=0,
+                    last_error_code=None,
+                    last_failure_phase=None,
+                )
+                for old in retention_candidates(
+                    self.directory.glob("releasetracker-*.zip"), retain, days, weeks
+                ):
+                    old.unlink()
+                return archive
+            except Exception as error:
+                self.failures += 1
+                await self._failed(_failure_code(error), scheduled=scheduled)
+                raise
 
-    async def _failed(self, code, *, scheduled):
+    async def verify_latest(self):
+        """Re-read a stored restore point daily; never delete or rewrite it."""
+        if self.lock.locked():
+            return False  # A creation in progress will verify its own new archive.
+        async with self.lock:
+            archives = sorted(
+                (
+                    p
+                    for p in self.directory.glob("releasetracker-*.zip")
+                    if p.is_file() and not p.is_symlink()
+                ),
+                key=lambda p: (archive_created_at(p), p.name),
+                reverse=True,
+            )
+            if not archives:
+                return False
+            try:
+                await _finish_thread(verify_archive, archives[0], True)
+                status = await self.status()
+                changes = {"last_verified_at": time.time()}
+                if status.get("last_failure_phase") == "verification":
+                    changes.update(
+                        consecutive_failures=0, last_error_code=None, last_failure_phase=None
+                    )
+                await self._record(**changes)
+                return True
+            except Exception as error:
+                self.failures += 1
+                await self._failed(_failure_code(error), scheduled=True, phase="verification")
+                raise
+
+    async def _failed(self, code, *, scheduled, phase="creation"):
         status = await self.status()
         failures = int(status.get("consecutive_failures") or 0) + 1
         await self._record(
-            last_failure_at=time.time(), last_error_code=code, consecutive_failures=failures
+            last_failure_at=time.time(),
+            last_error_code=code,
+            consecutive_failures=failures,
+            last_failure_phase=(
+                "creation"
+                if status.get("last_failure_phase") == "creation"
+                and status.get("consecutive_failures")
+                else phase
+            ),
         )
         if not scheduled:
             return  # The administrator saw the failure in the UI already.
@@ -250,7 +376,10 @@ class InstanceBackup:
             await enqueue_system_alert(
                 self.storage,
                 # One alert per failure streak; a success resets the streak.
-                f"backup_failed:{status.get('last_success_at') or 0}",
+                (
+                    f"backup_failed:{status.get('last_success_at') or 0}:"
+                    f"{phase}:{status.get('last_verified_at') or 0 if phase == 'verification' else 0}"
+                ),
                 {
                     "tracker_name": "ReleaseTracker",
                     "entity": "instance_backup",
@@ -265,51 +394,24 @@ class InstanceBackup:
     async def _create(self, *, retain):
         if not 1 <= retain <= 100:
             raise ValueError("Backup retention must be between 1 and 100")
-        if self.lock.locked():
-            raise ValueError("A backup is already running")
-        async with self.lock:
-            # Match the key rotation lock order. Ordinary database writes may
-            # continue; SQLite's backup API produces a consistent snapshot.
-            async with self.key_manager.lock:
-                async with self.storage.encryption_rotation_lock:
-                    keys = self.key_manager.secrets_path.read_bytes()
-                    if len(keys) > MAX_KEY_BYTES:
-                        raise ValueError("Invalid key file size")
-                    payload = _validate_keys(keys)
-                    if (
-                        payload["encryption_key"] != self.key_manager.encryption_key
-                        or payload["jwt_secret"] != self.key_manager.jwt_secret
-                    ):
-                        raise ValueError("Key file differs from active encryption key")
-                    worker = asyncio.create_task(
-                        asyncio.to_thread(
-                            _create_archive, self.storage.db_path, keys, self.directory
-                        )
-                    )
-                    cancelled = False
-                    while True:
-                        try:
-                            result = await asyncio.shield(worker)
-                            break
-                        except asyncio.CancelledError:
-                            # Repeated request cancellation must not release the
-                            # key locks while the native backup thread is active.
-                            cancelled = True
-                            if worker.cancelled():
-                                raise
-                    if cancelled:
-                        raise asyncio.CancelledError
-            self.last_success = time.time()
-            # Only complete archives from this namespace are eligible; never
-            # prune on failure or follow links to unrelated files.
-            backups = sorted(self.directory.glob("releasetracker-*.zip"), reverse=True)
-            for old in backups[retain:]:
-                if old.is_file() and not old.is_symlink():
-                    old.unlink()
-            return result
+        # Match the rotation lock order and keep both until native work ends.
+        async with self.key_manager.lock:
+            async with self.storage.encryption_rotation_lock:
+                keys = self.key_manager.secrets_path.read_bytes()
+                if len(keys) > MAX_KEY_BYTES:
+                    raise ValueError("Invalid key file size")
+                payload = _validate_keys(keys)
+                if (
+                    payload["encryption_key"] != self.key_manager.encryption_key
+                    or payload["jwt_secret"] != self.key_manager.jwt_secret
+                ):
+                    raise ValueError("Key file differs from active encryption key")
+                return await _finish_thread(
+                    _create_verified_archive, self.storage.db_path, keys, self.directory
+                )
 
 
-def validate_archive(archive, directory):
+def validate_archive(archive, directory, *, allow_older_schema=False):
     """Extract only allowlisted regular files into a private staging directory."""
     root = Path(directory).resolve()
     with zipfile.ZipFile(archive) as source:
@@ -340,7 +442,10 @@ def validate_archive(archive, directory):
         supported = sorted(
             p.name.split("_", 1)[0] for p in (backend_dir() / "dbmate/migrations").glob("*.sql")
         )
-        if versions != manifest.get("migrations") or versions != supported:
+        compatible = versions == supported or (
+            allow_older_schema and bool(versions) and versions == supported[: len(versions)]
+        )
+        if versions != manifest.get("migrations") or not compatible:
             raise ValueError(
                 "Backup schema does not match this application; restore using the matching image"
             )

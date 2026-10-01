@@ -547,6 +547,7 @@ async def _probe_deployment(storage, scheduler, executor, verification: dict) ->
             return _result("superseded", message="submitted image targets differ from finalization")
         rows = []
         retryable_pull = False
+        pod_stability = {}
         interruption_risk = False
         if "workloads" in current:
             if current["kind"] == "helm_release":
@@ -651,10 +652,32 @@ async def _probe_deployment(storage, scheduler, executor, verification: dict) ->
                             if digest_status == "superseded"
                             else "image_digest_unverified"
                         )
+                if (
+                    status == "healthy"
+                    and current["kind"] == "kubernetes_workload"
+                    and workload.get("kind") == "Deployment"
+                    and verification.get("observe_pod_stability")
+                ):
+                    from .kubernetes_pod_diagnostics import pod_stability_fingerprint
+
+                    adapter = await _adapter(storage, scheduler, executor)
+                    fingerprint = await pod_stability_fingerprint(
+                        adapter,
+                        executor.target_ref["namespace"],
+                        workload,
+                        images,
+                        verification.get("submitted_at"),
+                    )
+                    if fingerprint is None:
+                        status, message = "unknown", "Runtime observation unavailable"
+                    else:
+                        pod_stability[name] = fingerprint
                 rows.append(_service(name, status, message, "kubernetes_rollout"))
         else:
             return _probe_containers(current, verification, expected)
         result = _aggregate(rows)
+        if pod_stability:
+            result["pod_stability"] = pod_stability
         if retryable_pull and result["outcome"] == "pending":
             result["retryable_pull"] = True
             if interruption_risk:

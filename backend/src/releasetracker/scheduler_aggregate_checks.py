@@ -313,6 +313,7 @@ class ReleaseSchedulerAggregateChecks:
                 tracker_name=tracker_name,
                 channels=channels,
                 sort_mode=sort_mode,
+                enqueue_executors=not queued_check,
             )
 
         if (

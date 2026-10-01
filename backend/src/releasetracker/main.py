@@ -31,7 +31,7 @@ from .storage.sqlite_retention import prune_fetch_runs
 from .logger import LogConfig
 from .paths import database_path, system_secrets_path
 from .services.http_security import configure_http_security
-from .services.instance_backup import InstanceBackup, backup_options
+from .services.instance_backup import InstanceBackup, backup_options, retention_tiers
 from .routers import backups, metrics, browser_auth
 from .routers import (
     auth,
@@ -118,6 +118,7 @@ async def lifespan(app: FastAPI):
     # Initialize schedulers
     scheduler_host = SchedulerHost()
     backup_hours, backup_retain = backup_options()
+    retention_tiers()  # Reject invalid retention before starting background work.
     instance_backup = InstanceBackup(
         storage, system_key_manager, directory=os.environ.get("RELEASETRACKER_BACKUP_DIR")
     )
@@ -134,7 +135,8 @@ async def lifespan(app: FastAPI):
 
     if backup_hours:
         interval = backup_hours * 3600
-        latest = instance_backup.latest_archive_time()
+        persisted_backup = await instance_backup.status()
+        latest = persisted_backup.get("last_success_at") or instance_backup.latest_archive_time()
         now = time.time()
         # Resume from the newest archive: a process restarted more often than
         # the interval must still back up. Overdue backups run shortly after start.
@@ -146,6 +148,26 @@ async def lifespan(app: FastAPI):
             seconds=interval,
             next_run_time=datetime.fromtimestamp(due),
         )
+
+    async def verify_stored_backup():
+        try:
+            await instance_backup.verify_latest()
+        except Exception:
+            logging.getLogger(__name__).error("Stored backup verification failed")
+        finally:
+            await storage.close_current_task_connection()
+
+    # Also check manually-created archives when automatic creation is disabled.
+    verification_status = await instance_backup.status()
+    now = time.time()
+    last_verified = float(verification_status.get("last_verified_at") or 0)
+    scheduler_host.add_interval_job(
+        "maintenance",
+        "instance_backup_verification",
+        verify_stored_backup,
+        seconds=86400,
+        next_run_time=datetime.fromtimestamp(max(now + 300, last_verified + 86400)),
+    )
 
     async def prune_old_fetch_runs():
         try:
@@ -175,6 +197,11 @@ async def lifespan(app: FastAPI):
 
     readiness = DeploymentReadiness(storage, executor_scheduler, scheduler_host)
     executor_scheduler.readiness = readiness
+    from .services.runtime_health_watch import RuntimeHealthWatch
+
+    runtime_health_watch = RuntimeHealthWatch(
+        storage, executor_scheduler, readiness, scheduler_host
+    )
     task_queue = TaskQueue(storage.tasks, scheduler_host)
     fetch_tasks = FetchTasks(storage, scheduler)
     deploy_tasks = DeployTasks(storage, executor_scheduler)
@@ -197,6 +224,7 @@ async def lifespan(app: FastAPI):
 
     await task_queue.initialize()
     await readiness.initialize()
+    await runtime_health_watch.initialize()
     await notification_outbox.initialize()
     await release_notification_outbox.initialize()
     await admission_notification_outbox.initialize()
@@ -212,6 +240,7 @@ async def lifespan(app: FastAPI):
     # Clean up on shutdown
     if repository_webhook_scheduler:
         await repository_webhook_scheduler.shutdown()
+    await runtime_health_watch.shutdown()
     await task_queue.shutdown()
     await readiness.shutdown()
     await notification_outbox.shutdown()

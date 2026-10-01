@@ -72,7 +72,10 @@ class ExecutorSchedulerUpdateSafety:
         from .executors.health_check.runner import HealthCheckRunner
         from .executors.health_check.types import HealthCheckContext
 
-        baseline = self._capture_update_phase_baseline(adapter, update_result)
+        baseline = await asyncio.wait_for(
+            self._capture_update_phase_baseline(adapter, update_result),
+            timeout=profile.attempt_timeout_seconds,
+        )
         target_mode = executor_config.target_ref.get("mode", "container")
         probe = ProbeFactory().build(profile.strategy, target_mode)
         runner = HealthCheckRunner(probe)
@@ -133,7 +136,7 @@ class ExecutorSchedulerUpdateSafety:
             diagnostics=diagnostics,
         )
 
-    def _capture_update_phase_baseline(
+    async def _capture_update_phase_baseline(
         self,
         adapter: BaseRuntimeAdapter,
         update_result: "RuntimeUpdateResult",
@@ -151,13 +154,7 @@ class ExecutorSchedulerUpdateSafety:
             try:
                 baseline = capture(update_result)
                 if asyncio.iscoroutine(baseline):
-                    # Keep this helper sync; adapters that return a
-                    # coroutine are expected to be awaited by the caller
-                    # in a future refactor. For now we simply drop the
-                    # coroutine to avoid "coroutine was never awaited"
-                    # warnings and fall back to an empty baseline.
-                    baseline.close()
-                    return {}
+                    baseline = await baseline
                 if isinstance(baseline, dict):
                     return baseline
             except Exception as exc:  # pragma: no cover - defensive guard

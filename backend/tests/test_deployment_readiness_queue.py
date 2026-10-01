@@ -104,6 +104,178 @@ async def observe(storage, observer, task_id):
     await observer._observe(dict(row))
 
 
+async def test_restarts_reset_persisted_stability_window(storage, monkeypatch):
+    _, _, observer, probe, now, task, run_id = await setup(storage, monkeypatch, stable=10)
+    probe.return_value = {"outcome": "healthy", "services": [], "pod_stability": "first"}
+    await observe(storage, observer, task["id"])
+    now[0] += 9
+    probe.return_value = {"outcome": "healthy", "services": [], "pod_stability": "after-restart"}
+    await observe(storage, observer, task["id"])
+    now[0] += 1
+    await observe(storage, observer, task["id"])
+    assert (await storage.tasks.get(task["id"]))["state"] == "running"
+    now[0] += 9
+    await observe(storage, observer, task["id"])
+    assert (await storage.get_executor_run(run_id)).status == "success"
+
+
+async def test_final_window_guard_blocks_only_unstarted_automatic_mutations(storage, monkeypatch):
+    executor, scheduler, _, _, _, task, _ = await setup(storage, monkeypatch)
+    handler = scheduler.deploy_tasks
+    executor = executor.model_copy(update={"update_mode": "maintenance_window"})
+    task["payload"]["manual"] = False
+    monkeypatch.setattr(scheduler, "_refresh_system_timezone", AsyncMock())
+    monkeypatch.setattr(scheduler, "_within_maintenance_window", MagicMock(return_value=False))
+    db = await storage._get_connection()
+    await db.execute(
+        "UPDATE tasks SET result=json_set(result,'$.mutation_started',json('false')) WHERE id=?",
+        (task["id"],),
+    )
+    await db.commit()
+    with pytest.raises(ValueError, match="window closed"):
+        await handler._verify_mutation_window(task, executor)
+    await db.execute(
+        "UPDATE tasks SET result=json_set(result,'$.mutation_started',json('true')) WHERE id=?",
+        (task["id"],),
+    )
+    await db.commit()
+    await handler._verify_mutation_window(task, executor)
+    task["payload"]["manual"] = True
+    await handler._verify_mutation_window(task, executor)
+
+
+async def successful_watch(storage, monkeypatch):
+    from releasetracker.services.runtime_health_watch import RuntimeHealthWatch
+
+    monkeypatch.setenv("RELEASETRACKER_RUNTIME_HEALTH_INTERVAL_SECONDS", "300")
+    executor, scheduler, observer, _, now, task, run_id = await setup(
+        storage, monkeypatch, stable=0
+    )
+    await observe(storage, observer, task["id"])
+    probe = AsyncMock(
+        return_value={"outcome": "unhealthy", "services": [{"message": "private secret url"}]}
+    )
+    watch = RuntimeHealthWatch(storage, scheduler, observer, clock=lambda: now[0], probe=probe)
+    return executor, scheduler, watch, probe, now, task, run_id
+
+
+async def test_runtime_watch_persists_incidents_without_rewriting_deployment(storage, monkeypatch):
+    import json
+
+    await storage.create_notifier(
+        {
+            "name": "ops",
+            "type": "webhook",
+            "url": "https://hooks.example/x",
+            "events": ["error"],
+            "enabled": True,
+        }
+    )
+    executor, _, watch, probe, now, task, run_id = await successful_watch(storage, monkeypatch)
+    original = (await storage.tasks.get(task["id"]))["result"]
+    for _ in range(5):
+        await asyncio.create_task(watch._work())
+        now[0] += 301
+    db = await storage._get_connection()
+    notices = (
+        await (await db.execute("SELECT COUNT(*) FROM release_notification_outbox")).fetchone()
+    )[0]
+    assert notices == 1
+    saved = json.loads(await storage.get_setting(f"runtime_health.{executor.id}"))
+    assert saved["failures"] == 5 and "private" not in str(saved)
+    assert (await storage.get_executor_run(run_id)).status == "success"
+    assert (await storage.tasks.get(task["id"]))["result"] == original
+    assert (await storage.get_executor_status(executor.id)).last_result == "success"
+    await asyncio.create_task(watch._work())  # within interval: no network probe
+    assert probe.await_count == 6  # now advanced after loop, this check is due
+    await asyncio.create_task(watch._work())
+    assert probe.await_count == 6
+    probe.return_value = {"outcome": "healthy", "services": []}
+    now[0] += 301
+    await asyncio.create_task(watch._work())
+    assert json.loads(await storage.get_setting(f"runtime_health.{executor.id}"))["failures"] == 0
+    probe.return_value = {"outcome": "unknown", "services": []}
+    for _ in range(3):
+        now[0] += 301
+        await asyncio.create_task(watch._work())
+    db = await storage._get_connection()
+    assert (
+        await (await db.execute("SELECT COUNT(*) FROM release_notification_outbox")).fetchone()
+    )[0] == 2
+
+
+async def test_runtime_watch_discard_evidence_when_configuration_changes_during_probe(
+    storage, monkeypatch
+):
+    executor, scheduler, watch, probe, _, _, _ = await successful_watch(storage, monkeypatch)
+    real_identity = scheduler.deploy_tasks.identity
+    identity = await real_identity(executor)
+    monkeypatch.setattr(
+        scheduler.deploy_tasks, "identity", AsyncMock(side_effect=[identity, "changed"])
+    )
+    await asyncio.create_task(watch._work())
+    assert probe.await_count == 1
+    assert await storage.get_setting(f"runtime_health.{executor.id}") is None
+
+
+async def test_runtime_watch_skips_active_mutation_and_disabled_executors(storage, monkeypatch):
+    executor, scheduler, watch, probe, _, _, _ = await successful_watch(storage, monkeypatch)
+    scheduler._running_executor_ids.add(executor.id)
+    await asyncio.create_task(watch._work())
+    probe.assert_not_awaited()
+    scheduler._running_executor_ids.clear()
+    monkeypatch.setattr(
+        storage,
+        "get_executor_config",
+        AsyncMock(return_value=executor.model_copy(update={"enabled": False})),
+    )
+    await asyncio.create_task(watch._work())
+    probe.assert_not_awaited()
+
+
+async def test_runtime_watch_skips_other_executor_with_global_unknown_mutation(
+    storage, monkeypatch
+):
+    _, _, watch, probe, now, _, _ = await successful_watch(storage, monkeypatch)
+    db = await storage._get_connection()
+    await db.execute(
+        """INSERT INTO tasks(kind,resource_key,dedupe_key,target_label,payload,state,max_retries,due_at,created_at,updated_at)
+                        VALUES('recover','deployment-mutations','other','other','{"executor_id":999}','running',0,?,?,?)""",
+        (now[0], now[0], now[0]),
+    )
+    await db.commit()
+    await asyncio.create_task(watch._work())
+    probe.assert_not_awaited()
+    await db.execute("UPDATE tasks SET state='succeeded' WHERE dedupe_key='other'")
+    await db.commit()
+    await asyncio.create_task(watch._work())
+    probe.assert_awaited_once()
+
+
+async def test_runtime_watch_invokes_application_probe_and_detects_restarts(storage, monkeypatch):
+    import json
+
+    executor, _, watch, probe, now, _, _ = await successful_watch(storage, monkeypatch)
+    probe.return_value = {"outcome": "healthy", "services": [], "pod_stability": "before"}
+    supplement = AsyncMock(side_effect=lambda *args: args[2])
+    monkeypatch.setattr(watch.observer, "_supplement", supplement)
+    await asyncio.create_task(watch._work())
+    assert supplement.await_count == 1
+    now[0] += 301
+    probe.return_value = {"outcome": "healthy", "services": [], "pod_stability": "after"}
+    await asyncio.create_task(watch._work())
+    assert (
+        json.loads(await storage.get_setting(f"runtime_health.{executor.id}"))["outcome"]
+        == "pending"
+    )
+    now[0] += 301
+    await asyncio.create_task(watch._work())
+    assert (
+        json.loads(await storage.get_setting(f"runtime_health.{executor.id}"))["outcome"]
+        == "healthy"
+    )
+
+
 async def test_handoff_preserves_identity_and_releases_worker(storage, monkeypatch):
     executor, scheduler, observer, probe, now, task, run_id = await setup(storage, monkeypatch)
     before = await intent_count(storage)
@@ -452,6 +624,20 @@ async def test_pull_recovers_at_original_deadline_without_stale_snapshot(storage
     assert probe.await_count == 2
     assert (await storage.tasks.get(task["id"]))["state"] == "succeeded"
     assert (await storage.get_executor_run(run_id)).diagnostics["health_check"]["late_recovery"]
+
+
+async def test_deadline_recovery_must_also_pass_application_probe(storage, monkeypatch):
+    _, _, observer, probe, now, task, _ = await kube_pull_observation(storage, monkeypatch)
+    await observe(storage, observer, task["id"])
+    now[0] += 31
+    probe.return_value = {"outcome": "healthy", "services": []}
+    supplement = AsyncMock(
+        return_value={"outcome": "pending", "services": [], "message": "probe_timeout"}
+    )
+    monkeypatch.setattr(observer, "_supplement", supplement)
+    await observe(storage, observer, task["id"])
+    assert supplement.await_count == 1
+    assert (await storage.tasks.get(task["id"]))["state"] == "failed"
 
 
 async def test_pull_error_changes_to_terminal_at_deadline(storage, monkeypatch):

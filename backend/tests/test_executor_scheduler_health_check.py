@@ -73,6 +73,19 @@ async def _seed_release(storage, *, tracker_name: str, version: str) -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_async_native_baseline_is_awaited(storage):
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    scheduler = ExecutorScheduler(storage)
+    capture = AsyncMock(return_value={"restart_count": 2})
+    adapter = SimpleNamespace(capture_health_baseline=capture)
+    updated = object()
+    assert await scheduler._capture_update_phase_baseline(adapter, updated) == {"restart_count": 2}
+    capture.assert_awaited_once_with(updated)
+
+
 class _FakeAdapter(BaseRuntimeAdapter):
     """Adapter fake that lets tests script discovery, capture, update, and
     per-attempt health probe outcomes."""
@@ -150,6 +163,20 @@ async def _build_executor(
         )
     )
     return await storage.get_executor_config(executor_id)
+
+
+@pytest.mark.asyncio
+async def test_async_native_health_baseline_is_awaited(storage, scheduler):
+    from unittest.mock import AsyncMock, MagicMock
+
+    expected = {"container_id": "new", "restart_count": 2}
+    adapter = MagicMock()
+    adapter.capture_health_baseline = AsyncMock(return_value=expected)
+    result = RuntimeUpdateResult(updated=True, old_image="app:old", new_image="app:new")
+    assert await scheduler._capture_update_phase_baseline(adapter, result) == expected
+    adapter.capture_health_baseline.assert_awaited_once_with(result)
+    adapter.capture_health_baseline = MagicMock(return_value=expected)
+    assert await scheduler._capture_update_phase_baseline(adapter, result) == expected
 
 
 # ---- Tests ---------------------------------------------------------------

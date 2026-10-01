@@ -40,6 +40,7 @@ class ReleaseSchedulerProjectionNotifications:
         tracker_name: str,
         channels: list[Any],
         sort_mode: str,
+        enqueue_executors: bool = True,
     ) -> tuple[list[Release], str | None]:
         previous_projection = await self.storage.get_tracker_current_releases(aggregate_tracker_id)
         for release in previous_projection:
@@ -96,7 +97,7 @@ class ReleaseSchedulerProjectionNotifications:
         # Always reconcile bound executor targets. A stable or canary change can
         # be masked by a newer prerelease in the tracker-wide winner.
         queued_count = 0
-        if current_best is not None:
+        if enqueue_executors and current_best is not None:
             queued_count = await self._emit_executor_trigger_work_for_projection_change(
                 tracker_name=tracker_name,
                 previous_version=previous_best.version if previous_best is not None else None,

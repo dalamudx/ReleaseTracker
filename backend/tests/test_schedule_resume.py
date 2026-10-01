@@ -126,8 +126,10 @@ async def test_backup_schedule_resumes_from_newest_archive(storage, system_key_m
     service = backup.InstanceBackup(storage, system_key_manager, directory=tmp_path)
     assert service.latest_archive_time() is None
     archive = await service.create()
+    created = backup.archive_created_at(archive)
     old = archive.stat().st_mtime - 3600
-    os.utime(archive, (old, old))
+    os.utime(archive, (old, old))  # File copying/touching must not reset creation history.
     assert (
-        backup.InstanceBackup(storage, system_key_manager, directory=tmp_path).last_success == old
+        backup.InstanceBackup(storage, system_key_manager, directory=tmp_path).last_success
+        == created
     )

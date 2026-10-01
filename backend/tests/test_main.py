@@ -30,6 +30,12 @@ class FakeStorage:
         self.events.append("storage.initialize")
         return None
 
+    async def get_setting(self, key):
+        return None
+
+    async def close_current_task_connection(self):
+        pass
+
     async def get_system_log_level(self):
         return "INFO"
 
@@ -128,8 +134,12 @@ class FakeExecutorScheduler:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backup_hours", [0, 24])
-async def test_lifespan_starts_without_identity_drift_repair(monkeypatch, storage, backup_hours):
+@pytest.mark.parametrize("watch_seconds", [0, 300])
+async def test_lifespan_starts_without_identity_drift_repair(
+    monkeypatch, storage, backup_hours, watch_seconds
+):
     monkeypatch.setenv("RELEASETRACKER_BACKUP_INTERVAL_HOURS", str(backup_hours))
+    monkeypatch.setenv("RELEASETRACKER_RUNTIME_HEALTH_INTERVAL_SECONDS", str(watch_seconds))
     database_path = storage.db_path
     fake_storage_holder = {}
     fake_auth_holder = {}
@@ -186,9 +196,13 @@ async def test_lifespan_starts_without_identity_drift_repair(monkeypatch, storag
         assert scheduler_host.interval_jobs == (
             [("maintenance", "instance_backup", backup_hours * 3600)] if backup_hours else []
         ) + [
+            ("maintenance", "instance_backup_verification", 86400),
             ("maintenance", "fetch_retention", 86400),
             ("tasks", "dispatch", 2),
             ("readiness", "observe", 2),
+        ] + (
+            [("runtime_health", "tick", 60)] if watch_seconds else []
+        ) + [
             ("executor_notifications", "tick", 2),
             ("repository_webhooks", "worker", 2),
             ("repository_webhooks", "cleanup", 86400),

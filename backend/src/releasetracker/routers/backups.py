@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ..dependencies import get_current_admin_user
-from ..services.instance_backup import backup_options
+from ..services.instance_backup import archive_created_at, backup_options
 
 router = APIRouter(
     prefix="/api/backups", tags=["backups"], dependencies=[Depends(get_current_admin_user)]
@@ -30,7 +30,7 @@ def service(request: Request):
 
 def entry(path: Path):
     stat = path.stat()
-    return {"name": path.name, "size": stat.st_size, "created_at": stat.st_mtime}
+    return {"name": path.name, "size": stat.st_size, "created_at": archive_created_at(path)}
 
 
 @router.get("")
@@ -52,7 +52,15 @@ async def list_backups(request: Request):
         "overdue": bool(hours) and (latest is None or time.time() - latest > hours * 7200),
         "items": [
             entry(p)
-            for p in sorted(backup.directory.glob("releasetracker-*.zip"), reverse=True)
+            for p in sorted(
+                (
+                    p
+                    for p in backup.directory.glob("releasetracker-*.zip")
+                    if p.is_file() and not p.is_symlink()
+                ),
+                key=archive_created_at,
+                reverse=True,
+            )
             if p.is_file() and not p.is_symlink()
         ],
     }
