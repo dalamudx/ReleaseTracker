@@ -83,123 +83,148 @@ def _diagnose(pods, desired_images, submitted_at):
     )
 
 
+def desired_pod_count(workload):
+    if workload.get("kind") == "DaemonSet":
+        status = workload.get("status") or {}
+        return status.get("desiredNumberScheduled", status.get("desired_number_scheduled"))
+    return (workload.get("spec") or {}).get("replicas", 1)
+
+
+def _owned_by(obj, kind, uid):
+    owners = getattr(getattr(obj, "metadata", None), "owner_references", None) or []
+    return any(
+        owner.kind == kind and owner.uid == uid and owner.controller is True for owner in owners
+    )
+
+
+async def owned_pods(adapter, namespace, workload, images, submitted_at):
+    """Read complete bounded evidence with an actual controller UID chain."""
+    spec = workload.get("spec") or {}
+    selector_spec = spec.get("selector") or {}
+    selector = selector_spec.get("matchLabels") or selector_spec.get("match_labels") or {}
+    uid = (workload.get("metadata") or {}).get("uid")
+    kind = workload.get("kind")
+    if (
+        not selector
+        or not isinstance(selector, dict)
+        or not uid
+        or kind not in {"Deployment", "StatefulSet", "DaemonSet"}
+        or not submitted_at
+    ):
+        return None
+
+    def read():
+        adapter._authorize_namespace(namespace)
+        options = {
+            "label_selector": ",".join(f"{k}={v}" for k, v in sorted(selector.items())),
+            "limit": 101,
+            "_request_timeout": 3,
+        }
+        response = adapter._get_core_api().list_namespaced_pod(namespace, **options)
+        if len(response.items) > 100 or getattr(
+            getattr(response, "metadata", None), "_continue", None
+        ):
+            return None
+        if kind == "Deployment":
+            replicas = adapter._get_apps_api().list_namespaced_replica_set(namespace, **options)
+            if len(replicas.items) > 100 or getattr(
+                getattr(replicas, "metadata", None), "_continue", None
+            ):
+                return None
+            uids = {
+                item.metadata.uid for item in replicas.items if _owned_by(item, "Deployment", uid)
+            }
+
+            def belongs(pod):
+                return any(_owned_by(pod, "ReplicaSet", rs) for rs in uids)
+
+        else:
+
+            def belongs(pod):
+                return _owned_by(pod, kind, uid)
+
+        result = []
+        for pod in response.items:
+            metadata = getattr(pod, "metadata", None)
+            created = _timestamp(getattr(metadata, "creation_timestamp", None))
+            if (
+                not belongs(pod)
+                or getattr(metadata, "deletion_timestamp", None)
+                or created is None
+                or created < submitted_at - 30
+            ):
+                continue
+            containers = getattr(getattr(pod, "spec", None), "containers", None) or []
+            if (
+                not containers
+                or any(images.get(item.name) != item.image for item in containers)
+                or not set(images).issubset({item.name for item in containers})
+            ):
+                continue
+            result.append(pod)
+        return result
+
+    from .deployment_readiness_probes import _bounded_thread
+
+    return await _bounded_thread(adapter, "owned_pods", read)
+
+
 async def pod_stability_fingerprint(adapter, namespace, workload, images, submitted_at):
-    """Stable only while the same ready Pods have unchanged restart counts."""
+    """Only unchanged, ready Pod UID/restart tuples establish stable readiness."""
     import hashlib
     import json
 
-    spec = workload.get("spec") or {}
-    selector_spec = spec.get("selector") or {}
-    labels = selector_spec.get("matchLabels") or selector_spec.get("match_labels") or {}
-    replicas = spec.get("replicas", 1)
-    if not labels or not submitted_at or not isinstance(replicas, int) or not 0 < replicas <= 100:
+    count = desired_pod_count(workload)
+    if not isinstance(count, int) or not 0 < count <= 100:
         return None
     try:
-
-        def read():
-            adapter._authorize_namespace(namespace)
-            return (
-                adapter._get_core_api()
-                .list_namespaced_pod(
-                    namespace,
-                    label_selector=",".join(f"{k}={v}" for k, v in sorted(labels.items())),
-                    limit=100,
-                    _request_timeout=3,
-                )
-                .items
-            )
-
-        pods = await asyncio.wait_for(asyncio.to_thread(read), timeout=4)
-        samples = []
-        for pod in pods[:100]:
-            metadata = getattr(pod, "metadata", None)
-            if getattr(metadata, "deletion_timestamp", None):
-                continue
-            created = _timestamp(getattr(metadata, "creation_timestamp", None))
-            if created is None or created < submitted_at - 30:
-                continue
-            containers = {
-                c.name: c.image
-                for c in getattr(getattr(pod, "spec", None), "containers", None) or []
-            }
-            if not images or any(containers.get(k) != v for k, v in images.items()):
-                continue
-            uid = getattr(metadata, "uid", None)
-            statuses = {
-                s.name: s
-                for s in getattr(getattr(pod, "status", None), "container_statuses", None) or []
-            }
-            if not uid or any(
-                k not in statuses or not getattr(statuses[k], "ready", False) for k in images
-            ):
-                return None
-            counts = [(k, getattr(statuses[k], "restart_count", None)) for k in sorted(images)]
-            if any(not isinstance(n, int) or n < 0 for _, n in counts):
-                return None
-            samples.append((uid, counts))
-        if len(samples) != replicas:
+        pods = await owned_pods(adapter, namespace, workload, images, submitted_at)
+        if pods is None or len(pods) != count:
             return None
-        return hashlib.sha256(
-            json.dumps(sorted(samples), separators=(",", ":")).encode()
-        ).hexdigest()
+        evidence = []
+        for pod in pods:
+            statuses = {
+                item.name: item
+                for item in getattr(getattr(pod, "status", None), "container_statuses", None) or []
+            }
+            uid = getattr(pod.metadata, "uid", None)
+            if not uid or not all(name in statuses and statuses[name].ready for name in images):
+                return None
+            restarts = {name: getattr(statuses[name], "restart_count", None) for name in images}
+            if any(not isinstance(value, int) or value < 0 for value in restarts.values()):
+                return None
+            evidence.append((uid, sorted(restarts.items())))
+        return hashlib.sha256(json.dumps(sorted(evidence)).encode()).hexdigest()
     except asyncio.CancelledError:
         raise
     except Exception:
         return None
 
 
-async def verify_pod_digests(adapter, namespace, workload, images, submitted_at):
-    """Confirm actual running manifest digests for immutable image references.
+async def verify_pod_digests(
+    adapter, namespace, workload, images, submitted_at, resolve_digest=None
+):
+    """Manifest ImageID must match the pin or its cryptographically verified child.
 
-    Containerd's config digest is not necessarily the registry manifest digest.
-    Only an ImageID containing @sha256:<manifest> can prove equality; every
-    other format is unknown, never assumed to match.
+    A mismatch alone is UNKNOWN: an OCI index and its platform manifest differ.
+    Config IDs are not manifest evidence. Proven graph exclusion is superseded.
     """
     pinned = {
-        name: ref.rsplit("@sha256:", 1)[1].lower()
+        name: ref.rsplit("@", 1)[1].lower()
         for name, ref in images.items()
         if isinstance(ref, str) and re.search(r"@sha256:[0-9a-fA-F]{64}$", ref)
     }
     if not pinned:
         return "confirmed"
-    spec = workload.get("spec") or {}
-    selector_spec = spec.get("selector") or {}
-    selector = selector_spec.get("matchLabels") or selector_spec.get("match_labels") or {}
-    count = spec.get("replicas", 1)
-    if (
-        not selector
-        or not isinstance(selector, dict)
-        or not submitted_at
-        or not isinstance(count, int)
-        or count < 1
-    ):
+    count = desired_pod_count(workload)
+    if not isinstance(count, int) or not 0 < count <= 100:
         return "unknown"
     try:
-
-        def read():
-            adapter._authorize_namespace(namespace)
-            return (
-                adapter._get_core_api()
-                .list_namespaced_pod(
-                    namespace,
-                    label_selector=",".join(f"{k}={v}" for k, v in sorted(selector.items())),
-                    limit=100,
-                    _request_timeout=3,
-                )
-                .items
-            )
-
-        pods = await asyncio.wait_for(asyncio.to_thread(read), timeout=4)
-        confirmed = 0
-        for pod in pods[:100]:
-            created = _timestamp(
-                getattr(getattr(pod, "metadata", None), "creation_timestamp", None)
-            )
-            if created is None or created < submitted_at - 30:
-                continue
-            containers = getattr(getattr(pod, "spec", None), "containers", None) or []
-            if any(images.get(item.name) != item.image for item in containers):
-                continue
+        pods = await owned_pods(adapter, namespace, workload, images, submitted_at)
+        if pods is None or len(pods) != count:
+            return "unknown"
+        cache = {}
+        for pod in pods:
             statuses = {
                 item.name: item
                 for item in getattr(getattr(pod, "status", None), "container_statuses", None) or []
@@ -207,18 +232,21 @@ async def verify_pod_digests(adapter, namespace, workload, images, submitted_at)
             if not all(
                 name in statuses and getattr(statuses[name], "ready", False) for name in pinned
             ):
-                continue
-            matches = []
+                return "unknown"
             for name, digest in pinned.items():
-                image_id = getattr(statuses[name], "image_id", "") or ""
-                match = re.search(r"@sha256:([0-9a-fA-F]{64})$", image_id)
+                match = re.search(
+                    r"@(sha256:[0-9a-fA-F]{64})$", getattr(statuses[name], "image_id", "") or ""
+                )
                 if not match:
                     return "unknown"
-                matches.append(match.group(1).lower() == digest)
-            if not all(matches):
-                return "superseded"
-            confirmed += 1
-        return "confirmed" if confirmed >= count else "unknown"
+                actual = match.group(1).lower()
+                if actual != digest:
+                    key = (images[name], actual)
+                    if key not in cache:
+                        cache[key] = await resolve_digest(*key) if resolve_digest else "unknown"
+                    if cache[key] != "confirmed":
+                        return cache[key]
+        return "confirmed"
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -226,33 +254,10 @@ async def verify_pod_digests(adapter, namespace, workload, images, submitted_at)
 
 
 async def pod_evidence(adapter, namespace, workload, images, submitted_at):
-    spec = workload.get("spec") or {}
-    selector_spec = spec.get("selector") or {}
-    selector = selector_spec.get("matchLabels") or selector_spec.get("match_labels") or {}
-    if not selector or not isinstance(selector, dict) or not submitted_at:
-        return None
-    # Label keys/values come from the workload, not arbitrary user input.
-    label_selector = ",".join(f"{k}={v}" for k, v in sorted(selector.items()))
     try:
-
-        def read():
-            adapter._authorize_namespace(namespace)
-            return (
-                adapter._get_core_api()
-                .list_namespaced_pod(
-                    namespace,
-                    label_selector=label_selector,
-                    limit=100,
-                    _request_timeout=3,
-                )
-                .items
-            )
-
-        pods = await asyncio.wait_for(asyncio.to_thread(read), timeout=4)
-        return _diagnose(pods, images, submitted_at)
+        pods = await owned_pods(adapter, namespace, workload, images, submitted_at)
+        return _diagnose(pods, images, submitted_at) if pods is not None else None
     except asyncio.CancelledError:
         raise
     except Exception:
-        # RBAC, transport failure and missing Pod timestamps are unknown, not
-        # proof of a retryable error or of a terminal broken image.
         return None

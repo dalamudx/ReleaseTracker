@@ -42,57 +42,85 @@ class ReleaseSchedulerProjectionNotifications:
         sort_mode: str,
         enqueue_executors: bool = True,
     ) -> tuple[list[Release], str | None]:
-        previous_projection = await self.storage.get_tracker_current_releases(aggregate_tracker_id)
-        for release in previous_projection:
-            release.tracker_name = tracker_name
-
-        previous_best = self._best_release_from_candidates(
-            self.storage,
-            previous_projection,
-            channels,
-            sort_mode,
-        )
-
-        history_releases = await self.storage.get_tracker_release_history_releases(
-            aggregate_tracker_id
-        )
-        for release in history_releases:
-            release.tracker_name = tracker_name
-
-        if channels:
-            projection_winners = list(
-                self.storage.select_best_releases_by_channel(
-                    history_releases,
-                    channels,
-                    sort_mode=sort_mode,
-                    use_immutable_identity=True,
-                    use_source_aliases=True,
-                ).values()
+        async with self.storage.tasks.transaction():
+            previous_projection = await self.storage.get_tracker_current_releases(
+                aggregate_tracker_id
             )
-        else:
-            projection_winners = self.storage.dedupe_releases_by_immutable_identity(
-                history_releases
+            for release in previous_projection:
+                release.tracker_name = tracker_name
+
+            previous_best = self._best_release_from_candidates(
+                self.storage,
+                previous_projection,
+                channels,
+                sort_mode,
             )
 
-        await self.storage.refresh_tracker_current_releases(
-            aggregate_tracker_id,
-            projection_winners,
-        )
+            history_releases = await self.storage.get_tracker_release_history_releases(
+                aggregate_tracker_id
+            )
+            for release in history_releases:
+                release.tracker_name = tracker_name
 
-        current_best = self._best_release_from_candidates(
-            self.storage,
-            projection_winners,
-            channels,
-            sort_mode,
-        )
-        current_best_identity = (
-            self._projection_release_identity(current_best) if current_best is not None else None
-        )
-        previous_best_identity = (
-            self._projection_release_identity(previous_best) if previous_best is not None else None
-        )
+            if channels:
+                projection_winners = list(
+                    self.storage.select_best_releases_by_channel(
+                        history_releases,
+                        channels,
+                        sort_mode=sort_mode,
+                        use_immutable_identity=True,
+                        use_source_aliases=True,
+                    ).values()
+                )
+            else:
+                projection_winners = self.storage.dedupe_releases_by_immutable_identity(
+                    history_releases
+                )
 
-        winner_changed = self._projection_release_changed(previous_best, current_best)
+            await self.storage.refresh_tracker_current_releases(
+                aggregate_tracker_id,
+                projection_winners,
+                commit=False,
+            )
+
+            current_best = self._best_release_from_candidates(
+                self.storage,
+                projection_winners,
+                channels,
+                sort_mode,
+            )
+            current_best_identity = (
+                self._projection_release_identity(current_best)
+                if current_best is not None
+                else None
+            )
+            previous_best_identity = (
+                self._projection_release_identity(previous_best)
+                if previous_best is not None
+                else None
+            )
+
+            winner_changed = self._projection_release_changed(previous_best, current_best)
+
+            notified: set[str] = set()
+            if winner_changed and current_best is not None:
+                await self._notify_change(previous_best, current_best)
+                notified.add(self._projection_release_identity(current_best))
+            if channels:
+                # A newer prerelease can own the tracker-wide winner while a stable
+                # channel also moves. Notify each changed channel winner once.
+                previous_by_channel = {
+                    r.channel_name: r for r in previous_projection if r.channel_name
+                }
+                for release in projection_winners:
+                    identity = self._projection_release_identity(release)
+                    if not release.channel_name or identity in notified:
+                        continue
+                    previous = previous_by_channel.get(release.channel_name)
+                    if self._projection_release_changed(previous, release):
+                        release.tracker_name = tracker_name
+                        await self._notify_change(previous, release)
+                        notified.add(identity)
 
         # Always reconcile bound executor targets. A stable or canary change can
         # be masked by a newer prerelease in the tracker-wide winner.
@@ -111,24 +139,6 @@ class ReleaseSchedulerProjectionNotifications:
                 queued_count,
                 tracker_name,
             )
-        notified: set[str] = set()
-        if winner_changed and current_best is not None:
-            await self._notify_change(previous_best, current_best)
-            notified.add(self._projection_release_identity(current_best))
-        if channels:
-            # A newer prerelease can own the tracker-wide winner while a stable
-            # channel also moves. Notify each changed channel winner once.
-            previous_by_channel = {r.channel_name: r for r in previous_projection if r.channel_name}
-            for release in projection_winners:
-                identity = self._projection_release_identity(release)
-                if not release.channel_name or identity in notified:
-                    continue
-                previous = previous_by_channel.get(release.channel_name)
-                if self._projection_release_changed(previous, release):
-                    release.tracker_name = tracker_name
-                    await self._notify_change(previous, release)
-                    notified.add(identity)
-
         return projection_winners, current_best.version if current_best is not None else None
 
     async def _notify_change(self, previous: Release | None, current: Release) -> None:
@@ -166,11 +176,10 @@ class ReleaseSchedulerProjectionNotifications:
         """Queue durable, de-duplicated delivery; never send inline from a fetch."""
         from .services.release_notification_outbox import enqueue_release_notification
 
-        try:
-            queued = await enqueue_release_notification(self.storage, event, release)
-        except Exception:
-            logger.error("Failed to queue release notification for %s", release.tracker_name)
-            return
+        db = await self.storage._get_connection()
+        queued = await enqueue_release_notification(
+            self.storage, event, release, commit=not db.in_transaction
+        )
         if queued:
             logger.info(
                 "Queued %s %s notification(s) for %s %s",

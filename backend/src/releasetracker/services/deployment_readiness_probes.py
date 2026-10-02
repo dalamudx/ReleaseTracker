@@ -636,6 +636,7 @@ async def _probe_deployment(storage, scheduler, executor, verification: dict) ->
                     )
                 ):
                     from .kubernetes_pod_diagnostics import verify_pod_digests
+                    from .manifest_verification import verify_running_manifest
 
                     adapter = await _adapter(storage, scheduler, executor)
                     digest_status = await verify_pod_digests(
@@ -644,6 +645,9 @@ async def _probe_deployment(storage, scheduler, executor, verification: dict) ->
                         workload,
                         images,
                         verification.get("submitted_at"),
+                        resolve_digest=lambda image, actual: verify_running_manifest(
+                            storage, executor, image, actual
+                        ),
                     )
                     if digest_status != "confirmed":
                         status = "superseded" if digest_status == "superseded" else "unknown"

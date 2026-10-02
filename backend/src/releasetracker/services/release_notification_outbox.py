@@ -24,10 +24,12 @@ def release_dedupe_key(event: str, release: Release) -> str:
     return f"{release.tracker_name}|{event}|{identity}|{digest}"
 
 
-async def enqueue_release_notification(storage, event: str, release: Release) -> int:
+async def enqueue_release_notification(
+    storage, event: str, release: Release, *, commit=True
+) -> int:
     """Record one pending delivery per subscribed notifier; duplicates are ignored."""
     return await _enqueue(
-        storage, event, release_dedupe_key(event, release), release.model_dump_json()
+        storage, event, release_dedupe_key(event, release), release.model_dump_json(), commit=commit
     )
 
 
@@ -38,7 +40,7 @@ async def enqueue_system_alert(storage, dedupe_key: str, payload: dict) -> int:
     )
 
 
-async def _enqueue(storage, event: str, key: str, payload: str) -> int:
+async def _enqueue(storage, event: str, key: str, payload: str, *, commit=True) -> int:
     notifiers = [
         n
         for n in await storage.get_notifiers()
@@ -57,7 +59,8 @@ async def _enqueue(storage, event: str, key: str, payload: str) -> int:
             (notifier.id, event, key, payload, now, now),
         )
         inserted += max(cursor.rowcount, 0)
-    await db.commit()
+    if commit:
+        await db.commit()
     return inserted
 
 

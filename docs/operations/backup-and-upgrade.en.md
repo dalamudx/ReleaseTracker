@@ -22,7 +22,7 @@ ZIP files are **not encrypted** and include credentials, session state, and encr
 
 New ZIPs are written to a protected staging directory and read back to verify checksums, SQLite integrity and credential decryption. Only verified archives are atomically published for download; older archives are pruned afterwards. Failed verification never removes prior recovery points. Cancellation waits for the worker thread before releasing backup/key-rotation locks. The newest stored archive is also verified daily, resuming from the last successful check across restarts even when automatic creation is disabled. Stored verification accepts old schemas, while restoration still requires the matching image. Corruption records failure and alerts; repaired archives clear verification warnings without hiding backup-creation failures. The Backups page shows the last successful backup, consecutive failures with their category, and an “overdue” warning when no backup succeeded within two intervals. Scheduled backup failures alert notifiers subscribed to the “error” event.
 
-Restoration is local CLI only and never overwrites a running database. Validate using the matching application image, stop all instances, then restore to a **nonexistent** directory. Validation checks ZIP members and size limits, SHA256, SQLite integrity, exact migration compatibility, and credential/snapshot decryption. Checksums detect corruption, not authenticity: restore only trusted archives.
+Restoration is local CLI only and never overwrites a running database. Validate using the matching application image, stop all instances, then restore to a **nonexistent** directory. Validation checks ZIP members and size limits, SHA256, SQLite integrity, foreign keys and task/run/readiness relationships, exact migration compatibility, and credential/snapshot decryption. Archives with broken relationships cannot pass recovery-point validation. Checksums detect corruption, not authenticity: restore only trusted archives.
 
 ```bash
 # Run in the matching application environment; containers can use --entrypoint python
@@ -32,7 +32,18 @@ python -m releasetracker.cli restore-backup /backups/BACKUP.zip \
   --destination /restore/new-data --confirm-stopped
 ```
 
-Keep the old volume and mount the new directory as application data. A custom `RELEASETRACKER_DB_PATH` must point to `releases.db` inside it. Restoration neither starts the instance nor undoes external deployments. Before restarting, isolate executor network access or runtime credentials and review pending work against actual running versions to avoid replaying old tasks. Restoration clears sessions and transient OAuth states so revoked sessions cannot be resurrected; sign in again. The original ZIP is not modified. Restore older data with its matching image first, then upgrade through normal migrations.
+Keep the old volume and mount the new directory as application data. A custom `RELEASETRACKER_DB_PATH` must point to `releases.db` inside it. Restoration neither starts the instance nor undoes external deployments; the ZIP remains unchanged. Sessions and transient OAuth states are cleared, requiring a new login. Old pending deployment/recovery tasks, approvals, observations and unsent notifications are revoked, including old desired-state and worker claims. Claiming new mutations and runtime health monitoring pause until review; version fetching remains available. Restore older data with its matching image, then migrate normally.
+
+A time-point restore is not an ordinary process restart. Review actual remote versions, executor configuration and newly queued targets before running against the restored database:
+
+```bash
+# Read-only relationship audit; no automatic deletion or repair
+RELEASETRACKER_DB_PATH=/restore/new-data/releases.db python -m releasetracker.cli audit-database
+# Enable new mutations only; revoked tasks and approvals are not resurrected
+RELEASETRACKER_DB_PATH=/restore/new-data/releases.db python -m releasetracker.cli acknowledge-restore --confirm-reviewed
+```
+
+The backup-list API exposes `restore_review_required`; there is no browser acknowledgement control yet. Start a fresh operation if an old target still needs execution after review, rather than replaying archived tasks. Enabling live foreign-key enforcement remains a staged data-migration task; this change does not turn on cascading deletes. If a previously successful backup loses all archives, daily verification records `backup_missing` and emits a deduplicated alert. Instances that have never created a backup do not alert for this condition.
 
 ## Operational metrics {#metrics}
 

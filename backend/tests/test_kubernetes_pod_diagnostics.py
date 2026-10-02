@@ -34,10 +34,22 @@ def test_classification_does_not_leak_messages(reason, message, expected):
     assert waiting_diagnosis(reason, message) == expected
 
 
+def adapter_fixture():
+    adapter = MagicMock()
+    adapter._get_core_api.return_value.list_namespaced_pod.return_value.metadata = NS(
+        _continue=None
+    )
+    return adapter
+
+
 def pod(created, image="example:v2", reason="ImagePullBackOff", message="timeout secret-123"):
     status = NS(state=NS(waiting=NS(reason=reason, message=message), terminated=None))
     return NS(
-        metadata=NS(creation_timestamp=created),
+        metadata=NS(
+            creation_timestamp=created,
+            deletion_timestamp=None,
+            owner_references=[NS(kind="StatefulSet", uid="controller", controller=True)],
+        ),
         spec=NS(containers=[NS(name="app", image=image)]),
         status=NS(container_statuses=[status]),
     )
@@ -46,7 +58,7 @@ def pod(created, image="example:v2", reason="ImagePullBackOff", message="timeout
 @pytest.mark.asyncio
 async def test_pod_evidence_filters_old_versions_and_fails_closed():
     now = datetime.now(timezone.utc)
-    adapter = MagicMock()
+    adapter = adapter_fixture()
     api = adapter._get_core_api.return_value
     api.list_namespaced_pod.return_value.items = [
         pod(now - timedelta(hours=2), reason="InvalidImageName"),
@@ -56,7 +68,11 @@ async def test_pod_evidence_filters_old_versions_and_fails_closed():
             message="GET https://private.secret: token=bad request timeout",
         ),
     ]
-    workload = {"spec": {"selector": {"match_labels": {"app": "demo"}}}}
+    workload = {
+        "kind": "StatefulSet",
+        "metadata": {"uid": "controller"},
+        "spec": {"selector": {"match_labels": {"app": "demo"}}},
+    }
     result = await pod_evidence(
         adapter, "namespace", workload, {"app": "example:v2"}, now.timestamp()
     )
@@ -76,7 +92,7 @@ async def test_pod_evidence_filters_old_versions_and_fails_closed():
 async def test_pinned_digest_checks_actual_ready_pods_and_fails_closed():
     now = datetime.now(timezone.utc)
     expected = "example/app@sha256:" + "a" * 64
-    adapter = MagicMock()
+    adapter = adapter_fixture()
     api = adapter._get_core_api.return_value
     first = pod(now, image=expected)
     first.status.container_statuses[0].name = "app"
@@ -86,7 +102,11 @@ async def test_pinned_digest_checks_actual_ready_pods_and_fails_closed():
     second.status.container_statuses[0].name = "app"
     second.status.container_statuses[0].ready = True
     second.status.container_statuses[0].image_id = first.status.container_statuses[0].image_id
-    workload = {"spec": {"replicas": 2, "selector": {"match_labels": {"app": "test"}}}}
+    workload = {
+        "kind": "StatefulSet",
+        "metadata": {"uid": "controller"},
+        "spec": {"replicas": 2, "selector": {"match_labels": {"app": "test"}}},
+    }
     api.list_namespaced_pod.return_value.items = [first]
     assert (
         await verify_pod_digests(adapter, "test", workload, {"app": expected}, now.timestamp())
@@ -102,7 +122,7 @@ async def test_pinned_digest_checks_actual_ready_pods_and_fails_closed():
     )
     assert (
         await verify_pod_digests(adapter, "test", workload, {"app": expected}, now.timestamp())
-        == "superseded"
+        == "unknown"
     )
     second.status.container_statuses[0].image_id = "containerd://sha256:" + "a" * 64
     assert (
@@ -121,7 +141,7 @@ async def test_pod_stability_changes_on_restart_or_replacement():
     from releasetracker.services.kubernetes_pod_diagnostics import pod_stability_fingerprint
 
     now = datetime.now(timezone.utc)
-    adapter = MagicMock()
+    adapter = adapter_fixture()
     api = adapter._get_core_api.return_value
     sample = pod(now)
     sample.metadata.uid = "first-pod"
@@ -131,7 +151,11 @@ async def test_pod_stability_changes_on_restart_or_replacement():
     status.ready = True
     status.restart_count = 0
     api.list_namespaced_pod.return_value.items = [sample]
-    target = {"spec": {"replicas": 1, "selector": {"match_labels": {"app": "test"}}}}
+    target = {
+        "kind": "StatefulSet",
+        "metadata": {"uid": "controller"},
+        "spec": {"replicas": 1, "selector": {"match_labels": {"app": "test"}}},
+    }
     first = await pod_stability_fingerprint(
         adapter, "test", target, {"app": "example:v2"}, now.timestamp()
     )
@@ -165,6 +189,127 @@ async def test_tagged_images_need_no_additional_digest_rbac():
         == "confirmed"
     )
     adapter._get_core_api.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_deployment_evidence_requires_owned_replicaset_chain():
+    now = datetime.now(timezone.utc)
+    adapter = adapter_fixture()
+    sample = pod(now, reason="CrashLoopBackOff")
+    sample.metadata.owner_references = [NS(kind="ReplicaSet", uid="rs", controller=True)]
+    adapter._get_core_api.return_value.list_namespaced_pod.return_value.items = [sample]
+    rs = NS(
+        metadata=NS(
+            uid="rs",
+            owner_references=[NS(kind="Deployment", uid="wrong-deployment", controller=True)],
+        )
+    )
+    adapter._get_apps_api.return_value.list_namespaced_replica_set.return_value = NS(
+        items=[rs], metadata=NS(_continue=None)
+    )
+    workload = {
+        "kind": "Deployment",
+        "metadata": {"uid": "controller"},
+        "spec": {"selector": {"match_labels": {"app": "test"}}},
+    }
+    assert (
+        await pod_evidence(adapter, "test", workload, {"app": "example:v2"}, now.timestamp())
+        is None
+    )
+    rs.metadata.owner_references[0].uid = "controller"
+    assert (
+        await pod_evidence(adapter, "test", workload, {"app": "example:v2"}, now.timestamp())
+        == "container_start_failed"
+    )
+    sample.metadata.owner_references = []
+    assert (
+        await pod_evidence(adapter, "test", workload, {"app": "example:v2"}, now.timestamp())
+        is None
+    )
+    sample.metadata.owner_references = [NS(kind="ReplicaSet", uid="rs", controller=True)]
+    sample.metadata.deletion_timestamp = now
+    assert (
+        await pod_evidence(adapter, "test", workload, {"app": "example:v2"}, now.timestamp())
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_daemonset_digest_requires_all_scheduled_pods_and_complete_listing():
+    now = datetime.now(timezone.utc)
+    image = "example/app@sha256:" + "a" * 64
+    adapter = adapter_fixture()
+    first = pod(now, image=image)
+    first.metadata.owner_references = [NS(kind="DaemonSet", uid="controller", controller=True)]
+    status = first.status.container_statuses[0]
+    status.name, status.ready = "app", True
+    status.image_id = "docker-pullable://example/app@sha256:" + "a" * 64
+    workload = {
+        "kind": "DaemonSet",
+        "metadata": {"uid": "controller"},
+        "status": {"desiredNumberScheduled": 2},
+        "spec": {"selector": {"match_labels": {"app": "test"}}},
+    }
+    response = adapter._get_core_api.return_value.list_namespaced_pod.return_value
+    response.items = [first]
+    assert (
+        await verify_pod_digests(adapter, "test", workload, {"app": image}, now.timestamp())
+        == "unknown"
+    )
+    import copy
+
+    second = copy.deepcopy(first)
+    response.items = [first, second]
+    assert (
+        await verify_pod_digests(adapter, "test", workload, {"app": image}, now.timestamp())
+        == "confirmed"
+    )
+    response.metadata._continue = "more-results"
+    assert (
+        await verify_pod_digests(adapter, "test", workload, {"app": image}, now.timestamp())
+        == "unknown"
+    )
+
+
+@pytest.mark.asyncio
+async def test_distinct_manifest_needs_proven_index_membership():
+    from unittest.mock import AsyncMock
+
+    now = datetime.now(timezone.utc)
+    image = "example/app@sha256:" + "a" * 64
+    adapter = adapter_fixture()
+    sample = pod(now, image=image)
+    status = sample.status.container_statuses[0]
+    status.name, status.ready = "app", True
+    status.image_id = "docker-pullable://example/app@sha256:" + "b" * 64
+    adapter._get_core_api.return_value.list_namespaced_pod.return_value.items = [sample]
+    workload = {
+        "kind": "StatefulSet",
+        "metadata": {"uid": "controller"},
+        "spec": {"replicas": 1, "selector": {"match_labels": {"app": "test"}}},
+    }
+    resolve = AsyncMock(return_value="confirmed")
+    assert (
+        await verify_pod_digests(
+            adapter, "test", workload, {"app": image}, now.timestamp(), resolve
+        )
+        == "confirmed"
+    )
+    resolve.assert_awaited_once_with(image, "sha256:" + "b" * 64)
+    resolve.return_value = "unknown"
+    assert (
+        await verify_pod_digests(
+            adapter, "test", workload, {"app": image}, now.timestamp(), resolve
+        )
+        == "unknown"
+    )
+    resolve.return_value = "superseded"
+    assert (
+        await verify_pod_digests(
+            adapter, "test", workload, {"app": image}, now.timestamp(), resolve
+        )
+        == "superseded"
+    )
 
 
 @pytest.mark.asyncio

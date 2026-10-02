@@ -496,6 +496,92 @@ class DockerTracker(BaseTracker):
         )
         return retry_response, refreshed_token
 
+    async def verify_running_manifest(self, pinned: str, actual: str) -> str:
+        """Prove a runtime manifest belongs to a pinned index, never compare config IDs.
+
+        Requests use existing registry auth/SSRF protections. The returned body
+        must hash to the requested digest before any descriptor can be trusted.
+        Nested indexes are bounded to depth two and eight requests.
+        """
+        import hashlib
+
+        if not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", pinned) or not re.fullmatch(
+            r"sha256:[0-9a-fA-F]{64}", actual
+        ):
+            return "unknown"
+        if pinned.lower() == actual.lower():
+            return "confirmed"
+        scope = f"repository:{self.image}:pull"
+        async with httpx.AsyncClient(follow_redirects=False) as client:
+            token = await self._get_bearer_token(client, scope)
+            todo, seen = [(pinned.lower(), 0)], set()
+            incomplete = False
+            while todo and len(seen) < 8:
+                digest, depth = todo.pop(0)
+                if digest in seen:
+                    continue
+                seen.add(digest)
+                response, token = await self._request_manifest(
+                    client,
+                    "GET",
+                    f"{self._registry_url()}/v2/{self.image}/manifests/{digest}",
+                    token,
+                    scope,
+                )
+                if (
+                    response.status_code != 200
+                    or len(response.content) > 2_000_000
+                    or "sha256:" + hashlib.sha256(response.content).hexdigest() != digest
+                ):
+                    return "unknown"
+                try:
+                    body = response.json()
+                except ValueError:
+                    return "unknown"
+                if not isinstance(body, dict) or body.get("schemaVersion") != 2:
+                    return "unknown"
+                if not _is_manifest_index(response.headers.get("Content-Type", ""), body):
+                    if body.get("mediaType") not in {
+                        "application/vnd.oci.image.manifest.v1+json",
+                        "application/vnd.docker.distribution.manifest.v2+json",
+                    }:
+                        return "unknown"
+                    continue
+                children = body.get("manifests")
+                if not isinstance(children, list) or len(children) > 100:
+                    return "unknown"
+                for child in children:
+                    if not isinstance(child, dict):
+                        return "unknown"
+                    media = child.get("mediaType", "")
+                    child_digest = child.get("digest", "")
+                    platform = child.get("platform") or {}
+                    if (
+                        not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", child_digest)
+                        or (child.get("annotations") or {}).get("vnd.docker.reference.type")
+                        == "attestation-manifest"
+                    ):
+                        continue
+                    if (
+                        media
+                        in {
+                            "application/vnd.oci.image.manifest.v1+json",
+                            "application/vnd.docker.distribution.manifest.v2+json",
+                        }
+                        and platform.get("os") not in {None, "unknown"}
+                        and platform.get("architecture") not in {None, "unknown"}
+                    ):
+                        if child_digest.lower() == actual.lower():
+                            return "confirmed"
+                    elif "image.index" in media or "manifest.list" in media:
+                        if depth < 2:
+                            todo.append((child_digest.lower(), depth + 1))
+                        else:
+                            incomplete = True
+                    else:
+                        incomplete = True
+            return "unknown" if todo or incomplete else "superseded"
+
     async def _resolve_manifest_digest(
         self,
         client: httpx.AsyncClient,

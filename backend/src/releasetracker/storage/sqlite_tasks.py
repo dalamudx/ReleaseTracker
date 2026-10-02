@@ -284,6 +284,13 @@ class TaskStore:
         now = time.time() if now is None else now
         owner = uuid.uuid4().hex
         async with self.transaction() as db:
+            if (
+                kind != "fetch"
+                and await (
+                    await db.execute("SELECT 1 FROM settings WHERE key='restore.review_required'")
+                ).fetchone()
+            ):
+                return None
             row = await (
                 await db.execute(
                     """SELECT t.* FROM tasks t WHERE kind=? AND state IN ('queued','retry_wait')

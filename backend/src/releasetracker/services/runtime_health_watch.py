@@ -61,7 +61,7 @@ class RuntimeHealthWatch:
                    JOIN tasks t ON t.id=o.task_id
                    LEFT JOIN settings s ON s.key=? || o.executor_id
                    WHERE o.state='completed' AND o.outcome='healthy' AND h.status='success'
-                   AND o.run_id=(SELECT MAX(id) FROM executor_run_history WHERE executor_id=o.executor_id)
+                   AND o.run_id=(SELECT MAX(id) FROM executor_run_history WHERE executor_id=o.executor_id AND status!='skipped')
                    AND o.task_id=(SELECT MAX(task_id) FROM deployment_observations
                        WHERE run_id=o.run_id AND state='completed' AND outcome='healthy')
                    ORDER BY CASE WHEN json_valid(s.value) THEN json_extract(s.value,'$.checked_at') ELSE 0 END
@@ -89,6 +89,8 @@ class RuntimeHealthWatch:
             await self.storage.close_current_task_connection()
 
     async def _is_current(self, executor, row):
+        if await self.storage.get_setting("restore.review_required") is not None:
+            return False
         if executor.id in self.scheduler._running_executor_ids:
             return False
         # Respect other executors' in-flight/blocked mutations on this target.
@@ -111,12 +113,18 @@ class RuntimeHealthWatch:
         ).fetchone()
         if conflict:
             return False
-        latest = await self.storage.get_latest_executor_run(executor.id)
+        db = await self.storage._get_connection()
+        latest = await (
+            await db.execute(
+                "SELECT id,status FROM executor_run_history WHERE executor_id=? AND status!='skipped' ORDER BY id DESC LIMIT 1",
+                (executor.id,),
+            )
+        ).fetchone()
         current = await self.storage.get_executor_config(executor.id)
         return bool(
             latest
-            and latest.id == row["run_id"]
-            and latest.status == "success"
+            and latest["id"] == row["run_id"]
+            and latest["status"] == "success"
             and current
             and current.enabled
             and current.health_check.readiness_enabled

@@ -338,6 +338,9 @@ class InstanceBackup:
                 reverse=True,
             )
             if not archives:
+                status = await self.status()
+                if status.get("last_success_at"):
+                    await self._failed("backup_missing", scheduled=True, phase="verification")
                 return False
             try:
                 await _finish_thread(verify_archive, archives[0], True)
@@ -438,6 +441,9 @@ def validate_archive(archive, directory, *, allow_older_schema=False):
     with closing(sqlite3.connect((root / "releases.db").as_uri() + "?mode=ro", uri=True)) as db:
         if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
             raise ValueError("Backup database integrity check failed")
+        from .database_integrity import validate_relations
+
+        validate_relations(db)
         versions = _versions(db)
         supported = sorted(
             p.name.split("_", 1)[0] for p in (backend_dir() / "dbmate/migrations").glob("*.sql")
@@ -481,6 +487,9 @@ def restore_to_new_directory(archive, destination):
         with closing(sqlite3.connect(root / "releases.db")) as db:
             db.execute("DELETE FROM sessions")
             db.execute("DELETE FROM oauth_states")
+            from .restore_safety import quarantine_restored_intents
+
+            quarantine_restored_intents(db)
             db.commit()
         # Validation includes decryption with the archived keys.
         for file in root.iterdir():

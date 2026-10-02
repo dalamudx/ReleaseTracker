@@ -296,7 +296,10 @@ async def test_probe_uses_pod_waiting_reason_and_recovers_without_redeploying(mo
     monkeypatch.setattr(probes, "_capture", AsyncMock(return_value=snapshot))
     adapter = MagicMock()
     pod = SimpleNamespace(
-        metadata=SimpleNamespace(creation_timestamp=submitted_at),
+        metadata=SimpleNamespace(
+            creation_timestamp=submitted_at,
+            owner_references=[SimpleNamespace(kind="ReplicaSet", uid="rs", controller=True)],
+        ),
         spec=SimpleNamespace(containers=[SimpleNamespace(name="service-a", image=IMAGE)]),
         status=SimpleNamespace(
             container_statuses=[
@@ -313,6 +316,24 @@ async def test_probe_uses_pod_waiting_reason_and_recovers_without_redeploying(mo
         ),
     )
     adapter._get_core_api.return_value.list_namespaced_pod.return_value.items = [pod]
+    adapter._get_core_api.return_value.list_namespaced_pod.return_value.metadata = SimpleNamespace(
+        _continue=None
+    )
+    adapter._get_apps_api.return_value.list_namespaced_replica_set.return_value = SimpleNamespace(
+        items=[
+            SimpleNamespace(
+                metadata=SimpleNamespace(
+                    uid="rs",
+                    owner_references=[
+                        SimpleNamespace(
+                            kind="Deployment", uid=current["metadata"]["uid"], controller=True
+                        )
+                    ],
+                )
+            )
+        ],
+        metadata=SimpleNamespace(_continue=None),
+    )
     monkeypatch.setattr(probes, "_adapter", AsyncMock(return_value=adapter))
     verification = {
         "baseline": {"workloads": {"Deployment/service-a": before}},

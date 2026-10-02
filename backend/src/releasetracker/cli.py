@@ -59,9 +59,42 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="confirm the application is stopped before switching data volumes",
     )
+    subcommands.add_parser(
+        "audit-database", help="read-only foreign key and deployment relation audit"
+    )
+    review_parser = subcommands.add_parser(
+        "acknowledge-restore",
+        help="unlock NEW mutations after reviewing a restored database; old intents remain revoked",
+    )
+    review_parser.add_argument("--confirm-reviewed", action="store_true")
     args = parser.parse_args(argv)
 
     try:
+        if args.command == "audit-database":
+            from .services.database_integrity import validate_relations
+
+            with sqlite3.connect(database_path().as_uri() + "?mode=ro", uri=True) as db:
+                violations = db.execute("PRAGMA foreign_key_check").fetchmany(50)
+                for table, rowid, parent, key in violations:
+                    print(
+                        f"Foreign key violation: table={table}, rowid={rowid}, parent={parent}, key={key}"
+                    )
+                validate_relations(db)
+            print("Database relationships verified; no data changed.")
+            return 0
+        if args.command == "acknowledge-restore":
+            if not args.confirm_reviewed:
+                raise ValueError(
+                    "Review remote state and executor configuration, then pass --confirm-reviewed"
+                )
+            db_path = database_path()
+            with sqlite3.connect(db_path.as_uri() + "?mode=rw", uri=True) as db:
+                db.execute("DELETE FROM settings WHERE key='restore.review_required'")
+                db.commit()
+            print(
+                "Restore reviewed; new mutations enabled. Old tasks and approvals remain revoked."
+            )
+            return 0
         if args.command in {"inspect-backup", "restore-backup"}:
             from .services.instance_backup import validate_archive, restore_to_new_directory
 

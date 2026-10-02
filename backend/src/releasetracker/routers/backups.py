@@ -43,6 +43,8 @@ async def list_backups(request: Request):
         "interval_hours": hours,
         "retention": retain,
         "running": backup.lock.locked(),
+        "restore_review_required": await backup.storage.get_setting("restore.review_required")
+        is not None,
         "last_success_at": latest,
         "last_failure_at": status.get("last_failure_at"),
         "last_error_code": status.get("last_error_code"),

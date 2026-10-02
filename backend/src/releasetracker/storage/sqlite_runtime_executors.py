@@ -1164,6 +1164,13 @@ async def delete_executor_run_history(storage: "SQLiteStorage", executor_id: int
         """
         DELETE FROM executor_run_history
         WHERE executor_id = ?
+          AND status IN ('success','skipped','failed')
+          AND id != COALESCE((SELECT MAX(h.id) FROM executor_run_history h WHERE h.executor_id=executor_run_history.executor_id AND h.status!='skipped'), -1)
+          AND NOT EXISTS (SELECT 1 FROM executor_snapshots s WHERE s.executor_run_id=executor_run_history.id)
+          AND NOT EXISTS (SELECT 1 FROM executor_notification_intents n WHERE n.run_id=executor_run_history.id)
+          AND NOT EXISTS (SELECT 1 FROM deployment_observations o WHERE o.run_id=executor_run_history.id)
+          AND NOT EXISTS (SELECT 1 FROM tasks t WHERE json_extract(t.result,'$.run_id')=executor_run_history.id)
+          AND NOT EXISTS (SELECT 1 FROM executor_notification_outbox n WHERE n.run_id=executor_run_history.id)
           AND NOT EXISTS (
               SELECT 1 FROM executor_snapshot_claims c
               WHERE c.executor_run_id = executor_run_history.id
@@ -1183,6 +1190,12 @@ async def prune_old_executor_runs(storage: "SQLiteStorage", days: int = 90) -> i
         DELETE FROM executor_run_history
         WHERE started_at < ?
           AND status IN ('success', 'skipped', 'failed')
+          AND id != COALESCE((SELECT MAX(h.id) FROM executor_run_history h WHERE h.executor_id=executor_run_history.executor_id AND h.status!='skipped'), -1)
+          AND NOT EXISTS (SELECT 1 FROM executor_snapshots s WHERE s.executor_run_id=executor_run_history.id)
+          AND NOT EXISTS (SELECT 1 FROM executor_notification_intents n WHERE n.run_id=executor_run_history.id)
+          AND NOT EXISTS (SELECT 1 FROM deployment_observations o WHERE o.run_id=executor_run_history.id)
+          AND NOT EXISTS (SELECT 1 FROM tasks t WHERE json_extract(t.result,'$.run_id')=executor_run_history.id)
+          AND NOT EXISTS (SELECT 1 FROM executor_notification_outbox n WHERE n.run_id=executor_run_history.id)
           AND NOT EXISTS (
               SELECT 1 FROM executor_snapshot_claims c
               WHERE c.executor_run_id = executor_run_history.id

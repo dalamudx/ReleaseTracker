@@ -2377,13 +2377,13 @@ async def test_executor_history_can_be_cleared(authed_client, storage):
 
     clear_response = authed_client.delete(f"/api/executors/{executor_id}/history")
     assert clear_response.status_code == 200
-    assert clear_response.json() == {"message": "Execution history cleared", "deleted": 2}
+    assert clear_response.json() == {"message": "Execution history cleared", "deleted": 1}
 
     history_response = authed_client.get(f"/api/executors/{executor_id}/history")
     assert history_response.status_code == 200
     history_body = history_response.json()
-    assert history_body["total"] == 0
-    assert history_body["items"] == []
+    assert history_body["total"] == 1
+    assert history_body["items"][0]["to_version"] == "clear-history-worker:1.1.0"
 
 
 @pytest.mark.asyncio

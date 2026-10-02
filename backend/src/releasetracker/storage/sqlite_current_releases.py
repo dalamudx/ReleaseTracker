@@ -17,6 +17,7 @@ async def refresh_tracker_current_releases(
     releases: list[Release],
     *,
     source_type: str | None = None,
+    commit: bool = True,
 ) -> None:
     db = await storage._get_connection()
     db.row_factory = aiosqlite.Row
@@ -73,7 +74,8 @@ async def refresh_tracker_current_releases(
             ),
         )
 
-    await db.commit()
+    if commit:
+        await db.commit()
 
 
 async def _get_tracker_current_projection_rows_by_aggregate_tracker_id(

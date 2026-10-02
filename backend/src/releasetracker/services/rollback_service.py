@@ -14,7 +14,7 @@ from ..executors.health_check.recovery_hook import (
     RecoveryHookCoordinator,
     RecoveryOutcome,
 )
-from ..models import ExecutorRunHistory, ExecutorSnapshot
+from ..models import ExecutorRunHistory, ExecutorSnapshot, ExecutorStatus
 from .podman_target_lineage import (
     ACTIVE_PODMAN_LINEAGE,
     normalize_members,
@@ -442,6 +442,35 @@ class RollbackService:
         to_version: str | None,
     ) -> ExecutorRunHistory:
         finished_at = datetime.now()
+        original = await self._storage.get_executor_run(run_id)
+        if original is None:
+            raise ValueError("executor_run_missing")
+        config = await self._storage.get_executor_config(original.executor_id)
+        previous = await self._storage.get_executor_status(original.executor_id)
+        summary = ExecutorStatus(
+            executor_id=original.executor_id,
+            last_run_at=finished_at,
+            last_result=status,
+            last_error=message if status == "failed" else None,
+            last_version=(
+                to_version
+                if status == "success"
+                else (previous.last_version if previous else from_version)
+            ),
+        )
+        payload = {
+            "entity": "executor_run",
+            "operation": "rollback",
+            "run_id": run_id,
+            "executor_id": original.executor_id,
+            "executor_name": config.name if config else str(original.executor_id),
+            "tracker_name": config.tracker_name if config else "",
+            "status": status,
+            "finished_at": finished_at.timestamp(),
+            "from_version": from_version,
+            "to_version": to_version,
+            "services": diagnostics.get("services", []),
+        }
         await self._storage.finalize_executor_run(
             run_id,
             status=status,
@@ -450,6 +479,12 @@ class RollbackService:
             to_version=to_version,
             message=message,
             diagnostics=diagnostics,
+            executor_status=summary,
+            notification_intent={
+                "payload": payload,
+                "notify_health_result": False,
+                "timezone_name": "UTC",
+            },
         )
         updated = await self._storage.get_executor_run(run_id)
         assert updated is not None

@@ -2445,9 +2445,10 @@ class SQLiteStorage:
         releases: list[Release],
         *,
         source_type: str | None = None,
+        commit: bool = True,
     ) -> None:
         return await sqlite_current_releases.refresh_tracker_current_releases(
-            self, aggregate_tracker_id, releases, source_type=source_type
+            self, aggregate_tracker_id, releases, source_type=source_type, commit=commit
         )
 
     async def _get_tracker_current_projection_rows_by_aggregate_tracker_id(

@@ -397,6 +397,23 @@ class DeploymentReadiness:
         return result
 
     async def _observe(self, row):
+        if await self.storage.get_executor_run(row["run_id"]) is None:
+            now = self.clock()
+            result = {"outcome": "unknown", "message": "executor_run_missing", "services": []}
+            async with self.storage.tasks.transaction() as db:
+                await db.execute(
+                    "UPDATE deployment_observations SET state='blocked',result=?,finished_at=? WHERE task_id=?",
+                    (json.dumps(result), now, row["task_id"]),
+                )
+                await db.execute(
+                    "UPDATE tasks SET state='needs_attention',owner=NULL,lease_until=NULL,error_code='executor_run_missing',message='Readiness record missing; manual review required',updated_at=? WHERE id=? AND state='running'",
+                    (now, row["task_id"]),
+                )
+                await db.execute(
+                    "UPDATE task_attempts SET state='needs_attention',finished_at=?,error_code='executor_run_missing' WHERE task_id=? AND finished_at IS NULL",
+                    (now, row["task_id"]),
+                )
+            return
         executor = ExecutorConfig.model_validate_json(row["executor_config"])
         if row["state"] == "finalizing":
             await self._finalize(row, executor, json.loads(row["result"]))
