@@ -1,9 +1,12 @@
-import { render, screen, within } from "@testing-library/react"
+import { cleanup, render, screen, within } from "@testing-library/react"
+import { assertNoActWarnings } from "./assert-no-act-warnings"
 import { afterEach, describe, expect, it } from "vitest"
 import i18n from "@/i18n/config"
 import { ExecutorList } from "@/components/executors/ExecutorList"
 import { ReadinessSummary } from "@/components/executors/ReadinessSummary"
 import type { ExecutorListItem } from "@/api/types"
+
+assertNoActWarnings()
 
 const executor = {
     id: 1, name: "probe", enabled: true, runtime_type: "kubernetes",
@@ -12,7 +15,10 @@ const executor = {
     status: {last_result: "health_checking"},
 } as ExecutorListItem
 
-afterEach(async () => { await i18n.changeLanguage("en") })
+afterEach(async () => {
+    cleanup()
+    await i18n.changeLanguage("en")
+})
 
 describe.each([
     ["zh", "等待部署就绪", "镜像拉取暂时失败，正在只读复检（不会再次部署）"],

@@ -45,6 +45,21 @@ RELEASETRACKER_DB_PATH=/restore/new-data/releases.db python -m releasetracker.cl
 
 备份列表 API 的 `restore_review_required` 表示仍待确认；目前没有网页确认入口。旧目标若仍需执行，应在确认后重新发起操作，不重放旧任务。外键强制执行仍按存量数据迁移计划处理，本批不直接开启级联删除。曾有成功备份但所有归档丢失时，每日校验会记录 `backup_missing` 并发送去重告警；从未创建备份的实例不因此告警。
 
+## 清理历史孤儿记录 {#prune-orphans}
+
+备份创建时会在**快照副本**中清理已删除追踪器/执行器留下的历史孤儿行，按表统计在清单的 `pruned_orphans` 中；在线数据库不变。其他外键损坏及任务/健康观察关系仍严格校验，不会通过删除任务来绕过错误。
+
+需要修复在线数据库时，先预览，再停止所有实例后执行：
+
+```bash
+python -m releasetracker.cli prune-orphans --dry-run
+# 确认实例已停止，并保留一份停机整目录备份
+python -m releasetracker.cli prune-orphans --confirm-stopped
+python -m releasetracker.cli audit-database
+```
+
+实际清理前命令会保存**未修改**的数据库及密钥安全副本（`reason: pre_orphan_cleanup`，可能含孤儿数据，不能视为已通过恢复校验的归档）。清理只应用已知历史表的 CASCADE/SET NULL 规则，未知关系损坏会回滚清理。不要在应用运行或密钥轮换时执行。
+
 ## 监控指标 {#metrics}
 
 设置至少 32 字符的随机 `RELEASETRACKER_METRICS_TOKEN` 后开放 `GET /metrics`。未设置或太短时返回 404；请求必须携带独立的 `Authorization: Bearer ...`，普通登录令牌不能代替。令牌只用于读取指标，不具备管理权限。建议通过集群内地址每 60 秒抓取，不将其直接暴露公网。

@@ -528,4 +528,29 @@ describe("ExecutorSheet Portainer grouping", () => {
     expect(screen.getByText("release-tracker")).toBeInTheDocument()
     expect(screen.getByText("正式版")).toBeInTheDocument()
   })
+
+  it.each(["portainer", "kubernetes"] as const)("uses live %s images in review without mutating the target", (runtimeType) => {
+    const target = runtimeType === "kubernetes" ? {
+      mode: "kubernetes_workload", namespace: "apps", kind: "Deployment", name: "app",
+      services: [{ service: "api", image: "ghcr.io/acme/api:stale" }],
+    } : {
+      mode: "portainer_stack", endpoint_id: 2, stack_id: 11, stack_name: "stack", stack_type: "standalone",
+      services: [{ service: "api", image: "ghcr.io/acme/api:stale" }],
+    }
+    const original = structuredClone(target)
+    const liveImage = "ghcr.io/acme/api@sha256:" + "a".repeat(64)
+    const props = {
+      reviewItems: [], trackers: [createTracker()],
+      serviceBindings: [{service: "api", tracker_name: "release-tracker", tracker_source_id: "9", channel_name: "stable"}],
+      runtimeType, selectedTargetRef: target, imageSelectionMode: "use_tracker_image_and_tag" as const,
+      imageReferenceMode: "tag" as const, validationMessage: null,
+    }
+    const { rerender } = render(<ExecutorSheetReviewSection {...props} currentImages={{api: liveImage}} />)
+    expect(screen.getByText(liveImage)).toBeInTheDocument()
+    expect(screen.queryByText("ghcr.io/acme/api:stale")).not.toBeInTheDocument()
+    expect(target).toEqual(original)
+    rerender(<ExecutorSheetReviewSection {...props} currentImages={{}} />)
+    expect(screen.queryByText(liveImage)).not.toBeInTheDocument()
+    expect(screen.queryByText("ghcr.io/acme/api:stale")).not.toBeInTheDocument()
+  })
 })

@@ -1,6 +1,7 @@
 """Explicit recovery succeeds only after the submitted controller rollout converges."""
 
 from copy import deepcopy
+from types import SimpleNamespace
 
 import pytest
 from kubernetes import client as kube
@@ -12,6 +13,16 @@ from test_kubernetes_snapshot_safety import workload as workload
 
 @pytest.fixture(autouse=True)
 def fast_observer(monkeypatch):
+    # Keep only this verifier's clock synthetic: busy CI must not exhaust a
+    # 100ms wall-clock deadline while the mocked rollout is already healthy.
+    now = 0.0
+
+    def monotonic():
+        nonlocal now
+        now += 0.001
+        return now
+
+    monkeypatch.setattr(kubernetes_recovery, "time", SimpleNamespace(monotonic=monotonic))
     monkeypatch.setattr(kubernetes_recovery, "VERIFY_INTERVAL", 0)
     monkeypatch.setattr(kubernetes_recovery, "VERIFY_TIMEOUT", 0.1)
 

@@ -1,8 +1,12 @@
 
-import { describe, it, expect } from "vitest"
-import { render, screen, fireEvent } from "@testing-library/react"
+import { describe, it, expect, vi } from "vitest"
+import { act, cleanup, render, screen, fireEvent } from "@testing-library/react"
+import "@/i18n/config"
+import { assertNoActWarnings } from "./assert-no-act-warnings"
 import { CopyableCode } from "@/components/common/CopyableCode"
 import { ActiveRowMarker } from "@/components/common/ActiveRowMarker"
+
+assertNoActWarnings()
 
 describe("Extracted Common Design Components", () => {
   describe("CopyableCode", () => {
@@ -16,18 +20,27 @@ describe("Extracted Common Design Components", () => {
         },
       })
 
-      render(
-        <CopyableCode
-          value="sha256:1234567890abcdef"
-          displayValue="1234567"
-        />
-      )
+      vi.useFakeTimers()
+      try {
+        render(
+          <CopyableCode
+            value="sha256:1234567890abcdef"
+            displayValue="1234567"
+          />
+        )
 
-      expect(screen.getByText("1234567")).toBeInTheDocument()
-      const copyBtn = screen.getByRole("button", { name: /copy|复制/i })
-      fireEvent.click(copyBtn)
+        expect(screen.getByText("1234567")).toBeInTheDocument()
+        const copyBtn = screen.getByRole("button", { name: /copy|复制/i })
+        await act(async () => { fireEvent.click(copyBtn) })
 
-      expect(copiedText).toBe("sha256:1234567890abcdef")
+        expect(copiedText).toBe("sha256:1234567890abcdef")
+        expect(copyBtn.querySelector(".lucide-check")).toBeInTheDocument()
+        await act(async () => { vi.advanceTimersByTime(1500) })
+        expect(copyBtn.querySelector(".lucide-copy")).toBeInTheDocument()
+      } finally {
+        cleanup()
+        vi.useRealTimers()
+      }
     })
   })
 

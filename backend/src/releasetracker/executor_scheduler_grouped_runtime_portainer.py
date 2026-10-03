@@ -3,6 +3,7 @@ from __future__ import annotations
 from .services.task_effects import mark_deployment_mutation
 
 from .config import ExecutorConfig
+from .executors.adapter_lifetime import runtime_adapter_scope
 from .executor_scheduler_grouped_runtime_support import _ExecutorBindingRunResult
 from .executor_scheduler_run_lifecycle import ExecutorRunOutcome
 from .executors import PortainerRuntimeAdapter
@@ -20,6 +21,7 @@ class ExecutorSchedulerPortainerRuntime:
             return f"portainer request timeout: {message}"
         return message
 
+    @runtime_adapter_scope
     async def _execute_portainer_stack_executor(
         self,
         executor_config: ExecutorConfig,

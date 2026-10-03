@@ -66,15 +66,18 @@ vi.mock("@/components/executors/ExecutorList", () => ({
     loading,
     onRun,
     onViewExecutionHistory,
+    onSelect,
   }: {
     executors: ExecutorListItem[]
     loading: boolean
     onRun: (executorId: number) => void
     onViewExecutionHistory: (executorId: number) => void
+    onSelect: (executorId: number) => void
   }) => (
     <div data-testid="executor-list" data-loading={String(loading)}>
       {executors.map((executor) => (
         <div key={executor.id}>
+          <button type="button" onClick={() => executor.id && onSelect(executor.id)}>select executor {executor.id}</button>
           <button type="button" onClick={() => executor.id && onRun(executor.id)}>
             run executor {executor.id}
           </button>
@@ -196,6 +199,20 @@ function renderExecutorsPage() {
 }
 
 describe("ExecutorsPage run flow", () => {
+  it("opens the execution history sheet when an executor entry is selected", async () => {
+    getExecutorsMock.mockResolvedValue({items:[createExecutor()],total:1})
+    getRuntimeConnectionsMock.mockResolvedValue({items:[createRuntimeConnection()],total:1})
+    getTrackersMock.mockResolvedValue({items:[createTracker()],total:1})
+    getSettingsMock.mockResolvedValue([])
+    renderExecutorsPage()
+    fireEvent.click(await screen.findByRole("button",{name:"select executor 1"}))
+    const dialog=await screen.findByRole("dialog")
+    expect(dialog).toHaveTextContent("release-api")
+    expect(screen.getByRole("tab",{name:"executors.history.title"})).toHaveAttribute("data-state","active")
+    expect(runExecutorMock).not.toHaveBeenCalled()
+    expect(deleteExecutorMock).not.toHaveBeenCalled()
+  })
+
   it("deduplicates pending run clicks and allows retry after a failed submission", async () => {
     getExecutorsMock.mockResolvedValue({items: [createExecutor()], total: 1})
     getRuntimeConnectionsMock.mockResolvedValue({items: [createRuntimeConnection()], total: 1})

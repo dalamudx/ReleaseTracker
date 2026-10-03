@@ -19,6 +19,25 @@ function show() {
 beforeEach(async () => { vi.clearAllMocks(); await i18n.changeLanguage("zh") })
 
 describe("persistent task queue", () => {
+    it("shows changed-only update diff and refreshes live review without a popup", async () => {
+        const pending = { ...task("queued", "deploy"), approval_pending: true }
+        vi.mocked(api.getTasks).mockResolvedValue([pending])
+        vi.mocked(api.getTask).mockResolvedValue(pending)
+        const plan = { id:9, task_id:17, fingerprint:"full-config-review", state:"pending", reason:"manual_update_review", expires_at:1789706800, summary:{configuration_diff:{scope:"container_configuration",truncated:false,lines:[{operation:"-" as const,path:"/create_config/image",value:'"nginx:old"',redacted:false},{operation:"+" as const,path:"/create_config/image",value:'"nginx:stable@sha256:123"',redacted:false}]}} }
+        vi.mocked(api.getDeploymentPlan).mockResolvedValue(plan)
+        show()
+        await screen.findByText("nginx-test")
+        fireEvent.click(screen.getByRole("button",{name:i18n.t("tasks.details",{id:17})}))
+        expect(await screen.findByTestId("deployment-configuration-diff")).toHaveTextContent("nginx:stable@sha256:123")
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+        fireEvent.click(screen.getByRole("button",{name:i18n.t("tasks.refreshPlan")}))
+        await waitFor(()=>expect(api.getDeploymentPlan).toHaveBeenCalledWith(17,true))
+        vi.mocked(api.getDeploymentPlan).mockResolvedValue({...plan,summary:{configuration_diff:{...plan.summary.configuration_diff,truncated:true}}})
+        fireEvent.click(screen.getByRole("button",{name:i18n.t("tasks.refreshPlan")}))
+        expect(await screen.findByText(i18n.t("tasks.diffIncomplete"))).toBeVisible()
+        expect(screen.getByRole("button",{name:i18n.t("tasks.approvePlan")})).toBeDisabled()
+    })
+
     it("shows a retryable load failure instead of an empty queue", async () => {
         vi.mocked(api.getTasks)
             .mockRejectedValueOnce(new Error("temporarily unavailable"))
@@ -41,11 +60,12 @@ describe("persistent task queue", () => {
         await screen.findByText("nginx-test")
         fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.details", { id: 17 }) }))
         expect(await screen.findByText(i18n.t("tasks.approvalRequired"))).toBeVisible()
-        const review = screen.getByRole("button", { name: i18n.t("tasks.reviewPlan") })
+        const refresh = screen.getByRole("button", { name: i18n.t("tasks.refreshPlan") })
         const approve = screen.getByRole("button", { name: i18n.t("tasks.approvePlan") })
         await waitFor(() => {
-            expect(review).toBeEnabled()
+            expect(refresh).toBeEnabled()
             expect(approve).toBeEnabled()
+            expect(screen.getByText(/plan-fingerprint/)).toBeInTheDocument()
         })
         expect(api.getDeploymentPlan).toHaveBeenCalledWith(17)
     })

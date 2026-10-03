@@ -14,6 +14,7 @@ from .base import (
 )
 from .compose_runtime_update import GroupedRuntimeRecreateSpec, build_grouped_runtime_recreate_spec
 from .container_runtime import _ContainerRuntimeAdapter, snapshot_recovery
+from .runtime_tls import RuntimeTLSMaterial, docker_tls_config
 from . import container_recovery, docker_identity
 
 
@@ -89,6 +90,9 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
             for target_image in sorted({spec.target_image for spec in ordered_specs}):
                 images.pull(target_image)
 
+        from ..services.deployment_diff import verify_update_state
+
+        await verify_update_state(self, target_ref)
         created_containers = []
         try:
             for spec in reversed(ordered_specs):
@@ -137,28 +141,20 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         tls_verify = config.get("tls_verify", False)
         api_version = config.get("api_version")
 
-        tls_config = None
-        if tls_verify:
-            client_cert = self.runtime_connection.secrets.get("client_cert")
-            client_key = self.runtime_connection.secrets.get("client_key")
-            ca_cert = self.runtime_connection.secrets.get("ca_cert")
-            cert_pair = (
-                (client_cert, client_key)
-                if isinstance(client_cert, str) and isinstance(client_key, str)
-                else None
+        material = RuntimeTLSMaterial(self.runtime_connection.secrets) if tls_verify else None
+        try:
+            tls_config = docker_tls_config(docker, material, base_url) if material else None
+            client = docker.DockerClient(
+                base_url=base_url,
+                version=api_version,
+                tls=tls_config,
+                timeout=runtime_operation_policy(self.runtime_connection).write_timeout_seconds,
             )
-            tls_config = docker.tls.TLSConfig(
-                client_cert=cert_pair,
-                ca_cert=ca_cert if isinstance(ca_cert, str) else None,
-                verify=True,
-            )
-
-        return docker.DockerClient(
-            base_url=base_url,
-            version=api_version,
-            tls=tls_config,
-            timeout=runtime_operation_policy(self.runtime_connection).write_timeout_seconds,
-        )
+            return self._own_client(client, material)
+        except BaseException:
+            if material is not None:
+                material.cleanup()
+            raise
 
     async def update_image(self, target_ref: dict[str, Any], new_image: str) -> RuntimeUpdateResult:
         if not isinstance(new_image, str) or not new_image.strip():
@@ -171,6 +167,9 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
 
         client = self._get_client()
         if hasattr(client, "update_container_image"):
+            from ..services.deployment_diff import verify_update_state
+
+            await verify_update_state(self, target_ref)
             client.update_container_image(container.id, new_image)
             return RuntimeUpdateResult(updated=True, old_image=old_image, new_image=new_image)
 
@@ -184,6 +183,9 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         if images is not None and hasattr(images, "pull"):
             images.pull(new_image)
 
+        from ..services.deployment_diff import verify_update_state
+
+        await verify_update_state(self, target_ref)
         new_container = None
         try:
             container.stop()
@@ -470,6 +472,26 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
     def _sanitize_docker_create_kwargs(create_config: dict[str, Any]) -> dict[str, Any]:
         create_kwargs = dict(create_config)
         create_kwargs.pop("stop_timeout", None)
+        # JSON persistence turns (host_ip, host_port) tuples into lists. Docker
+        # interprets a list as multiple published ports ("" means a random port).
+        # Restore only IP/port pairs; ordinary lists of host ports stay lists.
+        from ipaddress import ip_address
+
+        def binding(value):
+            if not isinstance(value, list):
+                return value
+            if len(value) == 2 and isinstance(value[0], str):
+                try:
+                    is_host_ip = not value[0] or ip_address(value[0]) is not None
+                except ValueError:
+                    is_host_ip = False
+                if is_host_ip:
+                    return tuple(value)
+            return [binding(item) for item in value]
+
+        ports = create_kwargs.get("ports")
+        if isinstance(ports, dict):
+            create_kwargs["ports"] = {port: binding(value) for port, value in ports.items()}
         return create_kwargs
 
     @staticmethod

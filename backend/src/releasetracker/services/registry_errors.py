@@ -1,6 +1,18 @@
 """Safe, structured errors for a Registry tag-list request."""
 
 
+class RegistryAuthenticationError(ValueError):
+    """Configured credentials were rejected; no upstream body or secrets escape."""
+
+    def __init__(self, status: int):
+        self.code = "registry_authentication_failed" if status == 401 else "registry_access_denied"
+        super().__init__(
+            "Image registry authentication failed: invalid credential username or password."
+            if status == 401
+            else "Image registry access denied: check credential validity and repository read permissions."
+        )
+
+
 class RegistryTagListError(ValueError):
     """Keep upstream bodies, credentials and request URLs out of diagnostics."""
 

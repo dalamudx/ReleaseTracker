@@ -3,8 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { ExecutorListItem, RollbackResponse, SnapshotListItem } from "@/api/types"
 
+const reviewedDiff = { scope: "container_configuration", lines: [], truncated: false, current_missing: false, review_fingerprint: "reviewed-config" }
+
 const {
   mutateAsyncMock,
+  previewMock,
+  previewRefetchMock,
   onOpenChangeMock,
   onSuccessMock,
   toastErrorMock,
@@ -14,6 +18,8 @@ const {
   translateMock,
 } = vi.hoisted(() => ({
   mutateAsyncMock: vi.fn(),
+  previewMock: vi.fn(),
+  previewRefetchMock: vi.fn(),
   onOpenChangeMock: vi.fn(),
   onSuccessMock: vi.fn(),
   toastErrorMock: vi.fn(),
@@ -39,6 +45,7 @@ vi.mock("sonner", () => ({
 }))
 
 vi.mock("@/hooks/queries", () => ({
+  useExecutorRollbackPreview: previewMock,
   useRollbackExecutor: () => ({
     mutateAsync: mutateAsyncMock,
   }),
@@ -139,6 +146,7 @@ describe("ExecutorRollbackDialog", () => {
     expect(toastSuccessMock).not.toHaveBeenCalled()
   })
   beforeEach(() => {
+    previewMock.mockReturnValue({ data: { snapshot_id: 42, integrity_status: "verified", snapshot_valid: true, validation_error: null, mutation_performed: false, configuration_diff: reviewedDiff }, isFetching: false, isError: false, refetch: previewRefetchMock })
     mutateAsyncMock.mockReset()
     onOpenChangeMock.mockReset()
     onSuccessMock.mockReset()
@@ -153,6 +161,36 @@ describe("ExecutorRollbackDialog", () => {
     vi.restoreAllMocks()
   })
 
+  it.each([
+    ["pending", { isFetching: true }],
+    ["request error", { isError: true }],
+    ["invalid snapshot", { data: { snapshot_id: 42, integrity_status: "verified", snapshot_valid: false, validation_error: "Snapshot missing required field: container_attrs", mutation_performed: false } }],
+    ["legacy integrity", { data: { snapshot_id: 42, integrity_status: "legacy_unverified", snapshot_valid: true, mutation_performed: false } }],
+    ["other snapshot", { data: { snapshot_id: 99, integrity_status: "verified", snapshot_valid: true, mutation_performed: false } }],
+    ["no preview", { data: undefined }],
+    ["missing diff", { data: { snapshot_id: 42, integrity_status: "verified", snapshot_valid: true, mutation_performed: false } }],
+    ["truncated diff", { data: { snapshot_id: 42, integrity_status: "verified", snapshot_valid: true, mutation_performed: false, configuration_diff: { ...reviewedDiff, truncated: true } } }],
+  ])("blocks recovery when preview is %s", (_name, override) => {
+    previewMock.mockReturnValue({ data: { snapshot_id: 42, integrity_status: "verified", snapshot_valid: true, validation_error: null, mutation_performed: false, configuration_diff: reviewedDiff }, isFetching: false, isError: false, ...override })
+    renderDialog()
+    fireEvent.change(screen.getByLabelText("executors.rollback.dialog.confirmPrompt"), { target: { value: "sample-executor" } })
+    const button = screen.getByTestId("executor-rollback-confirm")
+    expect(button).toBeDisabled()
+    fireEvent.click(button)
+    expect(mutateAsyncMock).not.toHaveBeenCalled()
+    if (_name === "invalid snapshot") expect(screen.getByRole("alert")).toHaveTextContent("Snapshot missing required field: container_attrs")
+    expect(previewMock).toHaveBeenCalledWith(7, 42)
+  })
+
+  it("rechecks a failed preview without starting recovery", () => {
+    previewRefetchMock.mockClear()
+    previewMock.mockReturnValue({ data: undefined, isFetching: false, isError: true, refetch: previewRefetchMock })
+    renderDialog()
+    fireEvent.click(screen.getByRole("button", { name: "executors.rollback.dialog.recheck" }))
+    expect(previewRefetchMock).toHaveBeenCalledOnce()
+    expect(mutateAsyncMock).not.toHaveBeenCalled()
+  })
+
   it("shows rollback request feedback immediately before the request resolves", async () => {
     const rollbackRequest = deferred<RollbackResponse>()
     mutateAsyncMock.mockReturnValue(rollbackRequest.promise)
@@ -164,7 +202,7 @@ describe("ExecutorRollbackDialog", () => {
     })
     fireEvent.click(screen.getByRole("button", { name: "executors.rollback.dialog.confirmLabel" }))
 
-    expect(mutateAsyncMock).toHaveBeenCalledWith({ executorId: 7, snapshotId: 42 })
+    expect(mutateAsyncMock).toHaveBeenCalledWith({ executorId: 7, snapshotId: 42, reviewFingerprint: "reviewed-config" })
     expect(toastLoadingMock).toHaveBeenCalledWith("executors.rollback.toasts.submitting")
     expect(toastSuccessMock).not.toHaveBeenCalled()
     expect(toastErrorMock).not.toHaveBeenCalled()
@@ -200,6 +238,9 @@ describe("ExecutorRollbackDialog", () => {
       })
     })
     expect(toastSuccessMock).not.toHaveBeenCalled()
+    expect(previewRefetchMock).toHaveBeenCalled()
+    expect(screen.getByLabelText("executors.rollback.dialog.confirmPrompt")).toHaveValue("")
+    expect(screen.getByRole("button", { name: "executors.rollback.dialog.confirmLabel" })).toBeDisabled()
   })
 
   it("keeps API failure details visible on general rollback failures", async () => {

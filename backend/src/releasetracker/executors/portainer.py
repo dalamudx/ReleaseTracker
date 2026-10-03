@@ -37,6 +37,16 @@ class PortainerRequestTimeoutError(RuntimeError):
     pass
 
 
+class PortainerResourceNotFoundError(ValueError):
+    """A confirmed HTTP 404, with the requested resource retained for retry policy."""
+
+    status_code = 404
+
+    def __init__(self, message: str, resource_path: str):
+        super().__init__(message)
+        self.resource_path = resource_path
+
+
 @dataclass(frozen=True)
 class PortainerStackServiceUpdateResult:
     updated_services: list[str]
@@ -55,7 +65,16 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
     def __init__(self, runtime_connection, client: Any | None = None):
         super().__init__(runtime_connection)
         self._client = client
+        self._owns_client = False
         self._operation_policy = runtime_operation_policy(runtime_connection)
+
+    async def close(self) -> None:
+        """Release owned HTTP connections without closing caller-injected clients."""
+        client, owns_client = self._client, self._owns_client
+        self._client = None
+        self._owns_client = False
+        if owns_client and client is not None:
+            await client.aclose()
 
     def supports_single_image_operations(self, target_ref: dict[str, Any]) -> bool:
         """Portainer targets are updated as grouped multi-service stacks."""
@@ -278,6 +297,9 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
                 message="runtime already at target image",
             )
 
+        from ..services.deployment_diff import verify_update_state
+
+        await verify_update_state(self, target_ref)
         await self._update_stack(
             endpoint_id=endpoint_id,
             stack_id=stack_id,
@@ -623,7 +645,9 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
                 f"Portainer API request timed out: {method} {path}"
             ) from exc
         if response.status_code == 404:
-            raise ValueError(not_found_message or f"Portainer API resource not found: {path}")
+            raise PortainerResourceNotFoundError(
+                not_found_message or f"Portainer API resource not found: {path}", path
+            )
         if response.status_code >= 400:
             detail = response.text.strip()
             if detail:
@@ -823,6 +847,7 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
                 base_url=self._runtime_base_url(),
                 headers={"X-API-Key": self._runtime_api_key()},
             )
+            self._owns_client = True
         return self._client
 
     def _runtime_base_url(self) -> str:

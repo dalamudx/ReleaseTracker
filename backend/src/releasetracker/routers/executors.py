@@ -38,6 +38,8 @@ class SSHRecoveryRequest(BaseModel):
 
 class RollbackRequest(BaseModel):
     snapshot_id: int | None = None
+    include_diff: bool = False
+    review_fingerprint: str | None = None
 
 
 def _serialize_executor_config(executor: ExecutorConfig) -> dict[str, Any]:
@@ -48,27 +50,44 @@ def _serialize_executor_status(status: ExecutorStatus | None) -> dict[str, Any] 
     return status.model_dump() if status else None
 
 
-async def _get_executor_config_current_image(
+async def _get_executor_config_current_images(
     storage: SQLiteStorage, executor: ExecutorConfig
-) -> str | None:
-    if executor.runtime_type not in {"docker", "podman"}:
-        return None
-
+) -> dict[str, str | None]:
+    if executor.runtime_type not in {"docker", "podman", "kubernetes", "portainer"}:
+        return {}
     target_mode = executor.target_ref.get("mode")
-    if target_mode in EXECUTOR_GROUPED_BINDING_TARGET_MODES or target_mode == "helm_release":
-        return None
-
+    if target_mode == "helm_release":
+        return {}
+    adapter = None
     try:
         runtime_connection = await storage.get_runtime_connection(executor.runtime_connection_id)
-        if not runtime_connection or runtime_connection.type not in {"docker", "podman"}:
-            return None
+        if not runtime_connection or runtime_connection.type != executor.runtime_type:
+            return {}
         materialized_connection = await materialize_runtime_connection_credentials(
             storage, runtime_connection
         )
         adapter = _get_runtime_adapter(materialized_connection)
-        return await adapter.get_current_image(executor.target_ref)
+        if target_mode == "kubernetes_workload":
+            return await adapter.fetch_workload_service_images(executor.target_ref)
+        if target_mode == "portainer_stack":
+            return await adapter.fetch_stack_service_images(executor.target_ref)
+        if target_mode == "docker_compose":
+            return await adapter.fetch_compose_service_images(executor.target_ref)
+        return {"container": await adapter.get_current_image(executor.target_ref)}
     except Exception:
-        return None
+        return {}
+    finally:
+        close = getattr(adapter, "close", None)
+        if close is not None:
+            await close()
+
+
+async def _get_executor_config_current_image(
+    storage: SQLiteStorage, executor: ExecutorConfig
+) -> str | None:
+    images = await _get_executor_config_current_images(storage, executor)
+    distinct = {image for image in images.values() if image}
+    return next(iter(distinct)) if len(distinct) == 1 else None
 
 
 async def _compose_ownership_status(storage, executor):
@@ -124,6 +143,7 @@ async def _validate_executor_payload(
     executor_data: dict[str, Any],
     *,
     existing_executor: ExecutorConfig | None = None,
+    validate_runtime: bool = True,
 ) -> ExecutorConfig:
     name = executor_data.get("name", existing_executor.name if existing_executor else None)
     runtime_type = executor_data.get(
@@ -442,6 +462,11 @@ async def _validate_executor_payload(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Draft preview has its own scoped read-only runtime inspection. In particular,
+    # it must not call SSH ownership.prepare (which is part of saving/enrollment).
+    if not validate_runtime:
+        return executor
+
     if executor.health_check.strategy in {"http", "tcp", "auto"}:
         try:
             runtime_connection = await storage.get_runtime_connection(
@@ -619,6 +644,10 @@ async def discover_runtime_targets(
             targets = await adapter.discover_targets()
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Runtime discovery failed: {exc}") from exc
+    finally:
+        close = getattr(adapter, "close", None)
+        if close is not None:
+            await close()
 
     return {
         "items": [
@@ -632,6 +661,65 @@ async def discover_runtime_targets(
         ],
         "total": len(targets),
     }
+
+
+class ExecutorConfigurationPreviewRequest(BaseModel):
+    executor_id: int | None = None
+    configuration: dict[str, Any]
+
+
+@router.post("/configuration-preview", dependencies=[Depends(get_current_admin_user)])
+async def preview_executor_configuration(
+    payload: ExecutorConfigurationPreviewRequest,
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    scheduler: Annotated[ExecutorScheduler, Depends(get_executor_scheduler)],
+):
+    """Inspect an unsaved form. Never enroll, persist, enqueue or approve it."""
+    from datetime import datetime, timezone
+    from ..services.deployment_targets import resolve_deployment_targets
+    from ..services.deployment_diff import frozen_targets, native_review, ssh_review
+
+    existing = None
+    if payload.executor_id is not None:
+        existing = await storage.get_executor_config(payload.executor_id)
+        if existing is None:
+            raise HTTPException(404, "Executor not found")
+    executor = await _validate_executor_payload(
+        storage, payload.configuration, existing_executor=existing, validate_runtime=False
+    )
+    adapter = None
+    result = {"mutation_performed": False, "checked_at": datetime.now(timezone.utc).isoformat()}
+    try:
+        targets = await resolve_deployment_targets(storage, executor, manual=True)
+        if not targets or any(not target.get("target") for target in targets):
+            return {
+                **result,
+                "configuration_diff": None,
+                "comparison_error": "no_deployable_version",
+            }
+        task = {"payload": {"targets": targets}}
+        connection = await storage.get_runtime_connection(executor.runtime_connection_id)
+        connection = await materialize_runtime_connection_credentials(storage, connection)
+        with frozen_targets(task):
+            if executor.runtime_type == "ssh":
+                _, target, images = await scheduler._resolve_ssh_update(executor)
+                _, diff = await ssh_review(storage, executor, connection, target, images)
+            else:
+                adapter = _get_runtime_adapter(connection)
+                await adapter.validate_target_ref(executor.target_ref)
+                _, diff = await native_review(storage, scheduler, executor, adapter, task)
+        return {**result, "configuration_diff": diff, "comparison_error": None}
+    except Exception:
+        # SDK/Compose errors can contain credentials or unmasked environment values.
+        return {
+            **result,
+            "configuration_diff": None,
+            "comparison_error": "runtime_inspection_failed",
+        }
+    finally:
+        close = getattr(adapter, "close", None)
+        if callable(close):
+            await close()
 
 
 @router.get("/{executor_id}", dependencies=[Depends(get_current_admin_user)])
@@ -677,8 +765,14 @@ async def get_executor_config_detail(
     executor = await storage.get_executor_config(executor_id)
     if not executor:
         raise HTTPException(status_code=404, detail="Executor not found")
-    current_image = await _get_executor_config_current_image(storage, executor)
-    return {**_serialize_executor_config(executor), "current_image": current_image}
+    images = await _get_executor_config_current_images(storage, executor)
+    distinct = {image for image in images.values() if image}
+    payload = _serialize_executor_config(executor)
+    return {
+        **payload,
+        "current_image": next(iter(distinct)) if len(distinct) == 1 else None,
+        "current_images": images,
+    }
 
 
 @router.get("/{executor_id}/history", dependencies=[Depends(get_current_admin_user)])
@@ -1041,11 +1135,17 @@ async def preview_executor_rollback(
         storage, runtime_connection
     )
     adapter = _get_runtime_adapter(materialized_runtime)
-    preview = await RollbackService(storage, scheduler.snapshot_service).preview(
-        executor_config=executor,
-        adapter=adapter,
-        snapshot_id=payload.snapshot_id if payload is not None else None,
-    )
+    try:
+        preview = await RollbackService(storage, scheduler.snapshot_service).preview(
+            executor_config=executor,
+            adapter=adapter,
+            snapshot_id=payload.snapshot_id if payload is not None else None,
+            include_diff=payload.include_diff if payload is not None else False,
+        )
+    finally:
+        close = getattr(adapter, "close", None)
+        if callable(close):
+            await close()
     return {
         "snapshot_id": preview.snapshot_id,
         "image_at_capture": preview.image_at_capture,
@@ -1053,6 +1153,11 @@ async def preview_executor_rollback(
         "snapshot_valid": preview.snapshot_valid,
         "validation_error": preview.validation_error,
         "mutation_performed": False,
+        **(
+            {"configuration_diff": preview.configuration_diff}
+            if payload and payload.include_diff
+            else {}
+        ),
     }
 
 
@@ -1082,6 +1187,15 @@ async def rollback_executor(
 
     snapshot_id = payload.snapshot_id if payload is not None else None
     if getattr(scheduler, "recovery_tasks", None) is not None:
+        try:
+            if payload and payload.review_fingerprint is not None:
+                await RollbackService(storage, scheduler.snapshot_service).check_review(
+                    executor, adapter, snapshot_id, payload.review_fingerprint
+                )
+        finally:
+            close = getattr(adapter, "close", None)
+            if callable(close):
+                await close()
         from fastapi.responses import JSONResponse
 
         return JSONResponse(
@@ -1091,6 +1205,11 @@ async def rollback_executor(
                 snapshot_id,
                 "rollback",
                 current_user.username if current_user else None,
+                **(
+                    {"review_fingerprint": payload.review_fingerprint}
+                    if payload and payload.review_fingerprint is not None
+                    else {}
+                ),
             ),
         )
     service = RollbackService(storage, scheduler.snapshot_service)
@@ -1099,6 +1218,7 @@ async def rollback_executor(
         adapter=adapter,
         snapshot_id=snapshot_id,
         actor=current_user.username if current_user else None,
+        review_fingerprint=payload.review_fingerprint if payload else None,
     )
     return {
         "run": _serialize_run_history(outcome.run),

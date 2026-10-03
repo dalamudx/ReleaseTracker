@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS "schema_migrations" (version varchar(128) primary key);
+CREATE TABLE schema_migrations (version TEXT PRIMARY KEY);
 CREATE TABLE settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,

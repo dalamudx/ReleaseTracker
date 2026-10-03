@@ -14,6 +14,7 @@ import time
 from datetime import datetime
 
 from ..config import ExecutorConfig
+from ..executors.adapter_lifetime import runtime_adapter_scope
 from .mutation_scope import mutation_resource_key
 from ..executor_scheduler_run_lifecycle import ExecutorRunOutcome
 
@@ -352,6 +353,7 @@ class DeploymentReadiness:
                 "Readiness observer %s interrupted (%s)", key, type(worker.exception()).__name__
             )
 
+    @runtime_adapter_scope
     async def _supplement(self, executor, verification, result, remaining):
         if result.get("outcome") != "healthy" or executor.health_check.strategy in {
             "none",

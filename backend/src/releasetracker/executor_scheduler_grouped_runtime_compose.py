@@ -4,6 +4,7 @@ from .services.podman_target_lineage import ACTIVE_PODMAN_LINEAGE
 from .services.task_effects import mark_deployment_mutation
 
 from .config import ExecutorConfig
+from .executors.adapter_lifetime import runtime_adapter_scope
 from .executor_scheduler_grouped_runtime_support import _ExecutorBindingRunResult
 from .executor_scheduler_run_lifecycle import ExecutorRunOutcome
 from .executors import DockerRuntimeAdapter, PodmanRuntimeAdapter
@@ -14,6 +15,7 @@ from .services.runtime_credentials import materialize_runtime_connection_credent
 class ExecutorSchedulerComposeRuntime:
     """Execute grouped Docker and Podman Compose updates."""
 
+    @runtime_adapter_scope
     async def _execute_docker_compose_executor(
         self,
         executor_config: ExecutorConfig,

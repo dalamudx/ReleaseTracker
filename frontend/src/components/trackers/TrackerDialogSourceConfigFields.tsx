@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next"
 import type { GitHubFetchMode, TrackerChannelType } from "@/api/types"
 import {
     FormControl,
+    FormDescription,
     FormField,
     FormItem,
     FormLabel,
@@ -230,6 +231,7 @@ export function TrackerDialogSourceConfigFields({
                 render={({ field }) => (
                     <FormItem className="w-full">
                         <FormLabel>{t("tracker.fields.publishedAtMode.label")}</FormLabel>
+                        <FormDescription>{t("tracker.fields.publishedAtMode.description")}</FormDescription>
                         <Select
                             value={field.value ?? "auto"}
                             onValueChange={(value) =>

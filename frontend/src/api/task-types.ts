@@ -9,7 +9,7 @@ export interface DeploymentPlan {
     state: string
     reason: string
     expires_at: number
-    summary: { target_label?: string; identity_key?: string; configuration_fingerprint?: string; recovery_scope?: string; includes_application_data?: boolean; automatic_rollback?: boolean; source_count?: number }
+    summary: { target_label?: string; identity_key?: string; configuration_fingerprint?: string; recovery_scope?: string; includes_application_data?: boolean; automatic_rollback?: boolean; source_count?: number; configuration_diff?: { scope: string; lines: { operation: "-" | "+"; path: string; value: string; redacted: boolean }[]; truncated: boolean } }
 }
 export interface QueueTask {
     id: number

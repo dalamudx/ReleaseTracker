@@ -103,6 +103,8 @@ def _json_response(
 ) -> httpx.Response:
     serialized = json.dumps(body).encode("utf-8")
     merged_headers = {"Content-Type": "application/vnd.oci.image.manifest.v1+json"}
+    if "mediaType" in body or "schemaVersion" in body:
+        merged_headers["Docker-Content-Digest"] = MANIFEST_DIGEST
     if headers:
         merged_headers.update(headers)
     return httpx.Response(status_code, content=serialized, headers=merged_headers)
@@ -807,7 +809,7 @@ async def test_same_digest_aliases_fetch_config_metadata_once(monkeypatch):
     async def fake_tags(self, client, bearer_token):
         return ["1.0.0", "latest"]
 
-    async def fake_digest(self, client, tag, bearer_token, scope):
+    async def fake_digest(self, client, tag, bearer_token, scope, **_options):
         return MANIFEST_DIGEST, "application/vnd.oci.image.manifest.v1+json", None, bearer_token
 
     async def fake_created(self, client, tag, bearer_token, scope):
@@ -854,7 +856,7 @@ async def test_persisted_digest_metadata_cache_skips_config_lookup(monkeypatch):
     async def fake_tags(self, client, bearer_token):
         return ["1.0.0", "latest"]
 
-    async def fake_digest(self, client, tag, bearer_token, scope):
+    async def fake_digest(self, client, tag, bearer_token, scope, **_options):
         return MANIFEST_DIGEST, "application/vnd.oci.image.manifest.v1+json", None, bearer_token
 
     async def fail_created(self, client, tag, bearer_token, scope):
@@ -911,7 +913,7 @@ async def test_digest_change_prioritizes_oci_version_and_previous_digest_sibling
     async def fake_tags(self, client, bearer_token):
         return [floating_tag, exact_tag, sibling_tag, "old-build-a", "old-build-b"]
 
-    async def fake_digest(self, client, tag, bearer_token, scope):
+    async def fake_digest(self, client, tag, bearer_token, scope, **_options):
         resolved_tags.append(tag)
         digest = new_digest if tag in {floating_tag, exact_tag, sibling_tag} else MANIFEST_DIGEST
         return digest, "application/vnd.oci.image.manifest.v1+json", None, bearer_token

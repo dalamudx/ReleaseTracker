@@ -99,9 +99,14 @@ async def _build_runtime_connection_config(
             raise HTTPException(status_code=404, detail="Runtime connection not found")
 
     if existing is None:
-        return RuntimeConnectionConfig(
-            **{key: value for key, value in runtime_connection_data.items() if key != "secrets"}
+        draft = {key: value for key, value in runtime_connection_data.items() if key != "secrets"}
+        name = draft.get("name")
+        draft["name"] = (
+            name.strip()
+            if isinstance(name, str) and name.strip()
+            else f"draft-{draft.get("type", "runtime")}"
         )
+        return RuntimeConnectionConfig(**draft)
 
     return RuntimeConnectionConfig(
         id=runtime_connection_id,
@@ -312,7 +317,10 @@ async def discover_portainer_endpoints(
             runtime_connection,
         )
         adapter = PortainerRuntimeAdapter(runtime_connection)
-        endpoints = await adapter.discover_endpoints()
+        try:
+            endpoints = await adapter.discover_endpoints()
+        finally:
+            await adapter.close()
     except HTTPException:
         raise
     except Exception as exc:

@@ -1,5 +1,6 @@
 """FastAPI application entry point"""
 
+import asyncio
 from contextlib import asynccontextmanager
 import time
 from datetime import datetime, timedelta
@@ -47,6 +48,7 @@ from .routers import (
 from .routers import runtime_connections, ssh_connections, ssh_compose
 from .routers import executors, tasks
 from .services.task_queue import TaskQueue
+from .services.shutdown import shutdown_services
 from .services.fetch_tasks import FetchTasks
 from .services.deploy_tasks import DeployTasks
 from .services.recovery_tasks import RecoveryTasks
@@ -84,174 +86,213 @@ async def lifespan(app: FastAPI):
     await system_key_manager.initialize()
 
     storage = SQLiteStorage(db_path, system_key_manager=system_key_manager)
-    await storage.initialize()
-    await recover_pending_encryption_key_rotation(storage, system_key_manager)
-    migrated_snapshots = await migrate_legacy_snapshots(storage)
-    if migrated_snapshots:
-        logging.getLogger(__name__).info(
-            "encrypted %s legacy executor snapshots", migrated_snapshots
+    # Register ownership before initialize/start: either may partially allocate
+    # connections or workers before failing. Only constructed resources are closed.
+    owned_closers = {"storage": storage.close}
+    body_error: BaseException | None = None
+    try:
+        await storage.initialize()
+        await recover_pending_encryption_key_rotation(storage, system_key_manager)
+        migrated_snapshots = await migrate_legacy_snapshots(storage)
+        if migrated_snapshots:
+            logging.getLogger(__name__).info(
+                "encrypted %s legacy executor snapshots", migrated_snapshots
+            )
+        LogConfig.setup_logging(level=getattr(logging, await storage.get_system_log_level()))
+        # Initialize configuration without AppConfig
+
+        # Bind to app.state
+        app.state.storage = storage
+        app.state.system_key_manager = system_key_manager
+        # app.state.config = app_config # REMOVED
+
+        # Ensure an admin user exists
+        auth_service = AuthService(storage, system_key_manager)
+        await auth_service.ensure_admin_user()
+        interrupted_source_runs = await storage.reconcile_interrupted_source_fetch_runs()
+        if interrupted_source_runs:
+            logging.getLogger(__name__).warning(
+                "Reconciled %s interrupted source fetch runs", interrupted_source_runs
+            )
+        reconciled_claims = await storage.reconcile_stale_executor_snapshot_claims(
+            stale_before=datetime.now() - timedelta(minutes=30)
         )
-    LogConfig.setup_logging(level=getattr(logging, await storage.get_system_log_level()))
-    # Initialize configuration without AppConfig
+        if reconciled_claims:
+            logging.getLogger(__name__).warning(
+                "Reconciled %s stale executor snapshot rollback claims", reconciled_claims
+            )
+        reconcile_tasks = getattr(storage, "reconcile_orphaned_executor_tasks", None)
+        if reconcile_tasks is not None:
+            reconciled_tasks = await reconcile_tasks()
+            if reconciled_tasks:
+                logging.getLogger(__name__).warning(
+                    "Reconciled %s orphaned tasks for deleted executors", reconciled_tasks
+                )
 
-    # Bind to app.state
-    app.state.storage = storage
-    app.state.system_key_manager = system_key_manager
-    # app.state.config = app_config # REMOVED
-
-    # Ensure an admin user exists
-    auth_service = AuthService(storage, system_key_manager)
-    await auth_service.ensure_admin_user()
-    interrupted_source_runs = await storage.reconcile_interrupted_source_fetch_runs()
-    if interrupted_source_runs:
-        logging.getLogger(__name__).warning(
-            "Reconciled %s interrupted source fetch runs", interrupted_source_runs
+        # Initialize schedulers
+        scheduler_host = SchedulerHost()
+        owned_closers["scheduler_host"] = scheduler_host.shutdown
+        backup_hours, backup_retain = backup_options()
+        retention_tiers()  # Reject invalid retention before starting background work.
+        instance_backup = InstanceBackup(
+            storage, system_key_manager, directory=os.environ.get("RELEASETRACKER_BACKUP_DIR")
         )
-    reconciled_claims = await storage.reconcile_stale_executor_snapshot_claims(
-        stale_before=datetime.now() - timedelta(minutes=30)
-    )
-    if reconciled_claims:
-        logging.getLogger(__name__).warning(
-            "Reconciled %s stale executor snapshot rollback claims", reconciled_claims
-        )
+        app.state.instance_backup = instance_backup
 
-    # Initialize schedulers
-    scheduler_host = SchedulerHost()
-    backup_hours, backup_retain = backup_options()
-    retention_tiers()  # Reject invalid retention before starting background work.
-    instance_backup = InstanceBackup(
-        storage, system_key_manager, directory=os.environ.get("RELEASETRACKER_BACKUP_DIR")
-    )
-    app.state.instance_backup = instance_backup
+        async def scheduled_backup():
+            try:
+                await instance_backup.create(retain=backup_retain, scheduled=True)
+            except Exception:
+                # Status, metrics and a durable alert are recorded by the service.
+                logging.getLogger(__name__).error("Scheduled instance backup failed")
+            finally:
+                await storage.close_current_task_connection()
 
-    async def scheduled_backup():
-        try:
-            await instance_backup.create(retain=backup_retain, scheduled=True)
-        except Exception:
-            # Status, metrics and a durable alert are recorded by the service.
-            logging.getLogger(__name__).error("Scheduled instance backup failed")
-        finally:
-            await storage.close_current_task_connection()
+        if backup_hours:
+            interval = backup_hours * 3600
+            persisted_backup = await instance_backup.status()
+            latest = (
+                persisted_backup.get("last_success_at") or instance_backup.latest_archive_time()
+            )
+            now = time.time()
+            # Resume from the newest archive: a process restarted more often than
+            # the interval must still back up. Overdue backups run shortly after start.
+            due = now + 300 if latest is None or latest + interval <= now else latest + interval
+            scheduler_host.add_interval_job(
+                "maintenance",
+                "instance_backup",
+                scheduled_backup,
+                seconds=interval,
+                next_run_time=datetime.fromtimestamp(due),
+            )
 
-    if backup_hours:
-        interval = backup_hours * 3600
-        persisted_backup = await instance_backup.status()
-        latest = persisted_backup.get("last_success_at") or instance_backup.latest_archive_time()
+        async def verify_stored_backup():
+            try:
+                await instance_backup.verify_latest()
+            except Exception:
+                logging.getLogger(__name__).error("Stored backup verification failed")
+            finally:
+                await storage.close_current_task_connection()
+
+        # Also check manually-created archives when automatic creation is disabled.
+        verification_status = await instance_backup.status()
         now = time.time()
-        # Resume from the newest archive: a process restarted more often than
-        # the interval must still back up. Overdue backups run shortly after start.
-        due = now + 300 if latest is None or latest + interval <= now else latest + interval
+        last_verified = float(verification_status.get("last_verified_at") or 0)
         scheduler_host.add_interval_job(
             "maintenance",
-            "instance_backup",
-            scheduled_backup,
-            seconds=interval,
-            next_run_time=datetime.fromtimestamp(due),
+            "instance_backup_verification",
+            verify_stored_backup,
+            seconds=86400,
+            next_run_time=datetime.fromtimestamp(max(now + 300, last_verified + 86400)),
         )
 
-    async def verify_stored_backup():
+        async def prune_old_fetch_runs():
+            try:
+                removed = await prune_fetch_runs(storage)
+                if removed:
+                    logging.getLogger(__name__).info("Pruned %s old fetch runs", removed)
+            finally:
+                await storage.close_current_task_connection()
+
+        scheduler_host.add_interval_job(
+            "maintenance", "fetch_retention", prune_old_fetch_runs, seconds=86400
+        )
+        scheduler = ReleaseScheduler(storage, scheduler_host=scheduler_host)
+        executor_scheduler = ExecutorScheduler(storage, scheduler_host=scheduler_host)
+        owned_closers["executor_scheduler"] = executor_scheduler.shutdown
+        repository_webhook_scheduler = RepositoryWebhookScheduler(
+            storage, scheduler, scheduler_host
+        )
+        owned_closers["repository_webhook"] = repository_webhook_scheduler.shutdown
+
+        from .services.deployment_readiness import DeploymentReadiness
+        from .services.executor_notification_outbox import ExecutorNotificationOutbox
+        from .services.deployment_admission_notifications import (
+            DeploymentAdmissionNotificationOutbox,
+        )
+
+        from .services.release_notification_outbox import ReleaseNotificationOutbox
+
+        notification_outbox = ExecutorNotificationOutbox(storage, scheduler_host)
+        owned_closers["executor_outbox"] = notification_outbox.shutdown
+        release_notification_outbox = ReleaseNotificationOutbox(storage, scheduler_host)
+        owned_closers["release_outbox"] = release_notification_outbox.shutdown
+        admission_notification_outbox = DeploymentAdmissionNotificationOutbox(
+            storage, scheduler_host
+        )
+        owned_closers["admission_outbox"] = admission_notification_outbox.shutdown
+        executor_scheduler.notification_outbox = notification_outbox
+
+        readiness = DeploymentReadiness(storage, executor_scheduler, scheduler_host)
+        owned_closers["readiness"] = readiness.shutdown
+        executor_scheduler.readiness = readiness
+        from .services.runtime_health_watch import RuntimeHealthWatch
+
+        runtime_health_watch = RuntimeHealthWatch(
+            storage, executor_scheduler, readiness, scheduler_host
+        )
+        owned_closers["runtime_health"] = runtime_health_watch.shutdown
+        task_queue = TaskQueue(storage.tasks, scheduler_host)
+        owned_closers["task_queue"] = task_queue.shutdown
+        fetch_tasks = FetchTasks(storage, scheduler)
+        deploy_tasks = DeployTasks(storage, executor_scheduler)
+        recovery_tasks = RecoveryTasks(storage, executor_scheduler)
+        task_queue.register("fetch", fetch_tasks)
+        task_queue.register("deploy", deploy_tasks)
+        task_queue.register("recover", recovery_tasks)
+        scheduler.fetch_tasks = fetch_tasks
+        repository_webhook_scheduler.fetch_tasks = fetch_tasks
+        executor_scheduler.deploy_tasks = deploy_tasks
+        executor_scheduler.recovery_tasks = recovery_tasks
+        app.state.task_queue = task_queue
+        app.state.fetch_tasks = fetch_tasks
+
+        # Bind schedulers to app.state
+        app.state.scheduler_host = scheduler_host
+        app.state.scheduler = scheduler
+        app.state.executor_scheduler = executor_scheduler
+        app.state.repository_webhook_scheduler = repository_webhook_scheduler
+
+        await task_queue.initialize()
+        await readiness.initialize()
+        await runtime_health_watch.initialize()
+        await notification_outbox.initialize()
+        await release_notification_outbox.initialize()
+        await admission_notification_outbox.initialize()
+        await scheduler.initialize()
+        await executor_scheduler.initialize()
+        await repository_webhook_scheduler.initialize()
+        await scheduler_host.start()
+        await scheduler.start()
+        await executor_scheduler.start()
+        yield
+    except BaseException as exc:
+        body_error = exc
+        raise
+    finally:
+        # Preserve the established shutdown order even for a partial startup.
+        steps = [
+            (name, owned_closers[name])
+            for name in (
+                "repository_webhook",
+                "runtime_health",
+                "task_queue",
+                "readiness",
+                "executor_outbox",
+                "release_outbox",
+                "admission_outbox",
+                "executor_scheduler",
+                "scheduler_host",
+                "storage",
+            )
+            if name in owned_closers
+        ]
         try:
-            await instance_backup.verify_latest()
+            await shutdown_services(steps)
         except Exception:
-            logging.getLogger(__name__).error("Stored backup verification failed")
-        finally:
-            await storage.close_current_task_connection()
-
-    # Also check manually-created archives when automatic creation is disabled.
-    verification_status = await instance_backup.status()
-    now = time.time()
-    last_verified = float(verification_status.get("last_verified_at") or 0)
-    scheduler_host.add_interval_job(
-        "maintenance",
-        "instance_backup_verification",
-        verify_stored_backup,
-        seconds=86400,
-        next_run_time=datetime.fromtimestamp(max(now + 300, last_verified + 86400)),
-    )
-
-    async def prune_old_fetch_runs():
-        try:
-            removed = await prune_fetch_runs(storage)
-            if removed:
-                logging.getLogger(__name__).info("Pruned %s old fetch runs", removed)
-        finally:
-            await storage.close_current_task_connection()
-
-    scheduler_host.add_interval_job(
-        "maintenance", "fetch_retention", prune_old_fetch_runs, seconds=86400
-    )
-    scheduler = ReleaseScheduler(storage, scheduler_host=scheduler_host)
-    executor_scheduler = ExecutorScheduler(storage, scheduler_host=scheduler_host)
-    repository_webhook_scheduler = RepositoryWebhookScheduler(storage, scheduler, scheduler_host)
-
-    from .services.deployment_readiness import DeploymentReadiness
-    from .services.executor_notification_outbox import ExecutorNotificationOutbox
-    from .services.deployment_admission_notifications import DeploymentAdmissionNotificationOutbox
-
-    from .services.release_notification_outbox import ReleaseNotificationOutbox
-
-    notification_outbox = ExecutorNotificationOutbox(storage, scheduler_host)
-    release_notification_outbox = ReleaseNotificationOutbox(storage, scheduler_host)
-    admission_notification_outbox = DeploymentAdmissionNotificationOutbox(storage, scheduler_host)
-    executor_scheduler.notification_outbox = notification_outbox
-
-    readiness = DeploymentReadiness(storage, executor_scheduler, scheduler_host)
-    executor_scheduler.readiness = readiness
-    from .services.runtime_health_watch import RuntimeHealthWatch
-
-    runtime_health_watch = RuntimeHealthWatch(
-        storage, executor_scheduler, readiness, scheduler_host
-    )
-    task_queue = TaskQueue(storage.tasks, scheduler_host)
-    fetch_tasks = FetchTasks(storage, scheduler)
-    deploy_tasks = DeployTasks(storage, executor_scheduler)
-    recovery_tasks = RecoveryTasks(storage, executor_scheduler)
-    task_queue.register("fetch", fetch_tasks)
-    task_queue.register("deploy", deploy_tasks)
-    task_queue.register("recover", recovery_tasks)
-    scheduler.fetch_tasks = fetch_tasks
-    repository_webhook_scheduler.fetch_tasks = fetch_tasks
-    executor_scheduler.deploy_tasks = deploy_tasks
-    executor_scheduler.recovery_tasks = recovery_tasks
-    app.state.task_queue = task_queue
-    app.state.fetch_tasks = fetch_tasks
-
-    # Bind schedulers to app.state
-    app.state.scheduler_host = scheduler_host
-    app.state.scheduler = scheduler
-    app.state.executor_scheduler = executor_scheduler
-    app.state.repository_webhook_scheduler = repository_webhook_scheduler
-
-    await task_queue.initialize()
-    await readiness.initialize()
-    await runtime_health_watch.initialize()
-    await notification_outbox.initialize()
-    await release_notification_outbox.initialize()
-    await admission_notification_outbox.initialize()
-    await scheduler.initialize()
-    await executor_scheduler.initialize()
-    await repository_webhook_scheduler.initialize()
-    await scheduler_host.start()
-    await scheduler.start()
-    await executor_scheduler.start()
-
-    yield
-
-    # Clean up on shutdown
-    if repository_webhook_scheduler:
-        await repository_webhook_scheduler.shutdown()
-    await runtime_health_watch.shutdown()
-    await task_queue.shutdown()
-    await readiness.shutdown()
-    await notification_outbox.shutdown()
-    await release_notification_outbox.shutdown()
-    await admission_notification_outbox.shutdown()
-    if executor_scheduler:
-        await executor_scheduler.shutdown()
-    if scheduler_host:
-        await scheduler_host.shutdown()
-    # Close the persistent database connection
-    await storage.close()
+            if isinstance(body_error, asyncio.CancelledError):
+                raise body_error
+            raise
 
 
 # Create the FastAPI application

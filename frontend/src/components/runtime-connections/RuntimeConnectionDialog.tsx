@@ -24,6 +24,7 @@ import {
 import {
     Dialog,
     DialogContent,
+    DialogDescription,
     DialogFooter,
     DialogHeader,
     DialogTitle,
@@ -277,6 +278,7 @@ export function RuntimeConnectionDialog({ open, onOpenChange, runtimeConnection,
                     <DialogTitle>
                         {runtimeConnection ? t('runtimeConnections.dialog.editTitle') : t('runtimeConnections.dialog.addTitle')}
                     </DialogTitle>
+                    <DialogDescription className="sr-only">{t("runtimeConnections.dialog.description")}</DialogDescription>
                 </DialogHeader>
 
                 <Form {...form}>

@@ -21,6 +21,7 @@ from .base import (
 from .compose_runtime_update import GroupedRuntimeRecreateSpec, build_grouped_runtime_recreate_spec
 from . import podman_compose
 from .container_runtime import _ContainerRuntimeAdapter, snapshot_recovery
+from .runtime_tls import RuntimeTLSMaterial, configure_ip_hostname_verification
 from . import container_recovery
 from .podman_payload_renderer import PodmanPayloadRenderer
 from ..services.deployment_plan import MARKER_KEYS
@@ -83,28 +84,41 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
         tls_verify = config.get("tls_verify", False)
         api_version = config.get("api_version")
 
-        tls_config = None
-        if tls_verify:
-            client_cert = self.runtime_connection.secrets.get("client_cert")
-            client_key = self.runtime_connection.secrets.get("client_key")
-            ca_cert = self.runtime_connection.secrets.get("ca_cert")
-            cert_pair = (
-                (client_cert, client_key)
-                if isinstance(client_cert, str) and isinstance(client_key, str)
-                else None
+        material = RuntimeTLSMaterial(self.runtime_connection.secrets) if tls_verify else None
+        client = None
+        try:
+            # podman-py ignores tls and only normalizes HTTP/TCP URLs at construction.
+            # Configure its requests Session before the first native libpod request.
+            endpoint = urllib.parse.urlparse(base_url or "")
+            client = podman.PodmanClient(
+                base_url=(endpoint._replace(scheme="http").geturl() if material else base_url),
+                version=api_version,
+                timeout=runtime_operation_policy(self.runtime_connection).write_timeout_seconds,
             )
-            tls_config = podman.tls.TLSConfig(
-                client_cert=cert_pair,
-                ca_cert=ca_cert if isinstance(ca_cert, str) else None,
-                verify=True,
-            )
+            if material is not None:
+                client.api.base_url = client.api.base_url._replace(scheme="https")
+                client.api.cert = material.client_cert
+                client.api.verify = material.ca_cert or True
+                # podman-py chooses HTTP vs HTTPS from the per-call verify argument,
+                # ignoring both base_url.scheme and Session.verify for dispatch.
+                request = client.api._request
+                verify = client.api.verify
 
-        return podman.PodmanClient(
-            base_url=base_url,
-            version=api_version,
-            tls=tls_config,
-            timeout=runtime_operation_policy(self.runtime_connection).write_timeout_seconds,
-        )
+                def tls_request(*args, **kwargs):
+                    kwargs["verify"] = verify
+                    return request(*args, **kwargs)
+
+                client.api._request = tls_request
+                configure_ip_hostname_verification(client.api, base_url)
+            return self._own_client(client, material)
+        except BaseException:
+            try:
+                if client is not None:
+                    client.close()
+            finally:
+                if material is not None:
+                    material.cleanup()
+            raise
 
     async def update_image(self, target_ref: dict[str, Any], new_image: str) -> RuntimeUpdateResult:
         if not isinstance(new_image, str) or not new_image.strip():
@@ -145,7 +159,9 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
         )
 
         client.images.pull(new_image)
+        from ..services.deployment_diff import verify_update_state
 
+        await verify_update_state(self, target_ref)
         try:
             container.stop()
             container.remove()
@@ -168,7 +184,21 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
 
     async def discover_targets(self):
         client = self._get_client()
-        containers = client.containers.list(all=True)
+        try:
+            containers = client.containers.list(all=True)
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status in {403, 404}:
+                message = (
+                    "Podman native /libpod/ API access denied (403). Check runtime permissions. "
+                    if status == 403
+                    else "Podman native /libpod/ API is unavailable. "
+                )
+                raise ValueError(
+                    message + "Use a native Podman service/socket with Podman mode, or select "
+                    "Docker mode for a Docker-API-only socket proxy."
+                ) from exc
+            raise
         targets = []
         compose_containers_by_project: dict[str, list[Any]] = {}
         for container in containers:

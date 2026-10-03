@@ -3,6 +3,7 @@ from __future__ import annotations
 from .services.task_effects import mark_deployment_mutation
 
 from .config import ExecutorConfig
+from .executors.adapter_lifetime import runtime_adapter_scope
 from .executor_scheduler_grouped_runtime_support import _ExecutorBindingRunResult
 from .executor_scheduler_run_lifecycle import ExecutorRunOutcome
 from .executors import KubernetesRuntimeAdapter
@@ -12,6 +13,7 @@ from .services.runtime_credentials import materialize_runtime_connection_credent
 class ExecutorSchedulerKubernetesRuntime:
     """Execute grouped Kubernetes workload updates."""
 
+    @runtime_adapter_scope
     async def _execute_kubernetes_workload_executor(
         self,
         executor_config: ExecutorConfig,

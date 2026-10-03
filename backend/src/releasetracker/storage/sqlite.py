@@ -3345,6 +3345,9 @@ class SQLiteStorage:
             self, stale_before=stale_before
         )
 
+    async def reconcile_orphaned_executor_tasks(self, *, now: float | None = None) -> int:
+        return await sqlite_runtime_executors.reconcile_orphaned_executor_tasks(self, now=now)
+
     async def set_executor_snapshot_locked(
         self, executor_id: int, snapshot_id: int, *, locked: bool
     ) -> bool:

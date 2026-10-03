@@ -9,6 +9,7 @@ from functools import wraps
 from typing import Any, Callable
 
 from ..config import RuntimeConnectionConfig
+from .adapter_lifetime import wait_for_runtime_worker
 
 
 @dataclass(frozen=True)
@@ -73,14 +74,7 @@ def offload_blocking_runtime_adapter_methods(cls):
             worker = asyncio.create_task(
                 asyncio.to_thread(_run_adapter_operation_in_thread, __member, (self, *args), kwargs)
             )
-            try:
-                return await asyncio.shield(worker)
-            except asyncio.CancelledError:
-                try:
-                    await asyncio.shield(worker)
-                except Exception:
-                    pass
-                raise
+            return await wait_for_runtime_worker(worker)
 
         setattr(cls, name, offloaded)
     return cls

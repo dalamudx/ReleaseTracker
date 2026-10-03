@@ -40,7 +40,9 @@ export default defineConfig(({ command }) => ({
     proxy: {
       "/api": {
         target: "http://localhost:8000",
-        changeOrigin: true,
+        // Preserve the browser-facing Host so backend Origin checks see the
+        // same origin through this development proxy. Never rewrite Origin.
+        changeOrigin: false,
       },
     },
   },

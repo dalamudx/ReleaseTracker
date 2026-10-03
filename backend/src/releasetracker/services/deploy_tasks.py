@@ -9,6 +9,7 @@ import time
 from datetime import datetime, timedelta
 
 from ..executor_trigger import _binding_contexts
+from ..executors.adapter_lifetime import runtime_adapter_scope
 from ..executor_scheduler_target_resolution import QUEUED_TARGETS
 from .task_queue import Deferred, TaskResult
 from .mutation_scope import mutation_resource_key
@@ -36,20 +37,31 @@ class DeployTasks:
             await self.storage.get_tracker_source(binding.tracker_source_id)
             for binding in _binding_contexts(executor)
         ]
+        executor_payload = executor.model_dump(mode="json", exclude={"health_check"})
+        target_ref = executor_payload.get("target_ref")
+        # An updated container ID points to the replacement created by this deployment;
+        # the stable container name defines the operator-configured target identity.
+        if isinstance(target_ref, dict) and target_ref.get("container_name"):
+            target_ref = dict(target_ref)
+            target_ref.pop("container_id", None)
+            executor_payload["target_ref"] = target_ref
         value = {
-            "executor": executor.model_dump(mode="json", exclude={"health_check"}),
+            "executor": executor_payload,
             "connection": connection.model_dump(mode="json") if connection else None,
             "sources": [source.model_dump(mode="json") if source else None for source in sources],
         }
         return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
-    async def _collect_admission_evidence(self, executor):
+    @runtime_adapter_scope
+    async def _collect_admission_evidence(self, executor, task=None):
         """Collect read-only runtime evidence before a deployment attempt."""
         connection = await self.storage.get_runtime_connection(executor.runtime_connection_id)
         if connection is None or not connection.enabled:
             raise ValueError("runtime_connection_unavailable")
         target_ref = dict(executor.target_ref or {})
         mode = target_ref.get("mode", "container")
+        if mode == "container" and target_ref.get("container_name"):
+            target_ref.pop("container_id", None)
         runtime_public = {
             "type": connection.type,
             "config": dict(connection.config or {}),
@@ -70,14 +82,20 @@ class DeployTasks:
             raise ValueError("unsupported_admission_target")
 
         if mode == "ssh_compose":
-            _, target, targets = await self.scheduler._resolve_ssh_update(executor)
+            from .deployment_diff import frozen_targets, ssh_review
+
+            with frozen_targets(task):
+                _, target, targets = await self.scheduler._resolve_ssh_update(executor)
+                state_hash, diff = await ssh_review(
+                    self.storage, executor, connection, target, targets
+                )
             from .ssh_compose_deploy import read_managed_markers
 
             markers = await read_managed_markers(self.storage, connection, target, services=targets)
             configuration["target"] = target.model_dump(mode="json")
-            configuration["service_targets"] = dict(sorted(targets.items()))
+            configuration["runtime_configuration"] = state_hash
             return TargetEvidence(
-                runtime_identity, target_identity, configuration, tuple(markers), recovery
+                runtime_identity, target_identity, configuration, tuple(markers), recovery, diff
             )
 
         from .runtime_credentials import materialize_runtime_connection_credentials
@@ -105,8 +123,15 @@ class DeployTasks:
             configuration["current_chart_version"] = await adapter.get_helm_release_version(
                 target_ref
             )
+        from .deployment_diff import frozen_targets, native_review
+
+        with frozen_targets(task):
+            state_hash, diff = await native_review(
+                self.storage, self.scheduler, executor, adapter, task
+            )
+        configuration["runtime_configuration"] = state_hash
         return TargetEvidence(
-            runtime_identity, target_identity, configuration, tuple(markers), recovery
+            runtime_identity, target_identity, configuration, tuple(markers), recovery, diff
         )
 
     async def _mark_admission_applied(self, task, executor):
@@ -290,7 +315,7 @@ class DeployTasks:
         if latest and latest.status in {"queued", "running", "health_checking"}:
             return TaskResult("needs_attention", "previous_run_interrupted")
         try:
-            evidence = await self._collect_admission_evidence(executor)
+            evidence = await self._collect_admission_evidence(executor, task)
             plan = await self.admission.stage(task, evidence)
         except AdmissionConflict as exc:
             return TaskResult(
@@ -368,6 +393,11 @@ class DeployTasks:
         ):
             raise asyncio.CancelledError("Deployment lease lost")
 
+        from .deployment_diff import EXPECTED_UPDATE_STATE, INSPECTED_UPDATE_STATE, UPDATE_REFUSAL
+
+        write_state_token = EXPECTED_UPDATE_STATE.set(None)
+        refusal = {}
+        refusal_token = UPDATE_REFUSAL.set(refusal)
         baseline = {}
 
         async def guard():
@@ -384,8 +414,9 @@ class DeployTasks:
                 raise asyncio.CancelledError("Target requires operator verification")
             # Re-read runtime evidence immediately before the first mutation.
             # The plan fingerprint binds approval to this exact read-only state.
-            live_evidence = await self._collect_admission_evidence(executor)
+            live_evidence = await self._collect_admission_evidence(executor, task)
             await self.admission.verify_before_write(task, live_evidence)
+            EXPECTED_UPDATE_STATE.set(INSPECTED_UPDATE_STATE.get())
             if defer and not baseline:
                 baseline = await asyncio.wait_for(
                     capture_deployment_baseline(self.storage, self.scheduler, executor),
@@ -419,10 +450,17 @@ class DeployTasks:
         finally:
             QUEUED_TARGETS.reset(token)
             MUTATION_GUARD.reset(mutation_token)
+            EXPECTED_UPDATE_STATE.reset(write_state_token)
+            UPDATE_REFUSAL.reset(refusal_token)
             DEFER_READINESS.reset(defer_token)
             READINESS_FINALIZER.reset(finalize_token)
             if marker_token is not None:
                 MANAGED_MARKERS.reset(marker_token)
+        if refusal.get("blocked"):
+            await self.storage.tasks.checkpoint(task, {"mutation_started": False})
+            return TaskResult(
+                "superseded", "deployment_configuration_changed", result={"run_id": run_id}
+            )
         if outcome.status == "health_checking":
             return TaskResult("observing", result={"run_id": run_id})
         if outcome.status == "success":

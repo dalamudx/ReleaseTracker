@@ -656,11 +656,21 @@ export function useUnlockExecutorSnapshot() {
   })
 }
 
+export function useExecutorRollbackPreview(executorId: number | null, snapshotId: number | null) {
+  return useQuery({
+    queryKey: ["executors", executorId, "rollback-preview", snapshotId],
+    queryFn: () => api.previewExecutorRollback(executorId!, snapshotId!),
+    enabled: executorId !== null && snapshotId !== null,
+    staleTime: 0,
+    retry: false,
+  })
+}
+
 export function useRollbackExecutor() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ executorId, snapshotId }: { executorId: number; snapshotId: number }) =>
-      api.rollbackExecutor(executorId, { snapshot_id: snapshotId }),
+    mutationFn: ({ executorId, snapshotId, reviewFingerprint }: { executorId: number; snapshotId: number; reviewFingerprint?: string }) =>
+      api.rollbackExecutor(executorId, { snapshot_id: snapshotId, ...(reviewFingerprint ? { review_fingerprint: reviewFingerprint } : {}) }),
     onSuccess: (_data, { executorId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.executor(executorId) })
       queryClient.invalidateQueries({ queryKey: ["executors", executorId, "history"] })

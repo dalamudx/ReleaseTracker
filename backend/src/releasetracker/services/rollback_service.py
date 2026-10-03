@@ -49,6 +49,7 @@ class RollbackPreview:
     integrity_status: str
     snapshot_valid: bool
     validation_error: str | None = None
+    configuration_diff: dict | None = None
 
 
 class RollbackService:
@@ -66,6 +67,7 @@ class RollbackService:
         executor_config: "ExecutorConfig",
         adapter: "BaseRuntimeAdapter",
         snapshot_id: int | None,
+        include_diff: bool = False,
     ) -> RollbackPreview:
         """Validate a rollback candidate without a claim, run record, or runtime mutation."""
         if executor_config.id is None:
@@ -93,12 +95,51 @@ class RollbackService:
                 snapshot_valid=False,
                 validation_error=str(exc),
             )
+        configuration_diff = None
+        if include_diff:
+            from .recovery_diff import build_review
+
+            try:
+                configuration_diff = await build_review(
+                    self._storage, executor_config, adapter, snapshot
+                )
+            except Exception:
+                # Do not expose inspect/SDK errors which may embed credentials.
+                return RollbackPreview(
+                    snapshot.id,
+                    snapshot.image_at_capture,
+                    integrity_status,
+                    False,
+                    "Current recovery configuration could not be compared. Refresh and retry.",
+                )
         return RollbackPreview(
             snapshot_id=snapshot.id,
             image_at_capture=snapshot.image_at_capture,
             integrity_status=integrity_status,
             snapshot_valid=True,
+            configuration_diff=configuration_diff,
         )
+
+    async def check_review(self, executor, adapter, snapshot_id, expected):
+        from .recovery_diff import require_review
+
+        if snapshot_id is None:
+            raise HTTPException(status_code=409, detail="Select the reviewed snapshot explicitly.")
+        snapshot = await self._storage.get_executor_snapshot_by_id(executor.id, snapshot_id)
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="Snapshot not found")
+        try:
+            if verify_snapshot_integrity(snapshot) != "verified":
+                raise HTTPException(status_code=409, detail="Snapshot integrity is not verified")
+            await adapter.validate_snapshot(executor.target_ref, snapshot.snapshot_data)
+            await require_review(self._storage, executor, adapter, snapshot, expected)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="Recovery configuration cannot be checked. Refresh and retry.",
+            ) from exc
 
     async def rollback(
         self,
@@ -107,11 +148,14 @@ class RollbackService:
         adapter: "BaseRuntimeAdapter",
         snapshot_id: int | None,
         actor: str | None,
+        review_fingerprint: str | None = None,
     ) -> RollbackOutcome:
         if executor_config.id is None:
             raise HTTPException(status_code=400, detail="Executor id is required")
 
         executor_id = executor_config.id
+        if review_fingerprint is not None:
+            await self.check_review(executor_config, adapter, snapshot_id, review_fingerprint)
 
         run = ExecutorRunHistory(
             executor_id=executor_id,
@@ -199,6 +243,13 @@ class RollbackService:
                 )
             if target_missing:
                 diagnostics["pre_rollback_snapshot"] = "skipped: target is absent"
+
+            if review_fingerprint is not None:
+                from .recovery_diff import require_review
+
+                await require_review(
+                    self._storage, executor_config, adapter, snapshot, review_fingerprint
+                )
 
             coordinator = RecoveryHookCoordinator(self._storage)
             lineage_token = ACTIVE_PODMAN_LINEAGE.set(podman_lineage)

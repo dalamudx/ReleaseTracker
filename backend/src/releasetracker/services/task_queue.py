@@ -14,7 +14,7 @@ from email.utils import parsedate_to_datetime
 
 import httpx
 
-from .registry_errors import RegistryTagListError
+from .registry_errors import RegistryTagListError, RegistryAuthenticationError
 
 from .outbound_http import (
     OutboundConnectError,
@@ -77,7 +77,7 @@ def classify_fetch_error(error: BaseException) -> TaskResult:
         # ends persistent misconfiguration as a failed fetch.
         return TaskResult("failed", "upstream_tls_failed", retryable=True)
     for item in chain:
-        if isinstance(item, RegistryTagListError):
+        if isinstance(item, (RegistryTagListError, RegistryAuthenticationError)):
             return TaskResult("failed", item.code)
         if isinstance(item, httpx.HTTPStatusError):
             status = item.response.status_code

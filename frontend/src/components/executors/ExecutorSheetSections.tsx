@@ -3,6 +3,7 @@ import { ExecutorServiceImageChange } from "./ExecutorServiceImageChange"
 import { SSHComposeTargetFields } from "./SSHComposeTargetFields"
 import { AlertTriangle, CheckCircle2, Layers3, Loader2, Plus, Search, Trash2 } from "lucide-react"
 import type { UseFormReturn } from "react-hook-form"
+import type { ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 
 import type { RuntimeConnection, RuntimeTargetDiscoveryItem, TrackerStatus } from "@/api/types"
@@ -288,6 +289,7 @@ interface ExecutorSheetBindingSectionProps {
     runtimeType: ExecutorFormValues["runtime_type"]
     selectedTargetRef: Record<string, unknown>
     serviceBindings: ExecutorServiceBindingFormValue[]
+    currentImages?: Record<string, string | null> | null
     onSelectTracker: (value: string) => void
     onSelectTrackerSource: (value: string) => void
     onSelectChannel: (value: string) => void
@@ -335,6 +337,8 @@ interface ExecutorSheetReviewSectionProps {
     imageReferenceMode: ExecutorFormValues["image_reference_mode"]
     singleContainerBinding?: ExecutorServiceBindingFormValue | null
     singleContainerCurrentImage?: string | null
+    currentImages?: Record<string, string | null> | null
+    configurationPreview?: ReactNode
     validationMessage: string | null
 }
 
@@ -427,7 +431,7 @@ export function ExecutorSheetStepTabs({ step, onStepChange }: ExecutorSheetStepT
 
     return (
         <div className="border-b border-border/50 px-4 py-3 sm:px-6">
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-4 gap-2" data-testid="executor-step-tabs">
                 {STEP_ORDER.map((item, index) => {
                     const active = item === step
                     const completed = STEP_ORDER.indexOf(step) > index
@@ -437,16 +441,17 @@ export function ExecutorSheetStepTabs({ step, onStepChange }: ExecutorSheetStepT
                             key={item}
                             type="button"
                             variant="ghost"
-                            className={`h-auto justify-start rounded-lg border px-3 py-2 text-left transition-colors ${active ? "border-primary bg-primary/5 text-foreground" : "border-border/60 text-muted-foreground hover:border-border"} ${completed ? "bg-muted/60" : ""}`}
+                            className={`h-auto min-h-11 min-w-0 flex-col items-center justify-center gap-1 whitespace-normal rounded-lg border px-2 py-2 sm:flex-row sm:justify-start sm:gap-2 sm:px-3 ${active ? "border-primary bg-primary/5 text-foreground" : "border-border/60 text-muted-foreground hover:border-border"} ${completed ? "bg-muted/60" : ""}`}
+                            aria-current={active ? "step" : undefined}
                             onClick={() => onStepChange(item)}
                         >
-                            <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em]">
+                            <span className="flex shrink-0 items-center gap-1.5 text-xs leading-5 tabular-nums" data-testid="executor-step-number">
                                 <span>{String(index + 1).padStart(2, "0")}</span>
-                                {completed ? <CheckCircle2 className="h-3.5 w-3.5 text-primary" /> : null}
-                            </div>
-                            <div className="mt-2 text-sm font-medium">
+                                {completed ? <CheckCircle2 className="size-3.5 text-primary" aria-hidden="true" /> : null}
+                            </span>
+                            <span className="min-w-0 text-center text-xs font-medium leading-5 sm:text-left sm:text-sm" data-testid="executor-step-label">
                                 {t(`executors.steps.${item}`)}
-                            </div>
+                            </span>
                         </Button>
                     )
                 })}
@@ -551,6 +556,7 @@ export function ExecutorSheetBindingSection({
     runtimeType,
     selectedTargetRef,
     serviceBindings,
+    currentImages,
     onSelectTracker,
     onSelectTrackerSource,
     onSelectChannel,
@@ -562,7 +568,11 @@ export function ExecutorSheetBindingSection({
     const selectedTargetDisplay = buildExecutorTargetDisplay(runtimeType, selectedTargetRef, t)
     const hasSelectedTarget = formatTargetRef(runtimeType, selectedTargetRef) !== "-"
     const isGroupedBindingTarget = usesGroupedServiceBindings(selectedTargetRef)
-    const groupedServiceOptions = getGroupedBindingServiceOptions(selectedTargetRef)
+    // Runtime evidence is display-only; never write it back into the target form.
+    const groupedServiceOptions = getGroupedBindingServiceOptions(currentImages ? {
+        ...selectedTargetRef,
+        services: Object.entries(currentImages).map(([service, image]) => ({ service, image })),
+    } : selectedTargetRef)
 
     return (
         <Card className="border-border/60 bg-card/80 shadow-sm">
@@ -1011,10 +1021,16 @@ export function ExecutorSheetReviewSection({
     imageReferenceMode,
     singleContainerBinding,
     singleContainerCurrentImage,
+    currentImages,
+    configurationPreview,
     validationMessage,
 }: ExecutorSheetReviewSectionProps) {
     const { t } = useTranslation()
-    const targetDisplay = buildExecutorTargetDisplay(runtimeType, selectedTargetRef, t)
+    const displayTargetRef = currentImages ? {
+        ...selectedTargetRef,
+        services: Object.entries(currentImages).map(([service, image]) => ({ service, image })),
+    } : selectedTargetRef
+    const targetDisplay = buildExecutorTargetDisplay(runtimeType, displayTargetRef, t)
     const hiddenReviewItems = new Set([
         t("executors.review.serviceBindings"),
         t("executors.review.targetType"),
@@ -1047,7 +1063,7 @@ export function ExecutorSheetReviewSection({
                 </div>
 
                 {renderReviewServiceBindings(serviceBindings, t)}
-                {renderReviewImageChanges(
+                {configurationPreview ?? renderReviewImageChanges(
                     targetDisplay,
                     serviceBindings,
                     trackers,

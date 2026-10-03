@@ -69,7 +69,7 @@ describe("ExecutorList target rendering", () => {
     expect(props.onRun).not.toHaveBeenCalled()
   })
 
-  it("opens history only from its button, not the row or name", () => {
+  it("routes row and name clicks through selection while action buttons stay isolated", () => {
     const onHistory = vi.fn()
     const onSelect = vi.fn()
     const onRun = vi.fn()

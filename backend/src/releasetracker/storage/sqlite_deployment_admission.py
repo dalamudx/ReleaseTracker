@@ -10,7 +10,13 @@ from ..services.version_policy import version_policy_reason
 from ..services.deployment_plan import TargetEvidence, plan_fingerprint, public_summary
 
 APPROVABLE = frozenset(
-    {"unmanaged", "marker_missing", "configuration_drift", "version_policy_requires_approval"}
+    {
+        "unmanaged",
+        "marker_missing",
+        "configuration_drift",
+        "version_policy_requires_approval",
+        "manual_update_review",
+    }
 )
 
 
@@ -53,12 +59,20 @@ class DeploymentAdmissionStore:
 
     @staticmethod
     async def _leased_task(db, task, now):
-        row = await (
-            await db.execute(
-                "SELECT * FROM tasks WHERE id=? AND kind='deploy' AND state='running' AND owner=? AND lease_until>?",
-                (task["id"], task["owner"], now),
-            )
-        ).fetchone()
+        if task.get("approval_pending") and task.get("state") in ("queued", "awaiting_approval"):
+            row = await (
+                await db.execute(
+                    "SELECT * FROM tasks WHERE id=? AND kind='deploy' AND approval_pending=1",
+                    (task["id"],),
+                )
+            ).fetchone()
+        else:
+            row = await (
+                await db.execute(
+                    "SELECT * FROM tasks WHERE id=? AND kind='deploy' AND state='running' AND owner=? AND lease_until>?",
+                    (task["id"], task["owner"], now),
+                )
+            ).fetchone()
         if row is None:
             raise AdmissionConflict("task_lease_lost")
         if row["payload"] != json.dumps(task["payload"], sort_keys=True):
@@ -115,6 +129,11 @@ class DeploymentAdmissionStore:
             policy_reason = version_policy_reason(task, evidence)
             if policy_reason and reason is None:
                 reason = policy_reason
+            if evidence.configuration_diff is not None:
+                if evidence.configuration_diff.get("truncated"):
+                    reason = "configuration_diff_incomplete"
+                elif task["payload"].get("manual") and reason is None:
+                    reason = "manual_update_review"
 
             old = await (
                 await db.execute(

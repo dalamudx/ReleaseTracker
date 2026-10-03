@@ -168,7 +168,7 @@ def _native_responses() -> dict:
         responses[("GET", f"{prefix}/containers/{name}-container/json", None)] = [
             _ok(_container(name))
         ]
-        path = f"{prefix}/images/{quote(item['image'], safe='')}/json"
+        path = f"{prefix}/images/{quote(item['image'], safe='/')}/json"
         responses[("GET", path, None)] = [_ok({"Id": item["image_id"]})]
     return responses
 
@@ -693,7 +693,7 @@ async def test_old_snapshot_without_native_evidence_cannot_restore():
 async def test_native_preflight_failure_never_writes(failure):
     responses = {**_native_responses(), ("GET", "/api/stacks/42", 1): [_ok(_STACK_DETAIL_ACTIVE)]}
     prefix = "/api/endpoints/1/docker"
-    path = f"{prefix}/images/{quote(_evidence()['services']['api']['image'], safe='')}/json"
+    path = f"{prefix}/images/{quote(_evidence()['services']['api']['image'], safe='/')}/json"
     if failure == "engine_changed":
         responses[("GET", f"{prefix}/info", None)] = [_ok({"ID": "different-engine"})]
     elif failure == "alias_moved":

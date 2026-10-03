@@ -469,7 +469,7 @@ export default function ExecutorsPage() {
                     onRun={handleRun}
                     onViewExecutionHistory={handleOpenExecutionHistory}
                     selectedExecutorId={selectedExecutorId}
-                    onSelect={setSelectedExecutorId}
+                    onSelect={handleOpenExecutionHistory}
                     submittingExecutorIds={submittingExecutorIds}
                 />
 

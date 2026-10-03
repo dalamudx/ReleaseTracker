@@ -3019,10 +3019,14 @@ async def test_get_executor_snapshot_detail_returns_404_for_foreign_snapshot(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "validation_error", [None, "Snapshot missing required field: container_attrs"]
+)
 async def test_rollback_preview_endpoint_has_no_runtime_mutation(
-    authed_client, storage, monkeypatch
+    authed_client, storage, monkeypatch, validation_error
 ):
     executor_id, snapshot_id = await _seed_executor_with_snapshot(storage, name="snap-preview")
+    closed = []
     from releasetracker.executors.base import BaseRuntimeAdapter
 
     class _PreviewAdapter(BaseRuntimeAdapter):
@@ -3039,7 +3043,11 @@ async def test_rollback_preview_endpoint_has_no_runtime_mutation(
             raise AssertionError("preview must not capture a snapshot")
 
         async def validate_snapshot(self, target_ref, snapshot):
-            return None
+            if validation_error:
+                raise ValueError(validation_error)
+
+        async def close(self):
+            closed.append(True)
 
         async def update_image(self, target_ref, new_image):
             raise AssertionError("preview must not update runtime state")
@@ -3061,11 +3069,12 @@ async def test_rollback_preview_endpoint_has_no_runtime_mutation(
     assert response.json() == {
         "snapshot_id": snapshot_id,
         "image_at_capture": "acme/api:1.0.0",
-        "integrity_status": "verified",
-        "snapshot_valid": True,
-        "validation_error": None,
+        "integrity_status": "verified" if validation_error is None else "invalid",
+        "snapshot_valid": validation_error is None,
+        "validation_error": validation_error,
         "mutation_performed": False,
     }
+    assert closed == [True]
     assert not await storage.is_executor_snapshot_claimed(
         executor_id=executor_id, snapshot_id=snapshot_id
     )

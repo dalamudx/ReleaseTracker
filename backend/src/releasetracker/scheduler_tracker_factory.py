@@ -35,6 +35,10 @@ class ReleaseSchedulerTrackerFactory:
             if credential:
                 token = credential.token
             else:
+                if config.type == "container":
+                    from .services.registry_errors import RegistryAuthenticationError
+
+                    raise RegistryAuthenticationError(401)
                 logger.warning(
                     f"Credential '{config.credential_name}' referenced by tracker {config.name} not found, using anonymous access"
                 )
@@ -88,6 +92,7 @@ class ReleaseSchedulerTrackerFactory:
                 image=config.image or "",
                 registry=config.registry,
                 token=_container_registry_auth_token(credential) if credential else token,
+                credential_name=config.credential_name,
                 published_at_mode=config.published_at_mode,
                 allow_registry_redirects=allow_registry_redirects,
                 filter=legacy_filter,

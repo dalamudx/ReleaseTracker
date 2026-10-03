@@ -14,7 +14,7 @@ from urllib.parse import urljoin
 import httpx
 
 from ..models import Release
-from ..services.registry_errors import RegistryTagListError
+from ..services.registry_errors import RegistryTagListError, RegistryAuthenticationError
 from ..services.secure_urls import require_https_url, same_origin_https
 from .base import BaseTracker
 
@@ -54,6 +54,7 @@ _registry_cooldowns: dict[str, float] = {}
 # Config-blob bodies are typically small; cap to defend against malicious /
 # mis-configured registries that could send very large JSON.
 _MAX_CONFIG_BLOB_BYTES = 256 * 1024  # 256 KiB
+_CONFIG_BLOB_TIMEOUT_SECONDS = 5.0
 _REGISTRY_MAX_REDIRECTS = 5
 _REGISTRY_MAX_TAG_PAGES = 100
 
@@ -104,6 +105,7 @@ class DockerTracker(BaseTracker):
         token: str | None = None,
         published_at_mode: PublishedAtMode = "auto",
         allow_registry_redirects: bool = False,
+        credential_name: str | None = None,
         **kwargs,
     ):
         super().__init__(name, **kwargs)
@@ -118,6 +120,8 @@ class DockerTracker(BaseTracker):
         #   "username:password" → Basic Auth
         #   "ghp_xxxx" / raw Bearer Token
         self.token = token
+        self._credentials_configured = bool(credential_name or token)
+        self._config_blob_timed_out = False
         self.published_at_mode: PublishedAtMode = published_at_mode
         self.allow_registry_redirects = bool(allow_registry_redirects)
         self._alias_last_observed: dict[str, datetime] | None = None
@@ -401,11 +405,18 @@ class DockerTracker(BaseTracker):
                 origin_url=realm,
                 allow_cross_origin_without_credentials=False,
             )
+            self._raise_authentication_error(resp)
             resp.raise_for_status()
             return resp.json().get("token") or resp.json().get("access_token")
+        except RegistryAuthenticationError:
+            raise
         except Exception as e:
             logger.warning(f"DockerTracker: Fetch Bearer token failed: {e}")
             return None
+
+    def _raise_authentication_error(self, response: httpx.Response) -> None:
+        if self._credentials_configured and response.status_code in {401, 403}:
+            raise RegistryAuthenticationError(response.status_code)
 
     def _get_auth_header(self, bearer_token: str | None) -> dict:
         """Build authentication headers for actual registry requests"""
@@ -441,6 +452,7 @@ class DockerTracker(BaseTracker):
             except httpx.HTTPStatusError as exc:
                 # A tag-list 404 includes OCI NAME_UNKNOWN and registries/proxies
                 # which return no JSON body. Never expose their raw response.
+                self._raise_authentication_error(exc.response)
                 if exc.response.status_code in RegistryTagListError.DETAILS:
                     raise RegistryTagListError(exc.response.status_code) from exc
                 raise
@@ -481,10 +493,12 @@ class DockerTracker(BaseTracker):
             client, method, url, headers=headers, timeout=self.timeout
         )
         if response.status_code != 401:
+            self._raise_authentication_error(response)
             return response, bearer_token
 
         refreshed_token = await self._get_bearer_token(client, scope)
         if refreshed_token is None:
+            self._raise_authentication_error(response)
             return response, bearer_token
 
         retry_headers = {
@@ -494,6 +508,7 @@ class DockerTracker(BaseTracker):
         retry_response = await self._registry_request(
             client, method, url, headers=retry_headers, timeout=self.timeout
         )
+        self._raise_authentication_error(retry_response)
         return retry_response, refreshed_token
 
     async def verify_running_manifest(self, pinned: str, actual: str) -> str:
@@ -588,10 +603,30 @@ class DockerTracker(BaseTracker):
         tag: str,
         bearer_token: str | None,
         scope: str,
+        *,
+        manifest_bodies: dict[str, httpx.Response] | None = None,
     ) -> tuple[str | None, str | None, str | None, str | None]:
         manifest_url = f"{self._registry_url()}/v2/{self.image}/manifests/{tag}"
         current_token = bearer_token
         last_error: str | None = None
+        # Reuse only a successful GET that resolves its own digest. Metadata is
+        # optional: missing headers, transport failures or a cooling-down GET
+        # fall back to the established HEAD resolver. Auth rejection still raises.
+        if manifest_bodies is not None:
+            try:
+                response, current_token = await self._request_manifest(
+                    client, "GET", manifest_url, current_token, scope
+                )
+            except (httpx.TimeoutException, httpx.RequestError):
+                pass
+            else:
+                if response.status_code == 429:
+                    _mark_registry_rate_limited(self.registry)
+                if 200 <= response.status_code < 300:
+                    digest = response.headers.get("Docker-Content-Digest")
+                    if digest:
+                        manifest_bodies[tag] = response
+                        return digest, response.headers.get("Content-Type"), None, current_token
 
         for attempt in range(3):
             try:
@@ -613,7 +648,12 @@ class DockerTracker(BaseTracker):
                     if head_status == 429:
                         _mark_registry_rate_limited(self.registry)
                 elif 400 <= head_status < 500:
-                    return None, None, f"manifest_head_http_{head_status}", current_token
+                    return (
+                        None,
+                        None,
+                        f"manifest_head_http_{head_status}",
+                        current_token,
+                    )
                 else:
                     digest = head_resp.headers.get("Docker-Content-Digest")
                     media_type = head_resp.headers.get("Content-Type")
@@ -638,11 +678,18 @@ class DockerTracker(BaseTracker):
                         if get_status == 429:
                             _mark_registry_rate_limited(self.registry)
                     elif 400 <= get_status < 500:
-                        return None, None, f"manifest_get_http_{get_status}", current_token
+                        return (
+                            None,
+                            None,
+                            f"manifest_get_http_{get_status}",
+                            current_token,
+                        )
                     else:
                         digest = get_resp.headers.get("Docker-Content-Digest")
                         media_type = get_resp.headers.get("Content-Type")
                         if digest:
+                            if manifest_bodies is not None:
+                                manifest_bodies[tag] = get_resp
                             return digest, media_type, None, current_token
                         return None, media_type, "manifest_digest_header_missing", current_token
             except httpx.TimeoutException:
@@ -664,6 +711,8 @@ class DockerTracker(BaseTracker):
         tag: str,
         bearer_token: str | None,
         scope: str,
+        *,
+        manifest_response: httpx.Response | None = None,
     ) -> tuple[datetime | None, str | None]:
         """Fetch the image's build time from the OCI config blob.
 
@@ -672,7 +721,7 @@ class DockerTracker(BaseTracker):
         implausible timestamp, etc.) so the caller can fall back gracefully.
 
         The extra HTTP cost is:
-          * one GET manifest (pulls the body we already HEAD'd for digest);
+          * one GET manifest unless digest resolution already supplied its body;
           * if it's a multi-arch index, one more GET for a platform manifest;
           * one GET config blob.
 
@@ -684,18 +733,21 @@ class DockerTracker(BaseTracker):
         current_token = bearer_token
 
         # Step 1: GET the manifest body to find the config digest.
-        try:
-            response, current_token = await self._request_manifest(
-                client, "GET", manifest_url, current_token, scope
-            )
-        except (httpx.TimeoutException, httpx.RequestError) as exc:
-            logger.debug(
-                "DockerTracker: config blob fetch transport error on %s:%s: %s",
-                self.image,
-                tag,
-                exc,
-            )
-            return None, current_token
+        if manifest_response is not None:
+            response = manifest_response
+        else:
+            try:
+                response, current_token = await self._request_manifest(
+                    client, "GET", manifest_url, current_token, scope
+                )
+            except (httpx.TimeoutException, httpx.RequestError) as exc:
+                logger.debug(
+                    "DockerTracker: config blob fetch transport error on %s:%s: %s",
+                    self.image,
+                    tag,
+                    exc,
+                )
+                return None, current_token
 
         if response.status_code == 429:
             _mark_registry_rate_limited(self.registry)
@@ -744,16 +796,24 @@ class DockerTracker(BaseTracker):
         # Step 3: fetch the config blob and read `created`.
         blob_url = f"{self._registry_url()}/v2/{self.image}/blobs/{config_digest}"
         try:
-            blob_resp = await self._registry_config_blob_request(
-                client,
-                "GET",
-                blob_url,
-                headers=self._get_auth_header(current_token),
-                timeout=self.timeout,
-            )
-        except (ValueError, httpx.TimeoutException, httpx.RequestError):
+            budget = min(float(self.timeout), _CONFIG_BLOB_TIMEOUT_SECONDS)
+            # Bound the entire redirect chain, not only individual read waits.
+            async with asyncio.timeout(budget):
+                blob_resp = await self._registry_config_blob_request(
+                    client,
+                    "GET",
+                    blob_url,
+                    headers=self._get_auth_header(current_token),
+                    timeout=budget,
+                )
+        except (TimeoutError, httpx.TimeoutException):
+            # One slow storage endpoint is enough: skip remaining blobs this run.
+            self._config_blob_timed_out = True
+            return None, current_token
+        except (ValueError, httpx.RequestError):
             return None, current_token
 
+        self._raise_authentication_error(blob_resp)
         if blob_resp.status_code == 429:
             _mark_registry_rate_limited(self.registry)
             return None, current_token
@@ -843,6 +903,7 @@ class DockerTracker(BaseTracker):
             is skipped.
         """
         scope = f"repository:{self.image}:pull"
+        self._config_blob_timed_out = False
 
         logger.info(
             f"DockerTracker: Fetching tags from {self.registry}/{self.image} (limit={limit})"
@@ -924,12 +985,26 @@ class DockerTracker(BaseTracker):
                 processed_tags.add(candidate_tag)
                 selected_releases.append(candidate)
 
+                known_digest = self._alias_digest_by_name.get(candidate.tag_name)
+                want_body = (
+                    allow_config_blob
+                    and not self._config_blob_timed_out
+                    and not _is_registry_cooling_down(self.registry)
+                    and not artifact_metadata_by_digest.get(known_digest)
+                    and known_digest not in metadata_attempted_digests
+                )
+                # Bounded to this candidate and this round; never cache a tag
+                # response across runs or combine a GET body with a later HEAD.
+                manifest_bodies: dict[str, httpx.Response] = {}
+                resolve_options = {"manifest_bodies": manifest_bodies} if want_body else {}
                 digest, _, error_reason, bearer_token = await self._resolve_manifest_digest(
                     client,
                     candidate.tag_name,
                     bearer_token,
                     scope,
+                    **resolve_options,
                 )
+                manifest_response = manifest_bodies.pop(candidate.tag_name, None)
                 if digest:
                     candidate.commit_sha = digest
                     normalized_digest = digest.lower()
@@ -954,6 +1029,7 @@ class DockerTracker(BaseTracker):
                     elif (
                         normalized_digest not in metadata_attempted_digests
                         and allow_config_blob
+                        and not self._config_blob_timed_out
                         and not _is_registry_cooling_down(self.registry)
                     ):
                         # OCI config metadata is immutable for a manifest digest. Fetch it
@@ -965,6 +1041,11 @@ class DockerTracker(BaseTracker):
                             candidate.tag_name,
                             bearer_token,
                             scope,
+                            **(
+                                {"manifest_response": manifest_response}
+                                if manifest_response is not None
+                                else {}
+                            ),
                         )
                         if real_created is not None:
                             artifact_created_by_digest[normalized_digest] = real_created

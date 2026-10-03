@@ -494,6 +494,17 @@ async def update_aggregate_tracker(
 
 async def delete_aggregate_tracker(storage: "SQLiteStorage", name: str) -> None:
     db = await storage._get_connection()
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        await _delete_aggregate_tracker(storage, name)
+        await db.commit()
+    except BaseException:
+        await db.rollback()
+        raise
+
+
+async def _delete_aggregate_tracker(storage: "SQLiteStorage", name: str) -> None:
+    db = await storage._get_connection()
     db.row_factory = aiosqlite.Row
     cursor = await db.execute("SELECT id FROM aggregate_trackers WHERE name = ?", (name,))
     row = await cursor.fetchone()
@@ -507,6 +518,53 @@ async def delete_aggregate_tracker(storage: "SQLiteStorage", name: str) -> None:
     )
     source_rows = await source_cursor.fetchall()
     source_ids = [source_row["id"] for source_row in source_rows]
+
+    # Foreign keys are not enforced on legacy connections; explicitly remove
+    # all history and projection children before deleting source/aggregate rows.
+    source_query = "SELECT id FROM aggregate_tracker_sources WHERE aggregate_tracker_id = ?"
+    history_query = (
+        "SELECT id FROM source_release_history WHERE tracker_source_id IN (" + source_query + ")"
+    )
+    tracker_history_query = "SELECT id FROM tracker_release_history WHERE aggregate_tracker_id = ?"
+    for table, column, query in (
+        ("tracker_release_history_sources", "tracker_release_history_id", tracker_history_query),
+        (
+            "tracker_current_releases",
+            "aggregate_tracker_id",
+            "SELECT id FROM aggregate_trackers WHERE id = ?",
+        ),
+        (
+            "tracker_release_history_tombstones",
+            "aggregate_tracker_id",
+            "SELECT id FROM aggregate_trackers WHERE id = ?",
+        ),
+        (
+            "tracker_release_history",
+            "aggregate_tracker_id",
+            "SELECT id FROM aggregate_trackers WHERE id = ?",
+        ),
+        ("source_release_run_observations", "source_release_history_id", history_query),
+        (
+            "source_release_alias_run_observations",
+            "source_release_alias_id",
+            "SELECT id FROM source_release_aliases WHERE tracker_source_id IN ("
+            + source_query
+            + ")",
+        ),
+        ("source_release_aliases", "tracker_source_id", source_query),
+        ("source_release_history", "tracker_source_id", source_query),
+        ("source_refresh_requests", "tracker_source_id", source_query),
+        (
+            "webhook_deliveries",
+            "webhook_id",
+            "SELECT id FROM repository_webhooks WHERE tracker_source_id IN (" + source_query + ")",
+        ),
+        ("repository_webhooks", "tracker_source_id", source_query),
+        ("source_fetch_runs", "tracker_source_id", source_query),
+    ):
+        await db.execute(
+            f"DELETE FROM {table} WHERE {column} IN ({query})", (aggregate_tracker_id,)
+        )
 
     canonical_cursor = await db.execute(
         "SELECT id FROM canonical_releases WHERE aggregate_tracker_id = ?",

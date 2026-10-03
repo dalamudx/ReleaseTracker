@@ -75,7 +75,9 @@ def _sync_directory(path):
         os.close(fd)
 
 
-def _create_archive(db_path, keys, destination, *, reason="manual_or_scheduled"):
+def _create_archive(
+    db_path, keys, destination, *, reason="manual_or_scheduled", prune_history=True
+):
     destination = Path(destination)
     destination.mkdir(mode=0o700, parents=True, exist_ok=True)
     name = f"releasetracker-{time.time_ns()}-{uuid.uuid4().hex[:8]}.zip"
@@ -95,6 +97,12 @@ def _create_archive(db_path, keys, destination, *, reason="manual_or_scheduled")
                 source.backup(target, pages=256, progress=progress)
                 if target.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                     raise ValueError("Database integrity check failed")
+                # Repair only known historical CASCADE/SET NULL orphans in the copy.
+                # Never modify the live database or relax strict restore validation.
+                from .database_orphans import prune_orphans
+
+                pruned = prune_orphans(target) if prune_history else {}
+                target.commit()
                 migrations = _versions(target)
         database.chmod(0o600)
         if database.stat().st_size > MAX_DATABASE_BYTES:
@@ -107,6 +115,7 @@ def _create_archive(db_path, keys, destination, *, reason="manual_or_scheduled")
             "created_at": time.time(),
             "migrations": migrations,
             "reason": reason,
+            "pruned_orphans": pruned,
             "sha256": {name: _digest(root / name) for name in MEMBERS - {"manifest.json"}},
         }
         (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")

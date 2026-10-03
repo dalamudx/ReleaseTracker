@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
 import type { ExecutorListItem, SnapshotListItem } from "@/api/types"
-import { useRollbackExecutor } from "@/hooks/queries"
+import { useExecutorRollbackPreview, useRollbackExecutor } from "@/hooks/queries"
 import {
     AlertDialog,
     AlertDialogAction,
@@ -15,8 +15,10 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { cn } from "@/lib/utils"
 
 
 export interface ExecutorRollbackDialogProps {
@@ -44,6 +46,7 @@ export function ExecutorRollbackDialog({
 }: ExecutorRollbackDialogProps) {
     const { t } = useTranslation()
     const rollbackMutation = useRollbackExecutor()
+    const preview = useExecutorRollbackPreview(open ? executor?.id ?? null : null, snapshot?.id ?? null)
     const [confirmText, setConfirmText] = useState("")
     const [submitting, setSubmitting] = useState(false)
 
@@ -61,10 +64,14 @@ export function ExecutorRollbackDialog({
 
     const confirmed = confirmText.trim() === executor.name
 
-    const currentImage = executor.status?.last_version ?? null
+    const previewValid = !preview.isFetching && !preview.isError &&
+        preview.data?.snapshot_id === snapshot.id && preview.data.snapshot_valid === true &&
+        preview.data.integrity_status === "verified" && preview.data.mutation_performed === false &&
+        !!preview.data.configuration_diff?.review_fingerprint && !preview.data.configuration_diff.truncated
+    const diff = preview.data?.configuration_diff
 
     const handleConfirm = async () => {
-        if (!executor.id || !confirmed || submitting) {
+        if (!executor.id || !confirmed || submitting || !previewValid) {
             return
         }
         setSubmitting(true)
@@ -73,6 +80,7 @@ export function ExecutorRollbackDialog({
             const result = await rollbackMutation.mutateAsync({
                 executorId: executor.id,
                 snapshotId: snapshot.id,
+                reviewFingerprint: diff?.review_fingerprint ?? undefined,
             })
             if ("task_id" in result) {
                 toast.info(t("tasks.submitted", { name: executor.name, operation: t("executors.snapshots.actions.rollback") }), { id: toastId })
@@ -112,6 +120,8 @@ export function ExecutorRollbackDialog({
                     description: apiDetail,
                 })
             } else if (status === 409) {
+                setConfirmText("")
+                void preview.refetch()
                 toast.error(t("executors.rollback.toasts.conflict"), {
                     id: toastId,
                     description: apiDetail,
@@ -132,7 +142,7 @@ export function ExecutorRollbackDialog({
 
     return (
         <AlertDialog open={open} onOpenChange={handleOpenChange}>
-            <AlertDialogContent>
+            <AlertDialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl">
                 <AlertDialogHeader>
                     <AlertDialogTitle>{t("executors.rollback.dialog.title")}</AlertDialogTitle>
                     <AlertDialogDescription>
@@ -155,15 +165,47 @@ export function ExecutorRollbackDialog({
                         </div>
                     </div>
 
-                    <div className="rounded-lg border border-border/60 bg-muted/10 p-3">
-                        <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                            {t("executors.rollback.dialog.currentLabel")}
-                        </div>
-                        <span className="font-mono break-all">
-                            {currentImage ?? "-"}
-                        </span>
-                    </div>
+                    {diff && (
+                        <section aria-label={t("executors.rollback.dialog.diffTitle")} className="flex min-w-0 flex-col gap-2">
+                            <h3 className="text-sm font-medium">{t("executors.rollback.dialog.diffTitle")}</h3>
+                            <p className="text-muted-foreground">{t("executors.rollback.dialog.diffLegend")}</p>
+                            <p>{t(`executors.rollback.dialog.scopes.${diff.scope}`)}</p>
+                            {diff.current_missing && <p className="text-warning">{t("executors.rollback.dialog.targetMissing")}</p>}
+                            {diff.lines.length ? (
+                                <ol className="max-h-80 overflow-y-auto rounded-md border border-border text-xs font-mono" data-testid="recovery-configuration-diff">
+                                    {diff.lines.map((line, index) => (
+                                        <li key={`${line.path}:${line.operation}:${index}`} className={cn("flex gap-2 px-3 py-1.5", line.operation === "-" ? "bg-destructive/10 text-destructive" : "bg-success/10 text-success")}>
+                                            <span className="shrink-0" aria-label={t(line.operation === "-" ? "executors.rollback.dialog.removed" : "executors.rollback.dialog.added")}>{line.operation}</span>
+                                            <span className="min-w-0 whitespace-pre-wrap break-all">{line.path}: {line.redacted ? t("executors.rollback.dialog.hiddenValue") : line.value}</span>
+                                        </li>
+                                    ))}
+                                </ol>
+                            ) : <p>{t("executors.rollback.dialog.noChanges")}</p>}
+                            {diff.lines.some(line => line.redacted) && <p className="text-muted-foreground">{t("executors.rollback.dialog.secretNote")}</p>}
+                            {diff.truncated && <p role="alert" className="text-destructive">{t("executors.rollback.dialog.diffTooLarge")}</p>}
+                        </section>
+                    )}
 
+                    <div className="space-y-1.5" aria-live="polite">
+                        <p className="text-muted-foreground">{t("executors.rollback.dialog.configurationPolicy")}</p>
+                        {preview.isFetching ? (
+                            <p>{t("executors.rollback.dialog.checking")}</p>
+                        ) : preview.isError ? (
+                            <p role="alert" className="text-destructive">{getApiErrorDetail(preview.error) ?? t("executors.rollback.dialog.checkFailed")}</p>
+                        ) : previewValid ? (
+                            <p>{t("executors.rollback.dialog.checkPassed")}</p>
+                        ) : (
+                            <p role="alert" className="break-words text-destructive">
+                                {t("executors.rollback.dialog.checkInvalid")}
+                                {preview.data?.validation_error && ` ${preview.data.validation_error}`}
+                            </p>
+                        )}
+                    </div>
+                    <div>
+                        <Button size="sm" variant="outline" disabled={preview.isFetching || submitting} onClick={() => void preview.refetch()}>
+                            {t("executors.rollback.dialog.recheck")}
+                        </Button>
+                    </div>
                     <div className="flex flex-col gap-1.5">
                         <Label htmlFor="executor-rollback-confirm">
                             {t("executors.rollback.dialog.confirmPrompt")}
@@ -183,8 +225,8 @@ export function ExecutorRollbackDialog({
                         {t("executors.rollback.dialog.cancel")}
                     </AlertDialogCancel>
                     <AlertDialogAction
-                        onClick={handleConfirm}
-                        disabled={!confirmed || submitting}
+                        onClick={event => { event.preventDefault(); void handleConfirm() }}
+                        disabled={!confirmed || submitting || !previewValid}
                         data-testid="executor-rollback-confirm"
                     >
                         {submitting ? (

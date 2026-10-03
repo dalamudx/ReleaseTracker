@@ -2788,6 +2788,10 @@ async def test_docker_adapter_recovery_uses_snapshot_for_multi_binding_ports():
     recovery_client = FakeDockerRecreateClient([])
     recovery_adapter = DockerRuntimeAdapter(runtime, client=recovery_client)
 
+    # Persisted snapshots round-trip through JSON; SDK host-IP bindings must stay tuples.
+    import json
+
+    snapshot = json.loads(json.dumps(snapshot))
     result = await recovery_adapter.recover_from_snapshot({"container_name": "api"}, snapshot)
 
     assert result.updated is True

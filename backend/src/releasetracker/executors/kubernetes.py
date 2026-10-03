@@ -286,6 +286,18 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
         if markers:
             template_patch["metadata"] = {"annotations": markers}
         patch_body = {"spec": {"template": template_patch}}
+        from ..services.deployment_diff import verify_update_state
+
+        live = await verify_update_state(self, target_ref)
+        if live is not None:
+            metadata = live["workload"].get("metadata") or {}
+            resource_version = metadata.get("resourceVersion") or metadata.get("resource_version")
+            if not resource_version or not metadata.get("uid"):
+                raise ValueError("deployment_concurrency_identity_unavailable")
+            patch_body["metadata"] = {
+                "resourceVersion": str(resource_version),
+                "uid": metadata["uid"],
+            }
 
         apps_api = self._get_apps_api()
         if kind == "Deployment":
@@ -483,6 +495,9 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
         ]
         if isinstance(repo_url, str) and repo_url.strip():
             command.extend(["--repo", repo_url.strip()])
+        from ..services.deployment_diff import verify_update_state
+
+        await verify_update_state(self, target_ref)
         try:
             self._run_helm_command(command)
             self._apply_helm_managed_markers(target_ref)

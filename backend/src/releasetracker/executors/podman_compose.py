@@ -91,6 +91,9 @@ async def update_compose_services(
     for image in sorted(set(update_plan.values())):
         client.images.pull(image)
 
+    from ..services.deployment_diff import verify_update_state
+
+    await verify_update_state(adapter, target_ref)
     new_container_ids: list[str] = []
     backup_names_by_spec_key: dict[str, str] = {}
     removal_order = list(reversed(specs))

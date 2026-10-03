@@ -3,6 +3,7 @@ from __future__ import annotations
 from .services.task_effects import mark_deployment_mutation
 
 from .config import ExecutorConfig
+from .executors.adapter_lifetime import runtime_adapter_scope
 from .executor_scheduler_run_lifecycle import ExecutorRunOutcome
 from .executors import KubernetesRuntimeAdapter
 from .executors.base import RuntimeMutationError
@@ -12,6 +13,7 @@ from .services.runtime_credentials import materialize_runtime_connection_credent
 class ExecutorSchedulerHelmRuntime:
     """Execute Helm release updates through Kubernetes runtime connections."""
 
+    @runtime_adapter_scope
     async def _execute_helm_release_executor(
         self,
         executor_config: ExecutorConfig,

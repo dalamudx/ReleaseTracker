@@ -10,6 +10,12 @@ import asyncio
 import hashlib
 import json
 
+from ..executors.adapter_lifetime import (
+    retained_native_read,
+    retain_runtime_adapter,
+    runtime_adapter_scope,
+)
+
 # Timed-out read-only SDK calls cannot be killed by asyncio. Keep at most one
 # outstanding read per adapter/operation instead of leaking a thread every tick.
 _READS = {}
@@ -20,14 +26,23 @@ async def _bounded_thread(adapter, operation, callback, *args):
     running = _READS.get(key)
     if running is not None and not running.done():
         raise TimeoutError("previous native read still outstanding")
-    task = asyncio.create_task(asyncio.to_thread(callback, *args))
+    reservation = retain_runtime_adapter(adapter)
+    reservation.__enter__()
+    try:
+        task = asyncio.create_task(retained_native_read(adapter, callback, *args))
+    except BaseException:
+        reservation.__exit__(None, None, None)
+        raise
     _READS[key] = task
 
     def finished(done):
-        if _READS.get(key) is done:
-            _READS.pop(key, None)
-        if not done.cancelled():
-            done.exception()  # Retrieve errors even when the caller timed out.
+        try:
+            if _READS.get(key) is done:
+                _READS.pop(key, None)
+            if not done.cancelled():
+                done.exception()  # Retrieve errors even when the caller timed out.
+        finally:
+            reservation.__exit__(None, None, None)
 
     task.add_done_callback(finished)
     return await asyncio.wait_for(asyncio.shield(task), timeout=20)
@@ -145,6 +160,7 @@ async def _portainer_containers(adapter, ref):
     return groups
 
 
+@runtime_adapter_scope
 async def _capture(storage, scheduler, executor):
     ref = executor.target_ref
     if ref.get("mode") == "ssh_compose":
@@ -223,6 +239,7 @@ async def capture_deployment_baseline(storage, scheduler, executor) -> dict:
         return {"error": "native identity capture unavailable"}
 
 
+@runtime_adapter_scope
 async def capture_deployment_target(storage, scheduler, executor) -> dict:
     """Call immediately after mutation, before yielding deployment ownership."""
     if executor.target_ref.get("mode") == "kubernetes_workload":
@@ -525,6 +542,7 @@ async def _probe_ssh(storage, executor, verification):
     )
 
 
+@runtime_adapter_scope
 async def _probe_deployment(storage, scheduler, executor, verification: dict) -> dict:
     """One read-only attempt; caller owns deadline, retry, durability and HTTP checks."""
     try:

@@ -4,6 +4,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+import time
 from typing import TYPE_CHECKING, Any, cast
 
 import aiosqlite
@@ -825,6 +826,16 @@ async def _update_executor_config(
 
 async def delete_executor_config(storage: "SQLiteStorage", executor_id: int) -> bool:
     db = await storage._get_connection()
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        return await _delete_executor_config(storage, executor_id)
+    except BaseException:
+        await db.rollback()
+        raise
+
+
+async def _delete_executor_config(storage: "SQLiteStorage", executor_id: int) -> bool:
+    db = await storage._get_connection()
     result = await db.execute(
         """
         DELETE FROM executors
@@ -845,7 +856,29 @@ async def delete_executor_config(storage: "SQLiteStorage", executor_id: int) -> 
         (executor_id, executor_id, executor_id, executor_id),
     )
     if result.rowcount == 1:
-        await db.execute("DELETE FROM ssh_compose_ownership WHERE executor_id=?", (executor_id,))
+        now_ts = time.time()
+        await db.execute(
+            """UPDATE tasks SET state='superseded', approval_pending=0, error_code='executor_deleted',
+               message='Executor was deleted', updated_at=?
+               WHERE kind IN ('deploy', 'recover')
+               AND json_extract(payload, '$.executor_id') = ?
+               AND state IN ('queued', 'retry_wait')""",
+            (now_ts, executor_id),
+        )
+        await db.execute(
+            "UPDATE deployment_plans SET state='superseded' WHERE executor_id=? AND state IN ('pending', 'approved')",
+            (executor_id,),
+        )
+        for table in (
+            "executor_snapshots",
+            "deployment_observations",
+            "executor_run_history",
+            "executor_status",
+            "executor_service_bindings",
+            "executor_desired_state",
+            "ssh_compose_ownership",
+        ):
+            await db.execute(f"DELETE FROM {table} WHERE executor_id=?", (executor_id,))
     await db.commit()
     return result.rowcount == 1
 
@@ -1496,6 +1529,33 @@ async def is_executor_snapshot_claimed(
         )
     ).fetchone()
     return row is not None
+
+
+async def reconcile_orphaned_executor_tasks(
+    storage: "SQLiteStorage", *, now: float | None = None
+) -> int:
+    """Supersede pending deploy/recover tasks for deleted executors."""
+    db = await storage._get_connection()
+    effective_now = time.time() if now is None else now
+    try:
+        cursor = await db.execute(
+            """UPDATE tasks SET state='superseded', approval_pending=0,
+               error_code='executor_deleted', message='Executor was deleted', updated_at=?
+               WHERE kind IN ('deploy', 'recover')
+               AND state IN ('queued', 'retry_wait')
+               AND json_extract(payload, '$.executor_id') NOT IN (SELECT id FROM executors)""",
+            (effective_now,),
+        )
+        reconciled = cursor.rowcount or 0
+        if reconciled:
+            await db.execute("""UPDATE deployment_plans SET state='superseded'
+                   WHERE executor_id NOT IN (SELECT id FROM executors)
+                   AND state IN ('pending', 'approved')""")
+        await db.commit()
+        return reconciled
+    except BaseException:
+        await db.rollback()
+        raise
 
 
 async def reconcile_stale_executor_snapshot_claims(

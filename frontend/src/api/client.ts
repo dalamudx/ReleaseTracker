@@ -40,6 +40,7 @@ import type {
     LockSnapshotResponse,
     RollbackRequest,
     RollbackResponse,
+    RollbackPreview,
     ReleaseHistoryItem,
     LatestCurrentReleaseSummary,
     TrackerCurrentView,
@@ -246,7 +247,7 @@ export const api = {
     getTasks: (params?: { before?: number; state?: string }) => apiClient.get<QueueTask[]>("/api/tasks", { params }).then(res => res.data),
     clearFinishedTasks: (readTasks?: Array<{ id: number; updated_at: number }>) => apiClient.post<{ cleared: number }>("/api/tasks/clear", readTasks === undefined ? undefined : { read_tasks: readTasks }).then(res => res.data),
     getTask: (id: number) => apiClient.get<QueueTask>(`/api/tasks/${id}`).then(res => res.data),
-    getDeploymentPlan: (id: number) => apiClient.get<import("./task-types").DeploymentPlan>(`/api/tasks/${id}/deployment-plan`).then(res => res.data),
+    getDeploymentPlan: (id: number, refresh = false) => apiClient.get<import("./task-types").DeploymentPlan>(`/api/tasks/${id}/deployment-plan`, refresh ? { params: { refresh: true } } : undefined).then(res => res.data),
     approveDeployment: (id: number, plan: { plan_id: number; fingerprint: string }) => apiClient.post<TaskReceipt>(`/api/tasks/${id}/approve`, { ...plan, plan_reviewed: true }).then(res => res.data),
     cancelTask: (id: number) => apiClient.post(`/api/tasks/${id}/cancel`).then(res => res.data),
     retryTask: (id: number) => apiClient.post<TaskReceipt>(`/api/tasks/${id}/retry`).then(res => res.data),
@@ -367,6 +368,8 @@ export const api = {
         apiClient.get<PaginatedResponse<ExecutorListItem>>('/api/executors', { params }).then(res => res.data),
     getExecutor: (id: number) => apiClient.get<ExecutorDetail>(`/api/executors/${id}`).then(res => res.data),
     getExecutorConfig: (id: number) => apiClient.get<ExecutorConfig>(`/api/executors/${id}/config`).then(res => res.data),
+    previewExecutorConfiguration: (configuration: Record<string, unknown>, executorId: number | null, signal?: AbortSignal) =>
+        apiClient.post<import("./types").ExecutorConfigurationPreview>("/api/executors/configuration-preview", { executor_id: executorId, configuration }, { signal }).then(res => res.data),
     getExecutorHistory: (id: number, params?: { skip?: number, limit?: number, status?: 'success' | 'failed' | 'skipped', search?: string }) =>
         apiClient.get<PaginatedResponse<ExecutorRunHistory>>(`/api/executors/${id}/history`, { params }).then(res => res.data),
     clearExecutorHistory: (id: number) => apiClient.delete<{ message: string, deleted: number }>(`/api/executors/${id}/history`).then(res => res.data),
@@ -391,6 +394,8 @@ export const api = {
         apiClient.post<LockSnapshotResponse>(`/api/executors/${executorId}/snapshots/${snapshotId}/lock`).then(res => res.data),
     unlockExecutorSnapshot: (executorId: number, snapshotId: number) =>
         apiClient.post<LockSnapshotResponse>(`/api/executors/${executorId}/snapshots/${snapshotId}/unlock`).then(res => res.data),
+    previewExecutorRollback: (id: number, snapshotId: number) =>
+        apiClient.post<RollbackPreview>(`/api/executors/${id}/rollback/preview`, { snapshot_id: snapshotId, include_diff: true }).then(res => res.data),
     rollbackExecutor: (id: number, payload?: RollbackRequest) =>
         apiClient.post<RollbackResponse | TaskReceipt>(`/api/executors/${id}/rollback`, payload ?? {}).then(res => res.data),
 }

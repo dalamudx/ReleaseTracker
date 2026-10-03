@@ -178,9 +178,11 @@ async def preflight(adapter, ref: dict, evidence: dict) -> None:
         raise ValueError("recovery engine identity changed")
     prefix = f"/api/endpoints/{ref['endpoint_id']}/docker"
     for name, expected in evidence["services"].items():
+        if any(segment in ("", ".", "..") for segment in expected["image"].split("/")):
+            raise ValueError(f"recovery image reference invalid for service {name}")
         image = await adapter._request_json(
             "GET",
-            f"{prefix}/images/{quote(expected['image'], safe='')}/json",
+            f"{prefix}/images/{quote(expected['image'], safe='/')}/json",
             not_found_message=f"recovery image is no longer available for service {name}",
         )
         if image.get("Id") != expected["image_id"]:
@@ -190,7 +192,22 @@ async def preflight(adapter, ref: dict, evidence: dict) -> None:
 async def probe(adapter, ref: dict, evidence: dict) -> tuple[bool, tuple]:
     if await engine_id(adapter, ref) != evidence["engine_id"]:
         raise ValueError("recovery engine identity changed after restore")
-    groups = await containers(adapter, ref)
+    try:
+        groups = await containers(adapter, ref)
+    except ValueError as exc:
+        path = getattr(exc, "resource_path", "")
+        prefix = f"/api/endpoints/{ref['endpoint_id']}/docker/containers/"
+        if (
+            getattr(exc, "status_code", None) == 404
+            and isinstance(path, str)
+            and path.startswith(prefix)
+            and path.endswith("/json")
+            and path != f"{prefix}json"
+        ):
+            # Compose can replace a listed container before its inspect completes.
+            # Only rollout polling retries this race; snapshot capture stays strict.
+            return False, ()
+        raise
     if set(groups) != set(evidence["services"]):
         return False, ()
     stable = []

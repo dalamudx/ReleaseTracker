@@ -45,6 +45,21 @@ RELEASETRACKER_DB_PATH=/restore/new-data/releases.db python -m releasetracker.cl
 
 The backup-list API exposes `restore_review_required`; there is no browser acknowledgement control yet. Start a fresh operation if an old target still needs execution after review, rather than replaying archived tasks. Enabling live foreign-key enforcement remains a staged data-migration task; this change does not turn on cascading deletes. If a previously successful backup loses all archives, daily verification records `backup_missing` and emits a deduplicated alert. Instances that have never created a backup do not alert for this condition.
 
+## Prune historical orphan rows {#prune-orphans}
+
+Backup creation repairs known historical rows left by deleted trackers/executors in the **snapshot copy** only. Per-table counts appear in the manifest's `pruned_orphans`; the live database is unchanged. Other foreign-key corruption and task/readiness relationships still fail strict validation. Tasks are never deleted to bypass validation.
+
+To repair the live database, preview first and then stop all instances:
+
+```bash
+python -m releasetracker.cli prune-orphans --dry-run
+# Confirm the application is stopped; retain a stopped-directory backup
+python -m releasetracker.cli prune-orphans --confirm-stopped
+python -m releasetracker.cli audit-database
+```
+
+Before changing rows, the command saves an **unmodified** database/key safety copy (`reason: pre_orphan_cleanup`). It may contain orphans and is not a validated recovery archive. Only known history-table CASCADE/SET NULL rules apply; unrelated relational damage rolls back the repair. Never run during application operation or key rotation.
+
 ## Operational metrics {#metrics}
 
 Set a random `RELEASETRACKER_METRICS_TOKEN` of at least 32 characters to enable `GET /metrics`. Missing/short configuration returns 404. Scrapes require the dedicated `Authorization: Bearer ...` token; ordinary login credentials do not substitute. This token provides only read access to metrics, not administration. Prefer internal-cluster access and a 60-second scrape interval rather than public exposure.

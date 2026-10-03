@@ -363,6 +363,21 @@ async def test_health_policy_snapshot_not_changed_by_system_defaults(storage, mo
     )
 
 
+async def test_deploy_tasks_identity_preserves_container_id_replacement(storage, monkeypatch):
+    executor, scheduler, _, _, _, _, _ = await setup(storage, monkeypatch)
+    with_container_id = executor.model_copy(
+        update={
+            "target_ref": {**executor.target_ref, "container_name": "app", "container_id": "c12345"}
+        }
+    )
+    without_container_id = executor.model_copy(
+        update={"target_ref": {**executor.target_ref, "container_name": "app"}}
+    )
+    assert await scheduler.deploy_tasks.identity(
+        with_container_id
+    ) == await scheduler.deploy_tasks.identity(without_container_id)
+
+
 async def test_durable_queue_path_defers_success_until_native_ready(storage, monkeypatch):
     from test_executor_scheduler import FakeAdapter
 

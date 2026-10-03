@@ -132,7 +132,7 @@ for (const width of [1280, 390]) {
             id: 77,
             task_id: 42,
             fingerprint: "sample-plan-fingerprint",
-            state: "awaiting_approval",
+            state: "pending",
             reason: "marker_missing",
             expires_at: 1789706800,
             summary: {
@@ -187,8 +187,8 @@ for (const width of [1280, 390]) {
             { id: 44, kind: "deploy", state: "queued", approval_pending: true, target_label: "expired-target", attempts: 0, max_retries: 3, due_at: 1789705000, created_at: 1789704900, updated_at: 1789705000, error_code: null, message: null, result: {}, target: {}, attempt_history: [], triggers: [] },
         ]
         const plans = {
-            43: { id: 78, task_id: 43, fingerprint: "conflict-fingerprint", state: "awaiting_approval", reason: "marker_missing", expires_at: 1789706800, summary: { target_label: "conflict-target", identity_key: "runtime/conflict", recovery_scope: "container_config" } },
-            44: { id: 79, task_id: 44, fingerprint: "expired-fingerprint", state: "awaiting_approval", reason: "marker_missing", expires_at: 1789706800, summary: { target_label: "expired-target", identity_key: "runtime/expired", recovery_scope: "container_config" } },
+            43: { id: 78, task_id: 43, fingerprint: "conflict-fingerprint", state: "pending", reason: "marker_missing", expires_at: 1789706800, summary: { target_label: "conflict-target", identity_key: "runtime/conflict", recovery_scope: "container_config" } },
+            44: { id: 79, task_id: 44, fingerprint: "expired-fingerprint", state: "pending", reason: "marker_missing", expires_at: 1789706800, summary: { target_label: "expired-target", identity_key: "runtime/expired", recovery_scope: "container_config" } },
         }
         const errors: string[] = []
         page.on("pageerror", error => errors.push(error.message))

@@ -4,6 +4,8 @@ from typing import Annotated, Literal
 from datetime import datetime
 import time
 import json
+import logging
+
 from pydantic import BaseModel, Field
 from ..models import User
 from ..dependencies import get_executor_scheduler
@@ -13,6 +15,8 @@ from fastapi.responses import JSONResponse
 
 from ..dependencies import get_current_admin_user, get_storage
 from ..storage.sqlite import SQLiteStorage
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/tasks", tags=["tasks"], dependencies=[Depends(get_current_admin_user)]
@@ -104,12 +108,52 @@ class DeploymentApproval(BaseModel):
 
 
 @router.get("/{task_id}/deployment-plan")
-async def deployment_plan(task_id: int, storage: Annotated[SQLiteStorage, Depends(get_storage)]):
+async def deployment_plan(
+    task_id: int,
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    scheduler=Depends(get_executor_scheduler),
+    refresh: bool = False,
+):
     from ..storage.sqlite_deployment_admission import DeploymentAdmissionStore
 
-    plan = await DeploymentAdmissionStore(storage).latest(task_id)
+    admission_store = DeploymentAdmissionStore(storage)
+    plan = await admission_store.latest(task_id)
     if plan is None:
         raise HTTPException(404, "Deployment plan not found")
+
+    task = await storage.tasks.get(task_id)
+    if task and task.get("approval_pending") and task.get("kind") == "deploy":
+        payload = task.get("payload") or {}
+        executor_id = payload.get("executor_id")
+        if executor_id is not None:
+            executor = await storage.get_executor_config(executor_id)
+            if executor is None:
+                async with storage.tasks.transaction() as db:
+                    now_ts = time.time()
+                    await db.execute(
+                        """UPDATE tasks SET state='superseded', approval_pending=0,
+                           error_code='executor_deleted', message='Executor was deleted',
+                           updated_at=? WHERE id=? AND state IN ('queued', 'retry_wait')""",
+                        (now_ts, task_id),
+                    )
+                    await db.execute(
+                        "UPDATE deployment_plans SET state='superseded' WHERE task_id=?",
+                        (task_id,),
+                    )
+                raise HTTPException(410, "Executor was deleted; task has been superseded")
+
+            if refresh or (plan["state"] == "pending" and plan.get("expires_at", 0) <= time.time()):
+                from ..services.deploy_tasks import DeployTasks
+
+                deploy_tasks = DeployTasks(storage, scheduler)
+                try:
+                    evidence = await deploy_tasks._collect_admission_evidence(executor, task)
+                    refreshed_plan = await deploy_tasks.admission.stage(task, evidence)
+                    return refreshed_plan
+                except Exception:
+                    # Do not return stale configuration as a successful refresh.
+                    raise HTTPException(409, "deployment_evidence_unavailable") from None
+
     return plan
 
 
@@ -119,15 +163,99 @@ async def approve_deployment(
     body: DeploymentApproval,
     storage: Annotated[SQLiteStorage, Depends(get_storage)],
     actor: Annotated[User, Depends(get_current_admin_user)],
+    scheduler=Depends(get_executor_scheduler),
 ):
     from ..storage.sqlite_deployment_admission import AdmissionConflict, DeploymentAdmissionStore
 
+    task = await storage.tasks.get(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+
+    payload = task.get("payload") or {}
+    executor_id = payload.get("executor_id")
+    executor = await storage.get_executor_config(executor_id) if executor_id is not None else None
+
+    if executor_id is not None and executor is None:
+        async with storage.tasks.transaction() as db:
+            now_ts = time.time()
+            await db.execute(
+                """UPDATE tasks SET state='superseded', approval_pending=0,
+                   error_code='executor_deleted', message='Executor was deleted',
+                   updated_at=? WHERE id=? AND state IN ('queued', 'retry_wait')""",
+                (now_ts, task_id),
+            )
+            await db.execute(
+                "UPDATE deployment_plans SET state='superseded' WHERE task_id=?",
+                (task_id,),
+            )
+        raise HTTPException(410, "Executor was deleted; task has been superseded")
+
+    admission_store = DeploymentAdmissionStore(storage)
+    latest_plan = await admission_store.latest(task_id)
+    # New live-configuration plans must be re-inspected even while their TTL is valid.
+    if (
+        executor is not None
+        and task.get("approval_pending")
+        and latest_plan
+        and latest_plan["summary"].get("configuration_diff") is not None
+    ):
+        from ..services.deploy_tasks import DeployTasks
+
+        deploy_tasks = DeployTasks(storage, scheduler)
+        if latest_plan["id"] != body.plan_id or latest_plan["fingerprint"] != body.fingerprint:
+            raise HTTPException(409, "deployment_plan_changed")
+        try:
+            evidence = await deploy_tasks._collect_admission_evidence(executor, task)
+            refreshed = await deploy_tasks.admission.stage(task, evidence)
+        except Exception:
+            raise HTTPException(409, "deployment_evidence_unavailable") from None
+        if refreshed["fingerprint"] != body.fingerprint or refreshed["state"] not in {
+            "pending",
+            "approved",
+        }:
+            raise HTTPException(409, "deployment_plan_changed")
+        body = body.model_copy(update={"plan_id": refreshed["id"]})
     try:
-        plan = await DeploymentAdmissionStore(storage).approve(
+        plan = await admission_store.approve(
             task_id, body.plan_id, body.fingerprint, actor.username
         )
     except AdmissionConflict as exc:
+        if str(exc) == "approval_stale_or_blocked" and executor is not None:
+            latest_plan = await admission_store.latest(task_id)
+            if (
+                latest_plan
+                and latest_plan["state"] == "pending"
+                and latest_plan.get("expires_at", 0) <= time.time()
+            ):
+                from ..services.deploy_tasks import DeployTasks
+
+                deploy_tasks = DeployTasks(storage, scheduler)
+                try:
+                    evidence = await deploy_tasks._collect_admission_evidence(executor, task)
+                    refreshed = await deploy_tasks.admission.stage(task, evidence)
+                    if (
+                        refreshed["fingerprint"] == body.fingerprint
+                        and refreshed["state"] == "pending"
+                    ):
+                        plan = await admission_store.approve(
+                            task_id, refreshed["id"], refreshed["fingerprint"], actor.username
+                        )
+                        return JSONResponse(
+                            status_code=202,
+                            content={"task_id": task_id, "plan_id": plan["id"], "status": "queued"},
+                        )
+                    else:
+                        raise HTTPException(409, "deployment_plan_changed")
+                except HTTPException:
+                    raise
+                except Exception as refresh_exc:
+                    logger.warning(
+                        "Failed to auto-refresh expired plan on approve for task %s: %s",
+                        task_id,
+                        refresh_exc,
+                    )
         raise HTTPException(409, str(exc)) from None
+
     return JSONResponse(
         status_code=202, content={"task_id": task_id, "plan_id": plan["id"], "status": "queued"}
     )

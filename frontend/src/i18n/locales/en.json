@@ -167,6 +167,7 @@
     "confirm": "Confirm",
     "back": "Back",
     "close": "Close",
+    "openInNewTab": "Open in new tab",
     "saved": "Saved successfully",
     "deleted": "Deleted successfully",
     "deleteFailed": "Failed to delete",
@@ -769,7 +770,15 @@
       "targetImageDeferred": "Resolved at run time",
       "targetVersionUnavailable": "Cannot determine the target version: no current version is available for the selected source and channel.",
       "maintenanceSummary": "Maintenance window: {{timezone}}, {{start}}–{{end}}.",
-      "ready": "The executor configuration is complete and ready to save."
+      "ready": "The executor configuration is complete and ready to save.",
+      "liveDiffTitle": "Live configuration comparison",
+      "refreshDiff": "Refresh comparison",
+      "loadingDiff": "Reading live configuration and calculating changes…",
+      "liveDiffPolicy": "Compare the live target with the selected channel's current version using your unsaved target, bindings and image policy. Saving only changes executor settings; it does not deploy or approve. Execution will inspect and review again.",
+      "noVersionDiff": "No deployable version is available for this channel. Save the settings, fetch versions, then compare again.",
+      "failedDiff": "The complete live comparison is unavailable; this does not mean no changes. Check the target, connection and bindings, then refresh. You can still save settings to correct them.",
+      "truncatedDiff": "The changes are too large to display in full. This edit preview cannot serve as deployment approval.",
+      "checkedDiff": "Inspected at: {{time}}"
     },
     "target": {
       "kind": {
@@ -987,8 +996,14 @@
         "unlockFailed": "Failed to unlock snapshot"
       },
       "banners": {
-        "unredacted": "This snapshot contains fields that could not be redacted automatically; review before sharing.",
         "pruning": "Retention cap reached — older snapshots are being rotated out as new ones land."
+      },
+      "configurationNote": "Captured original runtime settings are retained in the snapshot; display redaction does not remove stored values. Storage verification does not prove every runtime setting is covered. Required fields, target identity and images must also pass recovery validation. Application data is not included.",
+      "integrity": {
+        "verified": "Stored data verified",
+        "invalid": "Stored data verification failed",
+        "legacy_unverified": "Legacy snapshot integrity cannot be verified",
+        "unknown": "Storage verification unavailable"
       },
       "locked": "Locked"
     },
@@ -997,7 +1012,29 @@
         "title": "Rollback executor",
         "description": "Restore {{executor}} to the selected snapshot. This will create a new run that captures a pre-rollback snapshot and then applies the target snapshot.",
         "targetLabel": "Target snapshot",
-        "currentLabel": "Current image",
+        "currentLabel": "Last recorded version (not live configuration)",
+        "configurationPolicy": "Only settings supported by snapshot recovery are compared; application data is excluded. Confirming applies the + configuration and may overwrite current changes. Configuration changes before execution stop recovery and require a new review.",
+        "checking": "Validating snapshot configuration and recovery target…",
+        "checkPassed": "Recovery validation passed. Review the configuration changes above.",
+        "diffTitle": "Recovery configuration diff",
+        "diffLegend": "− Current configuration (removed or replaced) · + Snapshot configuration (restored)",
+        "removed": "Remove current configuration",
+        "added": "Restore snapshot configuration",
+        "hiddenValue": "[Sensitive value hidden]",
+        "secretNote": "Sensitive values are compared before masking. Two hidden lines still indicate a real value change.",
+        "noChanges": "No configuration differences within the recovery scope.",
+        "targetMissing": "The current target is absent; the + configuration will recreate it.",
+        "diffTooLarge": "The diff exceeds the display limit. Recovery is blocked; reduce the change scope and retry.",
+        "scopes": {
+          "container_configuration": "Scope: container recreation settings and networks, excluding mounted data.",
+          "stack_configuration": "Scope: Compose declarations and Stack environment, excluding application data.",
+          "workload_spec": "Scope: workload spec, excluding external Secrets, ConfigMaps and volume data.",
+          "container_images": "Scope: container images only; this snapshot has no full workload configuration.",
+          "helm_revision": "Scope: Chart and Release revision; values and manifest differences were not captured."
+        },
+        "checkFailed": "Recovery validation could not complete. Recovery is blocked; close and retry.",
+        "checkInvalid": "The snapshot or target failed recovery validation. Recovery is blocked.",
+        "recheck": "Recheck snapshot",
         "confirmPrompt": "Type the executor name to confirm",
         "confirmLabel": "Rollback",
         "cancel": "Cancel"
@@ -1007,13 +1044,13 @@
         "success": "Rollback queued",
         "failed": "Rollback failed",
         "notFound": "Snapshot no longer exists",
-        "conflict": "Executor has an active run; rollback blocked"
+        "conflict": "Recovery blocked: an operation is active or configuration changed. Refresh the diff and confirm again."
       }
     },
     "sheet": {
       "addTitle": "Create Executor",
       "editTitle": "Edit Executor",
-      "description": ""
+      "description": "Choose a runtime target, bind release sources, and review deployment policies."
     },
     "days": {
       "monday": "Mon",
@@ -1110,7 +1147,7 @@
         "credential": "Select a credential"
       },
       "hints": {
-        "socket": "Use unix:// for a local socket or tcp:// for a remote socket.",
+        "socket": "Use unix:// for a local socket or tcp:// for a remote connection. For Podman behind socket-proxy or a Docker-compatible 2375 proxy, select docker. Select podman only for a native Podman Socket or podman system service exposing libpod.",
         "tlsVerify": "Enable when the remote daemon requires certificate validation.",
         "namespaces": "Discover namespaces from the current cluster and select one or more.",
         "inCluster": "When enabled, kubeconfig is optional and the backend uses in-cluster auth.",
@@ -1205,7 +1242,8 @@
         "label": "Publish-time source",
         "auto": "Auto (detect by registry)",
         "preferReal": "Always fetch real build time",
-        "firstObserved": "First observed time only"
+        "firstObserved": "First observed only (recommended for private registries)",
+        "description": "Auto mode attempts to read image build time. Each blob download is capped at 5 seconds; a timeout skips remaining blobs for this fetch. For private registries, first observed avoids extra blob downloads without changing version ordering."
       },
       "credential": "Credential",
       "optional": "Optional",
@@ -1509,14 +1547,30 @@
     "approvalRequired": "Deployment plan requires approval",
     "approvalReason": "Reason: {{reason}}",
     "approvalExpires": "Approval expires {{time}}",
-    "reviewPlan": "Review deployment plan",
+    "reviewPlan": "Refresh plan",
+    "refreshPlan": "Refresh plan",
     "approvePlan": "Approve and continue",
     "planApproved": "Deployment plan approved; the task will continue",
     "planTarget": "Target: {{target}}",
     "planIdentity": "Runtime identity: {{identity}}",
+    "planFingerprint": "Configuration fingerprint: {{fingerprint}}",
     "planRecovery": "Recovery scope: {{scope}}",
     "planNoData": "Application data is not included; automatic rollback is disabled.",
     "planReviewRequired": "Confirm the target identity, configuration summary, and recovery boundary before continuing.",
+    "planRefreshed": "Deployment plan refreshed",
+    "diffTitle": "Update configuration changes",
+    "diffLegend": "- Current configuration (replaced)　+ Update configuration (applied)",
+    "diffPolicy": "Inspected non-image settings are retained; sensitive values are hidden. Target or configuration changes after approval block the update and require a refreshed review.",
+    "diffNoChanges": "No declared configuration changes. Changed artifacts behind the same tag are still updated using the target digest.",
+    "diffIncomplete": "Configuration changes are not fully displayed. This plan cannot be approved.",
+    "diffScopeLimited": "Only settings captured and supported by this executor are included; application data and new-image defaults are excluded.",
+    "reasonManualUpdate": "Manual update: review the actual configuration and target changes.",
+    "reasonConfigurationDrift": "Live configuration differs from the managed baseline. Review it again.",
+    "reasonUnmanaged": "Target entity not previously managed by this installation",
+    "reasonMarkerMissing": "Target management marker is missing",
+    "reasonForeignOwner": "Target is managed by another installation",
+    "reasonConflict": "Target marker conflicts with this executor",
+    "reasonSchemaUnsupported": "Target marker schema version is not supported",
     "approvalFailed": "Deployment approval failed. Refresh the plan and try again.",
     "approvalExpired": "The deployment plan has expired. Refresh it and approve again.",
     "approvalConflict": "The target is owned by another configuration; this plan cannot be approved.",
@@ -1543,6 +1597,7 @@
     },
     "state": {
       "queued": "Queued",
+      "awaiting_approval": "Awaiting approval",
       "running": "Running",
       "retry_wait": "Waiting to retry",
       "succeeded": "Succeeded",
@@ -1564,7 +1619,7 @@
     },
     "errors": {
       "registry_repository_not_found": "Image repository not found or not visible with these credentials. Check the image path; after a repository rename, build and push the image before fetching again.",
-      "registry_authentication_failed": "Image registry authentication failed. Check that the configured credentials are valid.",
+      "registry_authentication_failed": "Image registry credential authentication failed. Check the credential username or password.",
       "registry_access_denied": "Image registry access denied. Check repository read permissions.",
       "upstream_http_401": "Upstream authentication failed. Check the access credentials.",
       "upstream_http_403": "Upstream access denied. Check read permissions.",
@@ -1576,6 +1631,11 @@
       "fetch_failed": "Version fetch failed",
       "retry_budget_exhausted": "Retry limit reached",
       "configuration_changed": "Configuration changed before execution",
+      "deployment_configuration_changed": "Live configuration changed; no update was performed. Generate and review a new deployment plan.",
+      "deployment_approval_required": "Deployment plan is awaiting approval",
+      "deployment_blocked": "Deployment safety validation failed. Check the target and configuration.",
+      "deployment_evidence_unavailable": "Could not inspect live configuration. Restore the connection and refresh the plan.",
+      "recovery_configuration_changed": "Recovery configuration changed. Refresh the diff and confirm again.",
       "check_in_progress": "A fetch is already running",
       "source_cooldown": "Waiting for source cooldown",
       "target_replaced": "Deployment target was replaced",

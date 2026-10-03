@@ -52,7 +52,29 @@ async def task(storage, executor_id=1):
     )
 
 
+async def _seed_executor(storage, executor_id=1):
+    from helpers.executor_runtime import create_runtime_connection
+    from releasetracker.config import ExecutorConfig
+
+    conn_id = await create_runtime_connection(storage)
+    ex = await storage.get_executor_config(executor_id)
+    if ex:
+        return ex.id
+    config = ExecutorConfig(
+        id=executor_id,
+        name=f"test-ex-{executor_id}",
+        runtime_type="docker",
+        runtime_connection_id=conn_id,
+        tracker_name="test-tracker",
+        enabled=True,
+        update_mode="manual",
+        target_ref={"mode": "container", "container_name": "app"},
+    )
+    return await storage.create_executor_config(config)
+
+
 async def staged(storage, **overrides):
+    await _seed_executor(storage, 1)
     store = DeploymentAdmissionStore(storage)
     queued = await task(storage)
     claimed = await storage.tasks.claim("deploy")
@@ -366,3 +388,98 @@ async def test_stage_rolls_back_park_if_notification_intent_fails(storage):
         await store.stage(claimed, evidence())
     assert await store.latest(queued["id"]) is None
     assert (await storage.tasks.get(queued["id"]))["state"] == "running"
+
+
+async def test_expired_deployment_plan_is_automatically_refreshed_on_get(
+    storage, authed_client, monkeypatch
+):
+    import time
+    from unittest.mock import AsyncMock
+    from releasetracker.services.deploy_tasks import DeployTasks
+
+    store, queued, observed, plan = await staged(storage)
+    db = await storage._get_connection()
+    past = time.time() - 100
+    await db.execute("UPDATE deployment_plans SET expires_at=? WHERE id=?", (past, plan["id"]))
+    await db.commit()
+
+    monkeypatch.setattr(
+        DeployTasks, "_collect_admission_evidence", AsyncMock(return_value=observed)
+    )
+
+    url = f"/api/tasks/{queued['id']}/deployment-plan"
+    response = authed_client.get(url)
+    assert response.status_code == 200
+    refreshed_plan = response.json()
+    assert refreshed_plan["id"] > plan["id"]
+    assert refreshed_plan["expires_at"] > time.time()
+
+
+async def test_expired_deployment_plan_auto_refreshed_and_approved_on_post(
+    storage, authed_client, monkeypatch
+):
+    import time
+    from unittest.mock import AsyncMock
+    from releasetracker.services.deploy_tasks import DeployTasks
+
+    store, queued, observed, plan = await staged(storage)
+    db = await storage._get_connection()
+    past = time.time() - 100
+    await db.execute("UPDATE deployment_plans SET expires_at=? WHERE id=?", (past, plan["id"]))
+    await db.commit()
+
+    monkeypatch.setattr(
+        DeployTasks, "_collect_admission_evidence", AsyncMock(return_value=observed)
+    )
+
+    url = f"/api/tasks/{queued['id']}"
+    body = {"plan_id": plan["id"], "fingerprint": plan["fingerprint"], "plan_reviewed": True}
+    response = authed_client.post(url + "/approve", json=body)
+    assert response.status_code == 202
+    res_json = response.json()
+    assert res_json["task_id"] == queued["id"]
+    assert res_json["plan_id"] > plan["id"]
+    current = await storage.tasks.get(queued["id"])
+    assert current["state"] == "queued"
+    assert current["approval_pending"] == 0
+
+
+async def test_deployment_plan_supersedes_task_when_executor_deleted(storage, authed_client):
+    store, queued, observed, plan = await staged(storage)
+    executor_id = queued["payload"]["executor_id"]
+    db = await storage._get_connection()
+    await db.execute("DELETE FROM executors WHERE id=?", (executor_id,))
+    await db.commit()
+
+    url = f"/api/tasks/{queued['id']}/deployment-plan"
+    response = authed_client.get(url)
+    assert response.status_code == 410
+    current = await storage.tasks.get(queued["id"])
+    assert current["state"] == "superseded"
+    assert current["approval_pending"] == 0
+    assert current["error_code"] == "executor_deleted"
+
+
+async def test_delete_executor_cascades_pending_tasks(storage):
+    store, queued, observed, plan = await staged(storage)
+    executor_id = queued["payload"]["executor_id"]
+    assert await storage.delete_executor_config(executor_id)
+    current = await storage.tasks.get(queued["id"])
+    assert current["state"] == "superseded"
+    assert current["approval_pending"] == 0
+    assert current["error_code"] == "executor_deleted"
+
+
+async def test_reconcile_orphaned_executor_tasks(storage):
+    store, queued, observed, plan = await staged(storage)
+    executor_id = queued["payload"]["executor_id"]
+    db = await storage._get_connection()
+    await db.execute("DELETE FROM executors WHERE id=?", (executor_id,))
+    await db.commit()
+
+    reconciled = await storage.reconcile_orphaned_executor_tasks()
+    assert reconciled >= 1
+    current = await storage.tasks.get(queued["id"])
+    assert current["state"] == "superseded"
+    assert current["approval_pending"] == 0
+    assert current["error_code"] == "executor_deleted"

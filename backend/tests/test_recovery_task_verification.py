@@ -70,3 +70,41 @@ async def test_recovery_requires_verified_result_before_releasing_blocked_task(
         assert result.state == "needs_attention"
     rollback.assert_awaited_once()
     scheduler._release_executor_run.assert_awaited_once_with(executor.id)
+
+
+async def test_reviewed_recovery_changed_in_queue_is_superseded(storage, monkeypatch):
+    from fastapi import HTTPException
+    from releasetracker.services import runtime_credentials
+
+    executor = SimpleNamespace(id=1, runtime_connection_id=1)
+    monkeypatch.setattr(storage, "get_executor_config", AsyncMock(return_value=executor))
+    monkeypatch.setattr(storage, "get_runtime_connection", AsyncMock(return_value=object()))
+    monkeypatch.setattr(
+        runtime_credentials,
+        "materialize_runtime_connection_credentials",
+        AsyncMock(return_value=object()),
+    )
+    rollback = AsyncMock(
+        side_effect=HTTPException(status_code=409, detail="Recovery configuration changed")
+    )
+    monkeypatch.setattr(RollbackService, "rollback", rollback)
+    scheduler = SimpleNamespace(
+        _try_acquire_executor_run=AsyncMock(return_value=True),
+        _release_executor_run=AsyncMock(),
+        _get_adapter=MagicMock(return_value=object()),
+        snapshot_service=object(),
+    )
+    task = {
+        "id": 2,
+        "payload": {
+            "executor_id": 1,
+            "action": "rollback",
+            "snapshot_id": 3,
+            "actor": "admin",
+            "review_fingerprint": "reviewed-state",
+        },
+    }
+    result = await RecoveryTasks(storage, scheduler).execute(task)
+    assert result.state == "superseded" and result.code == "recovery_configuration_changed"
+    assert rollback.call_args.kwargs["review_fingerprint"] == "reviewed-state"
+    scheduler._release_executor_run.assert_awaited_once_with(1)

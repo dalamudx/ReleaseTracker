@@ -62,6 +62,11 @@ def main(argv: list[str] | None = None) -> int:
     subcommands.add_parser(
         "audit-database", help="read-only foreign key and deployment relation audit"
     )
+    prune_parser = subcommands.add_parser(
+        "prune-orphans", help="repair known deleted-parent historical rows after a safety backup"
+    )
+    prune_parser.add_argument("--dry-run", action="store_true")
+    prune_parser.add_argument("--confirm-stopped", action="store_true")
     review_parser = subcommands.add_parser(
         "acknowledge-restore",
         help="unlock NEW mutations after reviewing a restored database; old intents remain revoked",
@@ -70,6 +75,45 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        if args.command == "prune-orphans":
+            from contextlib import closing
+            from .services.database_orphans import prune_orphans
+            from .services.database_integrity import validate_relations
+            from .services.instance_backup import _create_archive, _validate_keys
+
+            db_path = database_path()
+            if args.dry_run:
+                with closing(sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)) as source:
+                    with closing(sqlite3.connect(":memory:")) as copy:
+                        source.backup(copy)
+                        counts = prune_orphans(copy)
+                print(json.dumps({"dry_run": True, "affected_rows": counts}, sort_keys=True))
+                return 0
+            if not args.confirm_stopped:
+                raise ValueError(
+                    "Stop the application, then pass --confirm-stopped; use --dry-run to preview"
+                )
+            keys = system_secrets_path().read_bytes()
+            _validate_keys(keys)
+            archive = _create_archive(
+                db_path,
+                keys,
+                db_path.parent / "backups",
+                reason="pre_orphan_cleanup",
+                prune_history=False,
+            )
+            print(f"Unmodified database/key safety copy (may contain orphan rows): {archive}")
+            with closing(sqlite3.connect(db_path.as_uri() + "?mode=rw", uri=True)) as db:
+                try:
+                    db.execute("BEGIN IMMEDIATE")
+                    counts = prune_orphans(db)
+                    validate_relations(db)
+                    db.commit()
+                except BaseException:
+                    db.rollback()
+                    raise
+            print(json.dumps({"affected_rows": counts}, sort_keys=True))
+            return 0
         if args.command == "audit-database":
             from .services.database_integrity import validate_relations
 

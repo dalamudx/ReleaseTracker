@@ -33,6 +33,7 @@ class TargetEvidence:
     configuration: dict
     markers: tuple[dict, ...]
     recovery: str
+    configuration_diff: dict | None = None
 
     def __post_init__(self):
         if not self.runtime_identity or not self.target_identity:
@@ -109,4 +110,9 @@ def public_summary(task: dict, evidence: TargetEvidence) -> dict:
         "includes_application_data": False,
         "automatic_rollback": False,
         "source_count": len(task["payload"].get("targets", [])),
+        **(
+            {"configuration_diff": evidence.configuration_diff}
+            if evidence.configuration_diff is not None
+            else {}
+        ),
     }

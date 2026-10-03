@@ -787,6 +787,7 @@ export interface ExecutorConfig {
     health_check?: HealthCheckProfile | null
     invalid_config_error?: string | null
     current_image?: string | null
+    current_images?: Record<string, string | null>
 }
 
 // -----------------------------------------------------------------
@@ -857,6 +858,8 @@ export interface SnapshotListItem {
     image_at_capture: string | null
     executor_run_id: number | null
     unredacted_persisted: boolean
+    integrity_status?: "verified" | "invalid" | "legacy_unverified"
+    integrity_error?: string | null
     locked: boolean
 }
 
@@ -883,6 +886,35 @@ export interface LockSnapshotResponse {
 
 export interface RollbackRequest {
     snapshot_id?: number | null
+    review_fingerprint?: string
+}
+
+export interface ExecutorConfigurationPreview {
+    mutation_performed: false
+    checked_at: string
+    comparison_error: "no_deployable_version" | "runtime_inspection_failed" | null
+    configuration_diff: {
+        scope: string
+        lines: { operation: "-" | "+"; path: string; value: string; redacted: boolean }[]
+        truncated: boolean
+    } | null
+}
+
+export interface RecoveryConfigurationDiff {
+    scope: "container_configuration" | "stack_configuration" | "workload_spec" | "container_images" | "helm_revision"
+    lines: { operation: "-" | "+"; path: string; value: string; redacted: boolean }[]
+    truncated: boolean
+    current_missing: boolean
+    review_fingerprint: string | null
+}
+export interface RollbackPreview {
+    snapshot_id: number | null
+    image_at_capture: string | null
+    integrity_status: "verified" | "invalid" | "legacy_unverified" | null
+    snapshot_valid: boolean
+    validation_error: string | null
+    mutation_performed: false
+    configuration_diff?: RecoveryConfigurationDiff | null
 }
 
 export interface RollbackResponse {

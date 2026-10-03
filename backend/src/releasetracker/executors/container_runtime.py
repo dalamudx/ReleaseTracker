@@ -4,10 +4,13 @@ from functools import wraps
 from inspect import signature
 from typing import Any
 from urllib.parse import urlparse
+from weakref import finalize
 
 from ..services.deployment_plan import MANAGED_MARKERS
 
 from ..config import normalize_executor_target_ref
+from .runtime_tls import RuntimeTLSMaterial, close_runtime_client
+
 from .base import (
     BaseRuntimeAdapter,
     RuntimeTarget,
@@ -35,6 +38,19 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
     def __init__(self, runtime_connection, client=None):
         super().__init__(runtime_connection)
         self._client = client
+        self._client_finalizer = None
+
+    def _own_client(self, client, material: RuntimeTLSMaterial | None = None):
+        self._client_finalizer = finalize(self, close_runtime_client, client, material)
+        return client
+
+    async def close(self) -> None:
+        try:
+            if self._client_finalizer is not None:
+                self._client_finalizer()
+        finally:
+            self._client_finalizer = None
+            self._client = None
 
     async def discover_targets(self) -> list[RuntimeTarget]:
         client = self._get_client()

@@ -1,5 +1,8 @@
-import { fireEvent, render, screen } from "@testing-library/react"
+import { act, fireEvent, render, screen } from "@testing-library/react"
+import { assertNoActWarnings } from "./assert-no-act-warnings"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+
+assertNoActWarnings()
 
 const mutateAsync = vi.fn()
 let mockedDeliveries: Array<Record<string, unknown>> = []
@@ -77,11 +80,14 @@ describe("RepositoryWebhookSettings", () => {
         const branches = screen.getByLabelText("webhooks.repository.branches")
         fireEvent.change(branches, { target: { value: "main, release/*" } })
         expect(branches).toHaveValue("main, release/*")
-        fireEvent.click(screen.getByRole("button", { name: "common.save" }))
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "common.save" }))
+        })
         expect(mutateAsync).toHaveBeenCalledWith(expect.objectContaining({
             id: "hook-id",
             data: expect.objectContaining({ branches: ["main", "release/*"] }),
         }))
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
     })
 
     it("shows per-source delivery feedback without exposing payloads", () => {

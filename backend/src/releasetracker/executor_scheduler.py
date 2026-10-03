@@ -22,6 +22,12 @@ from .executors import (
     PortainerRuntimeAdapter,
 )
 from .executors.base import RuntimeMutationError
+from .executors.adapter_lifetime import (
+    RuntimeAdapterLifetime,
+    borrow_runtime_adapter,
+    runtime_adapter_scope,
+    wait_for_runtime_worker,
+)
 from .executor_scheduler_grouped_runtime import ExecutorSchedulerGroupedRuntime
 from .executor_scheduler_update_safety import ExecutorSchedulerUpdateSafety
 from .executor_scheduler_run_lifecycle import (
@@ -79,6 +85,10 @@ class ExecutorScheduler(
         self._job_namespace = "executor"
         self._now_provider = now_provider or datetime.now
         self._adapters: dict[int, BaseRuntimeAdapter] = {}
+        self._adapter_lifetimes: dict[int, RuntimeAdapterLifetime] = {}
+        self._adapter_close_errors: list[BaseException] = []
+        self._adapter_shutdown = False
+        self._shutdown_task: asyncio.Task[BaseException | None] | None = None
         self._running_executor_ids: set[int] = set()
         self._running_executor_ids_lock = asyncio.Lock()
         self._background_tasks: set[asyncio.Task[Any]] = set()
@@ -102,6 +112,15 @@ class ExecutorScheduler(
         return task
 
     async def shutdown(self) -> None:
+        # All callers join one drain. External cancellation must not cancel it
+        # or return while its workers still own runtime clients.
+        if self._shutdown_task is None or self._shutdown_task.done():
+            self._shutdown_task = asyncio.create_task(self._shutdown_runtime_resources())
+        failure = await wait_for_runtime_worker(self._shutdown_task)
+        if failure is not None:
+            raise failure
+
+    async def _shutdown_runtime_resources(self) -> BaseException | None:
         pending_tasks = [task for task in self._background_tasks if not task.done()]
         for task in pending_tasks:
             task.cancel()
@@ -110,6 +129,21 @@ class ExecutorScheduler(
             await asyncio.gather(*pending_tasks, return_exceptions=True)
 
         self._background_tasks.clear()
+        self._adapter_shutdown = True
+        # Keep ownership of retired clients until the last foreground borrower or
+        # timed-out native read finishes. Cleanup tasks are never cancelled here.
+        for adapter in self._adapters.values():
+            self._manage_runtime_adapter(adapter, borrow=False)
+        self._adapters.clear()
+        lifetimes = list(self._adapter_lifetimes.values())
+        for lifetime in lifetimes:
+            lifetime.retire()
+        await asyncio.gather(*(lifetime.wait_closed() for lifetime in lifetimes))
+        errors, self._adapter_close_errors = self._adapter_close_errors, []
+        if errors:
+            return next(
+                (error for error in errors if isinstance(error, asyncio.CancelledError)), errors[0]
+            )
 
     async def initialize(self) -> None:
         await self._refresh_system_timezone()
@@ -139,7 +173,7 @@ class ExecutorScheduler(
     async def refresh_executor(self, executor_id: int) -> None:
         # Configuration and credential materialization are part of adapter identity.
         # Do not let a saved executor keep an old runtime client.
-        self._adapters.pop(executor_id, None)
+        self._retire_cached_adapter(executor_id)
         config = await self.storage.get_executor_config(executor_id)
         if config:
             await self._add_or_update_executor_job(config)
@@ -157,7 +191,7 @@ class ExecutorScheduler(
         return await enqueue_executor_binding_targets(self.storage, executor_config)
 
     async def remove_executor(self, executor_id: int) -> None:
-        self._adapters.pop(executor_id, None)
+        self._retire_cached_adapter(executor_id)
         self.scheduler_host.remove_job(self._job_namespace, executor_id)
         await self.refresh_release_history_cleanup_schedule()
 
@@ -185,6 +219,7 @@ class ExecutorScheduler(
             if "already running" not in str(exc):
                 raise
 
+    @runtime_adapter_scope
     async def _execute_executor(
         self, executor_config: ExecutorConfig, *, manual: bool, _run_id: int | None = None
     ) -> ExecutorRunOutcome:
@@ -580,14 +615,41 @@ class ExecutorScheduler(
         }
         return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
+    def _adapter_closed(self, lifetime: RuntimeAdapterLifetime) -> None:
+        self._adapter_lifetimes.pop(lifetime.key, None)
+        if lifetime.error is not None:
+            # Log only the exception class; SDK messages may contain credentials.
+            logger.error(
+                "runtime_adapter_close_failed error_type=%s", type(lifetime.error).__name__
+            )
+            self._adapter_close_errors.append(lifetime.error)
+
+    def _manage_runtime_adapter(self, adapter, *, borrow: bool = True):
+        lifetime = self._adapter_lifetimes.get(id(adapter))
+        if lifetime is None:
+            lifetime = RuntimeAdapterLifetime(adapter, self._adapter_closed)
+            self._adapter_lifetimes[lifetime.key] = lifetime
+            adapter._runtime_adapter_lifetime = lifetime
+        if borrow:
+            borrow_runtime_adapter(lifetime)
+        return adapter
+
+    def _retire_cached_adapter(self, executor_id: int) -> None:
+        adapter = self._adapters.pop(executor_id, None)
+        if adapter is not None and not any(item is adapter for item in self._adapters.values()):
+            self._manage_runtime_adapter(adapter, borrow=False)
+            self._adapter_lifetimes[id(adapter)].retire()
+
     def _get_adapter(self, executor_id: int, runtime_connection) -> BaseRuntimeAdapter:
+        if self._adapter_shutdown:
+            raise RuntimeError("executor scheduler has shut down")
         cache_key = self._runtime_adapter_cache_key(runtime_connection)
         cached_adapter = self._adapters.get(executor_id)
         if cached_adapter is not None and (
             not hasattr(cached_adapter, "_runtime_cache_key")
             or cached_adapter._runtime_cache_key == cache_key
         ):
-            return cached_adapter
+            return self._manage_runtime_adapter(cached_adapter)
 
         if runtime_connection.type == "docker":
             adapter = DockerRuntimeAdapter(runtime_connection)
@@ -601,8 +663,10 @@ class ExecutorScheduler(
             raise ValueError(f"Unsupported runtime type: {runtime_connection.type}")
 
         adapter._runtime_cache_key = cache_key
+        if cached_adapter is not None:
+            self._retire_cached_adapter(executor_id)
         self._adapters[executor_id] = adapter
-        return adapter
+        return self._manage_runtime_adapter(adapter)
 
     def _within_maintenance_window(self, window: MaintenanceWindowConfig | None) -> bool:
         if not window:

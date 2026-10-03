@@ -1,0 +1,130 @@
+name: Isolated runtime acceptance
+
+"on":
+  workflow_dispatch:
+    inputs:
+      dind:
+        description: Run isolated Docker mTLS deploy and recovery acceptance
+        type: boolean
+        default: true
+      portainer:
+        description: Run isolated Portainer Stack deploy and recovery acceptance
+        type: boolean
+        default: false
+      public_registry:
+        description: Run the public registry read-only probe (network dependent)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-acceptance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  dind:
+    name: Synthetic mTLS DinD deploy and recovery
+    if: inputs.dind
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      DIND_IMAGE: data.forgejo.org/oci/docker@sha256:686d2c5464787b0ca42420e0aa03a94fc9781ff9bf8b5ff947614b9fa4c3c3e0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+
+      - name: Install isolated engine dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+          uv --directory backend sync --locked --extra dev
+
+      - name: Cache pinned DinD image for the root-owned test engine
+        run: |
+          sudo podman pull "$DIND_IMAGE"
+          sudo podman tag "$DIND_IMAGE" data.forgejo.org/oci/docker:dind
+
+      - name: Run the explicitly enabled acceptance test
+        working-directory: backend
+        run: |
+          sudo env RT_RUN_REAL_DIND_TESTS=1 timeout 420 \
+            "$PWD/.venv/bin/python" -m pytest -q tests/test_real_dind_acceptance.py \
+            -o faulthandler_timeout=0 --junitxml=runtime-acceptance-junit.xml
+
+  portainer:
+    name: Portainer 2.45.1 grouped Stack deploy and recovery
+    if: inputs.portainer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      DIND_IMAGE: data.forgejo.org/oci/docker@sha256:686d2c5464787b0ca42420e0aa03a94fc9781ff9bf8b5ff947614b9fa4c3c3e0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+
+      - name: Install isolated engine dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+          uv --directory backend sync --locked --extra dev
+
+      - name: Cache pinned root-owned disposable engine
+        run: sudo podman pull "$DIND_IMAGE"
+
+      - name: Run explicitly enabled Portainer acceptance
+        working-directory: backend
+        run: |
+          sudo env RT_RUN_REAL_PORTAINER_TESTS=1 timeout 600 \
+            "$PWD/.venv/bin/python" -m pytest -q tests/test_real_portainer_acceptance.py \
+            -o faulthandler_timeout=0 --junitxml=portainer-acceptance-junit.xml
+
+  public-registry:
+    name: Public read-only registry diagnostics
+    if: inputs.public_registry
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+
+      - name: Install backend dependencies
+        run: uv --directory backend sync --locked
+
+      - name: Probe anonymously readable registry
+        working-directory: backend
+        run: |
+          timeout 270 .venv/bin/python scripts/probe_registry_manifest.py \
+            --registry reg.aoodc.com --image fawney19/aether --mode auto \
+            --timeout 10 --observation-timeout 240

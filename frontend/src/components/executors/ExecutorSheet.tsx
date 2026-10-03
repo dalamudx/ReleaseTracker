@@ -4,11 +4,13 @@ import { useForm, useWatch } from "react-hook-form"
 import { useTranslation } from "react-i18next"
 
 import { api } from "@/api/client"
+import { ExecutorConfigurationPreview } from "./ExecutorConfigurationPreview"
 import type { HealthCheckProfile, RuntimeConnection, RuntimeTargetDiscoveryItem, TrackerStatus } from "@/api/types"
 import { Button } from "@/components/ui/button"
 import {
     Sheet,
     SheetContent,
+    SheetDescription,
     SheetFooter,
     SheetHeader,
     SheetTitle,
@@ -93,6 +95,7 @@ export function ExecutorSheet({
     const [selectedDiscoveryNamespace, setSelectedDiscoveryNamespace] = useState("")
     const [selectedTargetRef, setSelectedTargetRef] = useState<Record<string, unknown>>(EMPTY_TARGET_REF)
     const [selectedSingleContainerImage, setSelectedSingleContainerImage] = useState<string | null>(null)
+    const [currentServiceImages, setCurrentServiceImages] = useState<Record<string, string | null> | null>(null)
     const [serviceBindings, setServiceBindings] = useState<ExecutorServiceBindingFormValue[]>([])
     const [existingHealthCheck, setExistingHealthCheck] = useState<HealthCheckProfile | null>(null)
     const stepScrollRef = useRef<HTMLDivElement | null>(null)
@@ -345,6 +348,7 @@ export function ExecutorSheet({
             setDiscoveredTargets([])
             setSelectedTargetRef(EMPTY_TARGET_REF)
             setSelectedSingleContainerImage(null)
+            setCurrentServiceImages(null)
             setServiceBindings([])
             setExistingHealthCheck(null)
         })
@@ -366,6 +370,7 @@ export function ExecutorSheet({
                     maintenance_timezone: systemTimezone,
                 })
                 setSelectedTargetRef(config.target_ref ?? EMPTY_TARGET_REF)
+                setCurrentServiceImages(config.current_images ?? null)
                 const currentImage = typeof config.current_image === "string" && config.current_image.trim().length > 0
                     ? config.current_image.trim()
                     : getSingleContainerCurrentImage(config.runtime_type, config.target_ref ?? EMPTY_TARGET_REF)
@@ -472,6 +477,7 @@ export function ExecutorSheet({
                 ),
             )
             setDiscoveredTargets(response.items)
+            setCurrentServiceImages(null)
             if (response.items.length === 0) {
                 setDiscoveryMessage(t("executors.discovery.empty"))
                 return
@@ -504,6 +510,7 @@ export function ExecutorSheet({
 
             setSelectedTargetRef(EMPTY_TARGET_REF)
             setSelectedSingleContainerImage(null)
+            setCurrentServiceImages(null)
             setServiceBindings([])
         } catch (error: unknown) {
             console.error("Failed to discover runtime targets", error)
@@ -532,6 +539,7 @@ export function ExecutorSheet({
         setSshTargetReady(connection?.type !== "ssh")
         setSelectedTargetRef(EMPTY_TARGET_REF)
         setSelectedSingleContainerImage(null)
+        setCurrentServiceImages(null)
         setServiceBindings([])
         setSelectedDiscoveryNamespace("")
         setDiscoveryMessage(null)
@@ -555,6 +563,7 @@ export function ExecutorSheet({
             form.setValue("channel_name", "", { shouldDirty: true })
         }
         setSelectedTargetRef(nextTargetRef)
+        setCurrentServiceImages(null)
         setSelectedSingleContainerImage(getSingleContainerCurrentImage(runtimeType, { ...nextTargetRef, image: target.image }))
         setServiceBindings([])
         setDiscoveryMessage(null)
@@ -748,6 +757,7 @@ export function ExecutorSheet({
             <SheetContent side="right" className="w-full border-l sm:max-w-5xl">
                 <SheetHeader className="border-b border-border/60 pb-4">
                     <SheetTitle>{executorId === null ? t("executors.sheet.addTitle") : t("executors.sheet.editTitle")}</SheetTitle>
+                    <SheetDescription className="sr-only">{t("executors.sheet.description")}</SheetDescription>
                 </SheetHeader>
 
                 <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -802,6 +812,7 @@ export function ExecutorSheet({
                                                 runtimeType={runtimeType}
                                                 selectedTargetRef={selectedTargetRef}
                                                 serviceBindings={serviceBindings}
+                                                currentImages={currentServiceImages}
                                                 onSelectTracker={handleSelectTracker}
                                                 onSelectTrackerSource={handleSelectTrackerSource}
                                                 onSelectChannel={handleSelectChannel}
@@ -833,7 +844,16 @@ export function ExecutorSheet({
                                                 imageReferenceMode={imageReferenceMode}
                                                 singleContainerBinding={singleContainerBinding}
                                                 singleContainerCurrentImage={selectedSingleContainerImage}
+                                                currentImages={currentServiceImages}
                                                 validationMessage={validationMessage}
+                                                configurationPreview={!validationMessage ? <ExecutorConfigurationPreview
+                                                executorId={executorId}
+                                                payloadJson={JSON.stringify(buildExecutorPayload({
+                                                    values: { ...formValues, maintenance_timezone: systemTimezone || formValues.maintenance_timezone },
+                                                    effectiveTrackerSourceId, selectedTargetRef,
+                                                    trackers: containerCompatibleTrackers, serviceBindings, existingHealthCheck,
+                                                }))}
+                                                /> : undefined}
                                             />
                                         ) : null}
                                     </div>

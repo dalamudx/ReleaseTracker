@@ -93,6 +93,8 @@ function createSnapshot(overrides: Partial<SnapshotListItem> = {}): SnapshotList
     image_at_capture: "image_at_capture" in overrides ? overrides.image_at_capture! : "docker.io/library/sample:1.0.0",
     executor_run_id: "executor_run_id" in overrides ? overrides.executor_run_id! : 100,
     unredacted_persisted: overrides.unredacted_persisted ?? false,
+    integrity_status: overrides.integrity_status,
+    integrity_error: overrides.integrity_error,
     locked: overrides.locked ?? false,
   }
 }
@@ -129,6 +131,15 @@ describe("ExecutorSnapshotsPanel", () => {
     unlockExecutorSnapshotMock.mockReset()
     toastErrorMock.mockReset()
     toastSuccessMock.mockReset()
+  })
+
+  it.each(["verified", "invalid", "legacy_unverified", undefined] as const)("shows actual stored integrity %s, not a redaction/share warning", async integrity => {
+    getExecutorSnapshotsMock.mockResolvedValue(paginatedSnapshots([createSnapshot({ unredacted_persisted: true, integrity_status: integrity })]))
+    renderWithQueryClient(<ExecutorSnapshotsPanel executor={createExecutor()} />)
+    const row = await screen.findByTestId("executor-snapshot-item")
+    expect(within(row).getByText(`executors.snapshots.integrity.${integrity ?? "unknown"}`)).toBeInTheDocument()
+    expect(screen.getByText("executors.snapshots.configurationNote")).toBeInTheDocument()
+    expect(screen.queryByText("executors.snapshots.banners.unredacted")).not.toBeInTheDocument()
   })
 
   it("renders delete action immediately before rollback for each snapshot", async () => {

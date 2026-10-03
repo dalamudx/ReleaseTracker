@@ -504,12 +504,11 @@ async def test_fetch_all_normalizes_full_ghcr_image_ref(monkeypatch):
 
     assert token_scopes == ["repository:example/sample-secret:pull"]
     assert tag_fetches == [("ghcr.io", "example/sample-secret")]
-    # Digest HEADs must be issued for every tag, regardless of any
-    # subsequent config-blob lookups the tracker may attempt.
-    head_calls = [call for call in manifest_calls if call[0] == "HEAD"]
-    assert head_calls == [
-        ("HEAD", "https://ghcr.io/v2/example/sample-secret/manifests/latest"),
-        ("HEAD", "https://ghcr.io/v2/example/sample-secret/manifests/2.5.3"),
+    # Metadata-enabled probes resolve every tag with one GET, reusing its
+    # body instead of HEAD plus a second mutable-tag GET.
+    assert manifest_calls == [
+        ("GET", "https://ghcr.io/v2/example/sample-secret/manifests/latest"),
+        ("GET", "https://ghcr.io/v2/example/sample-secret/manifests/2.5.3"),
     ]
     assert [release.url for release in releases] == [
         "https://ghcr.io/example/sample-secret:latest",

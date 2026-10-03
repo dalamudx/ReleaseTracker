@@ -130,10 +130,27 @@ function approvalErrorMessageKey(error: unknown): string {
     return "tasks.approvalFailed"
 }
 
+function formatApprovalReason(t: (key: string, options?: Record<string, unknown>) => string, reason: string | undefined): string | null {
+    if (!reason) return null
+    if (reason === "version_policy_requires_approval") return t("versionPolicy:approval")
+    const reasonMap: Record<string, string> = {
+        unmanaged: t("tasks.reasonUnmanaged", { defaultValue: "目标实体初次纳管（此前未由本系统部署）" }),
+        marker_missing: t("tasks.reasonMarkerMissing", { defaultValue: "目标缺少纳管标记" }),
+        foreign_owner: t("tasks.reasonForeignOwner", { defaultValue: "目标已被其他实例纳管" }),
+        target_marker_conflict: t("tasks.reasonConflict", { defaultValue: "目标纳管标记与当前执行器冲突" }),
+        schema_unsupported: t("tasks.reasonSchemaUnsupported", { defaultValue: "纳管标记版本不受支持" }),
+        manual_update_review: t("tasks.reasonManualUpdate"),
+        configuration_drift: t("tasks.reasonConfigurationDrift"),
+        configuration_diff_incomplete: t("tasks.diffIncomplete"),
+    }
+    return reasonMap[reason] ?? reason
+}
+
 function TaskItem({ task }: { task: QueueTask }) {
     const { t, i18n } = useTranslation()
     const [open, setOpen] = useState(false)
     const [approvalError, setApprovalError] = useState<string | null>(null)
+    const [refreshingPlan, setRefreshingPlan] = useState(false)
     const cache = useQueryClient()
     const detail = useQuery({
         queryKey: ["tasks", task.id],
@@ -282,20 +299,73 @@ function TaskItem({ task }: { task: QueueTask }) {
                                     {plan.isLoading && <p className="text-xs text-muted-foreground">{t("common.loading", { defaultValue: "Loading..." })}</p>}
                                     {plan.data && (
                                         <div className="grid gap-1.5 rounded-md border border-border/60 bg-background/50 p-2.5 text-xs">
-                                            {plan.data.reason === "version_policy_requires_approval" && <p className="font-medium">{t("versionPolicy:approval")}</p>}
+                                            {plan.data.reason === "version_policy_requires_approval" ? (
+                                                <p className="font-medium text-warning">{t("versionPolicy:approval")}</p>
+                                            ) : plan.data.reason ? (
+                                                <p className="font-medium text-warning">
+                                                    {t("tasks.approvalReason", { reason: formatApprovalReason(t, plan.data.reason) })}
+                                                </p>
+                                            ) : null}
                                             <p>{t("tasks.planTarget", { target: plan.data.summary.target_label ?? task.target_label })}</p>
-                                            <p>{t("tasks.planIdentity", { identity: plan.data.summary.identity_key ?? "—" })}</p>
+                                            <p className="break-all">{t("tasks.planIdentity", { identity: plan.data.summary.identity_key ?? "—" })}</p>
+                                            {plan.data.fingerprint && (
+                                                <p className="break-all font-mono text-[11px] text-muted-foreground">
+                                                    <span className="font-sans text-xs font-medium text-foreground">{t("tasks.planFingerprint", { fingerprint: "" }).replace(/[:：]/g, "")}：</span>
+                                                    {plan.data.fingerprint}
+                                                </p>
+                                            )}
                                             <p>{t("tasks.planRecovery", { scope: plan.data.summary.recovery_scope ?? "—" })}</p>
+                                            {plan.data.expires_at && (
+                                                <p className="text-muted-foreground">{t("tasks.approvalExpires", { time: time(plan.data.expires_at) })}</p>
+                                            )}
                                             <p className="text-muted-foreground">{t("tasks.planNoData")}</p>
                                         </div>
                                     )}
+                                    {plan.data?.summary.configuration_diff && (
+                                        <section aria-label={t("tasks.diffTitle")} className="flex min-w-0 flex-col gap-2">
+                                            <h3 className="text-sm font-medium">{t("tasks.diffTitle")}</h3>
+                                            <p className="text-xs text-muted-foreground">{t("tasks.diffLegend")}</p>
+                                            <p className="text-xs">{t(`executors.rollback.dialog.scopes.${plan.data.summary.configuration_diff.scope}`, { defaultValue: t("tasks.diffScopeLimited") })}</p>
+                                            {plan.data.summary.configuration_diff.lines.length ? (
+                                                <ol className="max-h-80 overflow-y-auto rounded-md border border-border text-xs font-mono" data-testid="deployment-configuration-diff">
+                                                    {plan.data.summary.configuration_diff.lines.map((line, index) => (
+                                                        <li key={`${line.path}:${line.operation}:${index}`} className={cn("flex gap-2 px-3 py-1.5", line.operation === "-" ? "bg-destructive/10 text-destructive" : "bg-success/10 text-success")}>
+                                                            <span className="shrink-0" aria-label={t(line.operation === "-" ? "executors.rollback.dialog.removed" : "executors.rollback.dialog.added")}>{line.operation}</span>
+                                                            <span className="min-w-0 whitespace-pre-wrap break-all">{line.path}: {line.redacted ? t("executors.rollback.dialog.hiddenValue") : line.value}</span>
+                                                        </li>
+                                                    ))}
+                                                </ol>
+                                            ) : <p className="text-xs">{t("tasks.diffNoChanges")}</p>}
+                                            <p className="text-xs text-muted-foreground">{t("tasks.diffPolicy")}</p>
+                                            {plan.data.summary.configuration_diff.truncated && <p role="alert" className="text-xs text-destructive">{t("tasks.diffIncomplete")}</p>}
+                                        </section>
+                                    )}
                                     {plan.isError && <p role="alert" className="text-xs text-destructive">{t("common.unexpectedError")}</p>}
                                     {approvalError && <p role="alert" className="text-xs text-destructive">{t(approvalError)}</p>}
-                                    <div className="flex flex-wrap justify-end gap-2">
-                                        <Button size="sm" variant="outline" disabled={!plan.data || approve.isPending || plan.isFetching} onClick={() => void plan.refetch()}>
-                                            {t("tasks.reviewPlan")}
+                                    <div className="flex flex-wrap justify-end gap-2 pt-1">
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            disabled={approve.isPending || plan.isFetching || refreshingPlan}
+                                            onClick={async () => {
+                                                setRefreshingPlan(true)
+                                                try {
+                                                    const updated = await api.getDeploymentPlan(task.id, true)
+                                                    cache.setQueryData(["tasks", task.id, "deployment-plan"], updated)
+                                                    setApprovalError(null)
+                                                    toast.info(t("tasks.planRefreshed"))
+                                                } catch {
+                                                    setApprovalError("tasks.approvalFailed")
+                                                    toast.error(t("tasks.approvalFailed"))
+                                                } finally {
+                                                    setRefreshingPlan(false)
+                                                }
+                                            }}
+                                        >
+                                            <RefreshCw className={cn("size-3.5", (plan.isFetching || refreshingPlan) && "animate-spin")} aria-hidden="true" />
+                                            {t("tasks.refreshPlan")}
                                         </Button>
-                                        <Button size="sm" disabled={!plan.data || approve.isPending} onClick={() => approve.mutate()}>
+                                        <Button size="sm" disabled={!plan.data || approve.isPending || refreshingPlan || plan.isFetching || plan.isError || plan.data.state !== "pending" || plan.data.summary.configuration_diff?.truncated === true} onClick={() => approve.mutate()}>
                                             {approve.isPending && <Spinner className="size-3.5" />}
                                             {t("tasks.approvePlan")}
                                         </Button>

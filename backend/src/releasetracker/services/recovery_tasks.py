@@ -6,13 +6,16 @@ import hashlib
 import json
 
 from .deploy_tasks import DeployTasks
+from ..executors.adapter_lifetime import runtime_adapter_scope
 from .task_queue import Deferred, TaskResult
 from .mutation_scope import mutation_resource_key
 import time
 
 
 class RecoveryTasks(DeployTasks):
-    async def enqueue_recovery(self, executor, snapshot_id, action, actor=None):
+    async def enqueue_recovery(
+        self, executor, snapshot_id, action, actor=None, review_fingerprint=None
+    ):
         if snapshot_id is None:
             db = await self.storage._get_connection()
             row = await (
@@ -31,6 +34,8 @@ class RecoveryTasks(DeployTasks):
             "actor": actor,
             "config_identity": await self.identity(executor),
         }
+        if review_fingerprint is not None:
+            payload["review_fingerprint"] = review_fingerprint
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         task = await self.storage.tasks.enqueue(
             kind="recover",
@@ -59,6 +64,7 @@ class RecoveryTasks(DeployTasks):
             return TaskResult("failed", "executor_running")
         return None
 
+    @runtime_adapter_scope
     async def execute(self, task):
         payload = task["payload"]
         if payload["action"] == "readiness_recheck":
@@ -92,6 +98,11 @@ class RecoveryTasks(DeployTasks):
                     adapter=adapter,
                     snapshot_id=payload["snapshot_id"],
                     actor=payload["actor"],
+                    **(
+                        {"review_fingerprint": payload["review_fingerprint"]}
+                        if payload.get("review_fingerprint")
+                        else {}
+                    ),
                 )
                 result = {"run_id": outcome.run.id, "recovery_outcome": outcome.recovery_outcome}
                 verified = outcome.run.status == "success"
@@ -107,6 +118,16 @@ class RecoveryTasks(DeployTasks):
                         (executor.id, task["id"]),
                     )
             return TaskResult(result=result)
+        except Exception as exc:
+            from fastapi import HTTPException
+
+            if (
+                isinstance(exc, HTTPException)
+                and exc.status_code == 409
+                and payload.get("review_fingerprint")
+            ):
+                return TaskResult("superseded", "recovery_configuration_changed")
+            raise
         finally:
             await self.scheduler._release_executor_run(executor.id)
 

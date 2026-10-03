@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { AlertTriangle, Info, Loader2, Lock, LockOpen, RotateCcw, Trash2 } from "lucide-react"
+import { Info, Loader2, Lock, LockOpen, RotateCcw, Trash2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
@@ -74,11 +74,6 @@ export function ExecutorSnapshotsPanel({
     const loading = snapshotsQuery.isLoading
     const deleting = deleteSnapshotMutation.isPending
     const refetchSnapshots = snapshotsQuery.refetch
-
-    const hasUnredacted = useMemo(
-        () => items.some((item) => item.unredacted_persisted),
-        [items],
-    )
 
     // Show the pruning banner only when we have more snapshots than the
     // page is displaying AND we're on the first page; this gives the
@@ -162,12 +157,11 @@ export function ExecutorSnapshotsPanel({
                 </p>
             </div>
 
-            {hasUnredacted ? (
-                <div className="flex items-start gap-2 rounded-lg border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning">
-                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    <span>{t("executors.snapshots.banners.unredacted")}</span>
-                </div>
-            ) : null}
+            {items.length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                    {t("executors.snapshots.configurationNote")}
+                </p>
+            )}
 
             {showPruningBanner ? (
                 <div className="flex items-start gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
@@ -223,17 +217,12 @@ export function ExecutorSnapshotsPanel({
                                                 {t("executors.snapshots.locked")}
                                             </Badge>
                                         ) : null}
-                                        {item.unredacted_persisted ? (
-                                            <Badge
-                                                variant="outline"
-                                                className="h-5 shrink-0 gap-1 text-[10px] text-warning"
-                                            >
-                                                <AlertTriangle className="h-3 w-3" />
-                                                {t("executors.snapshots.banners.unredacted", {
-                                                    defaultValue: "Contains unredacted fields",
-                                                })}
-                                            </Badge>
-                                        ) : null}
+                                        <Badge
+                                            variant="outline"
+                                            className={cn("h-5 text-[10px]", item.integrity_status === "invalid" && "text-destructive")}
+                                        >
+                                            {t(`executors.snapshots.integrity.${item.integrity_status ?? "unknown"}`)}
+                                        </Badge>
                                     </div>
 
                                     <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">

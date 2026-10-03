@@ -1,8 +1,11 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { assertNoActWarnings } from "./assert-no-act-warnings"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { ExecutorConfig, RuntimeConnection, TrackerStatus } from "@/api/types"
 import { ExecutorSheet } from "@/components/executors/ExecutorSheet"
+
+assertNoActWarnings()
 
 globalThis.ResizeObserver = class ResizeObserver {
   observe() {}
@@ -146,17 +149,19 @@ describe("ExecutorSheet edit bindings", () => {
   it("blocks review navigation while SSH Compose analysis is pending", async () => {
     discoverSSHComposeMock.mockReturnValue(new Promise(() => undefined))
 
-    render(
-      <ExecutorSheet
-        open
-        onOpenChange={vi.fn()}
-        executorId={null}
-        runtimeConnections={[createRuntimeConnection({ id: 7, name: "example-ssh", type: "ssh" })]}
-        trackers={[createTracker()]}
-        systemTimezone="UTC"
-        onSuccess={vi.fn()}
-      />,
-    )
+    await act(async () => {
+      render(
+        <ExecutorSheet
+          open
+          onOpenChange={vi.fn()}
+          executorId={null}
+          runtimeConnections={[createRuntimeConnection({ id: 7, name: "example-ssh", type: "ssh" })]}
+          trackers={[createTracker()]}
+          systemTimezone="UTC"
+          onSuccess={vi.fn()}
+        />,
+      )
+    })
 
     const continueButton = screen.getByRole("button", { name: "executors.actions.continue" })
     expect(continueButton).toBeDisabled()
