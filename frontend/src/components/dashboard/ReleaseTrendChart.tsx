@@ -124,7 +124,7 @@ export function ReleaseTrendChart({ stats, loading }: ReleaseTrendChartProps) {
     const hasData = chartData.length > 0 && channels.length > 0
 
     return (
-        <Card className="glass-card flex h-full min-h-0 flex-col shadow-sm">
+        <Card className="glass-card flex min-w-0 flex-col shadow-sm xl:h-full xl:min-h-0">
             <CardHeader className="flex-none p-3.5 pb-2">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                     <div>
@@ -155,15 +155,15 @@ export function ReleaseTrendChart({ stats, loading }: ReleaseTrendChartProps) {
                     ) : null}
                 </div>
             </CardHeader>
-            <CardContent className="flex min-h-0 flex-1 flex-col px-4 pb-4 pt-1">
+            <CardContent className="flex min-w-0 flex-col px-4 pb-4 pt-1 xl:min-h-0 xl:flex-1">
                 {loading ? (
-                    <div className="min-h-0 flex-1 animate-pulse rounded-lg bg-muted/20" />
+                    <div className="h-[300px] animate-pulse rounded-lg bg-muted/20 xl:min-h-0 xl:flex-1" />
                 ) : !hasData ? (
-                    <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+                    <div className="flex min-h-[240px] flex-1 items-center justify-center text-sm text-muted-foreground">
                         {t("common.noData")}
                     </div>
                 ) : (
-                    <ChartContainer config={chartConfig} className="aspect-auto h-full min-h-[300px] w-full flex-1">
+                    <ChartContainer config={chartConfig} className="aspect-auto h-[300px] w-full sm:h-[340px] xl:h-full xl:min-h-[240px] xl:flex-1">
                         <AreaChart
                             accessibilityLayer
                             data={chartData}
@@ -198,7 +198,7 @@ export function ReleaseTrendChart({ stats, loading }: ReleaseTrendChartProps) {
                                     strokeWidth={2.25}
                                 />
                             ))}
-                            <ChartLegend content={<ChartLegendContent />} />
+                            <ChartLegend content={<ChartLegendContent className="flex-wrap gap-x-3 gap-y-1" />} />
                         </AreaChart>
                     </ChartContainer>
                 )}

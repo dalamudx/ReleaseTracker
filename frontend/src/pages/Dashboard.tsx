@@ -17,7 +17,7 @@ export default function DashboardPage() {
     const executorsList = useMemo(() => executorsData?.items ?? [], [executorsData])
 
     return (
-        <div className="flex h-full min-h-0 flex-col gap-3.5 animate-in fade-in duration-300">
+        <div className="flex min-h-full min-w-0 shrink-0 flex-col gap-3.5 animate-in fade-in duration-300 xl:h-full xl:min-h-0 xl:shrink">
             {/* Top Row: 6-in-1 KPI and Operational Metrics Header */}
             <section className="flex-none">
                 <DashboardHeaderCards
@@ -29,11 +29,11 @@ export default function DashboardPage() {
             </section>
 
             {/* Main Stage: Flexibly expands to fill remaining viewport height */}
-            <section className="grid min-h-0 flex-1 basis-0 gap-3.5 xl:grid-cols-12">
-                <div className="min-h-0 xl:col-span-7">
+            <section className="grid min-w-0 flex-none gap-3.5 xl:min-h-0 xl:flex-1 xl:basis-0 xl:grid-cols-12">
+                <div className="min-w-0 xl:min-h-0 xl:col-span-7">
                     <ReleaseTrendChart stats={stats ?? null} loading={!statsReady} />
                 </div>
-                <div className="min-h-0 xl:col-span-5">
+                <div className="min-w-0 xl:min-h-0 xl:col-span-5">
                     <RecentReleases releases={releases} loading={!releasesReady} />
                 </div>
             </section>

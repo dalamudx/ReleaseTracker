@@ -129,4 +129,13 @@
 - 定向后端5项新增及API/normal-deploy相关合计84项通过；前端新增4项及编辑相关24项通过，最终前端全量 **441 passed / 53 files**，lint/type通过。生产构建浏览器Kubernetes/Portainer中英+1280/390px编辑/刷新/保存防污染 **8 passed，0 retry**（API fixture与上述真实NGINX验收分开）。未运行完整后端全量、未提交部署或修改已有业务实例。
 - 证据：`/tmp/rt-native-sheet-review-final.log`、`/tmp/rt-native-sheet-diff-desktop.png`、`/tmp/rt-native-sheet-diff-mobile.png`、`/tmp/rt-sheet-diff-backend-final.log`、`/tmp/rt-sheet-diff-frontend-full.log`、`/tmp/rt-sheet-diff-browser.log`。
 
+## 移动端数据展示与跨页面适配
+
+- 前一批运行时/配置审核/编辑/行点击历史改动已先提交 `5e71ba5f`。本轮仅前端移动布局，不改统计/发布投影业务数据，不部署/访问已有业务实例。
+- 浏览器复现仪表盘叠排区仍用桌面剩余高度：图表/Recent卡片只有约50–62px而内容溢出，卡片宽498px超过390px视口。移动/平板改自然高度单列，图表300/340px明确高度，桌面xl保留双列；Recent按卡片实际宽度使用容器断点，完整名称/version换行、数据全部可滚动、说明/来源44px点击区域。多渠道图例可换行；移动KPI去掉重复外层padding，首屏空间更合理。
+- Trackers在小于xl宽度只显示全高列表，点击进入详情、有「返回追踪器列表」，搜索/分页/删除当前项返回列表；桌面可拖动双面板保留。fixed table列/完整名称换行/多源badge换行/版本限宽，检查和菜单44px触摸区，不把操作挤出320px视口。
+- 跨页审查发现History长版本及通知/仓库Webhook长字段将操作挤出屏幕，已改移动固定操作列及换行，将隐藏的URL/状态/事件保留在主单元格。Webhook和Settings的Tabs曾受共享h-9约束，wrapped行挤在内容上；两列自适应真实高度，全部标签留在tablist边界内。Executors/Tasks/RuntimeConnections等列表没有同类数据高度消失，保留现有布局；凭证页仅用合成fixture做浏览器读展示检查，不读取受限数据/截图。
+- 验收：真实生产构建Chromium页面+合成非空read-only API fixture，覆盖320/390/768/844横屏/1280桌面、图表28统计值/卡片边界/全部6发布、15tracker最后项可滚动选择返回、中英7页共28路由viewport审查+仓库Webhook动作。新9个布局场景与相邻12项浏览器回归合计21 passed、0 retry；另移动Release Notes打开/关闭1 passed。前端全量442 passed / 53 files，lint/types/diff通过。API是隔离fixture，不声称真实手机Safari或线上接口验收；未修改在线数据库或创建业务部署。
+- 日志：`/tmp/rt-mobile-regression-browser.log`、`/tmp/rt-mobile-notes-probe.log`、`/tmp/rt-mobile-frontend-final.log`。UI复现基线与修复截图在 `/tmp/rt-mobile-*`；长期回归用例为 `frontend/e2e/mobile-data-layout.spec.ts`。
+
 临时 DinD、Portainer、合成证书和此前副本已清理；保留公开镜像缓存。完整历史过程在 `/tmp/rt-retest-summary.md`，临时日志并非长期归档。

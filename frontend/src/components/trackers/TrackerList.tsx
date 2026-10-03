@@ -57,13 +57,13 @@ export function TrackerList({
 
     return (
         <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border/60 bg-card/40 shadow-xs">
-            <Table containerClassName="overflow-visible">
+            <Table className="table-fixed xl:table-auto" containerClassName="overflow-visible">
                 <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm">
                     <TableRow className="hover:bg-transparent">
-                        <TableHead className="min-w-[10rem]">{t("trackers.table.name")}</TableHead>
-                        <TableHead className="w-20">{t("trackers.table.status")}</TableHead>
+                        <TableHead className="xl:min-w-[10rem]">{t("trackers.table.name")}</TableHead>
+                        <TableHead className="w-16 xl:w-20">{t("trackers.table.status")}</TableHead>
                         <TableHead className="hidden sm:table-cell">{t("trackers.table.lastVersion")}</TableHead>
-                        <TableHead className="w-[1%] text-right">{t("trackers.table.actions")}</TableHead>
+                        <TableHead className="w-28 text-right xl:w-[1%]">{t("trackers.table.actions")}</TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -109,10 +109,10 @@ export function TrackerList({
                                     <TableCell className="relative py-2.5 align-middle">
                                         <ActiveRowMarker active={isSelected} />
                                         <div className="space-y-0.5 pl-1.5 min-w-0">
-                                            <div className="flex items-center gap-1.5">
-                                                <span className="truncate font-semibold text-sm text-foreground">{tracker.name}</span>
+                                            <div className="flex flex-wrap items-center gap-1.5 xl:flex-nowrap">
+                                                <span className="min-w-0 max-w-full break-all whitespace-normal font-semibold text-sm text-foreground xl:truncate">{tracker.name}</span>
                                                 {channelTypes.length > 0 && (
-                                                    <div className="flex items-center gap-1 shrink-0">
+                                                    <div className="flex max-w-full flex-wrap items-center gap-1 xl:shrink-0">
                                                         {channelTypes.map((channelType) => (
                                                             <Badge
                                                                 key={channelType}
@@ -137,7 +137,7 @@ export function TrackerList({
                                         {trackerError ? (
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
-                                                    <div className="flex items-center gap-1 text-destructive">
+                                                    <div className="flex flex-wrap items-center gap-1 text-destructive">
                                                         <CircleX className="h-3.5 w-3.5 shrink-0" />
                                                         <span className="text-[11px] font-medium">{t("trackers.status.error")}</span>
                                                     </div>
@@ -147,7 +147,7 @@ export function TrackerList({
                                                 </TooltipContent>
                                             </Tooltip>
                                         ) : (
-                                            <div className="flex items-center gap-1">
+                                            <div className="flex flex-wrap items-center gap-1">
                                                 <CircleCheck
                                                     className={cn(
                                                         "h-3.5 w-3.5 shrink-0",
@@ -163,7 +163,7 @@ export function TrackerList({
 
                                     <TableCell className="hidden py-2.5 align-middle font-mono text-xs sm:table-cell">
                                         {trackerLastVersion ? (
-                                            <span className="max-w-[12rem] truncate text-foreground/90 font-medium inline-block rounded bg-muted/40 px-1.5 py-0.5 border border-border/50" title={trackerLastVersion}>
+                                            <span className="max-w-full truncate text-foreground/90 font-medium inline-block rounded bg-muted/40 px-1.5 py-0.5 border border-border/50 xl:max-w-[12rem]" title={trackerLastVersion}>
                                                 {trackerLastVersion}
                                             </span>
                                         ) : (
@@ -181,7 +181,7 @@ export function TrackerList({
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"
-                                                        className="h-7 w-7"
+                                                        className="size-11 xl:size-7"
                                                         onClick={(event) => {
                                                             stopRowClick(event)
                                                             onCheck(tracker.name)
@@ -195,7 +195,7 @@ export function TrackerList({
                                             </Tooltip>
                                             <DropdownMenu>
                                                 <DropdownMenuTrigger asChild onClick={stopRowClick}>
-                                                    <Button variant="ghost" size="icon" className="h-7 w-7">
+                                                    <Button variant="ghost" size="icon" className="size-11 xl:size-7">
                                                         <MoreHorizontal className="h-3.5 w-3.5" />
                                                         <span className="sr-only">{t("common.actions")}</span>
                                                     </Button>

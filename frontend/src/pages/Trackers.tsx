@@ -57,6 +57,7 @@ export default function TrackersPage() {
     const [dialogOpen, setDialogOpen] = useState(false)
     const [editingTracker, setEditingTracker] = useState<string | null>(null)
     const [selectedTrackerName, setSelectedTrackerName] = useState<string | null>(null)
+    const [mobileDetailOpen, setMobileDetailOpen] = useState(false)
     const [detailRefreshKey, setDetailRefreshKey] = useState(0)
     const [deleteName, setDeleteName] = useState<string | null>(null)
     const [search, setSearch] = useState("")
@@ -103,6 +104,7 @@ export default function TrackersPage() {
             await deleteTracker.mutateAsync(deleteName)
             if (selectedTrackerName === deleteName) {
                 setSelectedTrackerName(null)
+                setMobileDetailOpen(false)
             }
             toast.success(t("common.deleted"))
         } catch (error) {
@@ -213,6 +215,7 @@ export default function TrackersPage() {
                             onChange={(event) => {
                                 setSearch(event.target.value)
                                 setPage(1)
+                                setMobileDetailOpen(false)
                             }}
                         />
                         {search ? (
@@ -224,6 +227,7 @@ export default function TrackersPage() {
                                     onClick={() => {
                                         setSearch("")
                                         setPage(1)
+                                        setMobileDetailOpen(false)
                                     }}
                                     title={t("common.clear")}
                                 >
@@ -247,13 +251,13 @@ export default function TrackersPage() {
             >
                 <div
                     id="tracker-list-pane"
-                    className="flex min-h-0 w-full flex-col gap-3 xl:w-[var(--tracker-list-width)] xl:min-w-0 xl:flex-none xl:pr-2"
+                    className={`${mobileDetailOpen ? "hidden" : "flex"} min-h-0 w-full flex-1 flex-col gap-3 xl:flex xl:w-[var(--tracker-list-width)] xl:min-w-0 xl:flex-none xl:pr-2`}
                 >
                     <TrackerList
                         trackers={trackers}
                         loading={loading}
                         selectedTrackerName={visibleSelectedTrackerName}
-                        onSelect={setSelectedTrackerName}
+                        onSelect={(name) => { setSelectedTrackerName(name); setMobileDetailOpen(true) }}
                         onEdit={handleEdit}
                         onDelete={setDeleteName}
                         onCheck={handleCheck}
@@ -265,6 +269,7 @@ export default function TrackersPage() {
                         total={total}
                         onPageChange={setPage}
                         onPageSizeChange={setPageSize}
+                        onBeforeChange={() => setMobileDetailOpen(false)}
                     />
                 </div>
 
@@ -298,8 +303,11 @@ export default function TrackersPage() {
 
                 <div
                     id="tracker-detail-pane"
-                    className="min-h-0 w-full min-w-0 overflow-y-auto xl:flex-1 xl:pl-2"
+                    className={`${mobileDetailOpen ? "flex" : "hidden"} min-h-0 w-full min-w-0 flex-1 flex-col gap-3 overflow-y-auto xl:flex xl:pl-2`}
                 >
+                    <Button type="button" variant="outline" className="min-h-11 shrink-0 self-start xl:hidden" onClick={() => setMobileDetailOpen(false)}>
+                        {t("trackers.backToList")}
+                    </Button>
                     <TrackerDetail
                         trackerName={visibleSelectedTrackerName}
                         refreshKey={detailRefreshKey}

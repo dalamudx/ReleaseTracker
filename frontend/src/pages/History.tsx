@@ -337,11 +337,11 @@ export default function HistoryPage() {
                 ) : (
                     <>
                 <div className="min-h-0 overflow-auto rounded-md border sm:flex-1">
-                    <Table containerClassName="overflow-visible">
+                    <Table className="table-fixed sm:table-auto" containerClassName="overflow-visible">
                         <TableHeader className="sticky top-0 z-10 bg-background">
                             <TableRow>
-                                <TableHead className="min-w-[7.5rem] sm:min-w-[12rem]">{t("history.table.tracker")}</TableHead>
-                                <TableHead className="min-w-[7.5rem] sm:min-w-[10rem]">{t("history.table.version")}</TableHead>
+                                <TableHead className="w-[35%] sm:w-auto sm:min-w-[12rem]">{t("history.table.tracker")}</TableHead>
+                                <TableHead className="sm:min-w-[10rem]">{t("history.table.version")}</TableHead>
                                 <TableHead className="hidden md:table-cell">
                                     {t("history.table.releaseChannelType")}
                                 </TableHead>
@@ -349,7 +349,7 @@ export default function HistoryPage() {
                                     {t("history.table.identity")}
                                 </TableHead>
                                 <TableHead className="hidden sm:table-cell">{t("history.table.published")}</TableHead>
-                                <TableHead className="w-[1%] text-right">
+                                <TableHead className="w-20 text-right sm:w-[1%]">
                                     {t("common.actions")}
                                 </TableHead>
                             </TableRow>
@@ -386,7 +386,7 @@ export default function HistoryPage() {
                                             <TableCell className="py-3 align-middle">
                                                 <div className="min-w-0 space-y-0.5">
                                                     <div
-                                                        className="truncate text-sm font-medium text-foreground"
+                                                        className="break-all whitespace-normal text-sm font-medium text-foreground sm:truncate"
                                                         title={release.tracker_name}
                                                     >
                                                         {release.tracker_name}
@@ -401,7 +401,7 @@ export default function HistoryPage() {
                                             <TableCell className="py-3 align-middle">
                                                 <div className="flex flex-wrap items-center gap-1.5">
                                                     <span
-                                                        className="max-w-[14rem] truncate font-mono text-sm text-foreground"
+                                                        className="max-w-full break-all whitespace-normal font-mono text-sm text-foreground sm:max-w-[14rem] sm:truncate"
                                                         title={release.tag_name}
                                                     >
                                                         {release.tag_name}

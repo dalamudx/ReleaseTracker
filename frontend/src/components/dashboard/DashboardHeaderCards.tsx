@@ -86,7 +86,7 @@ export function DashboardHeaderCards({
     return (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
             {/* Card 1: Trackers */}
-            <Card className="glass-card transition-all duration-200 hover:border-primary/40 hover:shadow-xs">
+            <Card className="glass-card py-0 transition-all duration-200 hover:border-primary/40 hover:shadow-xs sm:py-6">
                 <CardContent className="p-3">
                     <div className="flex items-center justify-between gap-1">
                         <span className="truncate text-xs font-medium text-muted-foreground">
@@ -116,7 +116,7 @@ export function DashboardHeaderCards({
             </Card>
 
             {/* Card 2: Total Releases */}
-            <Card className="glass-card transition-all duration-200 hover:border-primary/40 hover:shadow-xs">
+            <Card className="glass-card py-0 transition-all duration-200 hover:border-primary/40 hover:shadow-xs sm:py-6">
                 <CardContent className="p-3">
                     <div className="flex items-center justify-between gap-1">
                         <span className="truncate text-xs font-medium text-muted-foreground">
@@ -146,7 +146,7 @@ export function DashboardHeaderCards({
             </Card>
 
             {/* Card 3: 24h Activity */}
-            <Card className="glass-card transition-all duration-200 hover:border-primary/40 hover:shadow-xs">
+            <Card className="glass-card py-0 transition-all duration-200 hover:border-primary/40 hover:shadow-xs sm:py-6">
                 <CardContent className="p-3">
                     <div className="flex items-center justify-between gap-1">
                         <span className="truncate text-xs font-medium text-muted-foreground">
@@ -180,7 +180,7 @@ export function DashboardHeaderCards({
             </Card>
 
             {/* Card 4: Latest Update */}
-            <Card className="glass-card transition-all duration-200 hover:border-primary/40 hover:shadow-xs">
+            <Card className="glass-card py-0 transition-all duration-200 hover:border-primary/40 hover:shadow-xs sm:py-6">
                 <CardContent className="p-3">
                     <div className="flex items-center justify-between gap-1">
                         <span className="truncate text-xs font-medium text-muted-foreground">
@@ -211,7 +211,7 @@ export function DashboardHeaderCards({
             </Card>
 
             {/* Card 5: Channel Breakdown Compact */}
-            <Card className="glass-card transition-all duration-200 hover:border-primary/40 hover:shadow-xs">
+            <Card className="glass-card py-0 transition-all duration-200 hover:border-primary/40 hover:shadow-xs sm:py-6">
                 <CardContent className="p-3">
                     <div className="flex items-center justify-between gap-1">
                         <span className="truncate text-xs font-medium text-muted-foreground">
@@ -258,7 +258,7 @@ export function DashboardHeaderCards({
             </Card>
 
             {/* Card 6: Deployment Executors Overview */}
-            <Card className="glass-card transition-all duration-200 hover:border-primary/40 hover:shadow-xs">
+            <Card className="glass-card py-0 transition-all duration-200 hover:border-primary/40 hover:shadow-xs sm:py-6">
                 <CardContent className="p-3">
                     <div className="flex items-center justify-between gap-1">
                         <span className="truncate text-xs font-medium text-muted-foreground">

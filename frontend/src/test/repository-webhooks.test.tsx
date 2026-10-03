@@ -62,8 +62,8 @@ describe("RepositoryWebhookSettings", () => {
         render(<RepositoryWebhookSettings />)
         expect(screen.getByText("sample")).toBeInTheDocument()
         expect(screen.getByText("upstream · github")).toBeInTheDocument()
-        expect(screen.getByText("webhooks.repository.release")).toBeInTheDocument()
-        expect(screen.getByText("webhooks.repository.workflow")).toBeInTheDocument()
+        expect(screen.getAllByText("webhooks.repository.release")).toHaveLength(2)
+        expect(screen.getAllByText("webhooks.repository.workflow")).toHaveLength(2)
         expect(screen.getByText("https://tracker.test/api/webhooks/repository/hook-id")).toBeInTheDocument()
 
         fireEvent.click(screen.getByRole("button", { name: "common.edit" }))

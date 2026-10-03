@@ -277,14 +277,14 @@ export function RepositoryWebhookSettings() {
 
             {/* Main Table */}
             <div className="min-h-0 flex-1 overflow-auto rounded-md border">
-                <Table containerClassName="overflow-visible">
+                <Table className="table-fixed sm:table-auto" containerClassName="overflow-visible">
                     <TableHeader className="sticky top-0 z-10 bg-background">
                         <TableRow>
-                            <TableHead className="min-w-[14rem]">{t("webhooks.repository.source")}</TableHead>
-                            <TableHead className="min-w-[10rem]">{t("webhooks.repository.events")}</TableHead>
+                            <TableHead className="sm:min-w-[14rem]">{t("webhooks.repository.source")}</TableHead>
+                            <TableHead className="hidden min-w-[10rem] sm:table-cell">{t("webhooks.repository.events")}</TableHead>
                             <TableHead className="hidden min-w-[18rem] lg:table-cell">{t("webhooks.repository.endpoint")}</TableHead>
-                            <TableHead className="w-[8rem]">{t("webhooks.repository.status")}</TableHead>
-                            <TableHead className="w-[1%] text-right">{t("common.actions")}</TableHead>
+                            <TableHead className="hidden w-[8rem] sm:table-cell">{t("webhooks.repository.status")}</TableHead>
+                            <TableHead className="w-28 text-right sm:w-[1%]">{t("common.actions")}</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -312,7 +312,7 @@ export function RepositoryWebhookSettings() {
                                     <TableCell className="py-3 align-middle font-medium">
                                         <div className="min-w-0 space-y-1">
                                             <div className="flex items-center gap-2">
-                                                <span className="truncate font-medium">{hook.tracker_name}</span>
+                                                <span className="min-w-0 max-w-full break-all whitespace-normal font-medium sm:truncate">{hook.tracker_name}</span>
                                             </div>
                                             <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                                                 <span>{hook.source_key} · {hook.provider}</span>
@@ -325,6 +325,11 @@ export function RepositoryWebhookSettings() {
                                                         Signing
                                                     </span>
                                                 )}
+                                            </div>
+                                            <div className="flex flex-wrap items-center gap-1.5 whitespace-normal text-xs sm:hidden">
+                                                <span>{t(hook.enabled ? "common.enabled" : "common.disabled")}</span>
+                                                {hook.release_published && <Badge variant="outline">{t("webhooks.repository.release")}</Badge>}
+                                                {hook.workflow_success && <Badge variant="outline">{t("webhooks.repository.workflow")}</Badge>}
                                             </div>
                                             {/* Mobile endpoint copy link */}
                                             <div className="pt-0.5 lg:hidden">
@@ -344,7 +349,7 @@ export function RepositoryWebhookSettings() {
                                         </div>
                                     </TableCell>
 
-                                    <TableCell className="py-3 align-middle">
+                                    <TableCell className="hidden py-3 align-middle sm:table-cell">
                                         <div className="flex flex-wrap gap-1">
                                             {hook.release_published && (
                                                 <Badge variant="outline" className="border-primary/20 bg-primary/5 text-primary text-[10px] font-normal">
@@ -371,7 +376,7 @@ export function RepositoryWebhookSettings() {
                                         </div>
                                     </TableCell>
 
-                                    <TableCell className="py-3 align-middle">
+                                    <TableCell className="hidden py-3 align-middle sm:table-cell">
                                         <Badge variant={hook.enabled ? "default" : "secondary"}>
                                             {t(hook.enabled ? "common.enabled" : "common.disabled")}
                                         </Badge>

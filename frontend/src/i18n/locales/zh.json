@@ -388,6 +388,7 @@
     "addNew": "添加追踪器",
     "searchPlaceholder": "按名称、描述或源搜索",
     "resizePanels": "调整追踪器列表与详情面板宽度",
+    "backToList": "返回追踪器列表",
     "table": {
       "name": "名称",
       "type": "类型",

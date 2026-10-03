@@ -864,11 +864,11 @@ export function SystemSettingsPage() {
     return (
         <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col gap-4">
             <Tabs defaultValue="general" className="flex min-h-0 flex-1 flex-col gap-4">
-                <TabsList className="h-auto w-full flex-wrap justify-start sm:w-fit">
-                    <TabsTrigger value="general">{t("systemSettings.tabs.general")}</TabsTrigger>
-                    <TabsTrigger value="security">{t("systemSettings.tabs.security")}</TabsTrigger>
-                    <TabsTrigger value="oidc">{t("systemSettings.tabs.oidc")}</TabsTrigger>
-                    <TabsTrigger value="backups">{t("backups.tab")}</TabsTrigger>
+                <TabsList className="grid w-full grid-cols-2 gap-1 group-data-[orientation=horizontal]/tabs:h-auto sm:inline-flex sm:w-fit">
+                    <TabsTrigger value="general" className="h-auto min-h-11 sm:min-h-9">{t("systemSettings.tabs.general")}</TabsTrigger>
+                    <TabsTrigger value="security" className="h-auto min-h-11 sm:min-h-9">{t("systemSettings.tabs.security")}</TabsTrigger>
+                    <TabsTrigger value="oidc" className="h-auto min-h-11 sm:min-h-9">{t("systemSettings.tabs.oidc")}</TabsTrigger>
+                    <TabsTrigger value="backups" className="h-auto min-h-11 sm:min-h-9">{t("backups.tab")}</TabsTrigger>
                 </TabsList>
 
                 <div className="min-h-0 flex-1 overflow-y-auto pr-1">

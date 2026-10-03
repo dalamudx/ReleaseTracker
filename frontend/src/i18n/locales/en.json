@@ -388,6 +388,7 @@
     "addNew": "Add Tracker",
     "searchPlaceholder": "Search by name, description, or source",
     "resizePanels": "Resize tracker list and detail panels",
+    "backToList": "Back to tracker list",
     "table": {
       "name": "Name",
       "type": "Type",

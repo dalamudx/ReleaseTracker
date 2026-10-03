@@ -176,20 +176,20 @@ export function NotifierSettings() {
 
             <div className="flex min-h-0 flex-1 flex-col gap-3">
                 <div className="min-h-0 flex-1 overflow-auto rounded-md border">
-                    <Table containerClassName="overflow-visible">
+                    <Table className="table-fixed md:table-auto" containerClassName="overflow-visible">
                         <TableHeader className="sticky top-0 z-10 bg-background">
                             <TableRow>
-                                <TableHead className="min-w-[12rem]">
+                                <TableHead className="md:min-w-[12rem]">
                                     {t("settings.notifications.table.name")}
                                 </TableHead>
-                                <TableHead className="min-w-[18rem]">
+                                <TableHead className="hidden min-w-[18rem] md:table-cell">
                                     {t("settings.notifications.table.url")}
                                 </TableHead>
                                 <TableHead className="hidden md:table-cell">
                                     {t("settings.notifications.table.events")}
                                 </TableHead>
-                                <TableHead>{t("settings.notifications.table.status")}</TableHead>
-                                <TableHead className="w-[1%] text-right">
+                                <TableHead className="w-20 md:w-auto">{t("settings.notifications.table.status")}</TableHead>
+                                <TableHead className="w-12 text-right md:w-[1%]">
                                     {t("settings.notifications.table.actions")}
                                 </TableHead>
                             </TableRow>
@@ -212,14 +212,15 @@ export function NotifierSettings() {
                                     <TableRow key={notifier.id} className="transition-colors hover:bg-muted/40">
                                         <TableCell className="py-3 align-middle font-medium">
                                             <div className="min-w-0 space-y-0.5">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="truncate">{notifier.name}</span>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <span className="min-w-0 max-w-full break-all whitespace-normal md:truncate">{notifier.name}</span>
                                                     <Badge variant="outline" className="h-5 shrink-0 text-[10px]">
                                                         {t(`settings.notifications.types.${notifier.type}`, {
                                                             defaultValue: notifier.type,
                                                         })}
                                                     </Badge>
                                                 </div>
+                                                <code className="block max-w-full break-all whitespace-normal font-mono text-xs font-normal text-muted-foreground md:hidden">{notifier.url}</code>
                                                 {notifier.description ? (
                                                     <div
                                                         className="line-clamp-1 text-xs font-normal text-muted-foreground"
@@ -230,7 +231,7 @@ export function NotifierSettings() {
                                                 ) : null}
                                             </div>
                                         </TableCell>
-                                        <TableCell className="py-3 align-middle">
+                                        <TableCell className="hidden py-3 align-middle md:table-cell">
                                             <code
                                                 className="max-w-[22rem] truncate rounded bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-foreground/80"
                                                 title={notifier.url}

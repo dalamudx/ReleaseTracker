@@ -61,7 +61,7 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
 
     return (
         <>
-            <Card className="glass-card flex h-full min-h-0 flex-col shadow-sm">
+            <Card className="glass-card @container/recent flex min-w-0 flex-col shadow-sm xl:h-full xl:min-h-0">
                 <CardHeader className="flex-none p-4 pb-2.5">
                     <div className="flex items-center justify-between">
                         <div>
@@ -72,7 +72,7 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
                         </div>
                     </div>
                 </CardHeader>
-                <CardContent className="flex min-h-0 flex-1 flex-col p-0 overflow-hidden">
+                <CardContent className="flex min-w-0 flex-col p-0 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
                     {loading ? (
                         <div className="space-y-1.5 p-3">
                             {[1, 2, 3, 4, 5].map((i) => (
@@ -101,7 +101,7 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
                                 return (
                                     <li
                                         key={`${release.tracker_release_history_id}-${release.published_at}`}
-                                        className="group relative flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-muted/40"
+                                        className="group relative flex flex-col gap-2 px-4 py-3 transition-colors hover:bg-muted/40 @min-[36rem]/recent:flex-row @min-[36rem]/recent:items-center @min-[36rem]/recent:justify-between @min-[36rem]/recent:gap-3"
                                     >
                                         {/* Hover accent strip */}
                                         <span
@@ -110,8 +110,8 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
                                         />
 
                                         {/* Left: Tracker name + Badges */}
-                                        <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                                            <span className="truncate text-xs font-semibold text-foreground max-w-[120px] sm:max-w-[150px]">
+                                        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 @min-[36rem]/recent:flex-nowrap @min-[36rem]/recent:gap-2.5">
+                                            <span className="min-w-0 max-w-full break-all text-sm font-semibold text-foreground @min-[36rem]/recent:max-w-[150px] @min-[36rem]/recent:truncate @min-[36rem]/recent:text-xs">
                                                 {release.tracker_name}
                                             </span>
 
@@ -130,13 +130,13 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
                                                 </Badge>
                                             </div>
 
-                                            <span className="truncate rounded border border-border/60 bg-muted/40 px-2 py-0.5 font-mono text-[11px] leading-none text-foreground/90 font-medium max-w-[160px] sm:max-w-[220px]">
+                                            <span className="min-w-0 max-w-full basis-full break-all rounded border border-border/60 bg-muted/40 px-2 py-1 font-mono text-xs font-medium leading-4 text-foreground/90 @min-[36rem]/recent:max-w-[220px] @min-[36rem]/recent:basis-auto @min-[36rem]/recent:truncate @min-[36rem]/recent:text-[11px]">
                                                 {versionLabel}
                                             </span>
                                         </div>
 
                                         {/* Right: Published time + Actions */}
-                                        <div className="flex shrink-0 items-center gap-1.5">
+                                        <div className="flex shrink-0 items-center justify-between gap-1.5 @min-[36rem]/recent:justify-start">
                                             <span className="text-right text-[11px] tabular-nums text-muted-foreground whitespace-nowrap" title={formatDate(release.published_at)}>
                                                 {relativePublished}
                                             </span>
@@ -149,7 +149,7 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
                                                     onClick={() => handleViewNotes(release)}
                                                     title={t("dashboard.recentReleases.viewNotes")}
                                                     aria-label={t("dashboard.recentReleases.viewNotes")}
-                                                    className="h-6 w-6"
+                                                    className="size-11 @min-[36rem]/recent:size-6"
                                                 >
                                                     <FileText className="h-3.5 w-3.5" />
                                                 </Button>
@@ -158,7 +158,7 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
                                                         variant="ghost"
                                                         size="icon"
                                                         asChild
-                                                        className="h-6 w-6"
+                                                        className="size-11 @min-[36rem]/recent:size-6"
                                                         title={t("dashboard.releaseNotes.viewSource")}
                                                         aria-label={t("dashboard.releaseNotes.viewSource")}
                                                     >
