@@ -130,6 +130,31 @@ async def test_only_image_changes_in_update_diff_and_target_is_frozen(storage):
         await scheduler.shutdown()
 
 
+async def test_tag_reference_mode_uses_pure_tag_when_version_changes(storage):
+    executor, scheduler, handler, adapter, current, task = await setup(storage)
+    current["image"] = "docker.io/library/nginx:1.26.0"
+    current["create_config"]["image"] = current["image"]
+    try:
+        evidence = await handler._collect_admission_evidence(executor, task)
+        lines = evidence.configuration_diff["lines"]
+        assert len(lines) == 2
+        assert lines[0] == {
+            "operation": "-",
+            "path": "/create_config/image",
+            "value": '"docker.io/library/nginx:1.26.0"',
+            "redacted": False,
+        }
+        assert lines[1] == {
+            "operation": "+",
+            "path": "/create_config/image",
+            "value": '"docker.io/library/nginx:stable"',
+            "redacted": False,
+        }
+        assert "@sha256:" not in lines[1]["value"]
+    finally:
+        await scheduler.shutdown()
+
+
 async def test_after_pull_guard_detects_drift_and_records_safe_refusal(storage):
     executor, scheduler, handler, adapter, current, task = await setup(storage)
     try:

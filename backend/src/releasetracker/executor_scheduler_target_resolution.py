@@ -539,13 +539,9 @@ class ExecutorSchedulerTargetResolution:
         digest = (
             _normalize_docker_digest(target_digest) if tracker_source_type == "container" else None
         )
-        # A queued review freezes the artifact, not the mutable registry tag.
-        # Preserve the selected tag in tag@digest; do not modify executor policy.
-        if (
-            digest
-            and "@" not in image
-            and (QUEUED_TARGETS.get() is not None or image == current_image)
-        ):
+        # For same-tag republishes, freeze the artifact with digest so the changed
+        # digest can be applied when the tag name is identical to the running image.
+        if digest and "@" not in image and image == current_image:
             image = f"{image}@{digest}"
         return image
 
