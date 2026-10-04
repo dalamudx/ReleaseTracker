@@ -1,11 +1,12 @@
 #!/bin/sh
 set -eu
 
-DB_PATH="${RELEASETRACKER_DB_PATH:-/app/backend/data/releases.db}"
+DB_PATH="$(python -c 'from releasetracker.paths import database_path; print(database_path())')"
 DATABASE_URL="${DATABASE_URL:-sqlite://${DB_PATH}}"
 DBMATE_MIGRATIONS_DIR="${DBMATE_MIGRATIONS_DIR:-/app/backend/dbmate/migrations}"
 
 run_migrate() {
+  python -m releasetracker.cli recover-online-restore
   # Keep a restore point for the exact pre-upgrade schema. Set
   # RELEASETRACKER_PRE_MIGRATION_BACKUP=0 only if another tool already does this.
   python -m releasetracker.cli pre-migration-backup

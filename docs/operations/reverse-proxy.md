@@ -69,5 +69,6 @@ BASE URL 会用于生成前端基础路径和 OIDC 地址，不会自动给后�
 1. 首页和直接打开的 `/trackers` 路由均正常（子路径部署加上对应前缀）。
 2. 浏览器网络面板中 API 返回预期 JSON，而不是前端 HTML；静态资源没有 404。
 3. 通知链接指向外部地址；启用 OIDC 时，注册的 callback 与 [OIDC 配置](accounts-and-oidc.md#oidc)完全一致。
+4. 使用[仓库 Webhook](../guides/trackers.md#repository-webhooks) 时，Git 平台能通过代理访问 `/api/webhooks/repository/...`。
 
 BASE URL 为空可用于本地访问；非空值要求规范的绝对 HTTPS URL。仅修改代理头不能修复错误的 BASE URL。遇到错误见[代理排障](../reference/troubleshooting.md#proxy)。

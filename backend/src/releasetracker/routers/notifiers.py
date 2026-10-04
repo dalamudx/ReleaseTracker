@@ -164,6 +164,7 @@ async def test_notifier(
     if not notifier.url:
         raise HTTPException(status_code=400, detail="Webhook URL is missing")
 
+    system_tz = await storage.get_system_timezone()
     delivered = await build_notifier(
         notifier_type=notifier.type,
         name=notifier.name,
@@ -171,6 +172,7 @@ async def test_notifier(
         events=["test"],
         language=notifier.language,
         template=await get_template(storage, notifier.template_id),
+        timezone=system_tz,
     ).notify("test", payload)
     if not delivered:
         raise HTTPException(status_code=400, detail="Webhook test failed")

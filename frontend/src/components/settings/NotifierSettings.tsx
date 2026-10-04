@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { notificationTemplates } from "@/api/notification-templates"
 import { useTranslation } from "react-i18next"
 import { Edit, MoreHorizontal, Plus, Search, Send, Trash2, X } from "lucide-react"
-import { useForm } from "react-hook-form"
+import { useForm, useWatch } from "react-hook-form"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -367,6 +367,7 @@ function NotifierDialog({ open, onOpenChange, notifier }: NotifierDialogProps) {
             description: "",
         },
     })
+    const notifierType = useWatch({ control: form.control, name: "type" })
 
     useEffect(() => {
         if (open) {
@@ -408,14 +409,16 @@ function NotifierDialog({ open, onOpenChange, notifier }: NotifierDialogProps) {
     }
 
     const availableEvents = [
-        { id: "executor_health_check_result", label: t("settings.notifications.eventTypes.executor_health_check_result") },
-        { id: "executor_approval_required", label: t("settings.notifications.eventTypes.executor_approval_required") },
-        { id: "executor_deployment_blocked", label: t("settings.notifications.eventTypes.executor_deployment_blocked") },
         { id: "new_release", label: t("settings.notifications.eventTypes.new_release") },
         { id: "republish", label: t("settings.notifications.eventTypes.republish") },
         { id: "executor_run_success", label: t("settings.notifications.eventTypes.executor_run_success") },
         { id: "executor_run_failed", label: t("settings.notifications.eventTypes.executor_run_failed") },
         { id: "executor_run_skipped", label: t("settings.notifications.eventTypes.executor_run_skipped") },
+        { id: "executor_health_check_result", label: t("settings.notifications.eventTypes.executor_health_check_result") },
+        { id: "executor_approval_required", label: t("settings.notifications.eventTypes.executor_approval_required") },
+        { id: "executor_deployment_blocked", label: t("settings.notifications.eventTypes.executor_deployment_blocked") },
+        { id: "error", label: t("settings.notifications.eventTypes.error") },
+        { id: "test", label: t("settings.notifications.eventTypes.test") },
     ]
 
     return (
@@ -469,6 +472,21 @@ function NotifierDialog({ open, onOpenChange, notifier }: NotifierDialogProps) {
                                             <SelectItem value="wecom">
                                                 {t("settings.notifications.types.wecom")}
                                             </SelectItem>
+                                            <SelectItem value="feishu">
+                                                {t("settings.notifications.types.feishu")}
+                                            </SelectItem>
+                                            <SelectItem value="dingtalk">
+                                                {t("settings.notifications.types.dingtalk")}
+                                            </SelectItem>
+                                            <SelectItem value="discord">
+                                                {t("settings.notifications.types.discord")}
+                                            </SelectItem>
+                                            <SelectItem value="slack">
+                                                {t("settings.notifications.types.slack")}
+                                            </SelectItem>
+                                            <SelectItem value="telegram">
+                                                {t("settings.notifications.types.telegram")}
+                                            </SelectItem>
                                         </SelectContent>
                                     </Select>
                                     <FormDescription>
@@ -486,7 +504,11 @@ function NotifierDialog({ open, onOpenChange, notifier }: NotifierDialogProps) {
                                     <FormLabel>{t("settings.notifications.dialog.url")}</FormLabel>
                                     <FormControl>
                                         <Input
-                                            placeholder={t("settings.notifications.dialog.placeholder.url")}
+                                            placeholder={
+                                                notifierType === "telegram"
+                                                    ? "https://api.telegram.org/bot<token>/sendMessage?chat_id=<chat_id>"
+                                                    : t("settings.notifications.dialog.placeholder.url")
+                                            }
                                             {...field}
                                         />
                                     </FormControl>

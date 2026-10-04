@@ -837,14 +837,36 @@ class PodmanPodRecovery:
             port, protocol = self._split_port_protocol(container_port)
             if port is None:
                 continue
-            bindings = host_binding if isinstance(host_binding, list) else [host_binding]
+            # JSON snapshots turn (IP, port) pairs into lists. A flat list of
+            # numeric ports still means multiple bindings; do not conflate them.
+            from ipaddress import ip_address
+
+            def is_pair(value):
+                if (
+                    not isinstance(value, (list, tuple))
+                    or len(value) != 2
+                    or not isinstance(value[0], str)
+                ):
+                    return False
+                try:
+                    if value[0]:
+                        ip_address(value[0])
+                except ValueError:
+                    return False
+                return type(value[1]) is int or isinstance(value[1], str) and value[1].isdigit()
+
+            bindings = (
+                [host_binding]
+                if is_pair(host_binding)
+                else host_binding if isinstance(host_binding, list) else [host_binding]
+            )
             for binding in bindings:
                 mapping: dict[str, Any] = {"container_port": port, "protocol": protocol}
                 if isinstance(binding, int):
                     mapping["host_port"] = binding
                 elif isinstance(binding, str) and binding.isdigit():
                     mapping["host_port"] = int(binding)
-                elif isinstance(binding, tuple) and len(binding) >= 2:
+                elif isinstance(binding, (tuple, list)) and len(binding) >= 2:
                     host_ip, host_port = binding[0], binding[1]
                     if isinstance(host_ip, str) and host_ip:
                         mapping["host_ip"] = host_ip

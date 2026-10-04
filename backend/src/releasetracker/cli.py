@@ -49,6 +49,10 @@ def main(argv: list[str] | None = None) -> int:
         "pre-migration-backup",
         help="back up the database and keys if dbmate migrations are pending",
     )
+    subcommands.add_parser(
+        "recover-online-restore",
+        help="recover an interrupted owned restore before migrations/startup",
+    )
     restore_parser = subcommands.add_parser(
         "restore-backup", help="restore to a NEW directory; never overwrite live data"
     )
@@ -156,6 +160,19 @@ def main(argv: list[str] | None = None) -> int:
                 )
             print(json.dumps(manifest, indent=2))
             return 0
+        if args.command == "recover-online-restore":
+            from .services.online_restore_files import RestoreFiles
+
+            files = RestoreFiles(database_path())
+            if not files.root.exists():
+                return 0
+            files.acquire()
+            try:
+                files.recover()
+            finally:
+                files.release()
+            print("Interrupted online restore checked before startup.")
+            return 0
         if args.command == "pre-migration-backup":
             import os
 
@@ -166,7 +183,9 @@ def main(argv: list[str] | None = None) -> int:
                 print("Pre-migration backup disabled by RELEASETRACKER_PRE_MIGRATION_BACKUP=0")
                 return 0
             db_path = database_path()
-            directory = os.environ.get("RELEASETRACKER_BACKUP_DIR") or db_path.parent / "backups"
+            from .services.backup_configuration import pre_migration_directory
+
+            directory = pre_migration_directory(db_path)
             migrations = (
                 os.environ.get("DBMATE_MIGRATIONS_DIR") or backend_dir() / "dbmate" / "migrations"
             )

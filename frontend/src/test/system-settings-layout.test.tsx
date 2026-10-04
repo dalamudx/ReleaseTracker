@@ -64,6 +64,8 @@ describe("SystemSettingsPage Layout and Sections", () => {
     expect(screen.getByText("配置发布版本与执行器快照的保留策略，并支持手动清理历史数据。")).toBeInTheDocument()
     expect(screen.getByLabelText("每个发布渠道保留版本数")).toBeInTheDocument()
     expect(screen.getByLabelText("每个执行器保留快照数")).toBeInTheDocument()
+    expect(screen.getByLabelText("保留最近备份数量")).toBeInTheDocument()
+    expect(screen.getByLabelText("自动备份周期（小时）")).toBeInTheDocument()
 
     // 底部保存条
     expect(screen.getByRole("button", { name: /保存/ })).toBeInTheDocument()

@@ -566,7 +566,7 @@ export function RepositoryWebhookSettings() {
                         <div className="rounded-lg border bg-card p-4 space-y-4">
                             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                                 <Activity className="size-3.5" />
-                                {t("webhooks.repository.eventsSection", { defaultValue: "触发事件与过滤" })}
+                                {t("webhooks.repository.eventsSection", { defaultValue: "通知事件与过滤" })}
                             </div>
 
                             <div className="grid gap-3 sm:grid-cols-2">

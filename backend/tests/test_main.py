@@ -138,7 +138,7 @@ class FakeExecutorScheduler:
 async def test_lifespan_starts_without_identity_drift_repair(
     monkeypatch, storage, backup_hours, watch_seconds
 ):
-    monkeypatch.setenv("RELEASETRACKER_BACKUP_INTERVAL_HOURS", str(backup_hours))
+    # Scheduling is now configured in the global settings database.
     monkeypatch.setenv("RELEASETRACKER_RUNTIME_HEALTH_INTERVAL_SECONDS", str(watch_seconds))
     database_path = storage.db_path
     fake_storage_holder = {}
@@ -151,6 +151,11 @@ async def test_lifespan_starts_without_identity_drift_repair(
         storage = FakeStorage(db_path)
         storage.db_path = database_path
         storage.system_key_manager = system_key_manager
+
+        async def get_setting(key):
+            return str(backup_hours) if key == "system.backup_interval_hours" else None
+
+        storage.get_setting = get_setting
         fake_storage_holder["storage"] = storage
         return storage
 
@@ -174,6 +179,7 @@ async def test_lifespan_starts_without_identity_drift_repair(
         fake_executor_holder["executor"] = scheduler
         return scheduler
 
+    monkeypatch.setattr(main_module.app.state, "enable_online_restore", False)
     monkeypatch.setattr(main_module, "SQLiteStorage", fake_storage_factory)
     monkeypatch.setattr(main_module, "AuthService", fake_auth_factory)
     monkeypatch.setattr(main_module, "SchedulerHost", fake_scheduler_host_factory)

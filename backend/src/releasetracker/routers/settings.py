@@ -8,6 +8,8 @@ from pydantic import BaseModel
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
+from ..services.backup_configuration import BACKUP_DEFAULTS, normalize_backup_setting
+from ..services.instance_backup import BackupManagementError
 from ..models import User
 from ..config import READINESS_DEFAULTS, READINESS_BOUNDS
 from ..storage.sqlite_tasks import FETCH_RETRY_SETTING, DEFAULT_FETCH_RETRIES
@@ -107,6 +109,24 @@ def get_storage(request: Request):
     return storage
 
 
+async def _update_backup_setting(request, key, value):
+    backup = getattr(request.app.state, "instance_backup", None)
+    if backup is None or backup.storage is not get_storage(request):
+        raise HTTPException(503, "Backup service is unavailable")
+    controller = getattr(request.app.state, "online_restore", None)
+    if controller and (
+        controller.maintenance
+        or controller.lock.locked()
+        or controller.plan
+        or (controller.task and not controller.task.done())
+    ):
+        raise HTTPException(409, "backup_busy")
+    try:
+        return await backup.update_setting(key, value)
+    except BackupManagementError as error:
+        raise HTTPException(error.status_code, error.code) from None
+
+
 async def _refresh_cached_container_redirect_settings(request: Request) -> None:
     scheduler = getattr(request.app.state, "scheduler", None)
     refresh_redirect_settings = getattr(
@@ -140,6 +160,12 @@ async def _build_security_keys_status(
 
 def _normalize_setting_value(key: str, value: str) -> str:
     normalized_value = str(value).strip()
+
+    if key in BACKUP_DEFAULTS:
+        try:
+            return normalize_backup_setting(key, value)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from None
 
     field = key.removeprefix("system.")
     if key.startswith("system.") and field in READINESS_BOUNDS:
@@ -381,6 +407,8 @@ async def get_settings(
         key: (value, updated_at)
         for key, (value, updated_at) in (await storage.get_all_settings_with_updated_at()).items()
     }
+    for key, default in BACKUP_DEFAULTS.items():
+        settings.setdefault(key, (default, None))
     settings.setdefault(FETCH_RETRY_SETTING, (str(DEFAULT_FETCH_RETRIES), None))
     for field, default in READINESS_DEFAULTS.items():
         settings.setdefault(f"system.{field}", (str(default), None))
@@ -412,7 +440,10 @@ async def update_setting(
         raise HTTPException(status_code=403, detail="Reserved authentication setting")
 
     setting.value = _normalize_setting_value(setting.key, setting.value)
-    setting.updated_at = await storage.set_setting(setting.key, setting.value)
+    if setting.key in BACKUP_DEFAULTS:
+        setting.updated_at = await _update_backup_setting(request, setting.key, setting.value)
+    else:
+        setting.updated_at = await storage.set_setting(setting.key, setting.value)
     if setting.key == SYSTEM_LOG_LEVEL_SETTING_KEY:
         logging.getLogger().setLevel(getattr(logging, setting.value))
     if setting.key == SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY:
@@ -428,7 +459,10 @@ async def delete_setting(
     storage: SQLiteStorage = get_storage(request)
     if key in RESERVED_AUTH_SETTING_KEYS:
         raise HTTPException(status_code=403, detail="Reserved authentication setting")
-    await storage.delete_setting(key)
+    if key in BACKUP_DEFAULTS:
+        await _update_backup_setting(request, key, None)
+    else:
+        await storage.delete_setting(key)
     if key == SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY:
         await _refresh_cached_container_redirect_settings(request)
     return {"message": "Setting deleted"}

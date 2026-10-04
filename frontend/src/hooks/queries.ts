@@ -401,8 +401,9 @@ export function useUpdateSetting() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (data: { key: string; value: unknown }) => api.updateSetting(data),
-    onSuccess: () => {
+    onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.settings })
+      if (variables.key.startsWith("system.backup_")) void queryClient.invalidateQueries({ queryKey: ["instance-backups"] })
     },
   })
 }

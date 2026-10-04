@@ -4,67 +4,64 @@ title: Credentials and runtimes
 
 # Credentials and runtimes
 
-Credentials hold authentication material; runtime connections hold platform addresses and reference credentials. Public version tracking can work without either. Running updates requires a working runtime connection.
+Credentials hold authentication material; runtime connections hold platform addresses and reference credentials. Public version tracking needs neither. Running updates requires a working runtime connection or SSH host connection.
 
 ## Source credentials {#credentials}
 
-Create the matching type under **Credentials**, then reference it from a source or runtime connection. Secrets are encrypted in the database; backups must include both the [database and system keys](../operations/backup-and-upgrade.md#backup).
+Create the matching type under **Credentials** and reference it from a source or connection. Secrets are encrypted in the database; backups must include both the [database and system keys](../operations/backup-and-upgrade.md#backup).
 
 | Use | Credential material |
 | --- | --- |
-| GitHub / GitLab / Gitea | Access token with repository read permission; example token prefixes are not the only valid formats |
+| GitHub / GitLab / Gitea | Access token with repository read permission |
 | Helm chart repository | Basic Auth username and password |
 | Private OCI registry | Username and password / PAT |
-| Docker / Podman | TLS CA, client certificate, and private key when required |
+| Docker / Podman | TLS CA, client certificate and private key when required |
 | Kubernetes | kubeconfig or Token / certificate fields supported by the UI |
 | Portainer | API key |
+| Host SSH | Private key (optionally with passphrase) or password |
 
-Credentialed GitLab, Gitea, Helm, and custom changelog requests require HTTPS and reject cross-origin credential forwarding or HTTP downgrade. OCI redirects have a separate [system setting](../reference/settings.md).
+Credentialed GitLab, Gitea, Helm and custom changelog requests require HTTPS and reject cross-origin credential forwarding or HTTP downgrade. OCI redirects are controlled separately in [System settings](../reference/settings.md#global).
 
 ## Docker / Podman {#containers}
 
-- Use `unix:///var/run/docker.sock` for a local connection, not the bare `/var/run/docker.sock` path. For Podman, use its actual Socket path with the `unix://` prefix.
-- When ReleaseTracker runs in a container, mount the Socket into it. For example, append this to `volumes` in your existing Compose service:
-
-    ```yaml
-    - /var/run/docker.sock:/var/run/docker.sock
-    ```
-
-- For remote access, use `tcp://host:2376` with TLS verification and the required certificates. Match the actual server port.
-- Normally leave the API version blank; specify one only after checking server compatibility.
-- **Podman mode requires the native `/libpod/` API.** A Docker-API-only Socket Proxy usually exposes only Docker-compatible routes: select **Docker** for that proxy. Use a native Podman service/socket for Pod and native Podman update/recovery support. The runtime type is never switched automatically, and Docker compatibility is not full Podman support.
-- Enter the CA, client certificate, and private key as PEM credential fields, not paths outside the ReleaseTracker container. SDKs use private temporary files owned by the client lifetime. For direct IP endpoints, certificates without IP SANs are allowed while CA-chain verification remains enabled; DNS endpoints still require hostname verification.
+- Use `unix:///var/run/docker.sock` for a local connection, not the bare path; for Podman use its actual Socket path with the `unix://` prefix.
+- When ReleaseTracker runs in a container, mount the Socket into it, for example append `- /var/run/docker.sock:/var/run/docker.sock` to the Compose `volumes`.
+- For remote access use `tcp://host:2376` with TLS verification; normally leave the API version blank.
+- **Podman mode requires the native `/libpod/` API.** For a Docker-API-only Socket Proxy select **Docker**; use a native Podman service/socket for Pods and native Podman update/recovery.
+- Enter the CA, client certificate and private key as PEM credential fields, not paths outside the container. Direct IP endpoints accept certificates without IP SANs while still verifying the CA chain; DNS endpoints require hostname verification.
 
 !!! warning "Runtime access is privileged"
-    Docker Socket access is usually equivalent to host administration. A read-only bind mount does not make the Docker API read-only. Never expose an unauthenticated plaintext Docker TCP endpoint; restrict who can access ReleaseTracker and its network.
+    Docker Socket access is usually equivalent to host administration, and a read-only bind mount does not make the API read-only. Never expose an unauthenticated plaintext Docker TCP endpoint.
 
 ## Kubernetes / Helm {#kubernetes}
 
-Outside the cluster, select a Kubernetes credential. Inside a cluster, **In-Cluster** uses the Pod's ServiceAccount. Restrict namespaces and grant only the permissions needed for target discovery and updates.
-
-Helm releases use a Kubernetes connection, not a separate connection type. See the [support matrix](../reference/support.md#runtimes) for workload and Helm limitations.
+Outside the cluster select a Kubernetes credential; inside a cluster **In-Cluster** uses the Pod's ServiceAccount. Restrict namespaces and grant only the permissions needed for discovery and updates. Helm releases use a Kubernetes connection, not a separate connection type.
 
 ## Portainer {#portainer}
 
-Enter the instance address, select a Portainer credential, and discover the target Endpoint. Prefer HTTPS. Targets are supported standalone stacks, not arbitrary containers managed by Portainer; see the [support matrix](../reference/support.md#runtimes).
+Enter the instance address (prefer HTTPS), select a Portainer credential, and discover the target Endpoint. Targets are standalone stacks, not arbitrary containers managed by Portainer.
+
+## SSH hosts {#ssh}
+
+Use SSH to update Compose-managed projects on a remote host without exposing the Docker API.
+
+1. Under **Credentials → SSH host connections**, enter host, port, user name and authentication (private key or password).
+2. Click **Fetch host key**, compare it with the host's real fingerprint, **Confirm fingerprint**, then **Test connection**. A later key change is rejected.
+3. If the host is not directly reachable, choose another SSH connection with **Allow as proxy** enabled as a jump host (single hop).
+
+The remote host needs `docker compose`, `docker-compose`, `podman compose` or `podman-compose`, and the SSH user must be able to read and write project files and run Compose. See [SSH Compose targets](executors.md#ssh-compose) for project discovery and write strategies.
 
 ## Verify the connection {#verify}
 
-Select the connection during executor creation and run target discovery. Confirm the target name, namespace, or Endpoint before binding a source. For discovery failures, follow [connection troubleshooting](../reference/troubleshooting.md#connections); do not disable TLS verification to bypass certificate problems.
-
-Advanced timeout and read-retry configuration is currently API-only; see [Runtime operation policy](../reference/settings.md#operation-policy).
+Select the connection while creating an executor and run target discovery. Confirm the target name, namespace or Endpoint before binding a source. For failures follow [connection troubleshooting](../reference/troubleshooting.md#connections); never disable TLS verification to bypass certificate problems. Timeouts and read retries can be tuned via the API, see [Runtime operation policy](../reference/settings.md#operation-policy).
 
 ## Public registry read-only probe {#registry-probe}
 
-From `backend/` in a source checkout, run:
+To investigate slow image version fetching, run from `backend/` in a source checkout:
 
 ```bash
 .venv/bin/python scripts/probe_registry_manifest.py \
-  --registry reg.aoodc.com --image fawney19/aether --mode auto
+  --registry registry.example.com --image team/app --mode auto
 ```
 
-The script does not read the database, stored connections, or stored credentials, and never deploys or rolls back. It is for anonymously readable repositories only. Its JSON output records stage, method, count, and duration, not tokens, request URLs, or response bodies. For private registries, use normal source configuration rather than adding passwords to command-line arguments.
-
-Defaults are 10 versions, 10 seconds per request, at most 5 seconds per Blob, and a 240-second overall observation budget. `--observation-timeout` changes only the probe observation deadline, not production request limits. Use `--mode first_observed` to compare the no-Blob path. Missing required digests or failed requests produce exit code 1.
-
-New artifacts needing OCI metadata reuse the digest and body from one Manifest GET to avoid duplicate requests. Persisted metadata and `first_observed` still prefer HEAD. Network timing changes alone do not establish an optimization benefit: compare request counts too. A Tag-list timeout means the probe never reached Manifest verification.
+The script reads anonymously accessible repositories only; it never reads the database or stored credentials and never deploys. Its JSON output records request counts and durations per stage (defaults: 10 versions, 10 s per request, 240 s overall budget); `--mode first_observed` compares the no-Blob path. A Tag-list timeout means Manifest verification was never reached and is not evidence about Manifest performance.

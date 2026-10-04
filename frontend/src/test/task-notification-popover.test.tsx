@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { toast } from "sonner"
-import { TASK_NOTIFICATION_READ_KEY } from "@/hooks/use-task-notification-read"
+import { TASK_NOTIFICATION_READ_KEY, TASK_NOTIFICATION_DISMISSED_KEY } from "@/hooks/use-task-notification-read"
 import { MemoryRouter } from "react-router"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { api } from "@/api/client"
@@ -63,7 +63,10 @@ beforeEach(async () => {
     await i18n.changeLanguage("zh")
 })
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+    expect(api.clearFinishedTasks).not.toHaveBeenCalled()
+    vi.restoreAllMocks()
+})
 
 const indicator = () => screen.getByRole("button", { name: "任务动态" }).querySelector("[data-indicator]")
 
@@ -102,7 +105,7 @@ describe("notification read and clear behavior", () => {
         await openPopover()
         await screen.findByText("no-change")
         expect(indicator()).toBeNull()
-        expect(screen.getByRole("button", { name: "清理已读" })).toBeEnabled()
+        expect(screen.getByRole("button", { name: "清理最近任务" })).toBeEnabled()
     })
 
     it("keeps actionable attention and approval visible and never makes them clearable", async () => {
@@ -112,28 +115,32 @@ describe("notification read and clear behavior", () => {
         await openPopover()
         await screen.findByText("needs-verification")
         expect(indicator()).toHaveAttribute("data-indicator", "attention")
-        expect(screen.getByRole("button", { name: "清理已读" })).toBeDisabled()
+        expect(screen.getByRole("button", { name: "清理最近任务" })).toBeDisabled()
         const approval = { ...task, state: "queued" as const, approval_pending: true }
         act(() => client.setQueryData(["tasks", "recent-popover"], [approval]))
         await waitFor(() => expect(indicator()).toHaveAttribute("data-indicator", "warning"))
-        expect(screen.getByRole("button", { name: "清理已读" })).toBeDisabled()
+        expect(screen.getByRole("button", { name: "清理最近任务" })).toBeDisabled()
     })
 
-    it("clears only observed rows and refreshes the remaining unseen row", async () => {
+    it("hides only the five displayed read rows without altering either queue query", async () => {
         const tasks = Array.from({ length: 6 }, (_, i) => createTask(6 - i, "succeeded", `task-${6 - i}`))
-        vi.mocked(api.getTasks).mockResolvedValueOnce(tasks).mockResolvedValue([tasks[5]])
-        vi.mocked(api.clearFinishedTasks).mockResolvedValue({ cleared: 5 })
-        renderPopover()
+        // Previously read, but outside the current five-row notification list.
+        localStorage.setItem(TASK_NOTIFICATION_READ_KEY, JSON.stringify({ version: 1, tasks: [[1, tasks[5].updated_at]] }))
+        vi.mocked(api.getTasks).mockResolvedValue(tasks)
+        const { client } = renderPopover()
+        client.setQueryData(["tasks", "list", {}], tasks)
         await openPopover()
-        await waitFor(() => expect(screen.getByRole("button", { name: "清理已读" })).toBeEnabled())
-        expect(storedReads()[1]).toBeUndefined()
-        fireEvent.click(screen.getByRole("button", { name: "清理已读" }))
-        await waitFor(() => expect(api.clearFinishedTasks).toHaveBeenCalledWith(
-            tasks.slice(0, 5).map((task) => ({ id: task.id, updated_at: task.updated_at })),
-        ))
+        await waitFor(() => expect(screen.getByRole("button", { name: "清理最近任务" })).toBeEnabled())
+        expect(storedReads()[1]).toBe(tasks[5].updated_at)
+        fireEvent.click(screen.getByRole("button", { name: "清理最近任务" }))
         expect(await screen.findByText("task-1")).toBeVisible()
         expect(screen.queryByText("task-6")).not.toBeInTheDocument()
-        expect(toast.success).toHaveBeenCalledWith("已清理 5 条已读任务")
+        const hidden = JSON.parse(localStorage.getItem(TASK_NOTIFICATION_DISMISSED_KEY)!).tasks
+        expect(hidden.map(([id]: [number, number]) => id).sort()).toEqual([2, 3, 4, 5, 6])
+        expect(client.getQueryData(["tasks", "recent-popover"])).toEqual(tasks)
+        expect(client.getQueryData(["tasks", "list", {}])).toEqual(tasks)
+        expect(api.getTasks).toHaveBeenCalledTimes(1)
+        expect(toast.success).toHaveBeenCalledWith("已清理 5 条最近任务")
     })
 
     it("treats a newly settled version as unread until the popover is reopened", async () => {
@@ -151,34 +158,47 @@ describe("notification read and clear behavior", () => {
         expect(storedReads()[1]).toBe(newer.updated_at)
     })
 
-    it("reports clear failure without hiding rows", async () => {
-        vi.mocked(api.getTasks).mockResolvedValue([createTask(1, "failed", "preserved-task")])
-        vi.mocked(api.clearFinishedTasks).mockRejectedValue(new Error("offline"))
+    it("keeps cleared notifications hidden after refresh, remount and storage-tab sync", async () => {
+        const task = createTask(1, "succeeded", "hidden-result")
+        vi.mocked(api.getTasks).mockResolvedValue([task])
+        const first = renderPopover()
+        await openPopover()
+        await waitFor(() => expect(screen.getByRole("button", { name: "清理最近任务" })).toBeEnabled())
+        fireEvent.click(screen.getByRole("button", { name: "清理最近任务" }))
+        expect(await screen.findByText("暂无最近任务")).toBeVisible()
+        fireEvent.click(screen.getByRole("button", { name: "刷新任务" }))
+        await waitFor(() => expect(api.getTasks).toHaveBeenCalledTimes(2))
+        expect(screen.queryByText("hidden-result")).not.toBeInTheDocument()
+        first.unmount()
         renderPopover()
         await openPopover()
-        const clear = screen.getByRole("button", { name: "清理已读" })
-        await waitFor(() => expect(clear).toBeEnabled())
-        fireEvent.click(clear)
-        await waitFor(() => expect(toast.error).toHaveBeenCalledWith("清除结束任务失败"))
-        expect(screen.getByText("preserved-task")).toBeVisible()
-        expect(clear).toBeEnabled()
+        expect(await screen.findByText("暂无最近任务")).toBeVisible()
+        act(() => {
+            localStorage.removeItem(TASK_NOTIFICATION_DISMISSED_KEY)
+            window.dispatchEvent(new StorageEvent("storage", { key: TASK_NOTIFICATION_DISMISSED_KEY }))
+        })
+        expect(await screen.findByText("hidden-result")).toBeVisible()
     })
 
-    it("disables clearing while a request is pending and refreshes to empty on success", async () => {
-        let finish: (result: { cleared: number }) => void = () => undefined
-        vi.mocked(api.getTasks).mockResolvedValueOnce([createTask(1, "succeeded", "pending-clear")]).mockResolvedValue([])
-        vi.mocked(api.clearFinishedTasks).mockImplementation(() => new Promise((resolve) => { finish = resolve }))
-        renderPopover()
+    it("shows newer results and actionable states of a dismissed task again", async () => {
+        const task = createTask(1, "succeeded", "updated-task")
+        vi.mocked(api.getTasks).mockResolvedValue([task])
+        const { client } = renderPopover()
         await openPopover()
-        const clear = screen.getByRole("button", { name: "清理已读" })
-        await waitFor(() => expect(clear).toBeEnabled())
-        fireEvent.click(clear)
-        await waitFor(() => expect(clear).toBeDisabled())
-        fireEvent.click(clear)
-        expect(api.clearFinishedTasks).toHaveBeenCalledTimes(1)
-        act(() => finish({ cleared: 1 }))
+        await waitFor(() => expect(screen.getByRole("button", { name: "清理最近任务" })).toBeEnabled())
+        fireEvent.click(screen.getByRole("button", { name: "清理最近任务" }))
         expect(await screen.findByText("暂无最近任务")).toBeVisible()
-        expect(clear).toBeDisabled()
+        fireEvent.click(screen.getByRole("button", { name: "任务动态" }))
+        act(() => client.setQueryData(["tasks", "recent-popover"], [{ ...task, state: "failed", updated_at: task.updated_at + 1 }]))
+        await waitFor(() => expect(indicator()).toHaveAttribute("data-indicator", "attention"))
+        await openPopover()
+        expect(await screen.findByText("updated-task")).toBeVisible()
+        act(() => client.setQueryData(["tasks", "recent-popover"], [{ ...task, state: "needs_attention" }]))
+        await waitFor(() => expect(screen.getByRole("button", { name: "清理最近任务" })).toBeDisabled())
+        expect(screen.getByText("updated-task")).toBeVisible()
+        act(() => client.setQueryData(["tasks", "recent-popover"], [{ ...task, approval_pending: true }]))
+        expect(screen.getByText("updated-task")).toBeVisible()
+        expect(screen.getByRole("button", { name: "清理最近任务" })).toBeDisabled()
     })
 
     it("synchronizes read state from another tab", async () => {
@@ -199,8 +219,10 @@ describe("notification read and clear behavior", () => {
         vi.mocked(api.getTasks).mockResolvedValue([createTask(1, "failed", "storage-blocked")])
         renderPopover()
         await openPopover()
-        await waitFor(() => expect(screen.getByRole("button", { name: "清理已读" })).toBeEnabled())
+        await waitFor(() => expect(screen.getByRole("button", { name: "清理最近任务" })).toBeEnabled())
         expect(indicator()).toBeNull()
+        fireEvent.click(screen.getByRole("button", { name: "清理最近任务" }))
+        expect(await screen.findByText("暂无最近任务")).toBeVisible()
     })
 
     it("shows fetch errors rather than a misleading empty list", async () => {
@@ -208,7 +230,7 @@ describe("notification read and clear behavior", () => {
         renderPopover()
         await openPopover()
         expect(await screen.findByRole("alert")).toHaveTextContent("任务加载失败")
-        expect(screen.getByRole("button", { name: "清理已读" })).toBeDisabled()
+        expect(screen.getByRole("button", { name: "清理最近任务" })).toBeDisabled()
         expect(screen.queryByText("暂无最近任务")).not.toBeInTheDocument()
     })
 })

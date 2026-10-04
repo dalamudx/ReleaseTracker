@@ -1,4 +1,4 @@
-.PHONY: help install run-backend run-frontend lint test test-backend test-frontend format clean build dbmate-migrate version
+.PHONY: help install dev run-backend run-frontend lint test test-backend test-frontend format clean build dbmate-migrate version
 
 # Default target
 .DEFAULT_GOAL := help
@@ -24,11 +24,11 @@ run-backend: ## Run the backend service
 	@echo "🚀 Starting backend service..."
 	cd backend && $(UV) run uvicorn releasetracker.main:app --host 0.0.0.0 --port 8000 --reload
 
-run-frontend: ## Run the frontend service
+run-frontend: ## Wait for backend readiness, then run the frontend service
 	@echo "🚀 Starting frontend service..."
 	cd frontend && $(NPM) run dev
 
-dev: ## Run the backend and frontend together (requires make -j2)
+dev: ## Run both services; start the frontend only after the backend is ready
 	@echo "🚀 Starting the development environment..."
 	@$(MAKE) -j2 run-backend run-frontend
 

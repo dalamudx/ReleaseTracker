@@ -2006,7 +2006,7 @@ async def test_scheduler_start_does_not_trigger_initial_check_all(tmp_path, monk
             called.append(True)
 
         monkeypatch.setattr(scheduler, "check_all", fake_check_all)
-        monkeypatch.setattr(scheduler.scheduler_host.scheduler, "start", lambda: None)
+        monkeypatch.setattr(scheduler.scheduler_host.scheduler, "start", lambda **_: None)
 
         await scheduler.start()
         await asyncio.sleep(0.01)

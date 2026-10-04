@@ -1,7 +1,7 @@
 import { ReadinessSummary } from "@/components/executors/ReadinessSummary"
 import { useEffect, useId, useState } from "react"
 import { Link } from "react-router"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
 import { taskErrorLabel } from "@/lib/task-errors"
@@ -26,7 +26,7 @@ import { Badge } from "@/components/ui/badge"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
-import { isSettledTask, isUnreadTask, useTaskNotificationRead } from "@/hooks/use-task-notification-read"
+import { isClearableNotification, isDismissedNotification, isUnreadTask, useTaskNotificationRead } from "@/hooks/use-task-notification-read"
 
 function getKindIcon(kind: QueueTask["kind"]) {
     switch (kind) {
@@ -89,16 +89,7 @@ export function TaskNotificationPopover() {
     const { t, i18n } = useTranslation()
     const [open, setOpen] = useState(false)
     const descriptionId = useId()
-    const cache = useQueryClient()
-    const { read, markRead } = useTaskNotificationRead()
-    const clearRead = useMutation({
-        mutationFn: (readTasks: Array<{ id: number; updated_at: number }>) => api.clearFinishedTasks(readTasks),
-        onSuccess: async ({ cleared }) => {
-            toast.success(t("tasks.clearedRead", { count: cleared }))
-            await cache.invalidateQueries({ queryKey: ["tasks"] })
-        },
-        onError: () => toast.error(t("tasks.clearFailed")),
-    })
+    const { read, dismissed, markRead, dismissRead } = useTaskNotificationRead()
 
     const tasksQuery = useQuery({
         queryKey: ["tasks", "recent-popover"],
@@ -106,7 +97,8 @@ export function TaskNotificationPopover() {
         refetchInterval: 5000,
     })
 
-    const tasks = Array.isArray(tasksQuery.data) ? tasksQuery.data : []
+    const tasks = (Array.isArray(tasksQuery.data) ? tasksQuery.data : [])
+        .filter(task => !isDismissedNotification(task, dismissed))
     const recentTasks = tasks.slice(0, 5)
 
     const runningCount = tasks.filter((t) => t.state === "running").length
@@ -117,7 +109,7 @@ export function TaskNotificationPopover() {
     const retryCount = tasks.filter((t) => t.state === "retry_wait").length
     const activeCount = tasks.filter((t) => ["queued", "running", "retry_wait"].includes(t.state)).length
 
-    const readTasks = tasks.filter((task) => isSettledTask(task.state) &&
+    const readTasks = recentTasks.filter((task) => isClearableNotification(task) &&
         read[task.id] !== undefined && task.updated_at <= read[task.id])
     const indicator = attentionCount > 0 || unreadFailures ? "attention"
         : approvalCount > 0 || retryCount > 0 ? "warning"
@@ -134,9 +126,9 @@ export function TaskNotificationPopover() {
         // Only the rows actually presented in the popover become read. New
         // results received while closed or outside this five-row list do not.
         if (open && !tasksQuery.isError && Array.isArray(tasksQuery.data)) {
-            markRead(tasksQuery.data.slice(0, 5))
+            markRead(tasksQuery.data.filter(task => !isDismissedNotification(task, dismissed)).slice(0, 5))
         }
-    }, [open, tasksQuery.data, tasksQuery.isError, markRead])
+    }, [open, tasksQuery.data, tasksQuery.isError, dismissed, markRead])
 
     const formatRelative = (seconds: number): string => {
         try {
@@ -273,11 +265,14 @@ export function TaskNotificationPopover() {
                     <Button
                         variant="ghost"
                         size="xs"
-                        disabled={clearRead.isPending || tasksQuery.isError || readTasks.length === 0}
+                        disabled={tasksQuery.isError || readTasks.length === 0}
                         title={t("tasks.clearReadDescription")}
-                        onClick={() => clearRead.mutate(readTasks.map((task) => ({ id: task.id, updated_at: task.updated_at })))}
+                        onClick={() => {
+                            const cleared = dismissRead(readTasks)
+                            if (cleared) toast.success(t("tasks.clearedRead", { count: cleared }))
+                        }}
                     >
-                        {clearRead.isPending ? <Spinner className="size-3.5" /> : <ListX className="size-3.5" aria-hidden="true" />}
+                        <ListX className="size-3.5" aria-hidden="true" />
                         {t("tasks.clearRead")}
                     </Button>
                     <Button

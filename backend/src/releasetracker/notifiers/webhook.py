@@ -103,6 +103,7 @@ class WebhookNotifier(BaseNotifier):
         self.language = language if language in WEBHOOK_TRANSLATIONS else "en"
         self.template = kwargs.get("template")
         self.detail_url = kwargs.get("detail_url")
+        self.timezone = kwargs.get("timezone") or kwargs.get("tz_name")
 
     async def notify(self, event: str, payload: Any) -> bool:
         if event not in self.events:
@@ -116,7 +117,7 @@ class WebhookNotifier(BaseNotifier):
     async def prepare(self, event: str, payload: Any) -> dict:
         if isinstance(payload, dict) and isinstance(payload.get("_prepared_notification"), dict):
             return payload["_prepared_notification"]
-        generic = _build_webhook_payload(event, payload, language=self.language)
+        generic = _build_webhook_payload(event, payload, language=self.language, timezone=self.timezone)
         if self.template is None:
             return generic
         from .templates import render_notification
@@ -126,8 +127,9 @@ class WebhookNotifier(BaseNotifier):
             payload,
             self.language,
             self.template,
-            "wecom" if self.provider_name == "WeCom" else "webhook",
+            self.provider_name.lower(),
             detail_url=self.detail_url,
+            tz_name=self.timezone,
         )
         generic.update(
             content=rendered["content"], text=rendered["content"], message=rendered["content"]
@@ -235,16 +237,17 @@ def _build_webhook_payload(
     payload: Any,
     *,
     language: str = "en",
+    timezone: str | None = None,
 ) -> dict[str, Any]:
     labels = _webhook_labels(language)
     if hasattr(payload, "tracker_name") and hasattr(payload, "version"):
-        return _build_release_payload(event, payload, labels)
+        return _build_release_payload(event, payload, labels, timezone=timezone)
 
     if isinstance(payload, dict) and payload.get("entity") in {
         "executor_run",
         "executor_health_recheck",
     }:
-        return _build_executor_payload(event, payload, labels)
+        return _build_executor_payload(event, payload, labels, timezone=timezone)
 
     supplied_message = payload.get("message") if isinstance(payload, dict) else None
     message = (
@@ -265,10 +268,20 @@ def _build_release_payload(
     event: str,
     release: Any,
     labels: dict[str, str],
+    *,
+    timezone: str | None = None,
 ) -> dict[str, Any]:
+    from .templates import format_localized_time
+
     message = f"[{release.tracker_name}] {_translated_event(event, labels)}: {release.version}"
     if release.prerelease:
         message += f" ({labels['prerelease']})"
+
+    published_display = (
+        format_localized_time(release.published_at, timezone)
+        if timezone
+        else release.published_at.isoformat()
+    )
 
     return {
         "event": event,
@@ -297,7 +310,7 @@ def _build_release_payload(
                     },
                     {
                         "name": labels["published"],
-                        "value": release.published_at.isoformat(),
+                        "value": published_display,
                         "inline": True,
                     },
                 ],
@@ -312,6 +325,8 @@ def _build_executor_payload(
     event: str,
     payload: dict[str, Any],
     labels: dict[str, str],
+    *,
+    timezone: str | None = None,
 ) -> dict[str, Any]:
     executor_name = str(payload.get("executor_name") or "unknown executor")
     tracker_name = str(payload.get("tracker_name") or "unknown tracker")

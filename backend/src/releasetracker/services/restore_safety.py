@@ -37,7 +37,17 @@ def quarantine_restored_intents(db):
         "UPDATE executor_notification_intents SET status='expanded',expanded_at=? WHERE status='pending'",
         (now,),
     )
-    for table in ("release_notification_outbox", "executor_notification_outbox"):
+    db.execute(
+        "UPDATE deployment_admission_events SET expanded_at=? WHERE expanded_at IS NULL", (now,)
+    )
+    db.execute(
+        "UPDATE source_refresh_requests SET state='ignored',reason='restore_review_required',lease_until=NULL WHERE state IN ('pending','deferred','running')"
+    )
+    for table in (
+        "release_notification_outbox",
+        "executor_notification_outbox",
+        "deployment_admission_notification_outbox",
+    ):
         db.execute(f"UPDATE {table} SET status='discarded' WHERE status IN ('pending','sending')")
     db.execute(
         "INSERT OR REPLACE INTO settings(key,value,updated_at) VALUES (?,?,datetime('now'))",

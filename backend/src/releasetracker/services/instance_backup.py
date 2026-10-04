@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+import re
+import stat
 from pathlib import Path
 import shutil
 import sqlite3
@@ -28,17 +30,31 @@ FORMAT = 1
 MAX_DATABASE_BYTES = 2 * 1024**3
 MAX_KEY_BYTES = 65536
 MEMBERS = {"manifest.json", "releases.db", "system-secrets.json"}
+ARCHIVE_NAME = re.compile(r"releasetracker-[0-9]+-[0-9a-f]{8}\.zip")
 
 
-def backup_options():
-    try:
-        hours = int(os.environ.get("RELEASETRACKER_BACKUP_INTERVAL_HOURS", "0"))
-        retain = int(os.environ.get("RELEASETRACKER_BACKUP_RETENTION", "7"))
-    except ValueError as exc:
-        raise ValueError("Backup interval and retention must be integers") from exc
-    if not 0 <= hours <= 168 or not 1 <= retain <= 100:
-        raise ValueError("Backup interval must be 0–168 hours and retention 1–100")
-    return hours, retain
+class BackupManagementError(ValueError):
+    def __init__(self, code, status_code=409):
+        self.code = code
+        self.status_code = status_code
+        super().__init__(code)
+
+
+def _unlink_archive(path):
+    path.unlink()
+    _sync_directory(path.parent)
+
+
+async def backup_options(storage):
+    from .backup_configuration import BACKUP_INTERVAL, BACKUP_RETENTION, normalize_backup_setting
+
+    hours = normalize_backup_setting(
+        BACKUP_INTERVAL, await storage.get_setting(BACKUP_INTERVAL) or "0"
+    )
+    retain = normalize_backup_setting(
+        BACKUP_RETENTION, await storage.get_setting(BACKUP_RETENTION) or "7"
+    )
+    return int(hours), int(retain)
 
 
 def _digest(path):
@@ -280,15 +296,134 @@ class InstanceBackup:
         self.lock = asyncio.Lock()
         self.last_success = self.latest_archive_time() or 0.0
         self.failures = 0
+        self._downloads: dict[str, int] = {}
+        self._restore_pins: set[str] = set()
+        self.scheduler_host = None
+
+    async def load_configuration(self):
+        await backup_options(self.storage)
+        self.directory = Path(self.storage.db_path).parent / "backups"
+        self.last_success = self.latest_archive_time() or 0.0
+
+    async def reschedule(self):
+        if self.scheduler_host is None:
+            return
+        hours, _ = await backup_options(self.storage)
+        if not hours:
+            self.scheduler_host.remove_job("maintenance", "instance_backup")
+            return
+        latest = self.latest_archive_time()
+        now = time.time()
+        interval = hours * 3600
+        due = now + 300 if latest is None or latest + interval <= now else latest + interval
+        self.scheduler_host.add_interval_job(
+            "maintenance",
+            "instance_backup",
+            self.scheduled_backup,
+            seconds=interval,
+            next_run_time=datetime.fromtimestamp(due),
+        )
+
+    async def scheduled_backup(self):
+        try:
+            hours, _ = await backup_options(self.storage)
+            if hours:
+                await self.create(scheduled=True)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).error("Scheduled instance backup failed")
+        finally:
+            await self.storage.close_current_task_connection()
+
+    async def update_setting(self, key, value):
+        from .backup_configuration import (
+            BACKUP_DEFAULTS,
+            normalize_backup_setting,
+        )
+        from ..executors.adapter_lifetime import wait_for_runtime_worker
+
+        normalized = normalize_backup_setting(key, BACKUP_DEFAULTS[key] if value is None else value)
+        if self.lock.locked() or self._restore_pins:
+            raise BackupManagementError("backup_busy")
+        async with self.lock:
+            async def apply():
+                try:
+                    updated_at = await (
+                        self.storage.delete_setting(key)
+                        if value is None
+                        else self.storage.set_setting(key, normalized)
+                    )
+                    await self.reschedule()
+                    return updated_at
+                finally:
+                    await self.storage.close_current_task_connection()
+
+            return await wait_for_runtime_worker(asyncio.create_task(apply()))
+
+    def archives(self):
+        return sorted(
+            (
+                path
+                for path in self.directory.glob("releasetracker-*.zip")
+                if ARCHIVE_NAME.fullmatch(path.name) and path.is_file() and not path.is_symlink()
+            ),
+            key=lambda path: (archive_created_at(path), path.name),
+            reverse=True,
+        )
+
+    def archive(self, name):
+        if not ARCHIVE_NAME.fullmatch(name):
+            raise BackupManagementError("backup_not_found", 404)
+        path = self.directory / name
+        try:
+            mode = path.lstat().st_mode
+        except FileNotFoundError:
+            raise BackupManagementError("backup_not_found", 404) from None
+        if not stat.S_ISREG(mode):
+            raise BackupManagementError("backup_not_found", 404)
+        return path
+
+    async def acquire_download(self, name):
+        if self.lock.locked():
+            raise BackupManagementError("backup_busy")
+        async with self.lock:
+            path = self.archive(name)
+            self._downloads[name] = self._downloads.get(name, 0) + 1
+            return path
+
+    def release_download(self, name):
+        count = self._downloads.get(name, 0)
+        if count <= 1:
+            self._downloads.pop(name, None)
+        else:
+            self._downloads[name] = count - 1
+
+    async def delete(self, name):
+        if self.lock.locked():
+            raise BackupManagementError("backup_busy")
+        async with self.lock:
+            path = self.archive(name)
+            if self._downloads.get(name) or name in self._restore_pins:
+                raise BackupManagementError("backup_in_use")
+            if len(self.archives()) <= 1:
+                raise BackupManagementError("last_local_backup")
+            from ..executors.adapter_lifetime import wait_for_runtime_worker
+
+            worker = asyncio.create_task(self._delete_archive(path))
+            await wait_for_runtime_worker(worker)
+
+    async def _delete_archive(self, path):
+        try:
+            await _finish_thread(_unlink_archive, path)
+        finally:
+            self.last_success = self.latest_archive_time() or 0.0
+        await self._record(last_success_at=self.last_success, last_verified_at=0)
 
     def latest_archive_time(self):
         """Newest complete archive time; persisted across restarts by the files."""
         try:
-            times = [
-                archive_created_at(path)
-                for path in self.directory.glob("releasetracker-*.zip")
-                if path.is_file() and not path.is_symlink()
-            ]
+            times = [archive_created_at(path) for path in self.archives()]
         except OSError:
             return None
         return max(times, default=None)
@@ -306,11 +441,13 @@ class InstanceBackup:
             BACKUP_STATUS_SETTING, json.dumps((await self.status()) | changes)
         )
 
-    async def create(self, *, retain=7, scheduled=False):
+    async def create(self, *, retain=None, scheduled=False):
         if self.lock.locked():
             raise ValueError("A backup is already running")
         async with self.lock:
             try:
+                if retain is None:
+                    _, retain = await backup_options(self.storage)
                 days, weeks = retention_tiers()
                 archive = await self._create(retain=retain)
                 # No cleanup or success timestamp until ZIP, DB and keys verify.
@@ -322,10 +459,9 @@ class InstanceBackup:
                     last_error_code=None,
                     last_failure_phase=None,
                 )
-                for old in retention_candidates(
-                    self.directory.glob("releasetracker-*.zip"), retain, days, weeks
-                ):
-                    old.unlink()
+                for old in retention_candidates(self.archives(), retain, days, weeks):
+                    if not self._downloads.get(old.name) and old.name not in self._restore_pins:
+                        old.unlink()
                 return archive
             except Exception as error:
                 self.failures += 1
@@ -337,15 +473,7 @@ class InstanceBackup:
         if self.lock.locked():
             return False  # A creation in progress will verify its own new archive.
         async with self.lock:
-            archives = sorted(
-                (
-                    p
-                    for p in self.directory.glob("releasetracker-*.zip")
-                    if p.is_file() and not p.is_symlink()
-                ),
-                key=lambda p: (archive_created_at(p), p.name),
-                reverse=True,
-            )
+            archives = self.archives()
             if not archives:
                 status = await self.status()
                 if status.get("last_success_at"):

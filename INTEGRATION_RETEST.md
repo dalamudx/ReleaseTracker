@@ -138,4 +138,72 @@
 - 验收：真实生产构建Chromium页面+合成非空read-only API fixture，覆盖320/390/768/844横屏/1280桌面、图表28统计值/卡片边界/全部6发布、15tracker最后项可滚动选择返回、中英7页共28路由viewport审查+仓库Webhook动作。新9个布局场景与相邻12项浏览器回归合计21 passed、0 retry；另移动Release Notes打开/关闭1 passed。前端全量442 passed / 53 files，lint/types/diff通过。API是隔离fixture，不声称真实手机Safari或线上接口验收；未修改在线数据库或创建业务部署。
 - 日志：`/tmp/rt-mobile-regression-browser.log`、`/tmp/rt-mobile-notes-probe.log`、`/tmp/rt-mobile-frontend-final.log`。UI复现基线与修复截图在 `/tmp/rt-mobile-*`；长期回归用例为 `frontend/e2e/mobile-data-layout.spec.ts`。
 
+## 备份生命周期管理与页面直接恢复评估
+
+- 既有后端已有最近N/UTC每日/每周自动保留（默认7，成功且验证通过才淘汰），本轮补页面完整策略/归档数量/总占用及手动删除，而非错误声明从无保留能力。策略仍由环境变量管理，不引入另一套配置优先级。
+- 新管理员 `DELETE /api/backups/{name}` 要求confirm_name一致；有限错误码，任意路径/缺失/目录/symlink拒绝，至少保留一份合法本地归档（数量保护不等同完整性验证）。管理沿用InstanceBackup锁；完整FileResponse下载lease保护归档，自动淘汰跳过在下载文件，下次成功备份再清理。unlink状态更新在protectedworker中，重复取消完成再释放锁；disk error不暴露私密路径。列表/latesttime/verification/prune统一合法归档集，未管理文件不误删或冒充新恢复点。协调范围是单应用实例，不假称multi-worker锁。
+- 前端：删除确认名称/不可撤销性，失败保留弹窗可重试并主动刷新清单；下载中/最后份/创建校验busy禁用。统计数量/空间与实际daily/weekly保留策略，中英文桌面/320px生产浏览器删除取消→busy→重试→成功刷新→最后份禁用4项通过。
+- 真实页面验收：全新临时迁移SQLite/合成密钥 + FastAPI backup真实router；浏览器在390px实际创建ZIP、下载并保存在私有临时目录、删除2个旧ZIP、最后份禁用，0 pageerror。非backup设置及鉴权为隔离fixture，不访问在线备份/数据库。下载ZIP经过真实完整性/解密校验及恢复到全新目录，验证源库新值不变、restore.review_required存在、sessions清空、tasks仍0，全部临时资源清理通过。没有切换或恢复现库，不当成在线恢复验收。
+- 直接恢复评估：技术可行，推荐页面发起→预检→当前安全副本→全局维护排空→配对新目录切换/持久journal→受控重启→重登录复核。现有恢复校验/隔离旧意图/门禁/shutdown可复用；全局写入门禁、跨进程所有权、崩溃可恢复切换、外部重启协调与结果回执尚缺，不能直接os.replace在线db/keys或只暂停TaskQueue。本轮未实现网页restore接口、未降低既有offline防线。详细中英评估：`docs/operations/backup-and-upgrade{,.en}.md#managed-restore-assessment`。
+- 最终：backend备份管理/原恢复/main定向46 passed；frontend全量446 passed / 53files，lint/types/diff/black/ruff通过；productionbrowser最终4 passed/0retry。旧排序测试只调整fixture suffix为真实8hex，不放宽下载allowlist。MkDocs模块未安装，完整文档构建未跑。日志`/tmp/rt-backup-management-backend-complete.log`、`/tmp/rt-backup-management-frontend-all.log`、`/tmp/rt-backup-management-browser-complete.log`、`/tmp/rt-backup-management-native.log`，真实页面`/tmp/rt-backup-management-native.png`。
+
+
+## 页面受控在线恢复：实现与最终隔离验收
+
+- 上述评估阶段已在本轮落地。备份页单个归档「在线恢复」→私密暂存/严格校验/版本时间指纹预览→完整文件名与数据丢失确认→202只读回执→维护排空→当前安全ZIP→关闭旧资源→journal配对切换→原进程资源重建→重新登录→复核新操作。普通request503保留Retry-After与安全header，status header capability最长1h，绝无审批/数据库读取权限。cap可sessionStorage延续且storage受限时内存降级。
+- 新在线恢复默认POSIX开启，可`RELEASETRACKER_ONLINE_RESTORE=0`保留旧生命周期。持有数据目录级及DB局部flock，拒绝其他worker及同目录不同DB名，因为共享keys；本地Linux普通文件/具备锁和替换语义卷。在线source仅当前schema兼容可信本地归档，不支持上传/镜像自动降级。目录权属不代替外部CLI/人工写入排他，仍要求停机使用它们。
+- 不只TaskQueue pause：共享scheduler追踪callback，维护时禁止新callback并drain全部已提交工作、三Outbox独立子worker、Webhook子worker和只读fetch；正在deploy/recover/原生SDKborrow/未核销needsattention/download拒绝。readonlyfetch可自然等最多30秒，不强取消；timeout保留现库，不开始切换。10min计划过期在hash确认过程中不会删除仍用stage；审批及shutdown重复取消仍等ownedworker。退出要等admitted requests才能释放目录owner。
+- 安全ZIP独立保存，与raw原pair/checksum/journal在私密`.online-restore-<db filename>`；普通备份仍遵守配置retention，已审核sourcepin防淘汰。fsync journal先于第一替换；reload失败回原始pair，无法证明cleanup/rollback则failclosed。启动自动恢复中断原pair，entrypoint在dbmate前调用recover-online-restore。正常路径无kill、宿主业务socket或人工重启。
+- 恢复不复活旧任务/approval/observation/desiredstate/session；本轮额外修复旧restore helper遗漏第三审核Outbox与未展开admissionevents及Webhook父请求的隔离，旧pending/sending→discarded、历史delivered/failed保留，旧refresh→ignored。复核前暂停全部自动任务及通知，仅管理员显式review启用新操作。CLIreview后需重启恢复已paused调度器。
+- 真实页面：全新临时SQLite/schema、合成JWT/encryptionkeys、真实FastAPIruntime_lifespan/TaskQueue/3Outbox/backup/authbrowsercookie与CSRF；390px真实表单选择归档确认→202→实际DB/key重载→旧session失效→新登录→review→安全ZIP下载验证。恢复值=`archived`，安全ZIP值=`live`，JWT回archivedsecret，0新增deploymenttasks、0pageerrors。非业务dashboard剩余readAPI为fixture；不使用任何旧业务实例。全部临时server、目录和连接清理通过。实际日志`/tmp/rt-online-restore-native-final.log`，截图`/tmp/rt-online-restore-native-{confirm,result,reviewed}.png`。
+- 回归：相关完整backend254 passed，之后retention设置补充再次通过online两文件27项（重叠，不累加冒充完整suite）；frontend54files453 passed；productionbrowser中英320/1280恢复4项+旧删除4项共8passed/0retry。一次资源负载下reload白屏场景的同桌面单项复验及最终8项全部过，不消除断言/提高原30s上限。格式/lint/types/shellsyntax/diff通过。文档中英已更新；完整MkDocs构建仍未安装工具未执行。
+- 日志`/tmp/rt-online-restore-backend-complete.log`、`/tmp/rt-online-restore-retention-final.log`、`/tmp/rt-online-restore-frontend-complete.log`、`/tmp/rt-online-restore-browser-complete.log`；耐久用例`backend/tests/test_online_restore{,_files}.py`、`frontend/src/test/online-restore.test.tsx`、`frontend/e2e/online-restore.spec.ts`。未commit/deploy或恢复现有业务数据库，之前移动返回按钮改动保持不变。
+
+
+## Socket容器配置保真修复及真实UnixSocket验收
+
+- 审计使用合成inspect和真实Docker SDK转换，24项初始回归全部复现失败：HostConfig安全/资源/namespace字段被保存却未消费、复杂bind mode压缩、同source双目标被dict覆盖、匿名volume实际Name缺失、Podman空/混合Binds清空structuredMounts、Docker StopTimeout与明确空值丢失。原业务socket、DB、工作负载均未访问。
+- 共享创建映射deepcopy，保留已有Env/argv空list、Labels空dict；观察到的安全/CPU/内存/swap/swappiness0/PIDs-1/DNS/设备/namespace等明确字段按native支持保留。所有卷必须保留实际Name；已有卷不存在就拒绝，不让API创建空替代卷。随机HostPort空/0依据实际NetworkSettings绑定冻结，不重新随机分配。mount选项完整保留，Podman按规范化destination幂等合并，tmpfs权限/选项不裁成size。未知mounttype/部分无法安全映射的选项明确拒绝。
+- Docker调用禁用SDK默认proxy ENV注入；低层保留StopTimeout、MaskedPaths/ReadonlyPaths及AttachStdin/AttachStdout/AttachStderr/StdinOnce，不由SDK detach默认重算。实际Socket暴露了SDK `volumes=list` 对复杂mode的 `_host_volume_from_bind` 误解析：mode被当dest导致多余匿名卷；已校正native request的Config.Volumes为真实dest且保留Binds整串，加入专门回归，不通过隐藏差异放行。
+- 同一native参数render用于单容器、Compose分组及恢复的prestop验证；全部member先验证，再删除任何member。镜像pull后仍沿用实时配置/HMAC检查。真实SDK写入后重新inspect语义比对，image/3个纳管标签例外，ReadOnly省略等价false；env重复键不合并，argv顺序保持。失真不报成功，无自动回滚；错误只固定顶层字段名，无私密值。自定义非native SDK facade保留其原接口契约。
+- 保守限制：新目标镜像若新增默认Env/Labels/ExposedPorts/Volumes，或填入之前为空的启动/健康字段，会在stop前拒绝；不是已实现新image默认配置合并/审批策略。Podman不能准确表达的security/namespace/mount option不猜测映射；依赖本次被替换container-ID的Docker namespace不盲目沿用。应用/卷数据本身仍不包含在快照里。
+- 真实UnixSocket通过：默认skip的 `backend/tests/test_real_container_fidelity.py` 显式启用RT_RUN_REAL_DIND_TESTS，在全新 `rt-owned-fidelity-*` 独立DinD私有tmp UnixSocket，私有cgroup-v2 namespace委派；无宿主业务socket/旧证书/生产DB。自有build的额外ENV镜像验证拒绝且旧container仍running（该唯一tag由测试pullfacade提供prebuilt artifact；inspect/拒绝真实）。正向公开NGINX真实pull、更新、JSON roundtrip快照恢复、不可变native image ID均通过；readonlyroot、双bind/source/mode、匿名卷Name及`retained-data`、解析后的实际端口、DNS/groups/cap/resource、stdio/StopTimeout均核对。全部ownedengine及其匿名卷删除检查通过，没有全局prune。
+- 夹具失败排查记录：起初cgroup domain失效只影响新的fixture初始启动，改为其private namespace专有daemon/workload树委派；旧图像新增ENV被guard正确拒绝，正向fixture创建时明确配置其目标ENV键；SDK新collection导致local-tag pullfacade未生效，改为唯一tag的class方法并仍真实pull所有其他tag。native writeback发现ReadOnly omitted/false语义等价及SDK complexBind导致匿名卷，已修生产wire并给fixture正确initial rawdest，最终1 passed/0skip，73.49秒。临时仅synthetic mount诊断代码已移除，未消除任何readback保护。
+- 最终当前代码相关后端 **407 passed**（包括44个新保真用例），不是完整backend suite。Black/ruff/diff通过。前端无功能改动未重复测试；Podman真实socket/Portainer真实页面更新仍未在本轮计通过。新增可复现说明 `backend/tests/RUNTIME_ACCEPTANCE.md`；日志 `/tmp/rt-container-fidelity-complete.log`、`/tmp/rt-container-fidelity-native-final.log`。未commit/deploy或操作任何已有业务工作负载。
+
+
+## Socket配置保真实机复验：Docker页面＋原生Podman
+
+- 当前Docker UnixSocket更新/JSON快照恢复显式实机重跑1 passed/0skip，76.48秒，日志`/tmp/rt-container-fidelity-retest.log`。全部在新自有DinD运行，匿名卷proof、双bind、端口、安全/资源/ENV/stdio回读通过；不是已有业务容器验收。
+- 新增`backend/tests/test_real_podman_fidelity.py`：默认skip，显式`RT_RUN_REAL_PODMAN_TESTS=1`，专有tmp graphroot/runroot/vfs/cgroupfs/nativeUnixSocket服务。新建NGINX真实CLI配置，真实SDKpull/update，JSONroundtrip immutable恢复。末次1 passed/0skip，130.87秒；readOnly、Config.StopTimeout明确37、argv/entrypoint/labels/env、DNS/groups/caps/memory/swap/cpushares/restart/tmpfs、实际loopback绑定端口、原匿名卷名称/数据及双bind propagation均对比，不mock任何SDK。finally仅在私有store删除新容器卷，验证零残留并停止ownedservice。文档已补本地复现命令。
+- 实机发现并修复Podman两边界：inspect `MemorySwappiness=-1`是未设置，但libpod OCI `uint64`会拒绝；只省略该哨兵，明确0及0..100保留，非法值在preflight拒绝。JSON `[IP,port]`之前作为两个绑定遍历，恢复会丢loopbackIP；现正确识别IPv4/IPv6/空IP单pair、嵌套pairs，普通数字多hostports不改。分别新增9＋3项边界回归。
+- 新真实页面验收：专用DinD UnixSocket、独立Registry与新正常提供HTTP的NGINX、临时SQLite/keys，当前devfrontend通过私有FastAPI真实executors/tasks/rollback路由、真实调度队列，合成admin依赖和无关readAPI fixture，不当作生产登录验收。不读取在线DB。页面执行→查看真实+-→外部仅改测试容器端口→旧confirm409→refreshtrue→confirm202→deploysucceeded→原生checkpoint核对选定imageID、保留完整有效配置/卷proof/NGINX HTTP→点击条目历史/快照→真实恢复diff及名称确认→recover202/succeeded→原镜像与快照端口/配置/卷proof/NGINX HTTP核对。2个真实任务均成功，0pageerrors，ownedengine/privateDB/registry/volumes清理通过。
+- 页面发现修复：MANAGED_MARKERS实际包含第4个`releasetracker.io/deployment-id`，原保真project只排除3身份字段，真实队列写后会误报labels（directadapter无法覆盖）。现在读取本次context精确核验4个系统值，并将本次合法标记加入expected副本，不忽略任意reservedprefix；错误deployment-id或任何新增businesslabel仍拒绝，审核证据不被原地改写。新增本轮queue-label regression。
+- 页面初次失败为上述合法deployment-id falsepositive，修后update成功；后续恢复入口测试selector把姓名span当button，已按真实行文本点击修夹具，未为通过改变页面生产交互。最终加强原生checkpoint的日志`/tmp/rt-socket-page-retest-final.log`完整PASS；探针`/tmp/rt-socket-native-page-retest.{py,mjs}`；实际截图`/tmp/rt-socket-page-retest-{update,recovery}.png`。前端代码无修改。
+- 最新相关后端回归**420 passed**（含本轮57个保真用例），不是完整suite；ruff/black/diff通过。当前更新保守image-defaults拒绝策略未放宽；应用数据仍不做快照。Portainer/Kubernetes的真实更新页面本轮未计通过。未commit/deploy，不使用已有业务容器或修改在线数据库。
+
+
+## 备份三项配置迁移至全局配置
+
+- 移除备份目录、最近份数与间隔的环境读取，统一持久化为`system.backup_directory`（空表示持久化数据目录下的 `/app/backend/data/backups`）、`system.backup_retention`（默认7，1–100）、`system.backup_interval_hours`（默认0，0表示关闭，放宽支持 1–8760 小时，覆盖每天24h、每周168h、每月720h至1年8760h）。输入占位符规范为 `/app/backend/data/backups（留空使用默认目录）`，杜绝非持久挂载路径的误导。默认值在GET全局设置明确返回；POST严格校验，DELETE恢复默认；admin权限不变。Daily/weekly额外保留环境配置按请求范围未移除。
+- 系统设置全局页的“存储与历史保留”卡片内，将备份存储目录、备份保留份数及自动备份间隔这三项配置全面重构为标准 SettingItem 组件（采用与基础环境、版本抓取等配置完全一致的左右两列两级栅格布局、统一的圆角图标徽章及标准标题/描述排版），彻底去除原有的 fieldset 临时容器，并在中英文双语下对描述文案和输入占位进行了标准化规范；保存时仅提交修改过的脏键并按锁安全顺序持久化。备份/校验/下载/恢复预检占用时拒绝相关更改；切换不移动、不删除旧文件，可切回查看。间隔保存热更新共享scheduler job，0移除；按当前目录最新归档续算，不重置计时。保留数用于下一次已验证备份剪裁，不保存立即删除。
+- 启动、重启及在线恢复重载读取DB配置，手动/自动/恢复前安全归档读同一实时策略。启动前pre-migration CLI用只读SQLite读取目录，旧库没有settings表使用默认，不修改旧schema。旧部署env值不会自动导入，应升级时在全局页面重新填写；两份运维文档及双语页面说明同步。生产backend/src、frontend/src、docs三个旧env正则搜索0匹配。
+- 新增9个后端配置行为测试与1个前端保存/校验用例，覆盖旧env忽略、默认展示、目录/调度热生效、真实ZIP剪裁、旧目录保留、restart/readonlypre-migration、复位、非法/不可写/下载/restorepin阻止。最终相关backend **216passed**，前端全量 **454passed/54files**；lint/tsc/ruff/black/diff通过。不是后端fullsuite结果。
+- 真实浏览器：全新临时SQLite/keys与FastAPI服务，真实global-settings/backups路由、SchedulerHost、ZIP创建/验证/剪裁；只有合成管理员与无关读API fixture，不计生产登录验收。中文390px、英文1280px均完成页面保存三项→reload仍一致→备份页按新目录显示→连续创建3ZIP仅保留2；原中文目录两份归档在切换英文目录后仍存在；job实际24小时。0pageerrors/无横向溢出。日志`/tmp/rt-backup-global-browser-confirm.log`，截图`/tmp/rt-backup-global-{zh-390,en-1280}.png`。全部临时服务/数据归档清理；未读取/改写线上业务DB。
+- 首轮恢复测试在seed关闭fixture storage后又为了零间隔重开该storage，teardown超时；改为使用默认零而不重开closedpool，生产恢复与取消边界复验通过。lifecycle double更新load/reschedule await接口、移除旧不存在main.backup_options monkeypatch；不修改生产停机保护。浏览器探针修正toHaveValue字符串契约/中文按钮名称，以及只dirty设置导致英文不再发重复interval POST的错误等待条件；生产功能未为通过修改。未commit/deploy。
+
+
+## 通知弹窗「清理最近任务」与任务队列隔离
+
+- 移除TaskNotificationPopover对`api.clearFinishedTasks`的调用及任务缓存失效操作。按钮仅隐藏弹窗当前显示的最近5条中的已读结束任务（id+updated_at），不改任务队列/cleared_at/执行历史，也不清理列表外已读任务。运行/审批/needs_attention不隐藏；有新updated_at的同一任务重新出现。任务页自己的「清除已结束任务」仍保持原独立操作，不改后端API。
+- 沿用既有已读key，并增加独立本地dismissed版本存储（每个最多1000条），支持刷新/重开/跨tab更新，存储被禁用时本tab内存降级；通知描述明确只当前浏览器，非多设备服务端清理。通知摘要计算不包含已隐藏结果，但活动任务始终保留。隐藏不会原地修改query结果，任务页缓存/列表完全不变。
+- 定向前端27 passed（popover13+任务页14），lint/tsc/diff通过。生产构建浏览器6项passed/0retry：中390/en1280各检查清理已显示3条后7条任务全留在队列，未显示2条与运行/异常2条保留，刷新/reload隐藏持续、新结果重现，任务POST/DELETE请求为0；另原任务页清除确认和通知导航4项正常。不以fixtureUI测试宣称线上数据库操作验收，未访问/修改在线数据。
+- 回归`frontend/src/test/task-notification-popover.test.tsx`、`frontend/e2e/task-notification-dismissal.spec.ts`；日志`/tmp/rt-notification-clear-regression.log`、`/tmp/rt-notification-clear-browser.log`、`/tmp/rt-notification-clear-final.log`。本轮未跑全量，不commit/deploy，保留原有未提交改动。
+
+## 开发启动后端就绪等待
+
+- `npm run dev` 先执行 `frontend/scripts/wait-for-backend.mjs`，真实公开 `/api/auth/oidc/providers` 返回200 JSON数组才启动Vite；reloader打印监听、TCP连通、401/503/重定向或HTML不计就绪。覆盖`make dev`、`make -j2 run-backend run-frontend`及`make run-frontend`现有入口。固定IPv4回源127.0.0.1:8000，与原Host/Origin保留策略一致，不新增依赖或后端health接口。
+- 默认60秒整体截止，每次请求（包含body）最多1秒；可`DEV_BACKEND_WAIT_TIMEOUT_SECONDS`设为0以上、最多600秒。超时以非零退出阻止Vite启动并提示排查backend日志。日志不打印OIDC配置。纯UI开发用`npm run dev:ui`明确绕过；后端热重载断连仍可能发生，不屏蔽真实运行错误，也不会停止已启动的backend进程。
+- Node隔离测试8passed：延迟监听拒绝后就绪、HTTP状态/无效响应、挂起body/连接整体timeout、外部取消、非法CLI值非零退出、真实Vite回源/Host及Make/npm登记。已有devwatcher1passed、lint/types/diff通过。公开API实际只读探测就绪通过，未重启服务或写业务数据。相关日志`/tmp/rt-dev-startup-tests.log`、`/tmp/rt-dev-startup-types.log`。未提交/部署。
+
 临时 DinD、Portainer、合成证书和此前副本已清理；保留公开镜像缓存。完整历史过程在 `/tmp/rt-retest-summary.md`，临时日志并非长期归档。

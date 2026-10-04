@@ -16,6 +16,11 @@ from .compose_runtime_update import GroupedRuntimeRecreateSpec, build_grouped_ru
 from .container_runtime import _ContainerRuntimeAdapter, snapshot_recovery
 from .runtime_tls import RuntimeTLSMaterial, docker_tls_config
 from . import container_recovery, docker_identity
+from .container_configuration import (
+    verify_image_defaults,
+    verify_created_configuration,
+    verify_existing_volumes,
+)
 
 
 @offload_blocking_runtime_adapter_methods
@@ -87,11 +92,16 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         client = self._get_client()
         images = getattr(client, "images", None)
         if images is not None and hasattr(images, "pull"):
+            for spec in ordered_specs:
+                self._docker_create_arguments(client, spec.create_config)
+                verify_existing_volumes(client, spec.create_config)
             for target_image in sorted({spec.target_image for spec in ordered_specs}):
                 images.pull(target_image)
 
         from ..services.deployment_diff import verify_update_state
 
+        for spec in ordered_specs:
+            verify_image_defaults(client, spec.create_config)
         await verify_update_state(self, target_ref)
         created_containers = []
         try:
@@ -105,6 +115,7 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
                 created_containers.append(new_container)
                 self._restore_container_networks(client, new_container, spec)
                 new_container.start()
+                verify_created_configuration(self, new_container, spec.create_config)
         except Exception as exc:
             for container in created_containers:
                 self._remove_container_if_present(container)
@@ -185,6 +196,9 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
 
         from ..services.deployment_diff import verify_update_state
 
+        self._docker_create_arguments(client, recreate_spec.create_config)
+        verify_existing_volumes(client, recreate_spec.create_config)
+        verify_image_defaults(client, recreate_spec.create_config)
         await verify_update_state(self, target_ref)
         new_container = None
         try:
@@ -193,6 +207,7 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
             new_container = self._create_docker_container(client, recreate_spec.create_config)
             self._restore_container_networks(client, new_container, recreate_spec)
             new_container.start()
+            verify_created_configuration(self, new_container, recreate_spec.create_config)
         except Exception as exc:
             if new_container is not None:
                 self._remove_container_if_present(new_container)
@@ -273,8 +288,9 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         create_config = dict(create_config, image=image_id)
 
         self._validate_snapshot_target_identity(target_ref, snapshot)
+        self._docker_create_arguments(client, create_config)
+        verify_existing_volumes(client, create_config)
         removed = self._cleanup_replacement_conflict(client, snapshot, create_config)
-
         recovered_container = None
         try:
             docker_identity.verify(self, snapshot, destructive=bool(removed))
@@ -283,6 +299,7 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
             self._restore_container_networks_from_snapshot(client, recovered_container, snapshot)
             docker_identity.verify(self, snapshot, destructive=True)
             recovered_container.start()
+            verify_created_configuration(self, recovered_container, create_config)
         except Exception:
             if recovered_container is not None:
                 docker_identity.verify(self, snapshot, destructive=True)
@@ -392,6 +409,8 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         for item in snapshots:
             container_recovery.prepare_image(self, item)
             self._inspect_recovery_conflict(item["create_config"])
+            self._docker_create_arguments(self._get_client(), item["create_config"])
+            verify_existing_volumes(self._get_client(), item["create_config"])
         for item in snapshots:
             result = await self.recover_from_snapshot(
                 self._target_ref_for_compose_snapshot_entry(item),
@@ -438,40 +457,111 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
             labels.update(markers)
             create_config["labels"] = labels
         create_kwargs = self._sanitize_docker_create_kwargs(create_config)
+        verify_existing_volumes(client, create_config)
+        raw_create_kwargs = self._docker_create_arguments(client, create_config)
         exposed_ports = create_kwargs.pop("_releasetracker_exposed_ports", None)
-        if not exposed_ports:
+        stop_timeout = create_kwargs.pop("stop_timeout", None)
+        stdio = create_kwargs.pop("_releasetracker_stdio", None)
+        if (
+            not exposed_ports
+            and stdio is None
+            and not isinstance(create_kwargs.get("volumes"), list)
+            and stop_timeout is None
+            and not any(field in create_kwargs for field in ("masked_paths", "readonly_paths"))
+        ):
             return client.containers.create(**create_kwargs)
 
         api_client = getattr(client, "api", None)
         if api_client is None or not hasattr(api_client, "create_container"):
             return client.containers.create(**create_kwargs)
 
-        try:
-            docker_containers = importlib.import_module("docker.models.containers")
-            convert_create_args = docker_containers._create_container_args
-        except (AttributeError, ImportError):
-            return client.containers.create(**create_kwargs)
-
-        api_version = getattr(api_client, "_version", None)
-        raw_create_kwargs = convert_create_args({**create_kwargs, "version": api_version})
-        raw_ports = list(raw_create_kwargs.get("ports") or [])
-        existing_raw_ports = {self._docker_raw_port_key(port) for port in raw_ports}
-        for exposed_port in exposed_ports:
-            raw_port = self._parse_docker_port_spec(exposed_port)
-            if raw_port is not None and raw_port not in existing_raw_ports:
-                raw_ports.append(raw_port)
-                existing_raw_ports.add(raw_port)
-        if raw_ports:
-            raw_create_kwargs["ports"] = raw_ports
-
-        response = api_client.create_container(**raw_create_kwargs)
+        native_stdio = raw_create_kwargs.pop("_releasetracker_stdio", None)
+        if native_stdio is not None:
+            arguments = dict(raw_create_kwargs)
+            name = arguments.pop("name", None)
+            platform = arguments.pop("platform", None)
+            arguments.pop("use_config_proxy", None)
+            arguments.setdefault("command", None)
+            body = api_client.create_container_config(**arguments)
+            body.update(native_stdio)
+            response = api_client.create_container_from_config(body, name=name, platform=platform)
+        else:
+            response = api_client.create_container(**raw_create_kwargs)
         container_id = response.get("Id") if isinstance(response, dict) else None
         return client.containers.get(container_id)
+
+    def _docker_create_arguments(self, client, create_config):
+        """Pure SDK validation: must run BEFORE any container is stopped."""
+        from copy import deepcopy
+
+        docker_containers = importlib.import_module("docker.models.containers")
+        kwargs = deepcopy(self._sanitize_docker_create_kwargs(create_config))
+        exposed = kwargs.pop("_releasetracker_exposed_ports", [])
+        timeout = kwargs.pop("stop_timeout", None)
+        stdio = kwargs.pop("_releasetracker_stdio", None)
+        paths = {
+            native: kwargs.pop(field)
+            for field, native in (
+                ("masked_paths", "MaskedPaths"),
+                ("readonly_paths", "ReadonlyPaths"),
+            )
+            if field in kwargs
+        }
+        api = getattr(client, "api", None)
+        if (timeout is not None or paths or exposed) and (
+            api is None or not hasattr(api, "create_container")
+        ):
+            raise ValueError("Docker stop timeout requires native create support")
+        from docker.utils import version_lt
+
+        if paths and version_lt(getattr(api, "_version", None) or "1.45", "1.23"):
+            raise ValueError("Docker API cannot preserve security paths")
+        if stdio is not None and not hasattr(api, "create_container_from_config"):
+            raise ValueError("Docker API cannot preserve stdio configuration")
+        if kwargs.get("auto_remove"):
+            raise ValueError("Auto-remove containers cannot be safely recreated")
+        raw = docker_containers._create_container_args(
+            {**kwargs, "version": getattr(api, "_version", None) or "1.45"}
+        )
+        if timeout is not None:
+            from docker.utils import version_lt
+
+            if version_lt(getattr(api, "_version", None) or "1.45", "1.25"):
+                raise ValueError("Docker API cannot preserve stop timeout")
+            raw["stop_timeout"] = timeout
+        if isinstance(kwargs.get("volumes"), list):
+            raw["volumes"] = [
+                bind.split(":")[1]
+                for bind in kwargs["volumes"]
+                if isinstance(bind, str) and ":" in bind
+            ]
+        raw["host_config"].update(paths)
+        if stdio is not None:
+            raw["_releasetracker_stdio"] = stdio
+        ports = list(raw.get("ports") or [])
+        existing = {self._docker_raw_port_key(port) for port in ports}
+        for port in exposed:
+            parsed = self._parse_docker_port_spec(port)
+            if parsed is not None and parsed not in existing:
+                ports.append(parsed)
+                existing.add(parsed)
+        if ports:
+            raw["ports"] = ports
+        return raw
 
     @staticmethod
     def _sanitize_docker_create_kwargs(create_config: dict[str, Any]) -> dict[str, Any]:
         create_kwargs = dict(create_config)
-        create_kwargs.pop("stop_timeout", None)
+        create_kwargs["use_config_proxy"] = False
+        if isinstance(create_kwargs.get("devices"), list):
+            create_kwargs["devices"] = [
+                (
+                    f"{item['PathOnHost']}:{item['PathInContainer']}:{item.get('CgroupPermissions', 'rwm')}"
+                    if isinstance(item, dict) and "PathOnHost" in item
+                    else item
+                )
+                for item in create_kwargs["devices"]
+            ]
         # JSON persistence turns (host_ip, host_port) tuples into lists. Docker
         # interprets a list as multiple published ports ("" means a random port).
         # Restore only IP/port pairs; ordinary lists of host ports stay lists.
@@ -716,7 +806,18 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
     ) -> None:
         if not specs:
             raise ValueError("grouped recreate plan is empty")
+        replaced_ids = {spec.container_id for spec in specs}
         for spec in specs:
+            for field in ("network_mode", "pid_mode", "ipc_mode"):
+                mode = spec.create_config.get(field)
+                if (
+                    isinstance(mode, str)
+                    and mode.startswith("container:")
+                    and mode.partition(":")[2] in replaced_ids
+                ):
+                    raise ValueError(
+                        "ID-based namespace dependency cannot be preserved during grouped recreation"
+                    )
             if not spec.create_config:
                 raise ValueError(
                     f"Docker cannot recreate compose container '{spec.container_name or spec.container_id}' without a restorable create configuration"

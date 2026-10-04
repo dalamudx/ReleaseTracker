@@ -134,11 +134,11 @@ function formatApprovalReason(t: (key: string, options?: Record<string, unknown>
     if (!reason) return null
     if (reason === "version_policy_requires_approval") return t("versionPolicy:approval")
     const reasonMap: Record<string, string> = {
-        unmanaged: t("tasks.reasonUnmanaged", { defaultValue: "目标实体初次纳管（此前未由本系统部署）" }),
-        marker_missing: t("tasks.reasonMarkerMissing", { defaultValue: "目标缺少纳管标记" }),
-        foreign_owner: t("tasks.reasonForeignOwner", { defaultValue: "目标已被其他实例纳管" }),
-        target_marker_conflict: t("tasks.reasonConflict", { defaultValue: "目标纳管标记与当前执行器冲突" }),
-        schema_unsupported: t("tasks.reasonSchemaUnsupported", { defaultValue: "纳管标记版本不受支持" }),
+        unmanaged: t("tasks.reasonUnmanaged", { defaultValue: "初次纳管目标" }),
+        marker_missing: t("tasks.reasonMarkerMissing", { defaultValue: "缺少纳管标记" }),
+        foreign_owner: t("tasks.reasonForeignOwner", { defaultValue: "已被其他实例纳管" }),
+        target_marker_conflict: t("tasks.reasonConflict", { defaultValue: "纳管标记冲突" }),
+        schema_unsupported: t("tasks.reasonSchemaUnsupported", { defaultValue: "纳管版本不支持" }),
         manual_update_review: t("tasks.reasonManualUpdate"),
         configuration_drift: t("tasks.reasonConfigurationDrift"),
         configuration_diff_incomplete: t("tasks.diffIncomplete"),

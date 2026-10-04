@@ -9,11 +9,21 @@ Executors bind a source's release channel to a running service. First verify [ve
 ## Create and bind {#bindings}
 
 1. Create an executor, select a runtime connection, and discover targets.
-2. Bind the target to a specific tracker source and release channel.
-3. Review each service binding for multi-service targets; do not accidentally point different services at the same image source.
-4. Start in manual mode. Review the target image or chart version before saving.
+2. Bind the target to a specific tracker source and release channel; for multi-service targets review each binding and do not point different services at the same image source.
+3. Start in manual mode and review the target image or chart version before saving.
 
 ![Selecting version sources and release channels for executor services](../images/executors-binding.png)
+
+## SSH Compose targets {#ssh-compose}
+
+After selecting an [SSH host connection](runtime-connections.md#ssh), Compose projects on the remote host can be discovered automatically. If discovery is unreliable, enter the working directory, Compose files (in load order), environment files and profiles manually. **Analyze** parses the project read-only so you can confirm the Compose tool, services and where each version comes from.
+
+| Write strategy | Behavior |
+| --- | --- |
+| Edit original files / environment | Update the image reference in place in the Compose or environment file |
+| Separate image override file | Create and maintain a ReleaseTracker-owned override file without touching the originals; use it when variables come from the process environment |
+
+Only the images of selected services change; complex image expressions, shared variables or build-only services are refused. A project can be owned by one executor only. Project files are snapshotted before updating. If a disconnect leaves the result uncertain, the project stays locked: confirm the remote command has stopped, then choose **Restore configuration files** or **Verify and unlock** in the executor. Restoring files does not roll back running containers.
 
 ## Triggers {#policies}
 
@@ -21,9 +31,9 @@ Executors bind a source's release channel to a running service. First verify [ve
 | --- | --- |
 | Manual | Triggered explicitly in the UI |
 | Immediate | Runs automatically when a new target version is detected |
-| Maintenance window | Runs automatically only on allowed days and times, interpreted in the system timezone |
+| Maintenance window | Runs automatically only on allowed days and times, interpreted in the system time zone |
 
-A maintenance window is not a fixed release schedule. A run can be skipped when no matching target version exists, configuration is disabled, or the target is already current. A manual run is an explicit action, not a request to wait for the window.
+The window constrains only the first remote write of an automatic deployment; multi-step updates and readiness observation already in progress may finish after it closes. Runs are skipped when no matching target version exists, the configuration is disabled, or the target is already current.
 
 ## Image selection {#images}
 
@@ -34,18 +44,29 @@ A maintenance window is not a fixed release schedule. A run can be skipped when 
 | Digest reference | Pin a specific build when the source supplies a usable digest |
 | Tag reference | Reference a version label; upstream can republish the same tag |
 
-Image fields do not apply to Helm releases, which select chart versions. A matching Git tag does not guarantee that an image tag exists; check the repository and build publication rules.
+Helm releases do not use these fields; they select chart versions. A matching Git tag does not guarantee an image tag exists; check the repository and build publication rules.
 
 ## Automatic version limits {#version-policy}
 
-The executor form offers no version limit (default), minor-and-patch only, or patch only. The latter two compare the running version with the target using stable SemVer. Changes outside the limit, downgrades, prereleases, and tags/digests that cannot be mapped to a version require deployment-plan approval without spending deployment retries. Approval is bound to configuration, targets, and policy; changed evidence requires approval again. Managed baselines do not bypass the limit.
+Choose no limit (default), minor-and-patch only, or patch only. The latter two compare running and target versions as stable SemVer: changes outside the limit, downgrades, prereleases, and tags/digests that cannot be mapped to a version go to [deployment plan approval](#approval) without spending retries. Containers use image tags; Helm uses chart versions, not appVersion; groups compare bound services only. Paths without a reliable running version, such as SSH Compose, always require approval. Manual deployments are exempt from these limits.
 
-Containers use image tags; Helm uses chart versions, not appVersion. Groups compare bound services only, excluding sidecars. Paths without a reliable running version, such as SSH Compose, require approval. Manual deployments are exempt from automatic limits but still obey ownership, security, and recovery conditions.
+## Deployment plan approval {#approval}
+
+Before deploying, ReleaseTracker reads the target state and builds a deployment plan. The task stops at **Deployment plan approval required** and sends a "Deployment approval required" notification when:
+
+- the target is onboarded for the first time, or lacks ReleaseTracker ownership markers;
+- the running configuration differs from the last managed baseline (configuration drift);
+- the target version is outside the [version limit](#version-policy);
+- the update is manual and its configuration diff needs review.
+
+In the task details, review the target, runtime identity, configuration fingerprint, recovery scope and configuration diff (sensitive values hidden), then click **Approve and continue**. Approvals expire and are bound to the current evidence; if the configuration changes before execution, **Refresh plan** and approve again. A plan whose diff is not fully displayed cannot be approved.
+
+If the target is owned by another instance or executor, its markers conflict, or the marker version is unsupported, the deployment is **blocked**; approval cannot override it and ownership must be resolved first.
 
 ## Verify one update {#verify}
 
-Before running, check the target version, image policy, and service bindings. Afterwards, inspect run status, target versions, and per-service diagnostics in execution history, then check application availability.
+Before running, check the target version, image policy and service bindings. Afterwards inspect status, target versions and per-service diagnostics in execution history and the **Task queue**, then check application availability.
 
-- Enable Immediate or Maintenance Window only after a successful manual verification.
-- See [Health checks and rollback](health-and-rollback.md) for validation and recovery.
-- A write timeout does not mean nothing changed. Inspect runtime state before retrying; see [Update timeout](../reference/troubleshooting.md#update-timeout).
+- Enable Immediate or Maintenance Window only after a successful manual run.
+- If a task shows that its execution state needs confirmation, verify the actual runtime state before unblocking it.
+- A write timeout does not mean nothing changed; see [Update timeout](../reference/troubleshooting.md#update-timeout). For validation and recovery see [Health checks and rollback](health-and-rollback.md).

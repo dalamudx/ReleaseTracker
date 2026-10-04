@@ -423,7 +423,7 @@ export interface LoginResponse {
 }
 
 export type NotifierLanguage = 'en' | 'zh'
-export type NotifierType = 'webhook' | 'wecom'
+export type NotifierType = 'webhook' | 'wecom' | 'feishu' | 'dingtalk' | 'discord' | 'slack' | 'telegram'
 
 export interface Notifier {
     id: number

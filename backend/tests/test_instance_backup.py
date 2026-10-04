@@ -266,7 +266,7 @@ async def test_scheduled_failure_records_status_and_alerts_once(
     assert "secret" not in alerts[0][2]
 
     app.state.instance_backup = service
-    monkeypatch.setenv("RELEASETRACKER_BACKUP_INTERVAL_HOURS", "24")
+    await storage.set_setting("system.backup_interval_hours", "24")
     listed = authed_client.get("/api/backups").json()
     assert listed["consecutive_failures"] == 2 and listed["last_error_code"] == "storage_error"
     assert listed["overdue"] is False and listed["last_success_at"] == pytest.approx(
@@ -285,7 +285,7 @@ async def test_api_archive_timestamp_is_not_changed_by_file_modification(
     created = backup.archive_created_at(archive)
     os.utime(archive, (created + 90000, created + 90000))
     app.state.instance_backup = service
-    monkeypatch.setenv("RELEASETRACKER_BACKUP_INTERVAL_HOURS", "24")
+    await storage.set_setting("system.backup_interval_hours", "24")
     result = authed_client.get("/api/backups").json()
     assert result["items"][0]["created_at"] == pytest.approx(created, rel=0, abs=0.001)
     assert result["last_success_at"] == pytest.approx(created, rel=0, abs=0.001)
@@ -345,8 +345,8 @@ async def test_verification_cancellation_holds_all_locks(storage, system_key_man
 def test_archive_creation_order_survives_copy_or_corrupt_file_mtime_changes(tmp_path):
     import os
 
-    older = tmp_path / "releasetracker-1700000000000000000-abcd.zip"
-    newer = tmp_path / "releasetracker-1700000900000000000-abcd.zip"
+    older = tmp_path / "releasetracker-1700000000000000000-abcd0000.zip"
+    newer = tmp_path / "releasetracker-1700000900000000000-abcd0000.zip"
     older.write_text("old")
     newer.write_text("new")
     os.utime(older, (1900000000, 1900000000))
@@ -445,9 +445,9 @@ async def test_manual_backup_creation_rejects_overlap_until_verified(
         assert await service.verify_latest() is False
 
 
-@pytest.mark.parametrize("hours,retain", [("169", "7"), ("-1", "7"), ("x", "7"), ("24", "0")])
-def test_invalid_schedule_fails_closed(monkeypatch, hours, retain):
-    monkeypatch.setenv("RELEASETRACKER_BACKUP_INTERVAL_HOURS", hours)
-    monkeypatch.setenv("RELEASETRACKER_BACKUP_RETENTION", retain)
+@pytest.mark.parametrize("hours,retain", [("8761", "7"), ("-1", "7"), ("x", "7"), ("24", "0")])
+async def test_invalid_schedule_fails_closed(storage, hours, retain):
+    await storage.set_setting("system.backup_interval_hours", hours)
+    await storage.set_setting("system.backup_retention", retain)
     with pytest.raises(ValueError):
-        backup.backup_options()
+        await backup.backup_options(storage)

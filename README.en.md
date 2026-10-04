@@ -2,7 +2,7 @@
 
 [中文](README.md) | [English](README.en.md) · [Wiki](https://dalamudx.github.io/ReleaseTracker/en/)
 
-Lightweight version tracking and update orchestration. Track GitHub, GitLab, Gitea, Helm charts, and OCI images, then apply selected versions to supported Docker, Podman, Portainer, Kubernetes, and Helm targets.
+Lightweight version tracking and update orchestration. Track GitHub, GitLab, Gitea, Helm charts, and OCI images, then apply selected versions to supported Docker, Podman, Portainer, Kubernetes, Helm, and SSH Compose targets.
 
 ![Python](https://img.shields.io/badge/Python-3.12+-blue)
 ![React](https://img.shields.io/badge/React-19-61dafb)
@@ -10,10 +10,11 @@ Lightweight version tracking and update orchestration. Track GitHub, GitLab, Git
 
 ## Features
 
-- Aggregate version sources, filter through channels and rules, and retain history and release notes.
-- Bind runtime targets for manual, immediate, or maintenance-window updates with execution diagnostics.
-- Configuration snapshots, post-update health checks, and manual rollback for supported targets.
-- Webhook events, one administrator with explicit OIDC binding, encrypted credentials, and key rotation.
+- Aggregate version sources, filter through channels and rules, and retain history and release notes; repository webhooks trigger immediate refreshes.
+- Bind runtime targets for manual, immediate, or maintenance-window updates; configuration drift, first onboarding and out-of-policy versions require deployment plan approval.
+- Pre-update configuration snapshots, durable readiness observation, and manual rollback.
+- Generic Webhook, WeCom, Feishu, DingTalk, Discord, Slack and Telegram notifications with custom Jinja message templates.
+- Online instance backups with in-app restore, Prometheus metrics, one administrator with OIDC, encrypted credentials, and key rotation.
 - React Web UI with Chinese/English, dark mode, and browser-managed configuration.
 
 Runtime capabilities differ; see the [Wiki support matrix](https://dalamudx.github.io/ReleaseTracker/en/reference/support/). Failed updates never roll back automatically. Executor snapshots are not application-data backups.
@@ -50,7 +51,7 @@ make install
 make dev
 ```
 
-Open the frontend at `http://localhost:5173`. API and Swagger run at `http://localhost:8000` and `/docs`. Vite proxies development requests to the backend.
+Open the frontend at `http://localhost:5173`; API and Swagger run at `http://localhost:8000` and `/docs`. The frontend waits for the backend API first (60 seconds by default, adjustable with `DEV_BACKEND_WAIT_TIMEOUT_SECONDS`); for UI-only work use `npm --prefix frontend run dev:ui`.
 
 ```bash
 uv --directory backend run pytest -q
@@ -59,7 +60,7 @@ make lint
 make build
 ```
 
-Use `make dbmate-migrate` for migrations and `make version VERSION=x.y.z` to synchronize version metadata and the backend lockfile. Run `make help` for the full command list.
+Development data lives in `backend/data` (database and `backups`) with no extra configuration. Use `make dbmate-migrate` for migrations and `make version VERSION=x.y.z` to synchronize version metadata; see `make help` for all commands. When building images with an overridden `DBMATE_VERSION` or `HELM_VERSION`, also supply the matching `*_SHA256`.
 
 ### Documentation maintenance
 
@@ -76,8 +77,7 @@ Checks cover translation pairs, navigation, internal links, images, and legacy a
 
 ## Roadmap
 
-- More notification channels.
-- Consult release notes and the Wiki support matrix for subsequent capabilities.
+Consult release notes and the Wiki support scope for upcoming capabilities.
 
 ## Special thanks
 

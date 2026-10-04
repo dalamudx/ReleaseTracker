@@ -59,6 +59,18 @@ Paths support `{tag}`, `{version}`, `{major}`, `{minor}`, and `{patch}`. Read fr
 
 ![Custom changelog source, path, and extraction settings](../images/trackers-changelog.png)
 
+## Repository webhooks {#repository-webhooks}
+
+In addition to scheduled checks, a Git platform can ask ReleaseTracker to refresh immediately when a release is published or an Actions run succeeds. Webhooks only schedule a source refresh under the existing rules; payloads never create releases or trigger deployments.
+
+1. Under **Webhooks → Repository Webhooks**, choose a Git source and platform protocol (GitHub, GitLab, Gitea, Forgejo).
+2. Set a verification secret of at least 16 characters. GitHub / Gitea / Forgejo sign the body with HMAC-SHA256; for GitLab prefer the signing token (`whsec_`) and use the secret token only for legacy instances.
+3. Choose events: release published, Actions run succeeded. Branch and workflow filters apply only to Actions events.
+4. To refresh images or charts after a successful build, select OCI / Helm sources of the same tracker under **Linked artifact sources**.
+5. Enter the generated endpoint (`{BASE URL}/api/webhooks/repository/{id}`) and secret in the Git platform, enable the webhook, and confirm receipt in its delivery log.
+
+The endpoint must be reachable from the Git platform. Requests with a missing or wrong signature are rejected; duplicate deliveries are deduplicated and shown in the delivery log.
+
 ## Verify the result {#verify}
 
 After a manual check, inspect the version tag, source, channel, and release notes. Disabling a tracker stops scheduled checks without deleting configuration. Use [missing or unexpected versions](../reference/troubleshooting.md#versions) to troubleshoot. Fix the rules before enabling automatic execution.

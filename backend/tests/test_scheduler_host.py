@@ -112,6 +112,40 @@ def test_worker_poll_setting_rejects_invalid_values(monkeypatch, value):
         SchedulerHost()
 
 
+@pytest.mark.asyncio
+async def test_pause_drains_submitted_jobs_without_cancelling_them():
+    import asyncio
+
+    host = SchedulerHost()
+    entered, finish = asyncio.Event(), asyncio.Event()
+
+    async def job():
+        entered.set()
+        await finish.wait()
+
+    worker = asyncio.create_task(host._tracked(job)())
+    await entered.wait()
+    host.pause()
+    with pytest.raises(TimeoutError):
+        await host.drain(timeout=0.01)
+    assert not worker.done()
+    skipped = False
+
+    async def should_skip():
+        nonlocal skipped
+        skipped = True
+
+    await host._tracked(should_skip)()
+    assert not skipped
+    finish.set()
+    await host.drain()
+    await worker
+    assert not host._active
+    host.resume()
+    await host._tracked(should_skip)()
+    assert skipped
+
+
 def test_worker_poll_setting_preserves_default(monkeypatch):
     monkeypatch.delenv("RELEASETRACKER_WORKER_POLL_SECONDS", raising=False)
     assert SchedulerHost().worker_poll_seconds == 2

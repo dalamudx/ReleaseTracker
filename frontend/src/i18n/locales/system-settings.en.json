@@ -9,6 +9,27 @@
     "oidc": "OIDC"
   },
   "global": {
+    "backupRetention": {
+      "title": "Instance Backup Retention",
+      "scopeBadge": "Full Backup",
+      "label": "Recent backups to keep",
+      "description": "Number of full-system ZIP archives to keep in the backups directory (1–100). Older archives are automatically pruned after a new backup succeeds and passes validation.",
+      "invalid": "Enter an integer from 1 to 100."
+    },
+    "backupInterval": {
+      "title": "Automatic Backup Interval",
+      "scopeBadge": "Schedule",
+      "label": "Automatic backup interval (hours)",
+      "description": "Scheduled interval in hours for automatic full-system disaster recovery backups. Set to 0 to disable automatic backups (manual backups remain available); common intervals include 24 (daily), 168 (weekly), up to 8760 hours (1 year).",
+      "invalid": "Enter an integer from 0 to 8760 (0 to disable)."
+    },
+    "backup": {
+      "title": "Instance Backup Policy",
+      "description": "Configure retention limits and automated backup schedules (backups default to backups under the data directory).",
+      "retention": "Recent backups to keep",
+      "interval": "Automatic backup interval (hours)",
+      "invalid": "Check backup settings: retention 1–100, interval 0–8760."
+    },
     "title": "Global Settings",
     "description": "These settings apply to the whole application. Future global options should be managed here as well.",
     "baseUrl": {
@@ -29,16 +50,18 @@
       "description": "Controls backend application logging after startup."
     },
     "releaseHistoryCount": {
-      "title": "Release history count",
+      "title": "Tracker Release History",
+      "scopeBadge": "Trackers",
       "label": "Versions per release channel",
-      "description": "Keep the latest N versions for each release channel. Cleanup runs after executor maintenance windows finish, or daily at 02:00 when no maintenance windows exist.",
+      "description": "Historical release versions discovered by trackers from upstream sources. Keeps the latest N versions per channel; cleaned up daily at 02:00 or after maintenance windows.",
       "invalid": "Enter an integer from 1 to 1000.",
       "cleanupSuccess": "Release history cleanup completed. Deleted {{count}} records."
     },
     "snapshotHistoryCount": {
-      "title": "Snapshot history count",
+      "title": "Executor Runtime Snapshots",
+      "scopeBadge": "Executors",
       "label": "Snapshots per executor",
-      "description": "Keep the latest N snapshots for each executor. Older snapshots are pruned after new snapshots are saved.",
+      "description": "Actual runtime configurations and image tags captured before/after executor rollouts. Keeps the latest N snapshots per executor; older snapshots pruned as new ones are saved.",
       "invalid": "Enter an integer from 1 to 1000.",
       "cleanupSuccess": "Snapshot history cleanup completed. Deleted {{count}} snapshots."
     },
@@ -64,7 +87,9 @@
       },
       "storageAndRetention": {
         "title": "Storage & Retention",
-        "description": "Manage retention thresholds for releases and snapshots, and trigger manual cleanup."
+        "description": "Manage retention thresholds for releases and snapshots, and trigger manual cleanup.",
+        "operationalGroup": "Operational History (Database Records)",
+        "backupGroup": "Disaster Recovery Policy (Full Instance Archives)"
       }
     }
   },

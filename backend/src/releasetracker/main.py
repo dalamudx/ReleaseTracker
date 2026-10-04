@@ -32,7 +32,7 @@ from .storage.sqlite_retention import prune_fetch_runs
 from .logger import LogConfig
 from .paths import database_path, system_secrets_path
 from .services.http_security import configure_http_security
-from .services.instance_backup import InstanceBackup, backup_options, retention_tiers
+from .services.instance_backup import InstanceBackup, retention_tiers
 from .routers import backups, metrics, browser_auth
 from .routers import (
     auth,
@@ -49,6 +49,7 @@ from .routers import runtime_connections, ssh_connections, ssh_compose
 from .routers import executors, tasks
 from .services.task_queue import TaskQueue
 from .services.shutdown import shutdown_services
+from .services.online_restore import RestoreMaintenanceMiddleware
 from .services.fetch_tasks import FetchTasks
 from .services.deploy_tasks import DeployTasks
 from .services.recovery_tasks import RecoveryTasks
@@ -76,7 +77,7 @@ class StorageConnectionCleanupMiddleware:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def runtime_lifespan(app: FastAPI):
     """Application lifecycle management"""
 
     # Initialize storage
@@ -89,6 +90,7 @@ async def lifespan(app: FastAPI):
     # Register ownership before initialize/start: either may partially allocate
     # connections or workers before failing. Only constructed resources are closed.
     owned_closers = {"storage": storage.close}
+    app.state.runtime_services = []
     body_error: BaseException | None = None
     try:
         await storage.initialize()
@@ -132,39 +134,12 @@ async def lifespan(app: FastAPI):
         # Initialize schedulers
         scheduler_host = SchedulerHost()
         owned_closers["scheduler_host"] = scheduler_host.shutdown
-        backup_hours, backup_retain = backup_options()
         retention_tiers()  # Reject invalid retention before starting background work.
-        instance_backup = InstanceBackup(
-            storage, system_key_manager, directory=os.environ.get("RELEASETRACKER_BACKUP_DIR")
-        )
+        instance_backup = InstanceBackup(storage, system_key_manager)
+        await instance_backup.load_configuration()
         app.state.instance_backup = instance_backup
-
-        async def scheduled_backup():
-            try:
-                await instance_backup.create(retain=backup_retain, scheduled=True)
-            except Exception:
-                # Status, metrics and a durable alert are recorded by the service.
-                logging.getLogger(__name__).error("Scheduled instance backup failed")
-            finally:
-                await storage.close_current_task_connection()
-
-        if backup_hours:
-            interval = backup_hours * 3600
-            persisted_backup = await instance_backup.status()
-            latest = (
-                persisted_backup.get("last_success_at") or instance_backup.latest_archive_time()
-            )
-            now = time.time()
-            # Resume from the newest archive: a process restarted more often than
-            # the interval must still back up. Overdue backups run shortly after start.
-            due = now + 300 if latest is None or latest + interval <= now else latest + interval
-            scheduler_host.add_interval_job(
-                "maintenance",
-                "instance_backup",
-                scheduled_backup,
-                seconds=interval,
-                next_run_time=datetime.fromtimestamp(due),
-            )
+        instance_backup.scheduler_host = scheduler_host
+        await instance_backup.reschedule()
 
         async def verify_stored_backup():
             try:
@@ -221,6 +196,12 @@ async def lifespan(app: FastAPI):
             storage, scheduler_host
         )
         owned_closers["admission_outbox"] = admission_notification_outbox.shutdown
+        app.state.runtime_services = [
+            notification_outbox,
+            release_notification_outbox,
+            admission_notification_outbox,
+            repository_webhook_scheduler,
+        ]
         executor_scheduler.notification_outbox = notification_outbox
 
         readiness = DeploymentReadiness(storage, executor_scheduler, scheduler_host)
@@ -262,6 +243,10 @@ async def lifespan(app: FastAPI):
         await scheduler.initialize()
         await executor_scheduler.initialize()
         await repository_webhook_scheduler.initialize()
+        if await storage.get_setting("restore.review_required") is not None or getattr(
+            getattr(app.state, "online_restore", None), "maintenance", False
+        ):
+            scheduler_host.pause()
         await scheduler_host.start()
         await scheduler.start()
         await executor_scheduler.start()
@@ -295,6 +280,36 @@ async def lifespan(app: FastAPI):
             raise
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Small embedded/test applications retain the original lifecycle. The
+    # shipped app explicitly owns its data directory and enables reloading.
+    if not getattr(app.state, "enable_online_restore", False):
+        async with runtime_lifespan(app):
+            yield
+        return
+    from .services.online_restore import OnlineRestore
+
+    controller = OnlineRestore(app, runtime_lifespan, database_path())
+    app.state.online_restore = controller
+    body_error = None
+    try:
+        await controller.open()
+        yield
+    except BaseException as error:
+        body_error = error
+        raise
+    finally:
+        try:
+            await shutdown_services([("online_restore", controller.close)])
+        except Exception:
+            if isinstance(body_error, asyncio.CancelledError):
+                raise body_error
+            raise
+        finally:
+            app.state.online_restore = None
+
+
 # Create the FastAPI application
 app = FastAPI(
     title="ReleaseTracker API",
@@ -303,8 +318,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-configure_http_security(app)
+online_restore_option = os.environ.get(
+    "RELEASETRACKER_ONLINE_RESTORE", "1" if os.name == "posix" else "0"
+).strip()
+if online_restore_option not in {"0", "1"}:
+    raise ValueError("RELEASETRACKER_ONLINE_RESTORE must be 0 or 1")
+app.state.enable_online_restore = online_restore_option == "1"
 app.add_middleware(StorageConnectionCleanupMiddleware)
+app.add_middleware(RestoreMaintenanceMiddleware)
+configure_http_security(app)
 
 
 # ==================== Route registration ====================
@@ -316,6 +338,7 @@ app.include_router(notification_templates.router)
 app.include_router(webhooks.router)
 app.include_router(settings.router)
 app.include_router(backups.router)
+app.include_router(backups.status_router)
 app.include_router(metrics.router)
 app.include_router(trackers.router)
 app.include_router(credentials.router)

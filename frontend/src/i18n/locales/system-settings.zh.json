@@ -9,6 +9,27 @@
     "oidc": "OIDC"
   },
   "global": {
+    "backupRetention": {
+      "title": "系统备份保留份数",
+      "scopeBadge": "系统全量灾备",
+      "label": "保留最近备份数量",
+      "description": "保存在数据目录 backups 下的整机灾备 ZIP 归档保留份数（1–100）。新备份成功并校验通过后自动清理旧归档。",
+      "invalid": "请输入 1 到 100 之间的整数。"
+    },
+    "backupInterval": {
+      "title": "系统自动备份周期",
+      "scopeBadge": "定时任务",
+      "label": "自动备份周期（小时）",
+      "description": "系统全量灾备归档的自动执行周期（小时）。0 为关闭自动备份（仅手动创建）；常见如 24（每天）、168（每周），最大 8760（1 年）。",
+      "invalid": "请输入 0 到 8760 之间的整数（0 为关闭）。"
+    },
+    "backup": {
+      "title": "实例备份策略",
+      "description": "配置全量备份的版本淘汰及定时自动备份周期（备份默认保存于数据目录下的 backups）。",
+      "retention": "保留最近备份数量",
+      "interval": "自动备份周期（小时）",
+      "invalid": "请检查备份配置：保留数 1–100，间隔 0–8760。"
+    },
     "title": "全局设置",
     "description": "这些配置会影响整个应用，后续新增的全局选项也会集中在这里管理。",
     "baseUrl": {
@@ -29,16 +50,18 @@
       "description": "控制应用启动后的后端日志输出级别。"
     },
     "releaseHistoryCount": {
-      "title": "版本历史数量",
+      "title": "发布渠道版本历史",
+      "scopeBadge": "发布渠道",
       "label": "每个发布渠道保留版本数",
-      "description": "每个发布渠道保留最新 N 个版本；清理会在执行器维护窗口完成后执行，如果没有维护窗口，则每天 02:00 执行。",
+      "description": "各发布渠道从上游发现的新版本抓取记录。每个渠道保留最新 N 条；每天 02:00 或维护窗口结束后自动清理。",
       "invalid": "请输入 1 到 1000 之间的整数。",
       "cleanupSuccess": "版本历史清理完成，已删除 {{count}} 条记录。"
     },
     "snapshotHistoryCount": {
-      "title": "快照历史数量",
+      "title": "执行器运行态快照",
+      "scopeBadge": "执行器",
       "label": "每个执行器保留快照数",
-      "description": "每个执行器保留最新 N 个快照；新快照写入后会按数量裁剪旧快照。",
+      "description": "各执行器在部署前后捕获的容器实际运行配置与镜像标签。每个执行器保留最新 N 次快照；生成新快照后自动裁剪超出部分。",
       "invalid": "请输入 1 到 1000 之间的整数。",
       "cleanupSuccess": "快照历史清理完成，已删除 {{count}} 个快照。"
     },
@@ -64,7 +87,9 @@
       },
       "storageAndRetention": {
         "title": "存储与历史保留",
-        "description": "配置发布版本与执行器快照的保留策略，并支持手动清理历史数据。"
+        "description": "配置发布版本与执行器快照的保留策略，并支持手动清理历史数据。",
+        "operationalGroup": "业务数据历史（数据库表记录）",
+        "backupGroup": "系统全量灾备策略（整机 ZIP 归档）"
       }
     }
   },

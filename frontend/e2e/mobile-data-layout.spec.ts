@@ -78,7 +78,16 @@ for(const size of [{width:390,height:640},{width:320,height:568},{width:768,heig
   const detail=page.locator("#tracker-detail-pane");await expect(detail).toBeVisible()
   if(size.width<1280){
     await expect(pane).not.toBeVisible()
-    await page.getByRole("button",{name:"返回追踪器列表",exact:true}).click()
+    const back=page.getByRole("button",{name:"返回追踪器列表",exact:true})
+    const add=page.getByRole("button",{name:"添加追踪器",exact:true})
+    const geometry=await back.evaluate((button)=>{
+      const add=Array.from(button.parentElement!.querySelectorAll("button")).find(node=>node!==button)!
+      const b=button.getBoundingClientRect();const a=add.getBoundingClientRect()
+      return {left:b.right<=a.left,aligned:Math.abs(b.y+b.height/2-a.y-a.height/2)<1,within:add.getBoundingClientRect().right<=innerWidth}
+    })
+    expect(geometry).toEqual({left:true,aligned:true,within:true})
+    await expect(add).toBeVisible()
+    await back.click()
     await expect(pane).toBeVisible();await expect(detail).not.toBeVisible()
   }else{await expect(pane).toBeVisible();await expect(page.getByRole("separator",{name:"调整追踪器列表与详情面板宽度"})).toBeVisible()}
   const check=pane.getByRole("button",{name:"检查",exact:true}).last()

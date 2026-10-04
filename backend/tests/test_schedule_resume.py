@@ -109,7 +109,6 @@ def test_pre_migration_cli_honors_opt_out_and_fails_closed(tmp_path, monkeypatch
     migration_db(db, [])
     monkeypatch.setenv("RELEASETRACKER_DB_PATH", str(db))
     monkeypatch.setenv("DBMATE_MIGRATIONS_DIR", str(migrations))
-    monkeypatch.setenv("RELEASETRACKER_BACKUP_DIR", str(tmp_path / "out"))
     with pytest.raises(SystemExit) as error:
         cli.main(["pre-migration-backup"])  # keys missing: refuse to migrate
     assert error.value.code == 1
@@ -118,7 +117,7 @@ def test_pre_migration_cli_honors_opt_out_and_fails_closed(tmp_path, monkeypatch
     monkeypatch.delenv("RELEASETRACKER_PRE_MIGRATION_BACKUP")
     write_keys(tmp_path / "system-secrets.json")
     assert cli.main(["pre-migration-backup"]) == 0
-    assert len(list((tmp_path / "out").glob("releasetracker-*.zip"))) == 1
+    assert len(list((tmp_path / "backups").glob("releasetracker-*.zip"))) == 1
 
 
 @pytest.mark.asyncio

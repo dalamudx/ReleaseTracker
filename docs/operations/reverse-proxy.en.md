@@ -69,5 +69,6 @@ Run `nginx -t` before reloading the proxy, then check:
 1. Both the homepage and direct navigation to `/trackers` work, including the prefix for sub-path deployments.
 2. API requests return the expected JSON, not frontend HTML, and assets have no 404 errors.
 3. Notification links use the external address. With OIDC, the registered callback exactly matches [OIDC configuration](accounts-and-oidc.md#oidc).
+4. With [repository webhooks](../guides/trackers.md#repository-webhooks), the Git platform can reach `/api/webhooks/repository/...` through the proxy.
 
 An empty BASE URL supports local access; a non-empty value must be a canonical absolute HTTPS URL. Changing proxy headers alone cannot fix an incorrect BASE URL. See [Proxy troubleshooting](../reference/troubleshooting.md#proxy).

@@ -33,6 +33,25 @@ class PodmanPayloadRenderer:
         self._render_podman_storage(payload)
         self._render_podman_resources(payload)
         self._render_podman_security(payload)
+        self._render_podman_namespaces(payload)
+        for field in (
+            "links",
+            "volumes_from",
+            "device_requests",
+            "device_cgroup_rules",
+            "storage_opt",
+            "isolation",
+            "cpu_count",
+            "cpu_percent",
+            "device_read_bps",
+            "device_write_bps",
+            "device_read_iops",
+            "device_write_iops",
+            "blkio_weight",
+            "blkio_weight_device",
+        ):
+            if payload.get(field):
+                raise ValueError("Podman cannot safely preserve configuration field: " + field)
         self._render_podman_devices(payload)
         self._render_podman_pod(payload)
 
@@ -172,6 +191,7 @@ class PodmanPayloadRenderer:
         destination = self._normalize_podman_container_mount_destination(destination)
         if destination is None:
             return None
+        mount = self._normalize_inspected_mount(mount)
         rendered: dict[str, Any] = {
             "type": mount.get("type"),
             "destination": destination,
@@ -205,6 +225,41 @@ class PodmanPayloadRenderer:
             rendered.pop("options", None)
         return rendered
 
+    def _normalize_inspected_mount(self, mount):
+        if "Type" not in mount:
+            return mount
+        from copy import deepcopy
+
+        result = {
+            "type": mount["Type"],
+            "source": mount.get("Source"),
+            "read_only": mount.get("ReadOnly", False),
+        }
+        options = []
+        bind = mount.get("BindOptions") or {}
+        for key, value in bind.items():
+            if key == "Propagation":
+                options.append(value)
+            elif value:
+                raise ValueError("Podman cannot preserve bind mount option: " + key)
+        volume = mount.get("VolumeOptions") or {}
+        for key, value in volume.items():
+            if key == "NoCopy":
+                if value:
+                    options.append("nocopy")
+            elif value:
+                raise ValueError("Podman cannot preserve volume mount option: " + key)
+        tmpfs = mount.get("TmpfsOptions") or {}
+        for key, value in tmpfs.items():
+            if key == "SizeBytes":
+                options.append("size=" + str(value))
+            elif key == "Mode":
+                options.append("mode=" + format(value, "o"))
+            else:
+                raise ValueError("Podman cannot preserve tmpfs mount option: " + key)
+        result["options"] = deepcopy(options)
+        return result
+
     def _append_unique_podman_option(self, options: list[str], option: str) -> None:
         if option not in options:
             options.append(option)
@@ -212,7 +267,7 @@ class PodmanPayloadRenderer:
     def _render_podman_resources(self, payload: dict[str, Any]) -> None:
         resource_limits: dict[str, Any] = {}
         pids_limit = payload.pop("pids_limit", None)
-        if isinstance(pids_limit, int) and pids_limit > 0:
+        if isinstance(pids_limit, int) and pids_limit != 0:
             resource_limits["pids"] = {"limit": pids_limit}
 
         cpu_fields = {
@@ -238,6 +293,13 @@ class PodmanPayloadRenderer:
             "swappiness": payload.pop("mem_swappiness", None),
             "useHierarchy": payload.pop("mem_use_hierarchy", None),
         }
+        # Podman inspect uses -1 for unspecified swappiness; OCI expects uint64.
+        # Omit only this sentinel, preserving an explicit zero (disable swapping).
+        swappiness = memory_fields.get("swappiness")
+        if swappiness == -1:
+            memory_fields["swappiness"] = None
+        elif swappiness is not None and (type(swappiness) is not int or not 0 <= swappiness <= 100):
+            raise ValueError("Podman memory swappiness must be between 0 and 100 or unspecified")
         memory_limits = {
             key: value for key, value in memory_fields.items() if value not in (None, "")
         }
@@ -262,9 +324,38 @@ class PodmanPayloadRenderer:
                 payload["r_limits"] = r_limits
 
     def _render_podman_security(self, payload: dict[str, Any]) -> None:
+        if "read_only" in payload:
+            payload["read_only_filesystem"] = payload.pop("read_only")
+        if "group_add" in payload:
+            payload["groups"] = payload.pop("group_add")
+
         security_opt = payload.pop("security_opt", None)
         if isinstance(security_opt, list) and security_opt:
+            if any(
+                not isinstance(item, str) or not item.startswith(("label=", "label:"))
+                for item in security_opt
+            ):
+                raise ValueError("Podman security option cannot be preserved by this renderer")
             payload["selinux_opts"] = list(security_opt)
+
+    def _render_podman_namespaces(self, payload):
+        for field, native in (
+            ("pid_mode", "pidns"),
+            ("ipc_mode", "ipcns"),
+            ("userns_mode", "userns"),
+            ("uts_mode", "utsns"),
+            ("cgroupns", "cgroupns"),
+        ):
+            mode = payload.pop(field, None)
+            if not isinstance(mode, str) or not mode:
+                continue
+            if mode.startswith("container:"):
+                raise ValueError(
+                    "Podman container namespace dependencies require explicit resolution"
+                )
+            if mode not in {"host", "private", "shareable", "none", "keep-id", "auto"}:
+                raise ValueError("Podman cannot preserve namespace mode")
+            payload[native] = {"nsmode": mode}
 
     def _render_podman_devices(self, payload: dict[str, Any]) -> None:
         devices = payload.get("devices")
@@ -273,7 +364,14 @@ class PodmanPayloadRenderer:
         rendered_devices: list[dict[str, Any]] = []
         for device in devices:
             if isinstance(device, Mapping):
-                rendered_devices.append(dict(device))
+                if "PathOnHost" in device:
+                    rendered_devices.append(
+                        {
+                            "path": f"{device['PathOnHost']}:{device['PathInContainer']}:{device.get('CgroupPermissions', 'rwm')}"
+                        }
+                    )
+                else:
+                    rendered_devices.append(dict(device))
             elif isinstance(device, str) and device.strip():
                 rendered_devices.append({"path": device})
         if rendered_devices:

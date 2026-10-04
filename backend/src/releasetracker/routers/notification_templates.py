@@ -28,7 +28,7 @@ router = APIRouter(
 class PreviewInput(TemplateInput):
     event: str = Field(default="new_release", max_length=60)
     language: Literal["zh", "en"] = "en"
-    channel: Literal["wecom", "webhook"] = "wecom"
+    channel: Literal["wecom", "feishu", "dingtalk", "discord", "slack", "telegram", "webhook"] = "wecom"
     scenario: Literal["normal", "timeout", "no_healthcheck", "unchecked", "many", "container"] = (
         "normal"
     )
@@ -44,9 +44,11 @@ async def list_all(request: Request):
 
 
 @router.post("/preview")
-async def preview(data: PreviewInput):
+async def preview(data: PreviewInput, request: Request):
     if data.event not in EVENTS:
         raise HTTPException(422, detail="unsupported_notification_event")
+    storage = get_storage(request)
+    system_tz = await storage.get_system_timezone()
     try:
         return await render_notification(
             data.event,
@@ -55,6 +57,7 @@ async def preview(data: PreviewInput):
             data.model_dump(),
             data.channel,
             strict=True,
+            tz_name=system_tz,
         )
     except TemplateRenderError as exc:
         raise HTTPException(422, detail=str(exc)) from None

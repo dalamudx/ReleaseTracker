@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import os
+import asyncio
+import inspect
+from functools import wraps
 from typing import Any, Callable
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -15,6 +18,8 @@ class SchedulerHost:
 
     def __init__(self, scheduler: AsyncIOScheduler | None = None):
         self._scheduler = scheduler or AsyncIOScheduler()
+        self._accepting = True
+        self._active: set[asyncio.Task] = set()
         try:
             self.worker_poll_seconds = int(
                 os.environ.get("RELEASETRACKER_WORKER_POLL_SECONDS", "2")
@@ -73,7 +78,7 @@ class SchedulerHost:
         }:
             seconds = self.worker_poll_seconds
         self._scheduler.add_job(
-            func,
+            self._tracked(func),
             "interval",
             seconds=seconds,
             args=list(args or []),
@@ -95,7 +100,7 @@ class SchedulerHost:
     ) -> str:
         job_id = self.namespaced_job_id(namespace, key)
         self._scheduler.add_job(
-            func,
+            self._tracked(func),
             "date",
             run_date=run_date,
             args=list(args or []),
@@ -117,7 +122,7 @@ class SchedulerHost:
     ) -> str:
         job_id = self.namespaced_job_id(namespace, key)
         self._scheduler.add_job(
-            func,
+            self._tracked(func),
             "cron",
             hour=hour,
             minute=minute,
@@ -128,9 +133,46 @@ class SchedulerHost:
         )
         return job_id
 
+    def _tracked(self, function):
+        @wraps(function)
+        async def run(*args, **kwargs):
+            if not self._accepting:
+                return
+            task = asyncio.current_task()
+            self._active.add(task)
+            try:
+                if inspect.iscoroutinefunction(function):
+                    return await function(*args, **kwargs)
+                from .executors.adapter_lifetime import wait_for_runtime_worker
+
+                return await wait_for_runtime_worker(
+                    asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+                )
+            finally:
+                self._active.discard(task)
+
+        return run
+
+    def pause(self):
+        self._accepting = False
+        if self._scheduler.running:
+            self._scheduler.pause()
+
+    def resume(self):
+        self._accepting = True
+        if self._scheduler.running:
+            self._scheduler.resume()
+
+    async def drain(self, timeout=30):
+        pending = {task for task in self._active if not task.done()}
+        if pending:
+            _, unfinished = await asyncio.wait(pending, timeout=timeout)
+            if unfinished:
+                raise TimeoutError("Background jobs are still active")
+
     async def start(self) -> None:
         if not self._scheduler.running:
-            self._scheduler.start()
+            self._scheduler.start(paused=not self._accepting)
 
     async def shutdown(self) -> None:
         try:

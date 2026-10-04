@@ -59,6 +59,18 @@ title: 追踪器与版本规则
 
 ![自定义 Changelog 的来源、路径与提取配置](../images/trackers-changelog.png)
 
+## 仓库 Webhook {#repository-webhooks}
+
+定时检查之外，可让 Git 平台在发布版本或 Actions 运行成功时通知 ReleaseTracker 立即拉取。Webhook 只触发按既有规则的来源拉取，请求内容不会直接写入版本，也不会触发部署。
+
+1. 在 **Webhook → 仓库 Webhook** 中选择 Git 来源和平台协议（GitHub、GitLab、Gitea、Forgejo）。
+2. 设置至少 16 个字符的验证密钥。GitHub / Gitea / Forgejo 使用请求体 HMAC-SHA256 签名；GitLab 推荐 Signing Token（`whsec_`），Secret Token 仅用于旧实例。
+3. 选择接收的事件：版本发布、Actions 运行成功。分支和工作流过滤仅作用于 Actions 事件。
+4. 需要在构建成功后同时刷新镜像或 Chart 时，在 **联动制品来源** 中选择同一追踪器的 OCI / Helm 来源。
+5. 将生成的接收地址（`{BASE URL}/api/webhooks/repository/{id}`）和密钥填入 Git 平台，启用后在投递记录中确认收到事件。
+
+接收地址必须能从 Git 平台访问。签名缺失或不匹配的请求被拒绝；重复投递会去重并计入投递记录。
+
 ## 验证结果 {#verify}
 
 手动检查后核对版本标签、来源、发布渠道和发布说明。关闭追踪器会停止定时检查，不会删除配置。结果不符合预期时，按[版本缺失或未更新](../reference/troubleshooting.md#versions)排查；先修正规则，再启用自动执行。

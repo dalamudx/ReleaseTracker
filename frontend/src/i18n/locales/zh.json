@@ -15,9 +15,9 @@
     "translations": "翻译词条（JSON）",
     "translationsHint": "示例：{\"zh\": {\"custom\": \"提示\"}, \"en\": {\"custom\": \"Note\"}}，在模板中使用 {{ labels.custom }}。",
     "variables": "变量与语法说明",
-    "variablesHint": "使用 {% if release %} 判断可选数据，{% for service in services %} 循环服务列表，macro 复用片段。缺失数据为 null，未知字段会校验失败。禁止文件导入、任意函数及算术扩展。\nservice：name、from_display、to_display、check_label、method_label。\nrelease：version、source、channel、digest、notes、published_at、prerelease。\nhealth：outcome、outcome_label、scope_label、elapsed_seconds。",
+    "variablesHint": "支持 Jinja 条件、循环与 macro 片段。常用变量：\n• service：name、from_display、to_display、check_label\n• release：version、source、channel、digest、notes、published_at\n• health：outcome、outcome_label、scope_label",
     "preview": "消息预览",
-    "previewHint": "仅使用虚构示例，预览不会发送消息。以文本展示 Markdown 源内容，平台实际排版可能不同。",
+    "previewHint": "使用示例数据预览，不会真实发送消息。",
     "event": "通知事件",
     "language": "语言",
     "channel": "渠道格式",
@@ -37,7 +37,7 @@
     "copyRendered": "复制渲染结果",
     "autoRender": "自动更新预览",
     "quickVariables": "快速插入常用变量",
-    "safety": "系统会追加真实结果与核验范围提示，模板不能移除这些信息。企业微信内容上限为 4096 个 UTF-8 字节。",
+    "safety": "系统会自动追加核验说明；企业微信消息上限 4096 字节。",
     "saveHint": "保存时校验全部事件的中英模板；已入队消息保留原始内容。",
     "saveCopy": "另存为新模板",
     "saved": "模板已保存",
@@ -61,6 +61,11 @@
       "zh": "简体中文",
       "en": "English",
       "wecom": "企业微信 Markdown",
+      "feishu": "飞书 Markdown",
+      "dingtalk": "钉钉 Markdown",
+      "discord": "Discord 格式",
+      "slack": "Slack 文本",
+      "telegram": "Telegram Markdown",
       "webhook": "Webhook 文本",
       "normal": "正常结果",
       "timeout": "就绪等待超时",
@@ -76,11 +81,11 @@
       "title": "主题模式",
       "description": "选择明暗主题",
       "light": "浅色",
-      "lightDesc": "浅色主题",
+      "lightDesc": "浅色模式",
       "dark": "深色",
-      "darkDesc": "深色主题",
+      "darkDesc": "深色模式",
       "system": "跟随系统",
-      "systemDesc": "跟随系统设置"
+      "systemDesc": "跟随系统"
     },
     "color": {
       "title": "颜色主题",
@@ -226,14 +231,14 @@
       "description": "接收版本发布或 Actions 成功事件，并按既有追踪规则安排来源拉取。",
       "add": "添加仓库 Webhook",
       "edit": "编辑仓库 Webhook",
-      "formDescription": "在 Git 平台配置生成的接收地址和同一密钥。请求只会触发拉取，不会直接创建版本或部署。",
+      "formDescription": "在 Git 平台配置接收地址和密钥。Webhook 触发拉取，不直接执行部署。",
       "source": "仓库来源",
       "selectSource": "选择 Git 来源",
       "provider": "平台协议",
       "authMode": "认证方式",
       "signingToken": "Signing Token（推荐）",
       "secretToken": "Secret Token（兼容旧实例）",
-      "events": "触发事件",
+      "events": "通知事件",
       "endpoint": "接收地址",
       "status": "状态",
       "release": "版本发布",
@@ -242,8 +247,8 @@
       "secretPlaceholder": "至少 16 个字符",
       "secretUnchanged": "留空保持现有密钥",
       "hmacSecretHelp": "GitHub、Gitea 和 Forgejo 使用请求体 HMAC-SHA256 签名。",
-      "gitlabSigningHelp": "填写 GitLab 生成的 whsec_ Signing Token；接收端校验请求体签名和时间戳。",
-      "gitlabSecretHelp": "填写 GitLab Webhook 的 Secret Token；它通过请求头明文传递，仅用于旧实例兼容。",
+      "gitlabSigningHelp": "填写 GitLab 生成的 whsec_ 密钥，用于请求体签名校验。",
+      "gitlabSecretHelp": "填写 GitLab Secret Token（旧版兼容）。",
       "branches": "分支过滤",
       "branchesHelp": "可选，逗号分隔；只应用于 Actions 事件，不应用于 Release。",
       "workflows": "工作流过滤",
@@ -257,7 +262,7 @@
       "totalCount_other": "共 {{count}} 个配置",
       "sourceSection": "来源关联与协议",
       "secretSection": "安全与验签密钥",
-      "eventsSection": "触发事件与过滤",
+      "eventsSection": "通知事件与过滤",
       "linkedRefreshTitle": "关联来源拉取请求",
       "created": "仓库 Webhook 已创建",
       "updated": "仓库 Webhook 已更新",
@@ -297,19 +302,19 @@
     "description": "版本发布监控概览",
     "stats": {
       "releaseTypeStats": "发布类型统计",
-      "releaseTypeStatsDescription": "正式版与预发布版本的分布情况",
+      "releaseTypeStatsDescription": "正式版与预发布版分布",
       "channelStats": "渠道版本统计",
-      "channelStatsDescription": "发布在各追踪渠道中的分布"
+      "channelStatsDescription": "各追踪渠道版本分布"
     },
     "releaseTrend": {
       "title": "发布趋势",
-      "description": "最近 7 天的每日发布活动",
+      "description": "近 7 天发布动态",
       "totalInRange": "合计",
       "peakDay": "峰值"
     },
     "recentReleases": {
       "title": "最近发布",
-      "description": "最近 5 个发布版本",
+      "description": "最新发布的版本",
       "noReleases": "未找到发布版本",
       "viewNotes": "查看发布说明",
       "columns": {
@@ -426,7 +431,7 @@
       },
       "identity": {
         "title": "追踪器标识",
-        "description": "这个追踪器代表整个项目，子渠道用于提供 release、chart、容器镜像或包版本。"
+        "description": "配置项目基本信息，子来源提供镜像、Chart 或代码版本。"
       },
       "trackerChannels": {
         "title": "追踪渠道",
@@ -607,15 +612,15 @@
     "prerequisites": {
       "runtime": {
         "title": "请先添加运行时连接，再创建执行器",
-        "description": "选择目标前，请先添加运行时连接。"
+        "description": "创建执行器前，请先添加运行时连接。"
       },
       "tracker": {
         "title": "请先添加追踪器，再创建执行器",
-        "description": "执行器只能自动更新已追踪的发布渠道，因此请先创建追踪器。"
+        "description": "创建执行器前，请先添加追踪器。"
       },
       "both": {
-        "title": "请先补齐执行器前置条件",
-        "description": "创建执行器前，请先添加运行时连接和追踪器。"
+        "title": "缺少必要前置资源",
+        "description": "请先添加运行时连接和追踪器后再创建执行器。"
       },
       "actions": {
         "runtimeConnections": "前往运行时连接",
@@ -678,14 +683,14 @@
       "bindingUnavailable": "当前绑定不可用",
       "runtimeConnection": "运行时连接",
       "runtimeConnectionPlaceholder": "选择运行时连接",
-      "runtimeConnectionDesc": "用于发现目标和执行更新。",
+      "runtimeConnectionDesc": "用于目标发现与更新执行。",
       "runtimeSelectionHint": "选择运行时连接后即可发现目标。",
       "runtimeType": "运行时类型",
       "runtimeTypeDesc": "由所选连接自动推导。",
       "descriptionPlaceholder": "输入备注",
-      "trackerFilteredHint": "这里只显示同时具备可用镜像来源和发布渠道的追踪器。",
+      "trackerFilteredHint": "仅显示具备可用来源与渠道的追踪器。",
       "enabled": "启用",
-      "enabledDesc": "禁用后配置仍会保留，但不会按计划运行。",
+      "enabledDesc": "禁用后暂停计划更新。",
       "updateMode": "更新模式",
       "imageSelectionMode": "镜像选取策略",
       "imageReferenceMode": "更新目标策略",
@@ -706,9 +711,9 @@
       "immediate": "立即"
     },
     "modeDescriptions": {
-      "manual": "仅在操作员从列表手动触发时执行。",
-      "maintenance_window": "自动运行，但只会在配置的本地维护窗口内执行。",
-      "immediate": "一旦检测到更高版本镜像就自动执行。"
+      "manual": "仅手动触发更新。",
+      "maintenance_window": "仅在设定的维护窗口内自动更新。",
+      "immediate": "检测到新版本后立即自动更新。"
     },
     "results": {
       "queued": "排队中",
@@ -775,10 +780,10 @@
       "liveDiffTitle": "实时运行配置对比",
       "refreshDiff": "刷新对比",
       "loadingDiff": "正在读取实际运行配置并计算差异…",
-      "liveDiffPolicy": "根据当前未保存的目标、绑定和镜像策略，比较实际运行配置与所选渠道当前版本。保存仅修改执行器配置，不执行或批准部署；真正执行前会重新读取和审核。",
-      "noVersionDiff": "所选渠道暂无可部署版本，无法生成运行配置差异。保存配置后请先拉取版本，再重新对比。",
-      "failedDiff": "未能获取完整实时对比，不能将其视为无差异。请检查目标、连接和绑定后刷新；仍可保存执行器配置以修正设置。",
-      "truncatedDiff": "差异过大，未完整显示。这里只是编辑预览，不能作为部署确认。",
+      "liveDiffPolicy": "对比当前表单策略与运行时配置。保存仅更新执行器设置，不触发部署；执行前将重新审核。",
+      "noVersionDiff": "所选渠道暂无可部署版本。请拉取版本后再行对比。",
+      "failedDiff": "无法读取实时配置对比。请检查连接与目标后刷新，或直接保存以修正设置。",
+      "truncatedDiff": "差异过大未完整显示；执行前将重新审核完整配置。",
       "checkedDiff": "读取时间：{{time}}"
     },
     "target": {
@@ -999,7 +1004,7 @@
       "banners": {
         "pruning": "已达到保留上限 — 新快照会替换最早的快照。"
       },
-      "configurationNote": "快照已采集的原始运行配置仍保留，展示脱敏不会删除原始值。存储校验不等于所有运行配置都已覆盖；恢复前还须校验必需字段、目标身份和镜像。快照不包含应用数据。",
+      "configurationNote": "快照保留运行配置（敏感信息已脱敏展示，不含卷数据）。恢复前将校验目标与镜像。",
       "integrity": {
         "verified": "存储数据校验通过",
         "invalid": "存储数据校验失败",
@@ -1014,7 +1019,7 @@
         "description": "将 {{executor}} 恢复到所选快照。系统会新建一次执行，在回滚前先捕获一份快照，再应用目标快照。",
         "targetLabel": "目标快照",
         "currentLabel": "上次记录的版本（非实时配置）",
-        "configurationPolicy": "仅对比快照支持恢复的配置，不包含应用数据。确认后将应用 + 配置，可能覆盖当前修改；执行前若配置已变化，会停止恢复并要求重新审核。",
+        "configurationPolicy": "仅恢复受支持的配置项（不含卷数据）。执行前若环境变动需重新审核。",
         "checking": "正在校验快照配置和恢复目标…",
         "checkPassed": "恢复前校验通过，请确认以上配置差异。",
         "diffTitle": "恢复配置差异",
@@ -1022,7 +1027,7 @@
         "removed": "移除当前配置",
         "added": "恢复快照配置",
         "hiddenValue": "[敏感值已隐藏]",
-        "secretNote": "敏感值参与真实比较，但不展示原值；同样显示为隐藏的两行仍表示值已改变。",
+        "secretNote": "敏感值已脱敏；两行隐藏仍代表该配置项已发生变动。",
         "noChanges": "恢复范围内的配置没有差异。",
         "targetMissing": "当前目标不存在；以下 + 配置将用于重建。",
         "diffTooLarge": "差异超过展示上限，不能确认恢复。请缩小变更范围后重试。",
@@ -1148,7 +1153,7 @@
         "credential": "选择凭证"
       },
       "hints": {
-        "socket": "本地 Socket 使用 unix://，远程连接使用 tcp://。连接 Podman 的 socket-proxy 或 Docker 兼容 2375 代理请选择 docker；只有直连原生 Podman Socket 或开放 libpod 的 podman system service 才选择 podman。",
+        "socket": "本地使用 unix://，远程使用 tcp://。Docker API 代理选 docker；直连原生 Podman Socket 选 podman。",
         "tlsVerify": "远程 daemon 需要证书校验时启用。",
         "namespaces": "从当前集群自动获取命名空间，可多选。",
         "inCluster": "启用后 kubeconfig 变为可选，后端将使用集群内认证。",
@@ -1156,7 +1161,7 @@
         "credential": "凭证用于复用鉴权材料。",
         "baseUrl": "必须以 http:// 或 https:// 开头。",
         "endpointId": "填写 Portainer endpoint 的正整数标识。",
-        "endpointName": "点击获取以加载 Portainer endpoint，然后按名称选择；保存时会自动写入 endpoint ID。"
+        "endpointName": "点击获取后按名称选择，保存时自动填入 ID。"
       },
       "actions": {
         "discoverNamespaces": "获取命名空间",
@@ -1244,7 +1249,7 @@
         "auto": "自动（按仓库类型识别）",
         "preferReal": "总是尝试读取真实构建时间",
         "firstObserved": "仅使用首次观察时间（私有源推荐）",
-        "description": "自动模式会尝试读取镜像构建时间；单次 Blob 下载最多等待 5 秒，超时后跳过本轮剩余 Blob。私有镜像源推荐首次观察时间，不额外下载 Blob；版本排序不受影响。"
+        "description": "自动模式读取构建时间（失败回退）；私有源建议选择首次发现时间以加快拉取。"
       },
       "credential": "凭证",
       "optional": "可选",
@@ -1394,12 +1399,17 @@
       "searchPlaceholder": "按名称、URL 或描述搜索",
       "types": {
         "webhook": "通用 Webhook",
-        "wecom": "企业微信"
+        "wecom": "企业微信",
+        "feishu": "飞书",
+        "dingtalk": "钉钉",
+        "discord": "Discord",
+        "slack": "Slack",
+        "telegram": "Telegram"
       },
       "table": {
         "name": "名称",
         "url": "Webhook URL",
-        "events": "触发事件",
+        "events": "通知事件",
         "status": "状态",
         "enabled": "启用",
         "disabled": "禁用",
@@ -1410,7 +1420,7 @@
         "editTitle": "编辑通知渠道",
         "name": "名称",
         "type": "渠道类型",
-        "typeDesc": "通用 Webhook 发送标准载荷；企业微信使用机器人 Markdown 协议。",
+        "typeDesc": "通用 Webhook 发送标准结构；企业微信、飞书、钉钉、Discord、Slack 及 Telegram 会自动适配其官方机器人消息协议。",
         "url": "Webhook URL",
         "language": "消息语言",
         "languageDesc": "控制 Webhook 消息字段和测试消息使用的语言。",
@@ -1418,8 +1428,8 @@
           "en": "英语",
           "zh": "中文"
         },
-        "events": "触发事件",
-        "eventsDesc": "选择触发通知的事件类型",
+        "events": "通知事件",
+        "eventsDesc": "选择接收通知的事件类型",
         "description": "配置通知渠道的详细信息。",
         "deleteConfirm": "确认删除此通知渠道吗？",
         "test": "发送测试消息",
@@ -1433,24 +1443,28 @@
         }
       },
       "eventTypes": {
-        "new_release": "新版本发布",
-        "republish": "重新发布",
-        "executor_run_success": "执行器运行成功",
-        "executor_run_failed": "执行器运行失败",
-        "executor_run_skipped": "执行器运行跳过",
-        "executor_health_check_result": "健康检查结果",
+        "new_release": "发现新版本",
+        "republish": "版本重新发布",
+        "executor_run_success": "部署完成",
+        "executor_run_failed": "部署未完成",
+        "executor_run_skipped": "已跳过部署",
+        "executor_health_check_result": "服务核验结果",
         "executor_approval_required": "需要确认部署",
-        "executor_deployment_blocked": "部署已阻断"
+        "executor_deployment_blocked": "部署已阻断",
+        "error": "任务处理异常",
+        "test": "通知测试"
       },
       "eventDescriptions": {
-        "new_release": "当检测到新版本时触发",
-        "republish": "当版本重新发布时触发",
-        "executor_run_success": "当执行器成功更新运行时目标时触发",
-        "executor_run_failed": "当执行器运行失败时触发",
-        "executor_run_skipped": "当执行器运行被跳过时触发",
-        "executor_health_check_result": "当部署就绪核验或健康检查完成时触发",
-        "executor_approval_required": "当部署因缺少受管确认或配置漂移需要人工确认时触发",
-        "executor_deployment_blocked": "当部署因目标归属冲突或安全校验失败被阻断时触发"
+        "new_release": "当检测到新版本时通知",
+        "republish": "当版本重新发布时通知",
+        "executor_run_success": "当执行器成功更新运行时目标时通知",
+        "executor_run_failed": "当执行器运行失败时通知",
+        "executor_run_skipped": "当执行器运行被跳过时通知",
+        "executor_health_check_result": "当部署就绪核验或健康检查完成时通知",
+        "executor_approval_required": "当部署因缺少受管确认或配置漂移需要人工确认时通知",
+        "executor_deployment_blocked": "当部署因目标归属冲突或安全校验失败被阻断时通知",
+        "error": "当任务执行或检测出现异常时通知",
+        "test": "发送通道连通性测试时通知"
       }
     }
   },
@@ -1522,9 +1536,9 @@
     "latest": "最新任务",
     "older": "更早任务",
     "notifications": "任务动态",
-    "clearRead": "清理已读",
-    "clearReadDescription": "只隐藏看过且已结束的任务，执行历史会保留。",
-    "clearedRead": "已清理 {{count}} 条已读任务",
+    "clearRead": "清理最近任务",
+    "clearReadDescription": "仅从通知弹窗中隐藏已处理的任务记录，不影响队列与历史。",
+    "clearedRead": "已清理 {{count}} 条最近任务",
     "unreadTasks": "{{count}} 条未读任务动态",
     "attentionNotifications": "{{count}} 个任务需要人工处理",
     "allRead": "暂无未读任务动态",
@@ -1536,7 +1550,7 @@
     "totalTasks": "共 {{count}} 个任务",
     "clearFinished": "清除已结束任务",
     "clearTitle": "清除已结束任务？",
-    "clearDescription": "只从任务队列列表中清除已完成、失败、跳过、取消和已替代的任务；执行与抓取历史会保留。",
+    "clearDescription": "仅从当前队列中清除已结束任务，执行与抓取历史仍完整保留。",
     "clearConfirm": "确认清除",
     "cleared": "已清除结束任务",
     "clearFailed": "清除结束任务失败",
@@ -1544,14 +1558,14 @@
     "retryAttempt": "重试 #{{count}}",
     "due": "计划执行：{{time}}",
     "details": "任务 #{{id}} 详情",
-    "attention": "远端结果存在不确定性。请先核验运行时状态，再解除阻塞或开始其他变更。",
+    "attention": "执行状态待确认。请核验远端状态后再解除阻塞。",
     "approvalRequired": "需要确认部署计划",
     "approvalReason": "原因：{{reason}}",
     "approvalExpires": "确认有效期至 {{time}}",
     "reviewPlan": "刷新计划",
     "refreshPlan": "刷新计划",
     "approvePlan": "确认并继续部署",
-    "planApproved": "部署计划已确认，任务将继续执行",
+    "planApproved": "部署计划已确认",
     "planTarget": "目标：{{target}}",
     "planIdentity": "运行时身份：{{identity}}",
     "planFingerprint": "配置指纹：{{fingerprint}}",
@@ -1561,14 +1575,14 @@
     "planRefreshed": "部署计划已刷新",
     "diffTitle": "更新配置差异",
     "diffLegend": "- 当前配置（将替换）　+ 更新配置（将应用）",
-    "diffPolicy": "保留已读取的非镜像配置；敏感值不显示。确认后若目标或配置变化，会阻止更新，需刷新计划重新审核。",
-    "diffNoChanges": "未发现声明配置差异；同名标签的镜像内容变化仍会按目标 Digest 更新。",
+    "diffPolicy": "保留当前非镜像配置（敏感值隐藏）。执行前若配置变动需重新审核。",
+    "diffNoChanges": "无声明配置差异；镜像将按目标 Digest 正常更新。",
     "diffIncomplete": "配置差异未完整显示，不能确认此计划。",
-    "diffScopeLimited": "仅包含该执行器已采集、实际支持的配置；不包含应用数据或新镜像自身默认配置。",
-    "reasonManualUpdate": "手动更新，请审核实际配置与目标差异。",
-    "reasonConfigurationDrift": "实际运行配置与上次纳管基线不同，请重新审核。",
-    "reasonUnmanaged": "目标实体初次纳管（此前未由本系统部署）",
-    "reasonMarkerMissing": "目标缺少纳管标记",
+    "diffScopeLimited": "仅对比已支持的配置项（不含数据与镜像默认配置）。",
+    "reasonManualUpdate": "手动更新，请审核配置差异。",
+    "reasonConfigurationDrift": "运行配置与纳管基线不一致",
+    "reasonUnmanaged": "初次纳管目标",
+    "reasonMarkerMissing": "缺少纳管标记",
     "reasonForeignOwner": "目标已被其他实例纳管",
     "reasonConflict": "目标纳管标记与当前执行器冲突",
     "reasonSchemaUnsupported": "纳管标记版本不受支持",
@@ -1582,7 +1596,7 @@
     "sourceRun": "{{source}} · 抓取运行 #{{run}}",
     "deployRun": "执行器运行 #{{run}}",
     "resolve": "核验后解除阻塞",
-    "resolveDescription": "请确认远端命令已停止且运行时状态已经核验。此操作只记录失败及人工核验结果，不会执行任何远端变更。",
+    "resolveDescription": "确认远端已处理并核验。此操作仅记录人工核验状态，不执行远端变更。",
     "resolveConfirm": "确认已核验",
     "resolveBlocked": "尚未确认远端命令停止并核验状态，无法解除阻塞。",
     "retry": "重新拉取",
@@ -1633,8 +1647,8 @@
       "retry_budget_exhausted": "已达到重试上限",
       "configuration_changed": "执行前配置已发生变化",
       "deployment_configuration_changed": "实际运行配置已变化，未执行更新；请重新生成部署计划审核。",
-      "deployment_approval_required": "部署计划等待确认",
-      "deployment_blocked": "部署安全校验未通过，请检查目标和配置。",
+      "deployment_approval_required": "部署计划需要审批",
+      "deployment_blocked": "部署计划已被阻止",
       "deployment_evidence_unavailable": "无法读取实际运行配置，请恢复连接后刷新计划。",
       "recovery_configuration_changed": "恢复前配置已发生变化，请刷新差异并重新确认。",
       "check_in_progress": "已有拉取任务正在执行",
@@ -1656,8 +1670,6 @@
       "readiness_observation_unavailable": "无法观察就绪状态",
       "admission_evidence_unavailable": "部署前无法检查目标",
       "admission_evidence_stalled": "目标长时间不可达，部署需要人工处理",
-      "deployment_approval_required": "部署计划需要审批",
-      "deployment_blocked": "部署计划已被阻止",
       "readiness_timeout": "就绪等待超时",
       "readiness_unhealthy": "部署后不健康",
       "readiness_unknown": "无法核验就绪状态",

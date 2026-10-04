@@ -439,7 +439,7 @@ export function NotificationTemplates() {
                                     {([
                                         ['event', event, query.data.events, setEvent],
                                         ['language', language, ['zh', 'en'], setLanguage],
-                                        ['channel', channel, ['wecom', 'webhook'], setChannel],
+                                        ['channel', channel, ['wecom', 'feishu', 'dingtalk', 'discord', 'slack', 'telegram', 'webhook'], setChannel],
                                         ['scenario', scenario, ['normal', 'timeout', 'no_healthcheck', 'unchecked', 'many', 'container'], setScenario],
                                     ] as const).map(([key, value, options, update]) => (
                                         <div className="space-y-1" key={key}>
@@ -474,7 +474,7 @@ export function NotificationTemplates() {
                                     <div className="flex items-center justify-between border-b bg-muted/40 px-3 py-1.5">
                                         <div className="flex items-center gap-1.5">
                                             <span className="text-[11px] font-medium text-muted-foreground">
-                                                {channel === 'wecom' ? 'WeCom Markdown' : 'Webhook Text'}
+                                                {({ wecom: 'WeCom Markdown', feishu: 'Feishu Markdown', dingtalk: 'DingTalk Markdown', discord: 'Discord Embed', slack: 'Slack Text', telegram: 'Telegram Markdown', webhook: 'Webhook Text' } as Record<string, string>)[channel] || channel}
                                             </span>
                                             {preview && (
                                                 <Badge variant="outline" className="h-4 px-1 text-[9px] font-normal">

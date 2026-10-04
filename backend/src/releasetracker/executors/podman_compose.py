@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 from . import container_recovery
+from .container_configuration import (
+    verify_image_defaults,
+    verify_created_configuration,
+    verify_existing_volumes,
+)
 
 import logging
 from typing import Any, TYPE_CHECKING
@@ -88,11 +93,19 @@ async def update_compose_services(
 
     client = adapter._get_client()
     adapter._validate_podman_grouped_recreate_specs(specs, target_pod_id=target_pod_id)
+    for spec in specs:
+        configuration = adapter._podman_grouped_create_config_for_spec(spec, client=client)
+        adapter._podman_create_arguments(configuration)
+        verify_existing_volumes(client, configuration)
     for image in sorted(set(update_plan.values())):
         client.images.pull(image)
 
     from ..services.deployment_diff import verify_update_state
 
+    for spec in specs:
+        verify_image_defaults(
+            client, adapter._podman_grouped_create_config_for_spec(spec, client=client)
+        )
     await verify_update_state(adapter, target_ref)
     new_container_ids: list[str] = []
     backup_names_by_spec_key: dict[str, str] = {}
@@ -137,6 +150,7 @@ async def update_compose_services(
             replacement = adapter._create_podman_grouped_container(client, create_config)
             adapter._restore_container_networks(client, replacement, spec, phase="forward")
             replacement.start()
+            verify_created_configuration(adapter, replacement, create_config)
             backup_name = backup_names_by_spec_key.get(
                 adapter._grouped_runtime_recreate_spec_key(spec)
             )
@@ -276,6 +290,9 @@ async def _recover_compose_from_snapshot(
     for item in snapshots:
         container_recovery.prepare_image(adapter, item)
         adapter._inspect_recovery_conflict(item["create_config"])
+        configuration = adapter._podman_grouped_create_config_for_snapshot(item, client=client)
+        adapter._podman_create_arguments(configuration)
+        verify_existing_volumes(client, configuration)
     current_pod_refs = adapter._recover_snapshot_pods(client, snapshots)
     for item in snapshots:
         result = await adapter._recover_grouped_container_from_snapshot(

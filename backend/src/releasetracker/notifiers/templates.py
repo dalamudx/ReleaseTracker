@@ -7,6 +7,8 @@ import json
 import logging
 import sys
 from datetime import datetime, timezone
+from typing import Any
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -92,6 +94,8 @@ WORDS = {
         "recheck": "只读重新核验",
         "prerelease": "预发布",
         "more": "其余服务请查看执行记录",
+        "digest": "制品指纹",
+        "reason": "原因",
     },
     "en": {
         "version": "Version",
@@ -133,38 +137,44 @@ WORDS = {
         "recheck": "Read-only readiness recheck",
         "prerelease": "Pre-release",
         "more": "See the execution record for remaining services",
+        "digest": "Digest",
+        "reason": "Reason",
     },
 }
 DEFAULT_TITLE = "{{ labels.events[event] }} · {{ subject.name }}"
 DEFAULT_BODY = """{% if release %}
 {{ labels.version }}: {{ release.version }}{% if release.prerelease %} ({{ labels.prerelease }}){% endif %}
-
+{{ '' }}
 {{ labels.source }}: {{ release.source }}
 {% if release.channel %}{{ labels.channel }}: {{ release.channel }}
 {% endif %}{{ labels.published }}: {{ release.published_at }}
-{% if release.digest %}Digest: {{ release.digest }}
+{% if release.digest %}{{ labels.digest }}: {{ release.digest }}
 {% endif %}{% if release.notes %}
-{{ labels.notes }}
+
+{{ labels.notes }}:
 {{ release.notes }}
 {% endif %}{% endif %}
 {% if runtime %}{{ labels.runtime }}: {{ runtime }}
-{% endif %}{% if services %}
-{{ labels.service_changes }}
-{% for service in services %}
-• {{ service.name }}{% if service.from_display or service.to_display %}: {{ service.from_display }} → {{ service.to_display }}{% endif %}
 
-{% if service.check_label %}  {{ service.check_label }} ({{ service.method_label }})
-{% endif %}{% endfor %}
+{% endif %}
+{% if services %}{{ labels.service_changes }}:
+{% for service in services %}
+• {{ service.name }}{% if service.from_display or service.to_display %}: {{ service.from_display }} → {{ service.to_display }}{% endif %}{% if service.check_label %} · {{ service.check_label }} ({{ service.method_label }}){% endif %}
+
+{% endfor %}
+{{ '' }}
 {% if service_count > services|length %}{{ labels.more }} ({{ service_count }})
-{% endif %}{% elif from_version or to_version %}
-{{ labels.from_version }}: {{ from_version }}
+
+{% endif %}
+{% elif from_version or to_version %}{{ labels.from_version }}: {{ from_version }}
 {{ labels.to_version }}: {{ to_version }}
-{% endif %}{% if health %}
-{{ labels.verification }}: {{ health.outcome_label }}
+
+{% endif %}
+{% if health %}{{ labels.verification }}: {{ health.outcome_label }}
 {% if health.elapsed_seconds is not none %}{{ labels.elapsed }}: {{ health.elapsed_seconds }} {{ labels.seconds }}
 {% endif %}{% endif %}
-{% if reason %}{{ reason }}
-{% endif %}{% if timestamp %}{{ timestamp }}
+{% if reason %}{{ labels.reason }}: {{ reason }}
+{% endif %}{% if timestamp and not release %}{{ timestamp }}
 {% endif %}{% if category == 'test' %}{{ labels.test_message }}{% endif %}
 """
 
@@ -267,7 +277,44 @@ def safe_url(value):
     return None
 
 
-def context_for(event, payload, language, template=None):
+def format_localized_time(value: Any, tz_name: str | None = None) -> str:
+    if not value:
+        return ""
+    dt = None
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, (int, float)):
+        try:
+            dt = datetime.fromtimestamp(value, tz=timezone.utc)
+        except Exception:
+            return str(value)
+    elif isinstance(value, str):
+        val = value.strip()
+        if not val:
+            return ""
+        parse_val = val.replace("Z", "+00:00") if val.endswith("Z") else val
+        try:
+            dt = datetime.fromisoformat(parse_val)
+        except ValueError:
+            return val
+    else:
+        return str(value)
+
+    if dt is not None:
+        target_tz = timezone.utc
+        if tz_name:
+            try:
+                target_tz = ZoneInfo(tz_name)
+            except Exception:
+                target_tz = timezone.utc
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        localized = dt.astimezone(target_tz)
+        return localized.strftime("%Y-%m-%d %H:%M:%S")
+    return str(value)
+
+
+def context_for(event, payload, language, template=None, tz_name=None):
     locale = language if language in WORDS else "en"
     words = WORDS[locale]
     labels = {**words, **(template or {}).get("translations", {}).get(locale, {})}
@@ -291,6 +338,7 @@ def context_for(event, payload, language, template=None):
         "event": event,
         "category": category,
         "locale": locale,
+        "timezone": tz_name or "UTC",
         "labels": labels,
         "subject": {"name": "ReleaseTracker"},
         "result": {"status": "", "label": ""},
@@ -307,7 +355,8 @@ def context_for(event, payload, language, template=None):
     context["reason"] = ""
     context["timestamp"] = ""
     if isinstance(payload, dict):
-        context["timestamp"] = safe_text(payload.get("finished_at") or payload.get("timestamp"))
+        raw_ts = payload.get("finished_at") or payload.get("timestamp")
+        context["timestamp"] = format_localized_time(raw_ts, tz_name) if raw_ts else ""
         if category in {"error", "deployment_admission"}:
             context["reason"] = safe_text(
                 payload.get("reason") or payload.get("error") or payload.get("message")
@@ -318,7 +367,7 @@ def context_for(event, payload, language, template=None):
             "version": safe_text(payload.version),
             "source": safe_text(payload.tracker_type),
             "channel": safe_text(payload.channel_name),
-            "published_at": payload.published_at.isoformat(),
+            "published_at": format_localized_time(payload.published_at, tz_name),
             "digest": safe_text(payload.artifact_digest),
             "notes": safe_text(payload.body, 1500),
             "prerelease": payload.tracker_type in {"github", "gitlab", "gitea", "forgejo"}
@@ -481,14 +530,15 @@ async def validate_template(template):
 
 def format_message(rendered, context, channel):
     # Mandatory system facts remain outside the user-editable template.
-    safety = "\n".join(context["safety"])
+    body = rendered["body"]
+    safety_lines = [line for line in context["safety"] if line and line not in body]
+    safety = "\n".join(safety_lines)
     link = context["links"]["detail"]
     tail = ("\n\n" + safety if safety else "") + (
         f"\n\n[{WORDS[context['locale']]['view_details']}]({link})" if link else ""
     )
     title = rendered["title"].replace("\n", " ")[:160]
-    body = rendered["body"]
-    budget = 4096 if channel == "wecom" else 20000
+    budget = 4096 if channel in ("wecom", "discord", "telegram") else 20000
     head = f"### {title}\n\n"
     available = budget - len((head + tail).encode())
     if len(body.encode()) > available:
@@ -497,10 +547,10 @@ def format_message(rendered, context, channel):
 
 
 async def render_notification(
-    event, payload, language, template=None, channel="webhook", *, strict=False, detail_url=None
+    event, payload, language, template=None, channel="webhook", *, strict=False, detail_url=None, tz_name: str | None = None
 ):
     template = template or builtin()
-    context = context_for(event, payload, language, template)
+    context = context_for(event, payload, language, template, tz_name=tz_name)
     if detail_url:
         context["links"]["detail"] = safe_url(detail_url)
     error = None
@@ -512,7 +562,7 @@ async def render_notification(
         error = str(exc)
         logger.warning("Notification template rendering failed; using built-in template: %s", error)
         template = builtin()
-        context = context_for(event, payload, language, template)
+        context = context_for(event, payload, language, template, tz_name=tz_name)
         if detail_url:
             context["links"]["detail"] = safe_url(detail_url)
         rendered = (await render_many(template, [context]))[0]
@@ -522,4 +572,5 @@ async def render_notification(
         "template_id": template.get("id"),
         "revision": template.get("revision", 1),
         "fallback_error": error,
+        "timezone": context.get("timezone", "UTC"),
     }

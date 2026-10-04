@@ -237,9 +237,16 @@ export default function TrackersPage() {
                         ) : null}
                     </InputGroup>
                 </div>
-                <Button onClick={handleAdd}>
-                    <Plus className="mr-2 h-4 w-4" /> {t("trackers.addNew")}
-                </Button>
+                <div className="flex min-w-0 max-w-full items-center gap-2">
+                    {mobileDetailOpen && (
+                        <Button type="button" variant="outline" className="min-h-11 min-w-0 shrink whitespace-normal xl:hidden" onClick={() => setMobileDetailOpen(false)}>
+                            {t("trackers.backToList")}
+                        </Button>
+                    )}
+                    <Button onClick={handleAdd} className="min-h-11 min-w-0 shrink whitespace-normal xl:min-h-9">
+                        <Plus className="mr-2 h-4 w-4" /> {t("trackers.addNew")}
+                    </Button>
+                </div>
             </div>
 
             {/* Two-pane master-detail area. On xl+ the separator resizes both panes;
@@ -305,9 +312,6 @@ export default function TrackersPage() {
                     id="tracker-detail-pane"
                     className={`${mobileDetailOpen ? "flex" : "hidden"} min-h-0 w-full min-w-0 flex-1 flex-col gap-3 overflow-y-auto xl:flex xl:pl-2`}
                 >
-                    <Button type="button" variant="outline" className="min-h-11 shrink-0 self-start xl:hidden" onClick={() => setMobileDetailOpen(false)}>
-                        {t("trackers.backToList")}
-                    </Button>
                     <TrackerDetail
                         trackerName={visibleSelectedTrackerName}
                         refreshKey={detailRefreshKey}

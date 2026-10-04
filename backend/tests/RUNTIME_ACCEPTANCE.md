@@ -28,6 +28,72 @@ not replace that with a global prune of an existing engine. Abrupt process or
 host termination can prevent `finally`; inspect only the owned `rt-owned-mtls-*`
 fixture in that case. GitHub-hosted runner disposal is the final containment.
 
+## Container configuration fidelity via an owned Unix socket
+
+```sh
+RT_RUN_REAL_DIND_TESTS=1 timeout 360 .venv/bin/python -m pytest -q \
+  tests/test_real_container_fidelity.py -o faulthandler_timeout=0
+```
+
+This opt-in 300-second check starts a separate `rt-owned-fidelity-*` DinD,
+exposing **only its new Unix socket** through a private temporary directory.
+Its cgroup-v2 delegation is scoped to the fixture's private namespace, not host
+business cgroups. It never mounts a host business engine socket or loads stored
+runtime credentials/databases. The existing DinD cache image is required.
+
+Two new NGINX cases check: a locally built image introducing an unreviewed ENV is
+refused without stopping its old container; and explicitly compatible NGINX
+update followed by JSON-roundtripped immutable-image recovery preserves read-only
+root, exact dual bind sources/modes, anonymous-volume identity and proof data,
+resolved published port, DNS options, groups, capabilities, resource limits,
+stdio and stop timeout. Native SDK proxy settings must not inject ENV. The local
+negative image is prebuilt, so its uniquely named tag alone uses a test pull
+facade; image inspection, container state and rejection are real. Positive
+image pulls and all socket writes/readbacks are real. Other tags are untouched.
+
+A target image adding default ENV/labels/exposed ports/anonymous volumes or filling
+previously empty startup/health settings is currently rejected before stop; this
+is a conservative image-only policy, not an image-defaults merge/review feature.
+Unknown preservation options are refused, not silently omitted. Real Docker
+readback is compared semantically, with image/managed markers and native IDs
+excluded and missing `ReadOnly` equivalent to false. Mounted application data is
+not backed up; the test verifies existing volume reuse, not data snapshots.
+
+The fixture removes its exact owned engine and anonymous volumes in `finally`
+and checks its absence. Abrupt process termination can prevent cleanup;
+never replace it with global pruning. Podman/Portainer live page acceptance is
+separate; this test does not claim those runtimes passed a new live update.
+
+## Native Podman fidelity via a private storage root
+
+```sh
+RT_RUN_REAL_PODMAN_TESTS=1 timeout 360 .venv/bin/python -m pytest -q \
+  tests/test_real_podman_fidelity.py -o faulthandler_timeout=0
+```
+
+Opt-in rootful Podman 5.x/Linux acceptance owns new private `--root`, `--runroot`,
+VFS storage and Unix `system service` socket. It does not connect the host engine
+or read business configuration/credentials. All CLI setup, image pulls, SDK
+updates and immutable JSON-snapshot recovery are real, without adapter mocking.
+Public mirror image pulls remain a network prerequisite; no existing workload
+is a fallback when pulling fails.
+
+Checks include read-only root, dual bind targets/options, original anonymous
+volume and proof data, resolved published port with loopback bind address, DNS,
+groups, capabilities, memory/swap/CPU/restart, command/entrypoint and stop timeout.
+It found two native-only cases now covered in unit tests: unspecified swappiness
+`-1` must not be sent to OCI's uint64 field; JSON `[IP, port]` must retain its IP
+instead of being interpreted as independent host ports. Explicit swappiness zero
+and ordinary multiple host ports remain unchanged.
+
+All `rm -a` commands in this fixture carry its private storage/runroot options,
+never the host engine. `finally` removes private containers/volumes, checks no
+containers remain and stops that exact service process. Pytest's temporary tree
+is independent from the application database. Process-kill containment/cleanup
+is still the caller's responsibility; never run a host/global prune. Native
+socket acceptance does not establish normal production login or Portainer UI
+acceptance.
+
 ## Local Portainer grouped Stack check
 
 From `backend/` on an isolated rootful Podman test host:

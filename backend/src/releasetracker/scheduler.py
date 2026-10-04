@@ -123,6 +123,7 @@ class ReleaseScheduler(
         self.notifiers = []
         try:
             db_notifiers = await self.storage.get_notifiers()
+            system_tz = await self.storage.get_system_timezone()
             for n in db_notifiers:
                 if n.enabled and n.type in SUPPORTED_NOTIFIER_TYPES:
                     self.notifiers.append(
@@ -132,6 +133,7 @@ class ReleaseScheduler(
                             url=n.url,
                             events=n.events,
                             language=n.language,
+                            timezone=system_tz,
                         )
                     )
         except Exception as e:

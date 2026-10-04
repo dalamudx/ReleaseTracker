@@ -42,6 +42,7 @@ See [Execution policies](../guides/executors.md#policies).
 | TLS connection | CA trust, certificate expiry, hostname; do not disable verification |
 | Kubernetes | Context, valid credentials, namespace permissions, ServiceAccount |
 | Portainer | API key, Endpoint ID, platform availability, stack type |
+| SSH | Host key fingerprint changes, authentication, jump host, remote Compose tool and file permissions |
 
 See [Credentials and runtimes](../guides/runtime-connections.md) for configuration.
 
@@ -63,7 +64,15 @@ Check the [support matrix](support.md#runtimes), whether a snapshot-producing up
 
 ## Notification not received {#notifications}
 
-Send a test, then check enabled state, event filters, public addressing, approved ports, receiver rate limits, and message format. Failed events have no durable replay queue; see [Webhook notifications](../guides/notifications.md).
+Send a test, then check that the notifier is enabled, its channel type matches the endpoint, event subscriptions, public addressing and allowed ports, and the receiver's rate limits, keyword or signing settings. Failed messages are retried up to 4 times and never replayed afterwards; see [Notifications](../guides/notifications.md).
+
+## Repository webhook does not trigger a refresh {#repository-webhooks}
+
+Check the repository webhook's delivery log. No entry: make sure the Git platform can reach the endpoint and BASE URL. Signature failure: compare the secret and authentication mode. Ignored event: check event types and branch/workflow filters. A received event still refreshes under source rules; if no new version appears, follow [Missing versions](#versions).
+
+## Deployment awaits approval or is blocked {#approval}
+
+Open the task details for the reason. For first onboarding, configuration drift or version limits, review the plan and approve it. If another instance or executor owns the target or its markers conflict, approval is not possible; resolve ownership first. See [Deployment plan approval](../guides/executors.md#approval).
 
 ## Startup, write, or migration failure {#startup}
 

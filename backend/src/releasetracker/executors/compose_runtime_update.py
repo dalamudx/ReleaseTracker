@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from copy import deepcopy
+from .container_configuration import preserve_host_fields, preserve_mount_identity
 from typing import Any
 
 from .container_recovery import capture_evidence
@@ -48,6 +50,7 @@ def build_grouped_runtime_recreate_spec(
     config = config if isinstance(config, dict) else {}
     host_config = host_config if isinstance(host_config, dict) else {}
     network_settings = network_settings if isinstance(network_settings, dict) else {}
+    host_config = preserve_mount_identity(attrs, host_config)
 
     create_config = _extract_create_kwargs(
         container,
@@ -134,15 +137,15 @@ def _extract_create_kwargs(
         kwargs["name"] = name
 
     env = config.get("Env")
-    if env:
+    if isinstance(env, list):
         kwargs["environment"] = env
 
     entrypoint = config.get("Entrypoint")
-    if entrypoint:
+    if isinstance(entrypoint, list | str):
         kwargs["entrypoint"] = entrypoint
 
     cmd = config.get("Cmd")
-    if cmd:
+    if isinstance(cmd, list | str):
         kwargs["command"] = cmd
 
     user = config.get("User")
@@ -173,14 +176,22 @@ def _extract_create_kwargs(
     if isinstance(open_stdin, bool):
         kwargs["stdin_open"] = open_stdin
 
+    if runtime_type == "docker":
+        stdio = {
+            field: config[field]
+            for field in ("AttachStdin", "AttachStdout", "AttachStderr", "StdinOnce")
+            if isinstance(config.get(field), bool)
+        }
+        if stdio:
+            kwargs["_releasetracker_stdio"] = stdio
+
     stop_signal = config.get("StopSignal")
     if isinstance(stop_signal, str) and stop_signal.strip():
         kwargs["stop_signal"] = stop_signal
 
-    if runtime_type == "podman":
-        stop_timeout = config.get("StopTimeout")
-        if isinstance(stop_timeout, int) and stop_timeout >= 0:
-            kwargs["stop_timeout"] = stop_timeout
+    stop_timeout = config.get("StopTimeout")
+    if type(stop_timeout) is int and stop_timeout >= 0:
+        kwargs["stop_timeout"] = stop_timeout
 
     healthcheck = config.get("Healthcheck")
     if healthcheck and isinstance(healthcheck, dict):
@@ -226,10 +237,16 @@ def _extract_create_kwargs(
             host_path = parts[0]
             container_path = parts[1]
             raw_mode = parts[2] if len(parts) >= 3 else "rw"
-            mode = "ro" if "ro" in raw_mode.split(",") else "rw"
-            normalized_volumes[host_path] = {"bind": container_path, "mode": mode}
+            normalized_volumes[host_path] = {"bind": container_path, "mode": raw_mode}
         if normalized_volumes:
-            kwargs["volumes"] = normalized_volumes
+            sources = [
+                bind.split(":")[0] for bind in binds if isinstance(bind, str) and ":" in bind
+            ]
+            kwargs["volumes"] = (
+                list(binds)
+                if len(sources) != len(set(sources)) and runtime_type == "docker"
+                else normalized_volumes
+            )
 
     mounts = _extract_docker_create_mounts(host_config, bind_targets=bind_targets)
     if mounts:
@@ -323,11 +340,12 @@ def _extract_create_kwargs(
     if isinstance(init, bool):
         kwargs["init"] = init
 
+    preserve_host_fields(kwargs, host_config, runtime_type)
     labels = config.get("Labels")
-    if labels:
+    if isinstance(labels, dict):
         kwargs["labels"] = labels
 
-    return kwargs
+    return deepcopy(kwargs)
 
 
 def _extract_exposed_only_ports(config: dict[str, Any], host_config: dict[str, Any]) -> list[str]:
@@ -336,7 +354,11 @@ def _extract_exposed_only_ports(config: dict[str, Any], host_config: dict[str, A
         return []
 
     port_bindings = host_config.get("PortBindings")
-    bound_ports = set(port_bindings) if isinstance(port_bindings, dict) else set()
+    bound_ports = (
+        {port for port, bindings in port_bindings.items() if bindings}
+        if isinstance(port_bindings, dict)
+        else set()
+    )
     return sorted(
         port
         for port in exposed_ports
@@ -384,7 +406,7 @@ def _extract_docker_create_mounts(
             continue
         mount_type = mount_type.strip().lower()
         if mount_type not in DOCKER_CREATE_MOUNT_TYPES:
-            continue
+            raise ValueError("unsupported inspected mount type")
 
         source = raw_mount.get("Source") or raw_mount.get("Name")
         if mount_type in {"bind", "volume", "npipe"} and (
@@ -430,10 +452,7 @@ def _extract_docker_bind_options(raw_mount: dict[str, Any]) -> dict[str, Any]:
     bind_options = raw_mount.get("BindOptions")
     if not isinstance(bind_options, dict):
         return {}
-    propagation = bind_options.get("Propagation")
-    if isinstance(propagation, str) and propagation.strip():
-        return {"Propagation": propagation.strip()}
-    return {}
+    return deepcopy(bind_options)
 
 
 def _extract_docker_volume_options(raw_mount: dict[str, Any]) -> dict[str, Any]:
@@ -441,17 +460,7 @@ def _extract_docker_volume_options(raw_mount: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(volume_options, dict):
         return {}
 
-    normalized: dict[str, Any] = {}
-    no_copy = volume_options.get("NoCopy")
-    if isinstance(no_copy, bool):
-        normalized["NoCopy"] = no_copy
-    labels = volume_options.get("Labels")
-    if isinstance(labels, dict) and labels:
-        normalized["Labels"] = dict(labels)
-    driver_config = volume_options.get("DriverConfig")
-    if isinstance(driver_config, dict) and driver_config:
-        normalized["DriverConfig"] = dict(driver_config)
-    return normalized
+    return deepcopy(volume_options)
 
 
 def _extract_docker_tmpfs_options(raw_mount: dict[str, Any]) -> dict[str, Any]:
@@ -459,14 +468,7 @@ def _extract_docker_tmpfs_options(raw_mount: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(tmpfs_options, dict):
         return {}
 
-    normalized: dict[str, Any] = {}
-    size_bytes = tmpfs_options.get("SizeBytes")
-    if isinstance(size_bytes, int) and size_bytes > 0:
-        normalized["SizeBytes"] = size_bytes
-    mode = tmpfs_options.get("Mode")
-    if isinstance(mode, int) and mode >= 0:
-        normalized["Mode"] = mode
-    return normalized
+    return deepcopy(tmpfs_options)
 
 
 def _extract_network_config(

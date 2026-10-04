@@ -2,7 +2,7 @@
 
 [中文](README.md) | [English](README.en.md) · [Wiki](https://dalamudx.github.io/ReleaseTracker/)
 
-轻量级版本追踪与更新编排工具：追踪 GitHub、GitLab、Gitea、Helm Chart 和 OCI 镜像版本，并将选定版本应用到受支持的 Docker、Podman、Portainer、Kubernetes 和 Helm 目标。
+轻量级版本追踪与更新编排工具：追踪 GitHub、GitLab、Gitea、Helm Chart 和 OCI 镜像版本，并将选定版本应用到受支持的 Docker、Podman、Portainer、Kubernetes、Helm 和 SSH Compose 目标。
 
 ![Python](https://img.shields.io/badge/Python-3.12+-blue)
 ![React](https://img.shields.io/badge/React-19-61dafb)
@@ -10,10 +10,11 @@
 
 ## 功能特性
 
-- 聚合多个版本来源，通过发布渠道和规则筛选版本，保留版本历史与发布说明。
-- 绑定运行时目标，按手动、立即或维护窗口策略更新，并记录执行诊断。
-- 对支持的目标提供配置快照、更新后健康检查和手动回滚。
-- Webhook 事件通知、单一管理员与显式 OIDC 绑定、加密凭证和密钥轮换。
+- 聚合多个版本来源，通过发布渠道和规则筛选版本，保留版本历史与发布说明；支持仓库 Webhook 即时触发拉取。
+- 绑定运行时目标，按手动、立即或维护窗口策略更新；配置漂移、初次纳管和超出版本限制时需人工确认部署计划。
+- 更新前配置快照、持久化就绪观察和手动回滚。
+- 通用 Webhook、企业微信、飞书、钉钉、Discord、Slack、Telegram 通知，支持自定义 Jinja 消息模板。
+- 实例在线备份与页面恢复、Prometheus 指标、单一管理员与 OIDC、加密凭证和密钥轮换。
 - React Web UI，支持中英文、深色模式和浏览器内配置。
 
 各运行时能力不同，详见 [Wiki 支持矩阵](https://dalamudx.github.io/ReleaseTracker/reference/support/)。更新失败不会自动回滚，执行器快照不是应用数据备份。
@@ -50,7 +51,7 @@ make install
 make dev
 ```
 
-访问前端 `http://localhost:5173`；API 与 Swagger 在 `http://localhost:8000` 和 `/docs`。Vite 将开发请求代理到后端。
+访问前端 `http://localhost:5173`；API 与 Swagger 在 `http://localhost:8000` 和 `/docs`。前端会先等待后端 API 就绪（默认 60 秒，可用 `DEV_BACKEND_WAIT_TIMEOUT_SECONDS` 调整）；只开发界面时使用 `npm --prefix frontend run dev:ui`。
 
 ```bash
 uv --directory backend run pytest -q
@@ -59,7 +60,7 @@ make lint
 make build
 ```
 
-数据库迁移使用 `make dbmate-migrate`；`make version VERSION=x.y.z` 同步版本元数据和后端锁文件。完整命令见 `make help`。
+开发数据默认位于 `backend/data`（含数据库与 `backups`），无需额外配置。迁移使用 `make dbmate-migrate`；`make version VERSION=x.y.z` 同步版本元数据；完整命令见 `make help`。构建镜像时覆盖 `DBMATE_VERSION` 或 `HELM_VERSION` 须同时提供对应的 `*_SHA256`。
 
 ### 文档维护
 
@@ -76,8 +77,7 @@ python scripts/check_docs.py --site-dir site
 
 ## 路线图
 
-- 更多通知渠道。
-- 后续能力以 release notes 和 Wiki 支持范围为准。
+后续能力以 release notes 和 Wiki 支持范围为准。
 
 ## 特别感谢
 

@@ -46,9 +46,12 @@ def isolated_app(monkeypatch):
     storage = services["storage"]
     storage.tasks = SimpleNamespace()
     storage.get_system_log_level = AsyncMock(return_value="INFO")
+    storage.get_setting = AsyncMock(return_value=None)
     storage.reconcile_interrupted_source_fetch_runs = AsyncMock(return_value=0)
     storage.reconcile_stale_executor_snapshot_claims = AsyncMock(return_value=0)
     services["backup"].status = AsyncMock(return_value={})
+    services["backup"].load_configuration = AsyncMock()
+    services["backup"].reschedule = AsyncMock()
     for symbol, name in [
         ("SystemKeyManager", "keys"),
         ("SQLiteStorage", "storage"),
@@ -78,7 +81,6 @@ def isolated_app(monkeypatch):
         monkeypatch.setattr(module, symbol, lambda *a, name=name, **kw: services[name])
     monkeypatch.setattr(main, "recover_pending_encryption_key_rotation", AsyncMock())
     monkeypatch.setattr(main, "migrate_legacy_snapshots", AsyncMock(return_value=0))
-    monkeypatch.setattr(main, "backup_options", lambda: (0, 1))
     monkeypatch.setattr(main, "retention_tiers", lambda: None)
     monkeypatch.setattr(main.LogConfig, "setup_logging", lambda **kw: None)
     return FastAPI(), services, closed

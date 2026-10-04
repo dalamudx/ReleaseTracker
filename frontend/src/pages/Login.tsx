@@ -8,6 +8,8 @@ import { ArrowRight, Loader2 } from "lucide-react"
 import { motion } from "framer-motion"
 import { useTranslation } from "react-i18next"
 import { assetPath } from "@/lib/base-path"
+import { OnlineRestoreProgress } from "@/components/settings/OnlineRestoreControls"
+import { saveReceipt } from "@/hooks/restore-receipt"
 import { OIDCLoginButton } from "@/components/auth/OIDCLoginButton"
 import { getOIDCProviders, initiateOIDCLogin, type OIDCProvider } from "@/api/oidc"
 
@@ -45,6 +47,7 @@ export function LoginPage() {
             const from = (location.state as { from?: Location })?.from
             const destination = from ? `${from.pathname}${from.search}${from.hash}` : "/"
             await login(formData)
+            saveReceipt(null)
             navigate(destination)
         } catch {
             // Error handled in login function
@@ -93,6 +96,7 @@ export function LoginPage() {
                             <p className="text-sm text-muted-foreground">{t('auth.login.subtitle')}</p>
                         </div>
 
+                        <OnlineRestoreProgress />
                         <form onSubmit={handleSubmit} className="space-y-6">
                             <div className="space-y-2">
                                 <Label htmlFor="username">{t('auth.login.username')}</Label>

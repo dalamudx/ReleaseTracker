@@ -337,6 +337,11 @@ class ExecutorNotificationOutbox:
             if hasattr(self.storage, "get_system_base_url")
             else ""
         )
+        system_tz = (
+            await self.storage.get_system_timezone()
+            if hasattr(self.storage, "get_system_timezone")
+            else None
+        )
         notifier = build_notifier(
             notifier_type=item.type,
             name=item.name,
@@ -345,6 +350,7 @@ class ExecutorNotificationOutbox:
             language=item.language,
             template=await get_template(self.storage, getattr(item, "template_id", None)),
             detail_url=base_url + "/executors" if base_url else None,
+            timezone=system_tz,
         )
         return {**payload, "_prepared_notification": await notifier.prepare(event, payload)}
 
@@ -500,12 +506,18 @@ class ExecutorNotificationOutbox:
             ):
                 status = "discarded"
             else:
+                system_tz = (
+                    await self.storage.get_system_timezone()
+                    if hasattr(self.storage, "get_system_timezone")
+                    else None
+                )
                 notifier = build_notifier(
                     notifier_type=item.type,
                     name=item.name,
                     url=item.url,
                     events=item.events,
                     language=item.language,
+                    timezone=system_tz,
                 )
                 payload = json.loads(row["payload"])
                 if "_prepared_notification" not in payload:

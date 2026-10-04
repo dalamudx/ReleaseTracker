@@ -20,6 +20,7 @@ from releasetracker.executors.kubernetes import KubernetesRuntimeAdapter
 from releasetracker.executors.compose_runtime_update import GroupedRuntimeRecreateSpec
 from releasetracker.executors.podman import PodmanRuntimeAdapter
 from releasetracker.services.deployment_plan import MANAGED_MARKERS
+from helpers.container_wire import high_level_view
 
 
 class FakeContainerNotFound(KeyError):
@@ -46,6 +47,7 @@ def recovery_evidence():
 class FakeImage:
     def __init__(self, tags=None, image_id=None):
         self.tags = tags or []
+        self.attrs = {"Config": {}}
         self.id = image_id or (
             self.tags[0] if self.tags and self.tags[0].startswith("sha256:") else RECOVERY_IMAGE_ID
         )
@@ -165,7 +167,11 @@ class FakeContainerManager:
         normalized_mounts = _fake_docker_inspect_mounts(host_config.get("Mounts"))
         return self._create_from_docker_payload(
             kwargs,
-            container_id="docker-low-level-id",
+            container_id=(
+                "docker-low-level-id"
+                if not self._created
+                else f"docker-low-level-id-{len(self._created)+1}"
+            ),
             host_config=dict(host_config),
             normalized_mounts=normalized_mounts,
             config_ports=kwargs.get("ports"),
@@ -2629,7 +2635,9 @@ async def test_docker_adapter_recovery_removes_partial_replacement_before_recrea
     assert result.updated is True
     assert result.new_image == "api:1.0"
     assert len(partial_replacement.remove_calls) == 1
-    assert client.containers.create_calls == [{"image": RECOVERY_IMAGE_ID, "name": "api"}]
+    assert client.containers.create_calls == [
+        {"image": RECOVERY_IMAGE_ID, "name": "api", "use_config_proxy": False}
+    ]
 
 
 @pytest.mark.asyncio
@@ -2667,7 +2675,9 @@ async def test_docker_adapter_recovery_recreates_original_container_even_when_it
     assert result.new_container_id == "docker-new-id"
     assert original_container.start_calls == []
     assert len(original_container.remove_calls) == 1
-    assert client.containers.create_calls == [{"image": RECOVERY_IMAGE_ID, "name": "api"}]
+    assert client.containers.create_calls == [
+        {"image": RECOVERY_IMAGE_ID, "name": "api", "use_config_proxy": False}
+    ]
 
 
 @pytest.mark.asyncio
@@ -2704,7 +2714,9 @@ async def test_docker_adapter_recovery_recreates_even_when_original_container_is
     assert result.new_container_id == "docker-new-id"
     assert original_container.start_calls == []
     assert len(original_container.remove_calls) == 1
-    assert client.containers.create_calls == [{"image": RECOVERY_IMAGE_ID, "name": "api"}]
+    assert client.containers.create_calls == [
+        {"image": RECOVERY_IMAGE_ID, "name": "api", "use_config_proxy": False}
+    ]
 
 
 @pytest.mark.asyncio
@@ -4324,7 +4336,7 @@ async def test_docker_compose_grouped_update_recreates_targeted_services_with_sh
         },
     )
     client = FakeDockerRecreateClient(
-        [api, worker], network_names=["frontend", "release-stack_default"]
+        [api, worker], network_names=["frontend", "release-stack_default"], low_level_api=True
     )
     adapter = DockerRuntimeAdapter(runtime, client=client)
 
@@ -4351,12 +4363,15 @@ async def test_docker_compose_grouped_update_recreates_targeted_services_with_sh
         "create:release-stack-api-1",
         "start:release-stack-api-1",
     ]
-    assert [call["name"] for call in client.containers.create_calls] == [
+    calls = [high_level_view(call) for call in client.containers.low_level_create_calls]
+    assert [call["name"] for call in calls] == [
         "release-stack-worker-1",
         "release-stack-api-1",
     ]
+    assert client.containers.low_level_create_calls[0]["ports"] == [("9000", "tcp")]
+    assert not client.containers.low_level_create_calls[0]["host_config"].get("PortBindings")
 
-    worker_create = client.containers.create_calls[0]
+    worker_create = calls[0]
     assert worker_create["image"] == "ghcr.io/acme/worker:9.2"
     assert worker_create["environment"] == ["WORKER_CONCURRENCY=4"]
     assert worker_create["entrypoint"] == ["/bin/sh", "-lc"]
@@ -4394,7 +4409,7 @@ async def test_docker_compose_grouped_update_recreates_targeted_services_with_sh
     assert worker_create["devices"] == ["/dev/fuse:/dev/fuse:rwm"]
     assert worker_create["labels"] == worker_labels
 
-    api_create = client.containers.create_calls[1]
+    api_create = calls[1]
     assert api_create["image"] == "ghcr.io/acme/api:1.2.4"
     assert api_create["environment"] == ["FOO=bar"]
     assert api_create["entrypoint"] == ["python", "-m"]
@@ -4552,7 +4567,7 @@ async def test_docker_compose_grouped_update_preserves_hostconfig_mounts_without
             "NetworkSettings": {"Networks": {}},
         },
     )
-    client = FakeDockerRecreateClient([web])
+    client = FakeDockerRecreateClient([web], low_level_api=True)
     adapter = DockerRuntimeAdapter(runtime, client=client)
 
     result = await adapter.update_compose_services(
@@ -4561,7 +4576,7 @@ async def test_docker_compose_grouped_update_preserves_hostconfig_mounts_without
     )
 
     assert result.updated is True
-    create_kwargs = client.containers.create_calls[0]
+    create_kwargs = high_level_view(client.containers.low_level_create_calls[0])
     assert create_kwargs["ports"] == {"8443/tcp": ("", 18443)}
     assert "80/tcp" not in create_kwargs["ports"]
     assert "volumes" not in create_kwargs
@@ -4644,6 +4659,7 @@ async def test_docker_compose_grouped_update_preserves_container_network_mode_wi
             "image": "ghcr.io/acme/sidecar:1.1",
             "name": "release-stack-sidecar-1",
             "environment": ["SIDECAR_MODE=watch"],
+            "use_config_proxy": False,
             "restart_policy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
             "network_mode": "container:release-stack-db-1",
             "labels": labels,
@@ -4994,7 +5010,11 @@ async def test_docker_compose_snapshot_captures_and_recovers_grouped_config():
     assert result.new_image == "api=ghcr.io/acme/api:1.0"
     assert result.message == "docker compose recovered from snapshot"
     assert client.containers.create_calls == [
-        dict(snapshot["snapshots"][0]["create_config"], image=RECOVERY_IMAGE_ID)
+        dict(
+            snapshot["snapshots"][0]["create_config"],
+            image=RECOVERY_IMAGE_ID,
+            use_config_proxy=False,
+        )
     ]
     assert client.networks.connect_calls == [
         (
@@ -7075,7 +7095,7 @@ async def test_podman_adapter_recreates_container_preserving_compose_matrix_fiel
                     "source": "/srv/api",
                     "type": "bind",
                 },
-                {"destination": "/tmp", "options": ["size=64m"], "type": "tmpfs"},
+                {"destination": "/tmp", "options": ["rw", "size=64m"], "type": "tmpfs"},
             ],
             "log_configuration": {
                 "driver": "k8s-file",
@@ -7200,7 +7220,7 @@ async def test_podman_compose_grouped_update_preserves_high_fidelity_runtime_fie
             "mounts": [
                 {
                     "destination": "/tmp/nginx-tmpfs",
-                    "options": ["size=16777216"],
+                    "options": ["size=16777216", "rw", "rprivate"],
                     "type": "tmpfs",
                 }
             ],

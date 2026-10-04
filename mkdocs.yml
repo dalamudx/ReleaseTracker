@@ -66,7 +66,7 @@ plugins:
             凭证与运行时连接: Credentials and runtimes
             执行器与更新策略: Executors and update policies
             健康检查与回滚: Health checks and rollback
-            Webhook 通知: Webhook notifications
+            消息通知: Notifications
             部署与运维: Operations
             反向代理与子路径: Reverse proxy and sub-paths
             管理员与 OIDC: Administrator and OIDC
@@ -120,7 +120,7 @@ nav:
       - 凭证与运行时连接: guides/runtime-connections.md
       - 执行器与更新策略: guides/executors.md
       - 健康检查与回滚: guides/health-and-rollback.md
-      - Webhook 通知: guides/notifications.md
+      - 消息通知: guides/notifications.md
   - 部署与运维:
       - 反向代理与子路径: operations/reverse-proxy.md
       - 管理员与 OIDC: operations/accounts-and-oidc.md

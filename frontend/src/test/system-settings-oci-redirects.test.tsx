@@ -108,6 +108,22 @@ describe("SystemSettingsPage OCI registry redirects", () => {
     rotateJwtSecretMock.mockReset()
   })
 
+  it("loads persisted backup options, rejects invalid input and saves dirty keys sequentially", async () => {
+    renderPage([{key:"system.backup_retention",value:"9"},{key:"system.backup_interval_hours",value:"24"}])
+    expect(screen.getByLabelText("systemSettings.global.backupRetention.label")).toHaveValue(9)
+    fireEvent.change(screen.getByLabelText("systemSettings.global.backupInterval.label"),{target:{value:"8761"}})
+    fireEvent.click(screen.getByRole("button",{name:"common.save"}))
+    expect(updateSettingMock).not.toHaveBeenCalled()
+    expect(screen.getByRole("alert")).toHaveTextContent("systemSettings.global.backupInterval.invalid")
+    fireEvent.change(screen.getByLabelText("systemSettings.global.backupInterval.label"),{target:{value:"0"}})
+    fireEvent.change(screen.getByLabelText("systemSettings.global.backupRetention.label"),{target:{value:"2"}})
+    fireEvent.click(screen.getByRole("button",{name:"common.save"}))
+    await waitFor(()=>expect(updateSettingMock).toHaveBeenCalledWith({key:"system.backup_interval_hours",value:"0"}))
+    expect(updateSettingMock).toHaveBeenNthCalledWith(1,{key:"system.backup_retention",value:"2"})
+    expect(updateSettingMock).toHaveBeenNthCalledWith(2,{key:"system.backup_interval_hours",value:"0"})
+    await waitFor(()=>expect(updateSettingMock).toHaveBeenCalledWith({key:"system.timezone",value:expect.any(String)}))
+  })
+
   it("loads, validates and saves system readiness defaults", async () => {
     renderPage([{key: "system.readiness_timeout_seconds", value: "240"}])
     const timeout = screen.getByLabelText("readiness.readiness_timeout_seconds")

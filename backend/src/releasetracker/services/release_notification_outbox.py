@@ -135,6 +135,7 @@ class ReleaseNotificationOutbox:
             ):
                 status = "discarded"
             else:
+                system_tz = await self.storage.get_system_timezone()
                 notifier = build_notifier(
                     notifier_type=item.type,
                     name=item.name,
@@ -142,6 +143,7 @@ class ReleaseNotificationOutbox:
                     events=item.events,
                     language=item.language,
                     template=await get_template(self.storage, getattr(item, "template_id", None)),
+                    timezone=system_tz,
                 )
                 raw = json.loads(row["release"])
                 payload = raw if raw.pop("_system", False) else Release.model_validate(raw)

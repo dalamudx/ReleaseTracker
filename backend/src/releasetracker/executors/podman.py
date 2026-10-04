@@ -19,6 +19,11 @@ from .base import (
     offload_blocking_runtime_adapter_methods,
 )
 from .compose_runtime_update import GroupedRuntimeRecreateSpec, build_grouped_runtime_recreate_spec
+from .container_configuration import (
+    verify_image_defaults,
+    verify_created_configuration,
+    verify_existing_volumes,
+)
 from . import podman_compose
 from .container_runtime import _ContainerRuntimeAdapter, snapshot_recovery
 from .runtime_tls import RuntimeTLSMaterial, configure_ip_hostname_verification
@@ -158,9 +163,12 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
             )
         )
 
+        self._podman_create_arguments(create_kwargs)
+        verify_existing_volumes(client, create_kwargs)
         client.images.pull(new_image)
         from ..services.deployment_diff import verify_update_state
 
+        verify_image_defaults(client, create_kwargs)
         await verify_update_state(self, target_ref)
         try:
             container.stop()
@@ -169,6 +177,7 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
             new_container = self._create_podman_container(client, create_kwargs)
             self._restore_container_networks(client, new_container, recreate_spec)
             new_container.start()
+            verify_created_configuration(self, new_container, create_kwargs)
         except Exception as exc:
             raise RuntimeMutationError(
                 f"podman update failed after destructive steps began: {exc}",
@@ -351,15 +360,18 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
         create_config = dict(create_config, image=image_id)
 
         self._validate_snapshot_target_identity(target_ref, snapshot)
+        create_config = self._podman_container_create_config(create_config)
+        self._podman_create_arguments(create_config)
+        verify_existing_volumes(client, create_config)
         self._cleanup_replacement_conflict(client, snapshot, create_config)
 
         recovered_container = None
-        create_config = self._podman_container_create_config(create_config)
 
         try:
             recovered_container = self._create_podman_container(client, create_config)
             self._restore_container_networks_from_snapshot(client, recovered_container, snapshot)
             recovered_container.start()
+            verify_created_configuration(self, recovered_container, create_config)
         except Exception:
             if recovered_container is not None:
                 self._remove_container_if_present(recovered_container)
@@ -614,14 +626,8 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
             labels = dict(create_config.get("labels") or create_config.get("Labels") or {})
             labels.update(markers)
             create_config["labels"] = labels
-        create_kwargs = self._podman_container_create_config(create_config)
-        source_named_volume_names = self._podman_source_named_volume_names(create_kwargs)
-        payload = self._render_podman_create_payload(create_kwargs)
-        self._sanitize_podman_rendered_create_payload(
-            payload,
-            source_named_volume_names=source_named_volume_names,
-        )
-        self._sanitize_podman_final_mount_payload(payload)
+        verify_existing_volumes(client, create_config)
+        create_kwargs, payload = self._podman_create_arguments(create_config)
 
         api_client = getattr(client, "api", None)
         if api_client is None or not hasattr(api_client, "post"):
@@ -636,6 +642,19 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
         if not isinstance(container_id, str) or not container_id.strip():
             raise RuntimeError("podman create response missing container id")
         return client.containers.get(container_id)
+
+    def _podman_create_arguments(self, create_config):
+        """Render the exact native body before stopping or deleting anything."""
+        from copy import deepcopy
+
+        create_kwargs = self._podman_container_create_config(deepcopy(create_config))
+        source_named_volume_names = self._podman_source_named_volume_names(create_kwargs)
+        payload = self._render_podman_create_payload(create_kwargs)
+        self._sanitize_podman_rendered_create_payload(
+            payload, source_named_volume_names=source_named_volume_names
+        )
+        self._sanitize_podman_final_mount_payload(payload)
+        return create_kwargs, payload
 
     def _podman_low_level_create_compatibility_summary(self, client) -> tuple[bool, bool]:
         api_client = getattr(client, "api", None)
@@ -820,6 +839,8 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
         self._normalize_podman_security_options(sanitized)
         self._normalize_podman_cpu_limits(sanitized)
         self._normalize_podman_stop_signal(sanitized)
+        if sanitized.get("auto_remove"):
+            raise ValueError("Auto-remove containers cannot be safely recreated")
         extra_hosts = sanitized.get("extra_hosts")
         if isinstance(extra_hosts, list):
             normalized_extra_hosts: dict[str, str] = {}
@@ -1059,6 +1080,10 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
                 continue
             mount: dict[str, Any] = {"type": "tmpfs", "destination": destination}
             if isinstance(raw_options, str):
+                mount["options"] = [
+                    value.strip() for value in raw_options.split(",") if value.strip()
+                ]
+            if isinstance(raw_options, str):
                 for option in raw_options.split(","):
                     key, separator, value = option.strip().partition("=")
                     if separator and key == "size" and value:
@@ -1122,10 +1147,25 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
 
         binds = host_config.get("Binds")
         if isinstance(binds, list):
-            normalized_volumes: dict[str, Any] = {}
-            normalized_mounts: list[dict[str, Any]] = []
-            updated_volumes = False
-            updated_mounts = False
+            bind_destinations = {
+                self._normalize_podman_container_mount_destination(self._parse_bind_mount(bind)[1])
+                for bind in binds
+                if isinstance(bind, str)
+            }
+            normalized_volumes: dict[str, Any] = {
+                key: value
+                for key, value in (create_config.get("volumes") or {}).items()
+                if self._normalize_podman_container_mount_destination(value.get("bind"))
+                not in bind_destinations
+            }
+            normalized_mounts: list[dict[str, Any]] = [
+                mount
+                for mount in create_config.get("mounts") or []
+                if self._normalize_podman_container_mount_destination(
+                    mount.get("Target") or mount.get("destination") or mount.get("target")
+                )
+                not in bind_destinations
+            ]
             for bind in binds:
                 if not isinstance(bind, str):
                     continue
@@ -1154,7 +1194,6 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
                         elif token in {"Z", "z"}:
                             mount_payload["relabel"] = token
                     normalized_mounts.append(mount_payload)
-                    updated_mounts = True
                     continue
 
                 volume_payload: dict[str, Any] = {"bind": container_path}
@@ -1163,14 +1202,14 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
                 else:
                     volume_payload["mode"] = "rw"
                 normalized_volumes[host_path] = volume_payload
-                updated_volumes = True
-            if updated_volumes and normalized_volumes:
+            if normalized_volumes:
                 create_config["volumes"] = normalized_volumes
-            elif "volumes" in create_config:
+            else:
                 create_config.pop("volumes", None)
-            if updated_mounts:
+
+            if normalized_mounts:
                 create_config["mounts"] = normalized_mounts
-            elif "mounts" in create_config:
+            else:
                 create_config.pop("mounts", None)
 
         init_value = host_config.get("Init")

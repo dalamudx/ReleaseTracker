@@ -32,9 +32,9 @@ Define release sources. Supports GitHub, GitLab, Gitea, Helm charts, and OCI reg
 ![Executors](docs/images/executors.png)
 ![Executors](docs/images/executors-snapshot.png)
 
-将追踪器的目标版本绑定到实际运行时目标：Docker 容器、Compose Project、Portainer Stack、Kubernetes Workload、Helm Release。支持手动执行、计划执行、维护窗口、执行历史。
+将追踪器的目标版本绑定到实际运行时目标：Docker 容器、Compose Project、Portainer Stack、Kubernetes Workload、Helm Release 或远程主机上的 SSH Compose 项目。支持手动执行、维护窗口、部署计划确认、快照回滚和执行历史。
 
-Bind tracker target versions to runtime targets: Docker containers, Compose projects, Portainer stacks, Kubernetes workloads, or Helm releases. Supports manual / scheduled execution, maintenance windows, and run history.
+Bind tracker target versions to runtime targets: Docker containers, Compose projects, Portainer stacks, Kubernetes workloads, Helm releases, or SSH Compose projects on remote hosts. Supports manual execution, maintenance windows, deployment plan approval, snapshot rollback, and run history.
 
 ### 编辑/添加执行器 / Edit & Add Executor
 
@@ -47,9 +47,9 @@ Bind tracker target versions to runtime targets: Docker containers, Compose proj
 
 ![Runtime Connections](docs/images/runtime.png)
 
-接入 Docker、Podman、Portainer、Kubernetes 环境。敏感连接信息由凭证模块统一加密管理。
+接入 Docker、Podman、Portainer、Kubernetes 环境和 SSH 主机。敏感连接信息由凭证模块统一加密管理。
 
-Connect Docker, Podman, Portainer, and Kubernetes environments. Connection secrets are managed and encrypted through the credentials module.
+Connect Docker, Podman, Portainer, Kubernetes environments and SSH hosts. Connection secrets are managed and encrypted through the credentials module.
 
 ## 版本历史 / Release History
 
@@ -72,9 +72,9 @@ Central store for Git tokens, container registry credentials, and runtime connec
 
 ![Notifications](docs/images/notifications.png)
 
-Webhook 通知，支持事件过滤与 Discord / Slack 兼容格式。
+支持通用 Webhook、企业微信、飞书、钉钉、Discord、Slack、Telegram，可按事件订阅并使用自定义消息模板；仓库 Webhook 可在发版或构建成功时即时触发版本拉取。
 
-Webhook notifications with event filtering and Discord / Slack compatible payloads.
+Generic Webhook, WeCom, Feishu, DingTalk, Discord, Slack and Telegram notifications with per-event subscriptions and custom message templates; repository webhooks trigger immediate refreshes on releases or successful builds.
 
 ## 系统设置 / System Settings
 
@@ -82,6 +82,6 @@ Webhook notifications with event filtering and Discord / Slack compatible payloa
 ![System Settings](docs/images/settings-keys.png)
 ![System Settings](docs/images/settings-oidc.png)
 
-时区、日志级别、版本历史保留数量、BASE URL、系统密钥与加密密钥轮换、oidc等运行配置，均可在 Web UI 完成，无需环境变量。
+时区、日志级别、历史与快照保留、备份策略、BASE URL、密钥轮换、OIDC 等运行配置，均可在 Web UI 完成；备份页支持在线备份与恢复。
 
-Timezone, log level, release history retention, BASE URL, session and encryption key rotation, OIDC — all configurable from the Web UI, no environment variables required.
+Time zone, log level, history and snapshot retention, backup policy, BASE URL, key rotation and OIDC are all configurable from the Web UI; the backup page supports online backup and restore.

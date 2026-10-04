@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react"
 import { READINESS_FIELDS } from "@/lib/readiness"
-import { Activity, AlertTriangle, Clock3, Database, Globe, KeyRound, Link2, RotateCcw, RotateCw, Save, Settings2, Zap } from "lucide-react"
+import { Activity, AlertTriangle, Archive, Clock3, Database, Globe, KeyRound, Layers, Link2, RotateCcw, RotateCw, Save, Settings2, Tag, Zap } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 import { useTranslation } from "react-i18next"
 import { appPath } from "@/lib/base-path"
 import { toast } from "sonner"
@@ -54,6 +55,15 @@ export const SYSTEM_BASE_URL_SETTING_KEY = "system.base_url"
 export const SYSTEM_RELEASE_HISTORY_RETENTION_COUNT_SETTING_KEY = "system.release_history_retention_count"
 export const SYSTEM_EXECUTOR_SNAPSHOT_RETENTION_COUNT_SETTING_KEY = "system.executor_snapshot_retention_count"
 export const SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY = "system.oci_registry_redirects_enabled"
+export const SYSTEM_BACKUP_RETENTION_SETTING_KEY = "system.backup_retention"
+export const SYSTEM_BACKUP_INTERVAL_HOURS_SETTING_KEY = "system.backup_interval_hours"
+
+const DEFAULT_BACKUP_RETENTION = "7"
+const DEFAULT_BACKUP_INTERVAL_HOURS = "0"
+const MIN_BACKUP_RETENTION = 1
+const MAX_BACKUP_RETENTION = 100
+const MIN_BACKUP_INTERVAL_HOURS = 0
+const MAX_BACKUP_INTERVAL_HOURS = 8760
 
 const DEFAULT_LOG_LEVEL = "INFO"
 const LOG_LEVEL_OPTIONS = ["DEBUG", "INFO", "WARNING", "ERROR"]
@@ -197,12 +207,17 @@ function ReleaseHistoryCountSettingItem({
         <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] md:items-start">
             <div className="flex min-w-0 gap-3">
                 <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                    <Database className="h-4 w-4" />
+                    <Tag className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 space-y-1">
-                    <h3 className="text-sm font-semibold text-foreground">
-                        {t("systemSettings.global.releaseHistoryCount.title")}
-                    </h3>
+                    <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-semibold text-foreground">
+                            {t("systemSettings.global.releaseHistoryCount.title")}
+                        </h3>
+                        <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">
+                            {t("systemSettings.global.releaseHistoryCount.scopeBadge")}
+                        </Badge>
+                    </div>
                     <p className="text-sm leading-relaxed text-muted-foreground">
                         {t("systemSettings.global.releaseHistoryCount.description")}
                     </p>
@@ -255,12 +270,17 @@ function SnapshotHistoryCountSettingItem({
         <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] md:items-start">
             <div className="flex min-w-0 gap-3">
                 <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                    <Database className="h-4 w-4" />
+                    <Layers className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 space-y-1">
-                    <h3 className="text-sm font-semibold text-foreground">
-                        {t("systemSettings.global.snapshotHistoryCount.title")}
-                    </h3>
+                    <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-semibold text-foreground">
+                            {t("systemSettings.global.snapshotHistoryCount.title")}
+                        </h3>
+                        <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">
+                            {t("systemSettings.global.snapshotHistoryCount.scopeBadge")}
+                        </Badge>
+                    </div>
                     <p className="text-sm leading-relaxed text-muted-foreground">
                         {t("systemSettings.global.snapshotHistoryCount.description")}
                     </p>
@@ -291,6 +311,114 @@ function SnapshotHistoryCountSettingItem({
                             : t("systemSettings.global.cleanup.cleanNow")}
                     </Button>
                 </div>
+            </div>
+        </div>
+    )
+}
+
+function BackupRetentionSettingItem({
+    retentionDraft,
+    onRetentionDraftChange,
+    isValid,
+}: {
+    retentionDraft: string
+    onRetentionDraftChange: (value: string) => void
+    isValid: boolean
+}) {
+    const { t } = useTranslation()
+
+    return (
+        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] md:items-start">
+            <div className="flex min-w-0 gap-3">
+                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <Archive className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 space-y-1">
+                    <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-semibold text-foreground">
+                            {t("systemSettings.global.backupRetention.title")}
+                        </h3>
+                        <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">
+                            {t("systemSettings.global.backupRetention.scopeBadge")}
+                        </Badge>
+                    </div>
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                        {t("systemSettings.global.backupRetention.description")}
+                    </p>
+                </div>
+            </div>
+            <div className="min-w-0 space-y-2">
+                <Label className="text-sm font-medium" htmlFor="system-backup-retention">
+                    {t("systemSettings.global.backupRetention.label")}
+                </Label>
+                <Input
+                    id="system-backup-retention"
+                    type="number"
+                    min={MIN_BACKUP_RETENTION}
+                    max={MAX_BACKUP_RETENTION}
+                    value={retentionDraft}
+                    onChange={(event) => onRetentionDraftChange(event.target.value)}
+                    className="min-w-0"
+                />
+                {!isValid && (
+                    <p role="alert" className="text-xs text-destructive">
+                        {t("systemSettings.global.backupRetention.invalid")}
+                    </p>
+                )}
+            </div>
+        </div>
+    )
+}
+
+function BackupIntervalSettingItem({
+    intervalDraft,
+    onIntervalDraftChange,
+    isValid,
+}: {
+    intervalDraft: string
+    onIntervalDraftChange: (value: string) => void
+    isValid: boolean
+}) {
+    const { t } = useTranslation()
+
+    return (
+        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] md:items-start">
+            <div className="flex min-w-0 gap-3">
+                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <Clock3 className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 space-y-1">
+                    <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-semibold text-foreground">
+                            {t("systemSettings.global.backupInterval.title")}
+                        </h3>
+                        <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">
+                            {t("systemSettings.global.backupInterval.scopeBadge")}
+                        </Badge>
+                    </div>
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                        {t("systemSettings.global.backupInterval.description")}
+                    </p>
+                </div>
+            </div>
+            <div className="min-w-0 space-y-2">
+                <Label className="text-sm font-medium" htmlFor="system-backup-interval">
+                    {t("systemSettings.global.backupInterval.label")}
+                </Label>
+                <Input
+                    id="system-backup-interval"
+                    type="number"
+                    min={MIN_BACKUP_INTERVAL_HOURS}
+                    max={MAX_BACKUP_INTERVAL_HOURS}
+                    value={intervalDraft}
+                    onChange={(event) => onIntervalDraftChange(event.target.value)}
+                    className="min-w-0"
+                />
+                {!isValid && (
+                    <p role="alert" className="text-xs text-destructive">
+                        {t("systemSettings.global.backupInterval.invalid")}
+                    </p>
+                )}
             </div>
         </div>
     )
@@ -684,6 +812,40 @@ export function SystemSettingsPage() {
             ? parsed
             : DEFAULT_EXECUTOR_SNAPSHOT_HISTORY_COUNT
     }, [settings])
+    const currentBackupRetention = useMemo(() => {
+        const value = settings.find((item) => item.key === SYSTEM_BACKUP_RETENTION_SETTING_KEY)?.value
+        const parsed = Number.parseInt(String(value ?? ""), 10)
+        return Number.isInteger(parsed) && parsed >= MIN_BACKUP_RETENTION && parsed <= MAX_BACKUP_RETENTION
+            ? String(parsed)
+            : DEFAULT_BACKUP_RETENTION
+    }, [settings])
+    const currentBackupIntervalHours = useMemo(() => {
+        const value = settings.find((item) => item.key === SYSTEM_BACKUP_INTERVAL_HOURS_SETTING_KEY)?.value
+        const parsed = Number.parseInt(String(value ?? ""), 10)
+        return Number.isInteger(parsed) && parsed >= MIN_BACKUP_INTERVAL_HOURS && parsed <= MAX_BACKUP_INTERVAL_HOURS
+            ? String(parsed)
+            : DEFAULT_BACKUP_INTERVAL_HOURS
+    }, [settings])
+
+    const [backupRetentionDraft, setBackupRetentionDraft] = useState<string | null>(null)
+    const [backupIntervalHoursDraft, setBackupIntervalHoursDraft] = useState<string | null>(null)
+
+    const backupRetention = backupRetentionDraft ?? currentBackupRetention
+    const backupIntervalHours = backupIntervalHoursDraft ?? currentBackupIntervalHours
+
+    const parsedBackupRetention = Number.parseInt(backupRetention.trim(), 10)
+    const isValidBackupRetention =
+        Number.isInteger(parsedBackupRetention) &&
+        parsedBackupRetention >= MIN_BACKUP_RETENTION &&
+        parsedBackupRetention <= MAX_BACKUP_RETENTION &&
+        String(parsedBackupRetention) === backupRetention.trim()
+
+    const parsedBackupIntervalHours = Number.parseInt(backupIntervalHours.trim(), 10)
+    const isValidBackupIntervalHours =
+        Number.isInteger(parsedBackupIntervalHours) &&
+        parsedBackupIntervalHours >= MIN_BACKUP_INTERVAL_HOURS &&
+        parsedBackupIntervalHours <= MAX_BACKUP_INTERVAL_HOURS &&
+        String(parsedBackupIntervalHours) === backupIntervalHours.trim()
     const [readinessDraft, setReadinessDraft] = useState<Record<string, string>>({})
     const readinessValue = (field: typeof READINESS_FIELDS[number]) => readinessDraft[field.key] ?? settings.find((item) => item.key === `system.${field.key}`)?.value ?? String(field.defaultValue)
     const validReadiness = READINESS_FIELDS.every((field) => /^\d+$/.test(readinessValue(field)) && Number(readinessValue(field)) >= field.min && Number(readinessValue(field)) <= field.max)
@@ -724,6 +886,14 @@ export function SystemSettingsPage() {
     const isValidBaseUrl = !normalizedBaseUrl || /^https?:\/\/[^\s/?#]+[^\s?#]*$/i.test(normalizedBaseUrl)
 
     const handleSaveGlobalSettings = async () => {
+        if (!isValidBackupRetention) {
+            toast.error(t("systemSettings.global.backupRetention.invalid"))
+            return
+        }
+        if (!isValidBackupIntervalHours) {
+            toast.error(t("systemSettings.global.backupInterval.invalid"))
+            return
+        }
         if (!validReadiness) { toast.error(t("readiness.invalid")); return }
         if (!validRetryCount) {
             toast.error(t("tasks.retryInvalid"))
@@ -743,6 +913,20 @@ export function SystemSettingsPage() {
         }
 
         try {
+            // Backup changes share an operation lock: save sequentially, and only
+            // dirty keys. Unrelated global options keep their existing batching.
+            if (backupRetentionDraft !== null && String(parsedBackupRetention) !== currentBackupRetention) {
+                await updateSetting.mutateAsync({
+                    key: SYSTEM_BACKUP_RETENTION_SETTING_KEY,
+                    value: String(parsedBackupRetention),
+                })
+            }
+            if (backupIntervalHoursDraft !== null && String(parsedBackupIntervalHours) !== currentBackupIntervalHours) {
+                await updateSetting.mutateAsync({
+                    key: SYSTEM_BACKUP_INTERVAL_HOURS_SETTING_KEY,
+                    value: String(parsedBackupIntervalHours),
+                })
+            }
             await Promise.all([
                 ...READINESS_FIELDS.map((field) => updateSetting.mutateAsync({ key: `system.${field.key}`, value: readinessValue(field) })),
                 updateSetting.mutateAsync({ key: "system.fetch_retry_count", value: retryCount }),
@@ -778,6 +962,8 @@ export function SystemSettingsPage() {
             setOciRegistryRedirectsEnabledDraft(null)
             setReleaseHistoryCountDraft(null)
             setSnapshotHistoryCountDraft(null)
+            setBackupRetentionDraft(null)
+            setBackupIntervalHoursDraft(null)
             toast.success(t("common.saved"))
         } catch (error) {
             console.error("Failed to save global settings", error)
@@ -947,20 +1133,51 @@ export function SystemSettingsPage() {
                                     {t("systemSettings.global.sections.storageAndRetention.description")}
                                 </CardDescription>
                             </CardHeader>
-                            <CardContent className="pt-2">
-                                <div className="divide-y divide-border/60">
-                                    <ReleaseHistoryCountSettingItem
-                                        countDraft={releaseHistoryCountValue}
-                                        cleanupPending={cleanupReleaseHistory.isPending}
-                                        onCountDraftChange={setReleaseHistoryCountDraft}
-                                        onCleanup={handleCleanupReleaseHistory}
-                                    />
-                                    <SnapshotHistoryCountSettingItem
-                                        countDraft={snapshotHistoryCountValue}
-                                        cleanupPending={cleanupSnapshotHistory.isPending}
-                                        onCountDraftChange={setSnapshotHistoryCountDraft}
-                                        onCleanup={handleCleanupSnapshotHistory}
-                                    />
+                            <CardContent className="pt-4">
+                                <div className="space-y-6">
+                                    {/* 子组 1：业务数据历史 */}
+                                    <div>
+                                        <div className="border-b border-border/40 pb-2">
+                                            <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                                                {t("systemSettings.global.sections.storageAndRetention.operationalGroup")}
+                                            </h4>
+                                        </div>
+                                        <div className="divide-y divide-border/60">
+                                            <ReleaseHistoryCountSettingItem
+                                                countDraft={releaseHistoryCountValue}
+                                                cleanupPending={cleanupReleaseHistory.isPending}
+                                                onCountDraftChange={setReleaseHistoryCountDraft}
+                                                onCleanup={handleCleanupReleaseHistory}
+                                            />
+                                            <SnapshotHistoryCountSettingItem
+                                                countDraft={snapshotHistoryCountValue}
+                                                cleanupPending={cleanupSnapshotHistory.isPending}
+                                                onCountDraftChange={setSnapshotHistoryCountDraft}
+                                                onCleanup={handleCleanupSnapshotHistory}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {/* 子组 2：系统全量灾备策略 */}
+                                    <div>
+                                        <div className="border-b border-border/40 pb-2">
+                                            <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                                                {t("systemSettings.global.sections.storageAndRetention.backupGroup")}
+                                            </h4>
+                                        </div>
+                                        <div className="divide-y divide-border/60">
+                                            <BackupRetentionSettingItem
+                                                retentionDraft={backupRetention}
+                                                onRetentionDraftChange={setBackupRetentionDraft}
+                                                isValid={isValidBackupRetention}
+                                            />
+                                            <BackupIntervalSettingItem
+                                                intervalDraft={backupIntervalHours}
+                                                onIntervalDraftChange={setBackupIntervalHoursDraft}
+                                                isValid={isValidBackupIntervalHours}
+                                            />
+                                        </div>
+                                    </div>
                                 </div>
                             </CardContent>
                         </Card>
