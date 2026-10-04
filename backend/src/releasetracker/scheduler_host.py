@@ -84,6 +84,8 @@ class SchedulerHost:
             args=list(args or []),
             id=job_id,
             replace_existing=True,
+            coalesce=True,
+            misfire_grace_time=max(seconds * 5, 30),
             **({"next_run_time": next_run_time} if next_run_time is not None else {}),
             **({"jitter": jitter} if jitter else {}),
         )
