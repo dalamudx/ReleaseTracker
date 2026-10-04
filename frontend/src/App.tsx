@@ -1,14 +1,13 @@
 import { Suspense, lazy } from "react"
-import { BrowserRouter, Routes, Route, useLocation } from "react-router"
+import { BrowserRouter, Routes, Route, useLocation, Navigate, Outlet } from "react-router"
 import { ThemeProvider } from "@/providers/theme-provider"
 import { Toaster } from "@/components/ui/sonner"
-import AppLayout from "@/components/layout/AppLayout"
-import { Navigate, Outlet } from "react-router"
 import { useAuth } from "@/context/auth-context"
 import { Spinner } from "@/components/ui/spinner"
 import { appBasePath } from "@/lib/base-path"
 
-// Lazy load pages
+// Lazy load layout and pages
+const AppLayout = lazy(() => import("@/components/layout/AppLayout"))
 const DashboardPage = lazy(() => import("@/pages/Dashboard"))
 const TrackersPage = lazy(() => import("@/pages/Trackers"))
 const TasksPage = lazy(() => import("@/pages/Tasks"))
