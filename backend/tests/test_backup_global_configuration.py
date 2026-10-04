@@ -53,9 +53,7 @@ async def test_removed_env_ignored_defaults_visible(configured, monkeypatch, sto
     assert service.directory == Path(storage.db_path).parent / "backups"
 
 
-async def test_hot_retention_schedule_restart_and_reset(
-    configured, storage, system_key_manager
-):
+async def test_hot_retention_schedule_restart_and_reset(configured, storage, system_key_manager):
     service, host, client = configured
     old = await service.create()
     for key, value in ((KEEP, "1"), (HOURS, "24")):

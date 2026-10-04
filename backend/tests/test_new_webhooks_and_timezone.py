@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -14,10 +13,8 @@ from releasetracker.notifiers import (
     build_notifier,
 )
 from releasetracker.notifiers.templates import (
-    context_for,
     format_localized_time,
     render_notification,
-    sample_payload,
 )
 from releasetracker.services.outbound_http import OutboundResponse
 
@@ -55,15 +52,11 @@ def test_format_localized_time_with_various_timezones():
 async def test_notification_template_renders_configured_system_timezone():
     release = _sample_release()
     # In UTC (12:30:00)
-    utc_rendered = await render_notification(
-        "new_release", release, "zh", tz_name="UTC"
-    )
+    utc_rendered = await render_notification("new_release", release, "zh", tz_name="UTC")
     assert "2026-06-15 12:30:00" in utc_rendered["body"]
 
     # In Asia/Shanghai (UTC+8 -> 20:30:00)
-    sh_rendered = await render_notification(
-        "new_release", release, "zh", tz_name="Asia/Shanghai"
-    )
+    sh_rendered = await render_notification("new_release", release, "zh", tz_name="Asia/Shanghai")
     assert "2026-06-15 20:30:00" in sh_rendered["body"]
     assert sh_rendered["timezone"] == "Asia/Shanghai"
 
@@ -127,7 +120,9 @@ async def test_dingtalk_notifier_sends_markdown_payload():
     assert accepted is True and error is None
 
     rejected, error = notifier._validate_success_response(
-        OutboundResponse(status_code=200, headers={}, body=b'{"errcode":300001,"errmsg":"token invalid"}')
+        OutboundResponse(
+            status_code=200, headers={}, body=b'{"errcode":300001,"errmsg":"token invalid"}'
+        )
     )
     assert rejected is False and "errcode=300001" in error
 
@@ -154,7 +149,7 @@ async def test_discord_notifier_sends_embeds():
 
     # Test response validation (Discord returns 200 or 204)
     accepted, _ = notifier._validate_success_response(
-        OutboundResponse(status_code=204, headers={}, body=b'')
+        OutboundResponse(status_code=204, headers={}, body=b"")
     )
     assert accepted is True
 
@@ -180,7 +175,7 @@ async def test_slack_notifier_sends_text():
 
     # Test response validation
     accepted, _ = notifier._validate_success_response(
-        OutboundResponse(status_code=200, headers={}, body=b'ok')
+        OutboundResponse(status_code=200, headers={}, body=b"ok")
     )
     assert accepted is True
 
@@ -208,11 +203,17 @@ async def test_telegram_notifier_sends_markdown_with_chat_id():
 
     # Test response validation
     accepted, error = notifier._validate_success_response(
-        OutboundResponse(status_code=200, headers={}, body=b'{"ok":true,"result":{"message_id":100}}')
+        OutboundResponse(
+            status_code=200, headers={}, body=b'{"ok":true,"result":{"message_id":100}}'
+        )
     )
     assert accepted is True and error is None
 
     rejected, error = notifier._validate_success_response(
-        OutboundResponse(status_code=400, headers={}, body=b'{"ok":false,"error_code":400,"description":"Bad Request: chat not found"}')
+        OutboundResponse(
+            status_code=400,
+            headers={},
+            body=b'{"ok":false,"error_code":400,"description":"Bad Request: chat not found"}',
+        )
     )
     assert rejected is False and "chat not found" in error

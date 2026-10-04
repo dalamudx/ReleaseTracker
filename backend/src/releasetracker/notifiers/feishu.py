@@ -39,17 +39,22 @@ class FeishuNotifier(WebhookNotifier):
             }
         ]
         if detail_url:
-            elements.append({
-                "tag": "action",
-                "actions": [
-                    {
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": "查看详情" if self.language == "zh" else "View details"},
-                        "type": "primary",
-                        "url": detail_url,
-                    }
-                ],
-            })
+            elements.append(
+                {
+                    "tag": "action",
+                    "actions": [
+                        {
+                            "tag": "button",
+                            "text": {
+                                "tag": "plain_text",
+                                "content": "查看详情" if self.language == "zh" else "View details",
+                            },
+                            "type": "primary",
+                            "url": detail_url,
+                        }
+                    ],
+                }
+            )
 
         card_payload = {
             "msg_type": "interactive",

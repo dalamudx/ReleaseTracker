@@ -347,6 +347,7 @@ class InstanceBackup:
         if self.lock.locked() or self._restore_pins:
             raise BackupManagementError("backup_busy")
         async with self.lock:
+
             async def apply():
                 try:
                     updated_at = await (

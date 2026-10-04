@@ -611,7 +611,9 @@ class Notifier(BaseModel):
 
     id: int | None = None
     name: str
-    type: Literal["webhook", "wecom", "feishu", "dingtalk", "discord", "slack", "telegram"] = "webhook"
+    type: Literal["webhook", "wecom", "feishu", "dingtalk", "discord", "slack", "telegram"] = (
+        "webhook"
+    )
     url: str
     events: list[str] = Field(default_factory=lambda: ["new_release"])
     enabled: bool = True

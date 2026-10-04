@@ -28,7 +28,9 @@ router = APIRouter(
 class PreviewInput(TemplateInput):
     event: str = Field(default="new_release", max_length=60)
     language: Literal["zh", "en"] = "en"
-    channel: Literal["wecom", "feishu", "dingtalk", "discord", "slack", "telegram", "webhook"] = "wecom"
+    channel: Literal["wecom", "feishu", "dingtalk", "discord", "slack", "telegram", "webhook"] = (
+        "wecom"
+    )
     scenario: Literal["normal", "timeout", "no_healthcheck", "unchecked", "many", "container"] = (
         "normal"
     )

@@ -117,7 +117,9 @@ class WebhookNotifier(BaseNotifier):
     async def prepare(self, event: str, payload: Any) -> dict:
         if isinstance(payload, dict) and isinstance(payload.get("_prepared_notification"), dict):
             return payload["_prepared_notification"]
-        generic = _build_webhook_payload(event, payload, language=self.language, timezone=self.timezone)
+        generic = _build_webhook_payload(
+            event, payload, language=self.language, timezone=self.timezone
+        )
         if self.template is None:
             return generic
         from .templates import render_notification

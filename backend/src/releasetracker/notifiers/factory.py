@@ -12,7 +12,9 @@ from .templates import builtin
 from .webhook import WebhookNotifier
 from .wecom import WeComNotifier
 
-SUPPORTED_NOTIFIER_TYPES = frozenset({"webhook", "wecom", "feishu", "dingtalk", "discord", "slack", "telegram"})
+SUPPORTED_NOTIFIER_TYPES = frozenset(
+    {"webhook", "wecom", "feishu", "dingtalk", "discord", "slack", "telegram"}
+)
 
 
 def build_notifier(

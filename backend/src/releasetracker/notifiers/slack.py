@@ -29,9 +29,11 @@ class SlackNotifier(WebhookNotifier):
             view_text = "查看详情" if self.language == "zh" else "View details"
             text += f"\n\n<{detail_url}|{view_text}>"
 
-        return await self.send_payload({
-            "text": str(text)[:40000],
-        })
+        return await self.send_payload(
+            {
+                "text": str(text)[:40000],
+            }
+        )
 
     def _validate_success_response(self, response: OutboundResponse) -> tuple[bool, str | None]:
         if 200 <= response.status_code < 300:

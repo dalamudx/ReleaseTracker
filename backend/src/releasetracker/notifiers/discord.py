@@ -44,9 +44,11 @@ class DiscordNotifier(WebhookNotifier):
         if embed.get("footer"):
             discord_embed["footer"] = embed["footer"]
 
-        return await self.send_payload({
-            "embeds": [discord_embed],
-        })
+        return await self.send_payload(
+            {
+                "embeds": [discord_embed],
+            }
+        )
 
     def _validate_success_response(self, response: OutboundResponse) -> tuple[bool, str | None]:
         # Discord returns 200 OK or 204 No Content

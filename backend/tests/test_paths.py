@@ -41,9 +41,7 @@ def test_entrypoint_migration_uses_app_database_path(monkeypatch, tmp_path, conf
     bin_dir.mkdir()
     python = bin_dir / "python"
     python.write_text(
-        '#!/bin/sh\n'
-        'if [ "$1" = "-m" ]; then exit 0; fi\n'
-        'exec "$REAL_PYTHON" "$@"\n'
+        "#!/bin/sh\n" 'if [ "$1" = "-m" ]; then exit 0; fi\n' 'exec "$REAL_PYTHON" "$@"\n'
     )
     dbmate = bin_dir / "dbmate"
     dbmate.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@" > "$MIGRATION_ARGS"\n')
@@ -55,5 +53,7 @@ def test_entrypoint_migration_uses_app_database_path(monkeypatch, tmp_path, conf
     args = (tmp_path / "migration-args").read_text().splitlines()
     assert args[:2] == ["--url", f"sqlite://{paths.database_path()}"]
     assert args[-1] == "migrate"
-    assert pre_migration_directory(paths.database_path()) == paths.database_path().parent / "backups"
+    assert (
+        pre_migration_directory(paths.database_path()) == paths.database_path().parent / "backups"
+    )
     assert paths.system_secrets_path().parent == paths.database_path().parent

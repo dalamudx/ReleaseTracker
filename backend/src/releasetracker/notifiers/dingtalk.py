@@ -29,13 +29,15 @@ class DingTalkNotifier(WebhookNotifier):
             view_text = "查看详情" if self.language == "zh" else "View details"
             text += f"\n\n[{view_text}]({detail_url})"
 
-        return await self.send_payload({
-            "msgtype": "markdown",
-            "markdown": {
-                "title": str(title)[:120],
-                "text": str(text)[:20000],
-            },
-        })
+        return await self.send_payload(
+            {
+                "msgtype": "markdown",
+                "markdown": {
+                    "title": str(title)[:120],
+                    "text": str(text)[:20000],
+                },
+            }
+        )
 
     def _validate_success_response(self, response: OutboundResponse) -> tuple[bool, str | None]:
         try:

@@ -547,7 +547,15 @@ def format_message(rendered, context, channel):
 
 
 async def render_notification(
-    event, payload, language, template=None, channel="webhook", *, strict=False, detail_url=None, tz_name: str | None = None
+    event,
+    payload,
+    language,
+    template=None,
+    channel="webhook",
+    *,
+    strict=False,
+    detail_url=None,
+    tz_name: str | None = None,
 ):
     template = template or builtin()
     context = context_for(event, payload, language, template, tz_name=tz_name)
