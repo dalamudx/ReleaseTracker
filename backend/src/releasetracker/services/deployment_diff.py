@@ -200,7 +200,7 @@ async def native_review(storage, scheduler, executor, adapter, task):
             for name, value in observed["compose"].get("services", {}).items()
         }
     elif mode == "kubernetes_workload":
-        images = dict(snapshot["containers"])
+        images = dict(snapshot.get("containers") or {})
     desired = deepcopy(observed)
     targets = await image_targets(storage, scheduler, executor, task, images)
     if mode == "container" and None in targets:

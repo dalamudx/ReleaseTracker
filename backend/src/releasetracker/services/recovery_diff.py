@@ -257,15 +257,35 @@ def changed_lines(before, after):
 
 async def capture_current(adapter, target_ref):
     try:
+        get_image = getattr(adapter, "get_current_image", None)
+        supports_single = getattr(adapter, "supports_single_image_operations", None)
+        can_single = supports_single(target_ref) if callable(supports_single) else True
         image = (
-            await adapter.get_current_image(target_ref)
-            if target_ref.get("mode") != "helm_release"
-            and adapter.supports_single_image_operations(target_ref)
+            await get_image(target_ref)
+            if callable(get_image) and target_ref.get("mode") != "helm_release" and can_single
             else ""
         )
-        return await adapter.capture_snapshot(target_ref, image)
+        capture = getattr(adapter, "capture_snapshot", None)
+        if callable(capture):
+            snapshot = await capture(target_ref, image)
+            if (
+                isinstance(snapshot, dict)
+                and target_ref.get("mode", "container") == "container"
+                and "create_config" not in snapshot
+                and "image" in snapshot
+            ):
+                return dict(snapshot, create_config={"image": snapshot["image"]})
+            return snapshot
+        mode = target_ref.get("mode", "container")
+        if mode == "kubernetes_workload":
+            fetch_images = getattr(adapter, "fetch_workload_service_images", None)
+            if callable(fetch_images):
+                containers = await fetch_images(target_ref)
+                return {"mode": "kubernetes_workload", "containers": containers or {}}
+        return {}
     except Exception as exc:
-        if adapter.is_target_missing_error(exc):
+        is_missing = getattr(adapter, "is_target_missing_error", None)
+        if callable(is_missing) and is_missing(exc):
             return None
         raise
 
