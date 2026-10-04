@@ -7,7 +7,7 @@ import time
 import uuid
 
 from ..services.version_policy import version_policy_reason
-from ..services.deployment_plan import TargetEvidence, plan_fingerprint, public_summary
+from ..services.deployment_plan import MARKER_KEYS, TargetEvidence, plan_fingerprint, public_summary
 
 APPROVABLE = frozenset(
     {
@@ -109,6 +109,13 @@ class DeploymentAdmissionStore:
                     "SELECT * FROM managed_targets WHERE identity_key=?", (evidence.identity_key,)
                 )
             ).fetchone()
+            if occupied and occupied["executor_id"] != executor_id:
+                active_owner = await (
+                    await db.execute("SELECT 1 FROM executors WHERE id=?", (occupied["executor_id"],))
+                ).fetchone()
+                if not active_owner:
+                    await db.execute("DELETE FROM managed_targets WHERE executor_id=?", (occupied["executor_id"],))
+                    occupied = None
             target_id = (
                 target["target_id"]
                 if target
