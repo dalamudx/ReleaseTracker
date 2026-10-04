@@ -385,7 +385,9 @@ class ExecutorScheduler(
                         exc,
                     )
 
-            if current_image == target_image or runtime_digest_matches:
+            # Artifact equality cannot bypass a tag <-> digest policy change.
+            reference_mode_matches = ("@" in current_image) == ("@" in target_image)
+            if current_image == target_image or (runtime_digest_matches and reference_mode_matches):
                 run_id = (
                     _run_id
                     if _run_id is not None

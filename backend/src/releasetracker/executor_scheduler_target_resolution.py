@@ -528,7 +528,8 @@ class ExecutorSchedulerTargetResolution:
         tracker_source,
         tracker_source_type: str | None,
     ) -> str:
-        image = _build_target_image_value(
+        # A frozen queue target must not override the configured reference mode.
+        return _build_target_image_value(
             current_image=current_image,
             target_version=target_version,
             target_digest=target_digest,
@@ -536,14 +537,6 @@ class ExecutorSchedulerTargetResolution:
             tracker_source=tracker_source,
             tracker_source_type=tracker_source_type,
         )
-        digest = (
-            _normalize_docker_digest(target_digest) if tracker_source_type == "container" else None
-        )
-        # For same-tag republishes, freeze the artifact with digest so the changed
-        # digest can be applied when the tag name is identical to the running image.
-        if digest and "@" not in image and image == current_image:
-            image = f"{image}@{digest}"
-        return image
 
     async def _resolve_tracker_binding(
         self, executor_config: ExecutorConfig

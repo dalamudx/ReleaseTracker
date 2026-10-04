@@ -25,7 +25,7 @@ from helpers.executor_runtime import (
 from test_recovery_configuration_diff import container
 
 
-async def setup(storage):
+async def setup(storage, reference_mode="digest"):
     await save_docker_tracker_config(storage, name="diff-update", image="library/nginx")
     from datetime import datetime, timezone
     from releasetracker.models import Release
@@ -56,7 +56,7 @@ async def setup(storage):
             tracker_name=tracker.name,
             tracker_source_id=tracker.sources[0].id,
             channel_name="stable",
-            image_reference_mode="tag",
+            image_reference_mode=reference_mode,
             target_ref={"mode": "container", "container_name": "isolated-nginx"},
             health_check={"readiness_enabled": False},
         )
@@ -131,7 +131,7 @@ async def test_only_image_changes_in_update_diff_and_target_is_frozen(storage):
 
 
 async def test_tag_reference_mode_uses_pure_tag_when_version_changes(storage):
-    executor, scheduler, handler, adapter, current, task = await setup(storage)
+    executor, scheduler, handler, adapter, current, task = await setup(storage, "tag")
     current["image"] = "docker.io/library/nginx:1.26.0"
     current["create_config"]["image"] = current["image"]
     try:
@@ -268,27 +268,34 @@ async def test_portainer_proof_uses_real_native_environment_not_only_stack_yaml(
 
 
 @pytest.mark.parametrize("digest_match", [False, True])
-async def test_scheduler_same_tag_compares_real_artifact(storage, digest_match):
+@pytest.mark.parametrize("reference_mode", ["tag", "digest"])
+async def test_scheduler_same_tag_respects_reference_mode(storage, digest_match, reference_mode):
     from test_executor_scheduler import FakeAdapter, _mock_scheduler_target
 
-    executor, scheduler, handler, _, current, task = await setup(storage)
+    executor, scheduler, handler, _, current, task = await setup(storage, reference_mode)
     try:
+        current_digest = "sha256:" + ("a" if digest_match else "b") * 64
+        current_image = current["image"]
+        if reference_mode == "digest":
+            current_image += "@" + current_digest
         adapter = FakeAdapter(
             await storage.get_runtime_connection(executor.runtime_connection_id),
-            current_image=current["image"],
-            current_digest="sha256:" + ("a" if digest_match else "b") * 64,
+            current_image=current_image,
+            current_digest=current_digest,
         )
         scheduler._adapters[executor.id] = adapter
         _mock_scheduler_target(scheduler, ("stable", "sha256:" + "a" * 64))
-        outcome = await scheduler._execute_executor(executor, manual=True)
-        assert outcome.status == ("skipped" if digest_match else "success")
-        assert bool(adapter.update_calls) is not digest_match
-        if not digest_match:
-            assert (
-                "stable@sha256:" in adapter.update_calls[0]["new_image"]
-                if isinstance(adapter.update_calls[0], dict)
-                else "stable@sha256:" in str(adapter.update_calls)
-            )
+        with frozen_targets(task):
+            outcome = await scheduler._execute_executor(executor, manual=True)
+        should_update = reference_mode == "digest" and not digest_match
+        assert outcome.status == ("success" if should_update else "skipped")
+        assert bool(adapter.update_calls) is should_update
+        expected = (
+            "docker.io/library/nginx@sha256:" + "a" * 64
+            if reference_mode == "digest"
+            else current["image"]
+        )
+        assert outcome.to_version == expected
     finally:
         await scheduler.shutdown()
 

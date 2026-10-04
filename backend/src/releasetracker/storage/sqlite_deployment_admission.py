@@ -7,7 +7,7 @@ import time
 import uuid
 
 from ..services.version_policy import version_policy_reason
-from ..services.deployment_plan import MARKER_KEYS, TargetEvidence, plan_fingerprint, public_summary
+from ..services.deployment_plan import TargetEvidence, plan_fingerprint, public_summary
 
 APPROVABLE = frozenset(
     {
@@ -83,6 +83,50 @@ class DeploymentAdmissionStore:
             raise AdmissionConflict("mutation_already_started")
         return row
 
+    async def _ownership_reason(self, db, evidence, installation_id, target_id):
+        reason = evidence.ownership_reason(installation_id, target_id)
+        if reason != "target_marker_conflict":
+            return reason
+
+        # A stale marker is reclaimable only with local evidence of an approved
+        # write to this exact runtime/target by an executor that no longer exists.
+        # Never infer ownership from a copied marker or a merely previewed plan.
+        stale = set()
+        for marker in evidence.markers:
+            if marker.get("releasetracker.io/managed-by") not in {None, installation_id}:
+                return "foreign_owner"
+            if marker.get("releasetracker.io/schema") not in {None, "1"}:
+                return "marker_schema_unsupported"
+            previous_id = marker.get("releasetracker.io/target-id")
+            if previous_id is None or previous_id == target_id:
+                continue
+            if (
+                marker.get("releasetracker.io/managed-by") != installation_id
+                or marker.get("releasetracker.io/schema") != "1"
+            ):
+                return reason
+            previous = await (
+                await db.execute(
+                    """SELECT 1 FROM deployment_plans p JOIN tasks t ON t.id=p.task_id
+                       WHERE p.target_id=? AND p.identity_key=? AND p.approved_at IS NOT NULL
+                       AND json_extract(t.result, '$.mutation_started')=1
+                       AND (? IS NULL OR CAST(p.task_id AS TEXT)=?)
+                       AND NOT EXISTS (SELECT 1 FROM executors e WHERE e.id=p.executor_id)
+                       LIMIT 1""",
+                    (
+                        previous_id,
+                        evidence.identity_key,
+                        marker.get("releasetracker.io/deployment-id"),
+                        marker.get("releasetracker.io/deployment-id"),
+                    ),
+                )
+            ).fetchone()
+            if previous is None:
+                return reason
+            stale.add(previous_id)
+        # Mixed owners in one grouped target must not silently become one claim.
+        return "marker_missing" if len(stale) == 1 else reason
+
     async def stage(self, task, evidence: TargetEvidence, *, now=None, ttl=1800):
         """Before start_attempt: atomically park and emit intent, or authorize a plan.
 
@@ -111,17 +155,22 @@ class DeploymentAdmissionStore:
             ).fetchone()
             if occupied and occupied["executor_id"] != executor_id:
                 active_owner = await (
-                    await db.execute("SELECT 1 FROM executors WHERE id=?", (occupied["executor_id"],))
+                    await db.execute(
+                        "SELECT 1 FROM executors WHERE id=?", (occupied["executor_id"],)
+                    )
                 ).fetchone()
                 if not active_owner:
-                    await db.execute("DELETE FROM managed_targets WHERE executor_id=?", (occupied["executor_id"],))
+                    await db.execute(
+                        "DELETE FROM managed_targets WHERE executor_id=?",
+                        (occupied["executor_id"],),
+                    )
                     occupied = None
             target_id = (
                 target["target_id"]
                 if target
                 else uuid.uuid5(uuid.UUID(installation_id), str(executor_id)).hex
             )
-            reason = evidence.ownership_reason(installation_id, target_id)
+            reason = await self._ownership_reason(db, evidence, installation_id, target_id)
             if occupied and occupied["executor_id"] != executor_id:
                 reason = "target_already_owned"
             elif target and target["identity_key"] != evidence.identity_key:
@@ -157,7 +206,9 @@ class DeploymentAdmissionStore:
             # Preserve a target-id reserved by a prior approval preview.
             if not target and old:
                 target_id = old["target_id"]
-                marker_reason = evidence.ownership_reason(installation_id, target_id)
+                marker_reason = await self._ownership_reason(
+                    db, evidence, installation_id, target_id
+                )
                 if marker_reason not in {None, "marker_missing"}:
                     reason = marker_reason
             blocked = reason is not None and reason not in APPROVABLE
@@ -344,6 +395,11 @@ class DeploymentAdmissionStore:
             ).fetchone()
             if target is None:
                 raise AdmissionConflict("managed_target_missing")
+            reason = await self._ownership_reason(
+                db, evidence, await self.installation_id(), row["target_id"]
+            )
+            if reason not in {None, "marker_missing"}:
+                raise AdmissionConflict(reason)
             return self._decode(row)
 
     async def mark_applied(self, task, evidence: TargetEvidence, *, now=None):

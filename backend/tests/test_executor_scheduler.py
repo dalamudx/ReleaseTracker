@@ -3050,7 +3050,7 @@ async def test_noop_when_runtime_tag_differs_but_manifest_digest_matches(storage
             config={"socket": "unix:///var/run/docker.sock"},
             secrets={},
         ),
-        current_image="ghcr.io/acme/worker:stable",
+        current_image=f"ghcr.io/acme/worker:stable@{digest}",
         current_digest=digest,
     )
     scheduler._adapters[executor_id] = adapter

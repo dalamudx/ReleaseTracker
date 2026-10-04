@@ -44,6 +44,8 @@ The window constrains only the first remote write of an automatic deployment; mu
 | Digest reference | Pin a specific build when the source supplies a usable digest |
 | Tag reference | Reference a version label; upstream can republish the same tag |
 
+Tag mode always uses `image:tag`; neither queueing nor an unchanged tag adds a digest. An unchanged image reference is skipped. Choose Digest mode to pin and apply a specific artifact when the same tag is republished. Switching between Tag and Digest applies the new reference form even when the artifact digest matches.
+
 Helm releases do not use these fields; they select chart versions. A matching Git tag does not guarantee an image tag exists; check the repository and build publication rules.
 
 ## Automatic version limits {#version-policy}
@@ -62,6 +64,8 @@ Before deploying, ReleaseTracker reads the target state and builds a deployment 
 In the task details, review the target, runtime identity, configuration fingerprint, recovery scope and configuration diff (sensitive values hidden), then click **Approve and continue**. Approvals expire and are bound to the current evidence; if the configuration changes before execution, **Refresh plan** and approve again. A plan whose diff is not fully displayed cannot be approved.
 
 If the target is owned by another instance or executor, its markers conflict, or the marker version is unsupported, the deployment is **blocked**; approval cannot override it and ownership must be resolved first.
+
+If the previous executor was deleted and local history proves an approved write matching the runtime, target and stale markers, the target can be reviewed again as a first onboarding. Markers are replaced only after approval and execution, never automatically. Without verifiable history the target stays blocked.
 
 ## Verify one update {#verify}
 
