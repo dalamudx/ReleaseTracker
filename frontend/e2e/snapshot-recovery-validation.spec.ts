@@ -61,7 +61,7 @@ for (const language of ["zh", "en"]) for (const width of [1280, 390]) {
     await dialog.getByLabel(language === "zh" ? "输入执行器名称以确认" : "Type the executor name to confirm").fill(executor.name)
     const confirm = page.getByTestId("executor-rollback-confirm")
     await expect(confirm).toBeDisabled()
-    await expect(dialog).toContainText(language === "zh" ? "可能覆盖当前修改" : "may overwrite current changes")
+    await expect(dialog).toContainText(language === "zh" ? "仅恢复受支持的配置项" : "supported by snapshot recovery")
     previewValid = true
     await dialog.getByRole("button", { name: language === "zh" ? "重新校验" : "Recheck snapshot", exact: true }).click()
     await expect(confirm).toBeEnabled()
