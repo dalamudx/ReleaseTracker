@@ -877,6 +877,7 @@ async def _delete_executor_config(storage: "SQLiteStorage", executor_id: int) ->
             "executor_service_bindings",
             "executor_desired_state",
             "ssh_compose_ownership",
+            "managed_targets",
         ):
             await db.execute(f"DELETE FROM {table} WHERE executor_id=?", (executor_id,))
     await db.commit()
