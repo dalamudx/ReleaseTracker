@@ -707,7 +707,9 @@ async def preview_executor_configuration(
             else:
                 adapter = _get_runtime_adapter(connection)
                 await adapter.validate_target_ref(executor.target_ref)
-                _, diff = await native_review(storage, scheduler, executor, adapter, task)
+                _, diff = await native_review(
+                    storage, scheduler, executor, adapter, task, inspection_only=True
+                )
         return {**result, "configuration_diff": diff, "comparison_error": None}
     except Exception:
         # SDK/Compose errors can contain credentials or unmasked environment values.

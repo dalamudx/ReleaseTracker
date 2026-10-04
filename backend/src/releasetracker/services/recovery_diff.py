@@ -255,7 +255,7 @@ def changed_lines(before, after):
     return result, count > MAX_LINES or oversized
 
 
-async def capture_current(adapter, target_ref):
+async def capture_current(adapter, target_ref, *, inspection_only=False):
     try:
         get_image = getattr(adapter, "get_current_image", None)
         supports_single = getattr(adapter, "supports_single_image_operations", None)
@@ -265,7 +265,9 @@ async def capture_current(adapter, target_ref):
             if callable(get_image) and target_ref.get("mode") != "helm_release" and can_single
             else ""
         )
-        capture = getattr(adapter, "capture_snapshot", None)
+        capture = getattr(adapter, "inspect_configuration", None) if inspection_only else None
+        if not callable(capture):
+            capture = getattr(adapter, "capture_snapshot", None)
         if callable(capture):
             snapshot = await capture(target_ref, image)
             if (

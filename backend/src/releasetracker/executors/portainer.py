@@ -318,17 +318,13 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         del target_ref
         raise NotImplementedError(_PORTAINER_SINGLE_IMAGE_OPERATION_ERROR)
 
-    async def capture_snapshot(
+    async def inspect_configuration(
         self, target_ref: dict[str, Any], current_image: str
     ) -> dict[str, Any]:
-        """Capture enough Portainer stack state to re-apply it later.
+        """Read a standalone Stack's declarations without promising recoverability.
 
-        The snapshot persists the stack file, stack type, env vars, stack id,
-        endpoint id, and project name — everything required by
-        ``recover_from_snapshot`` when it calls ``PUT /api/stacks/{id}``.
-        ``image_at_capture`` is extracted best-effort from the stack file's
-        services; when the stack declares multiple distinct images the
-        value is left null.
+        A draft preview can compare configuration even when recovery evidence
+        cannot be captured. Deployment and recovery must still use capture_snapshot.
         """
         normalized_target_ref = normalize_executor_target_ref(target_ref, runtime_type="portainer")
         endpoint_id = normalized_target_ref["endpoint_id"]
@@ -370,8 +366,15 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         else:
             snapshot["image_at_capture"] = None
 
+        return snapshot
+
+    async def capture_snapshot(
+        self, target_ref: dict[str, Any], current_image: str
+    ) -> dict[str, Any]:
+        snapshot = await self.inspect_configuration(target_ref, current_image)
+        normalized_target_ref = normalize_executor_target_ref(target_ref, runtime_type="portainer")
         snapshot["recovery_evidence"] = await portainer_recovery.capture(
-            self, normalized_target_ref, stack_file
+            self, normalized_target_ref, snapshot["stack_file"]
         )
         return snapshot
 

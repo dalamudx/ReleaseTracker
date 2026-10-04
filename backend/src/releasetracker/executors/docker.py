@@ -237,9 +237,14 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         self, target_ref: dict[str, Any], current_image: str
     ) -> dict[str, Any]:
         identity = docker_identity.read(self)
+        snapshot = await self.inspect_configuration(target_ref, current_image)
+        return docker_identity.bind(self, snapshot, identity)
+
+    async def inspect_configuration(
+        self, target_ref: dict[str, Any], current_image: str
+    ) -> dict[str, Any]:
         if target_ref.get("mode") == "docker_compose":
-            snapshot = await self._capture_compose_snapshot(target_ref, current_image)
-            return docker_identity.bind(self, snapshot, identity)
+            return await self._capture_compose_snapshot(target_ref, current_image)
 
         container = self._get_container(target_ref)
         spec = self._build_recreate_spec_from_inspect(container, current_image)
@@ -252,7 +257,7 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
             }
         else:
             snapshot = dict(spec.snapshot_payload)
-        return docker_identity.bind(self, snapshot, identity)
+        return snapshot
 
     async def validate_snapshot(self, target_ref: dict[str, Any], snapshot: dict[str, Any]) -> None:
         if target_ref.get("mode") == "docker_compose":

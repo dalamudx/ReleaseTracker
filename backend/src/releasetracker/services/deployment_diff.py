@@ -173,8 +173,8 @@ async def _verify_update_state(adapter, target_ref):
     return current
 
 
-async def native_review(storage, scheduler, executor, adapter, task):
-    snapshot = await capture_current(adapter, executor.target_ref)
+async def native_review(storage, scheduler, executor, adapter, task, *, inspection_only=False):
+    snapshot = await capture_current(adapter, executor.target_ref, inspection_only=inspection_only)
     if snapshot is None:
         raise ValueError("deployment target is missing")
     mode = executor.target_ref.get("mode", "container")
@@ -237,9 +237,13 @@ async def native_review(storage, scheduler, executor, adapter, task):
         if selected.get("chart_digest"):
             desired["chart_digest"] = selected["chart_digest"]
     lines, truncated = changed_lines(observed, desired)
+    diff = {"scope": scope, "lines": lines, "truncated": truncated}
+    if inspection_only:
+        # A draft reads declarations; it must not publish evidence for a later write.
+        return protected_state(storage, {"inspection": observed}), diff
     state = await observed_state(adapter, executor.target_ref, snapshot, observed)
     INSPECTED_UPDATE_STATE.set(state)
-    return protected_state(storage, state), {"scope": scope, "lines": lines, "truncated": truncated}
+    return protected_state(storage, state), diff
 
 
 async def ssh_review(storage, executor, connection, target, targets):

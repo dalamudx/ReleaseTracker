@@ -121,6 +121,12 @@ class BaseRuntimeAdapter(ABC):
     ) -> dict[str, Any]:
         raise NotImplementedError
 
+    async def inspect_configuration(
+        self, target_ref: dict[str, Any], current_image: str
+    ) -> dict[str, Any]:
+        """Read settings for a draft preview, not evidence authorizing a write or recovery."""
+        return await self.capture_snapshot(target_ref, current_image)
+
     @abstractmethod
     async def validate_snapshot(self, target_ref: dict[str, Any], snapshot: dict[str, Any]) -> None:
         raise NotImplementedError
