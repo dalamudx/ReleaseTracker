@@ -13,6 +13,8 @@ from urllib.parse import quote
 
 import yaml
 
+from . import portainer_identity
+
 _IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
@@ -58,10 +60,7 @@ async def engine_id(adapter, ref: dict) -> str:
         f"/api/endpoints/{ref['endpoint_id']}/docker/info",
         not_found_message="recovery engine identity unavailable",
     )
-    identity = info.get("ID")
-    if not isinstance(identity, str) or not identity.strip():
-        raise ValueError("recovery engine identity unavailable")
-    return identity
+    return await portainer_identity.read(adapter, ref, info)
 
 
 async def containers(adapter, ref: dict) -> dict:

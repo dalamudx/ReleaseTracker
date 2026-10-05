@@ -41,6 +41,8 @@ Outside the cluster select a Kubernetes credential; inside a cluster **In-Cluste
 
 Enter the instance address (prefer HTTPS), select a Portainer credential, and discover the target Endpoint. Targets are standalone stacks, not arbitrary containers managed by Portainer.
 
+For Podman behind Portainer, deployment and recovery bind the compatibility endpoint identity to its route, host, storage directory and rootless state rather than the per-request Docker-compatible ID. Allow reads of the Endpoint, `/docker/info` and `/docker/version`; missing or changed identity fields still block operations. This does not identify a daemon generation: complete container ownership, replica and immutable-image evidence is still required. Podman snapshots containing only the old random ID are not automatically trusted; capture a new snapshot.
+
 ## SSH hosts {#ssh}
 
 Use SSH to update Compose-managed projects on a remote host without exposing the Docker API.

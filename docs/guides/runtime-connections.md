@@ -41,6 +41,8 @@ title: 凭证与运行时连接
 
 填写实例地址（优先 HTTPS），选择 Portainer 凭证，并通过 Endpoint 发现选择目标环境。目标是 standalone Stack，不是 Portainer 下的任意容器。
 
+Portainer 后接 Podman 时，部署与恢复按端点路由、主机、存储目录及 rootless 状态校验兼容端点身份，不使用每次请求都会变化的 Docker 兼容 ID。需允许读取 Endpoint、`/docker/info` 和 `/docker/version`；身份字段缺失或变化仍会阻断。此身份不代表守护进程代次，容器归属、副本和不可变镜像证据仍需完整；仅含旧随机 ID 的 Podman 快照不会自动转换信任，需重新捕获。
+
 ## SSH 主机 {#ssh}
 
 用于更新远程主机上由 Compose 文件管理的项目，无需开放 Docker API。

@@ -19,7 +19,8 @@ TAG = "docker.io/library/nginx:stable"
 
 @pytest.mark.parametrize("mode", ["tag", "digest"])
 @pytest.mark.parametrize(
-    "current", ["docker.io/library/nginx:1.25", TAG, "docker.io/library/nginx@" + DIGEST]
+    "current",
+    ["docker.io/library/nginx:1.25", TAG, "docker.io/library/nginx@" + DIGEST, TAG + "@" + DIGEST],
 )
 async def test_queued_review_builds_policy_reference_for_all_current_forms(storage, mode, current):
     executor, scheduler, handler, adapter, live, task = await setup(storage, mode)
@@ -73,8 +74,17 @@ async def test_policy_switch_is_not_skipped_for_matching_artifact_and_does_not_o
         await scheduler.shutdown()
 
 
-@pytest.mark.parametrize("mode", ["tag", "digest"])
-async def test_kubernetes_queued_review_and_approved_patch_use_same_reference(storage, mode):
+@pytest.mark.parametrize(
+    ("mode", "current"),
+    [
+        pytest.param("tag", "docker.io/library/nginx@" + DIGEST, id="tag-from-bare-digest"),
+        pytest.param("tag", TAG + "@" + DIGEST, id="tag-from-tagged-digest"),
+        pytest.param("digest", TAG, id="digest-from-tag"),
+    ],
+)
+async def test_kubernetes_queued_review_and_approved_patch_use_same_reference(
+    storage, mode, current
+):
     executor, scheduler, handler, _, _, original_task = await setup(storage, mode)
     runtime_id = await storage.create_runtime_connection(
         RuntimeConnectionConfig(name="isolated-k8s", type="kubernetes", config={"in_cluster": True})
@@ -102,7 +112,7 @@ async def test_kubernetes_queued_review_and_approved_patch_use_same_reference(st
     adapter = FakeKubernetesWorkloadAdapter(
         await storage.get_runtime_connection(runtime_id),
         current_images={
-            "nginx": "docker.io/library/nginx@" + DIGEST if mode == "tag" else TAG,
+            "nginx": current,
             "unbound": "haproxy:3.0",
         },
     )
