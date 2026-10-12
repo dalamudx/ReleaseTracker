@@ -171,16 +171,17 @@ class ReleaseSchedulerAggregateSupport:
         if aggregate_tracker.id is None:
             raise ValueError("Aggregate tracker is missing a persisted ID")
 
-
         history_releases = await self.storage.get_tracker_release_history_releases(
             aggregate_tracker.id
         )
         for release in history_releases:
             release.tracker_name = tracker_name
 
-
         from .storage import sqlite_selection
-        selection_candidates = await sqlite_selection.refresh_selections(self.storage, aggregate_tracker)
+
+        selection_candidates = await sqlite_selection.refresh_selections(
+            self.storage, aggregate_tracker
+        )
         # Rebuild the materialized view from source truth, never stale projections.
         # This path deliberately emits neither executor work nor release notifications.
         await self.storage.refresh_tracker_current_releases(
@@ -188,7 +189,11 @@ class ReleaseSchedulerAggregateSupport:
         )
         from .versioning import select_version_candidate
 
-        best_release = selection_candidates[0] if len(selection_candidates) == 1 else select_version_candidate(selection_candidates)
+        best_release = (
+            selection_candidates[0]
+            if len(selection_candidates) == 1
+            else select_version_candidate(selection_candidates)
+        )
         return {
             "releases": selection_candidates,
             "latest_version": best_release.version if best_release else None,

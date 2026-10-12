@@ -76,6 +76,7 @@ class TrackerConfig(BaseModel):
     @classmethod
     def migrate_version_sort_mode(cls, value):
         return "semver" if value == "published_at" else value
+
     fetch_limit: int = 10  # Fetch limit per run
     fetch_timeout: int = 15  # Fetch timeout in seconds
     fallback_tags: bool = (

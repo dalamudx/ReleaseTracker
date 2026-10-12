@@ -57,9 +57,13 @@ class ReleaseSchedulerProjectionNotifications:
             )
 
             from .storage import sqlite_selection
+
             tracker = await self.storage.get_aggregate_tracker(tracker_name)
             await sqlite_selection.refresh_selections(self.storage, tracker, commit=False)
-            projection_winners = [row["release"] for row in await sqlite_selection.current_rows(self.storage, aggregate_tracker_id)]
+            projection_winners = [
+                row["release"]
+                for row in await sqlite_selection.current_rows(self.storage, aggregate_tracker_id)
+            ]
             await self.storage.refresh_tracker_current_releases(
                 aggregate_tracker_id,
                 projection_winners,
@@ -93,13 +97,17 @@ class ReleaseSchedulerProjectionNotifications:
                 # A newer prerelease can own the tracker-wide winner while a stable
                 # channel also moves. Notify each changed channel winner once.
                 previous_by_channel = {
-                    (r.selection_source_id, r.channel_name): r for r in previous_projection if r.channel_name
+                    (r.selection_source_id, r.channel_name): r
+                    for r in previous_projection
+                    if r.channel_name
                 }
                 for release in projection_winners:
                     identity = self._projection_release_identity(release)
                     if not release.channel_name or identity in notified:
                         continue
-                    previous = previous_by_channel.get((release.selection_source_id, release.channel_name))
+                    previous = previous_by_channel.get(
+                        (release.selection_source_id, release.channel_name)
+                    )
                     if self._projection_release_changed(previous, release):
                         release.tracker_name = tracker_name
                         await self._notify_change(previous, release)
@@ -134,7 +142,10 @@ class ReleaseSchedulerProjectionNotifications:
         # Notifications describe logical releases, not deployment artifacts. A new
         # repository release may intentionally reuse an existing image digest.
         from .versioning import parsed_version
-        value = release.logical_version or (release.chart_version if release.tracker_type == "helm" else release.version)
+
+        value = release.logical_version or (
+            release.chart_version if release.tracker_type == "helm" else release.version
+        )
         version = parsed_version(value)
         return f"version:{version.key if version is not None else value}"
 

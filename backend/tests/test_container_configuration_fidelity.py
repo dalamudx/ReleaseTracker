@@ -454,6 +454,7 @@ def test_podman_cgroupv2_readback_default_matches_omitted_swappiness_without_hid
 
     class NativeClient:
         __module__ = "podman.client"
+
         def info(self):
             return {"host": {"cgroupVersion": "v2"}}
 
@@ -472,6 +473,7 @@ def test_podman_cgroupv2_readback_default_matches_omitted_swappiness_without_hid
 @pytest.mark.parametrize("pids", [0, 2048])
 def test_podman_cgroupv2_unspecified_readback_has_no_empty_resource_objects(pids):
     from releasetracker.executors.container_configuration import configuration_projection
+
     client = SimpleNamespace(info=lambda: {"host": {"cgroupVersion": "v2"}})
     value = adapter("podman", client)
     expected = {"image": "new", "mem_swappiness": 0, "pids_limit": pids}
@@ -482,6 +484,7 @@ def test_podman_cgroupv2_unspecified_readback_has_no_empty_resource_objects(pids
     _, payload = value._podman_create_arguments(expected, client=client)
     assert "memory" not in payload.get("resource_limits", {})
     assert bool(payload.get("resource_limits")) == bool(pids)
+
 
 @pytest.mark.parametrize("version,value", [("v1", 0), ("v1", 60), ("v2", 0)])
 def test_podman_runtime_swappiness_preflight_uses_native_cgroup_capability(version, value):
@@ -519,11 +522,13 @@ def test_podman_nonzero_swappiness_on_cgroupv2_is_not_silently_dropped():
 def test_podman_cgroup_api_failure_fails_before_recreate():
     def unavailable():
         raise RuntimeError("unavailable")
+
     client = SimpleNamespace(info=unavailable)
     with pytest.raises(ValueError, match="Cannot determine Podman cgroup"):
         adapter("podman", client)._podman_create_arguments(
             {"image": "new", "mem_swappiness": 0}, client=client
         )
+
 
 def test_native_stop_timeout_and_no_sdk_proxy_injection():
     spec = recreate(inspected(config={"StopTimeout": 45}))

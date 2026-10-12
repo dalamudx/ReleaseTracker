@@ -195,5 +195,6 @@ async def seed_docker_release(
 
     await storage.save_source_observations(aggregate_tracker.id, runtime_source, [release])
     from releasetracker.storage import sqlite_selection
+
     await sqlite_selection.save_candidates(storage, runtime_source, [release], commit=True)
     await sqlite_selection.refresh_selections(storage, aggregate_tracker)

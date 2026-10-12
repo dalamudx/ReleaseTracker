@@ -58,7 +58,6 @@ _MANIFEST_ACCEPT = ", ".join(
 )
 
 
-
 class DockerTracker(BaseTracker):
     """OCI container image tracker compatible with Docker Hub, GHCR, and private registries"""
 
@@ -249,7 +248,6 @@ class DockerTracker(BaseTracker):
 
         raise ValueError("Container registry redirect chain exceeded limit")
 
-
     async def _registry_request(
         self,
         client: httpx.AsyncClient,
@@ -270,7 +268,6 @@ class DockerTracker(BaseTracker):
             **kwargs,
         )
 
-
     async def _get_bearer_token(self, client: httpx.AsyncClient, scope: str) -> str | None:
         """Fetch access token from auth service via Bearer Token flow"""
         # Find the auth endpoint from known mappings, otherwise discover it from WWW-Authenticate
@@ -283,8 +280,11 @@ class DockerTracker(BaseTracker):
                 if resp.status_code == 401:
                     www_auth = resp.headers.get("www-authenticate", "")
                     auth_info = _parse_www_authenticate(www_auth)
-                    if auth_info and same_origin_https(self._registry_url(), auth_info.get("realm", "")):
+                    if auth_info and same_origin_https(
+                        self._registry_url(), auth_info.get("realm", "")
+                    ):
                         from urllib.parse import urlparse
+
                         realm_path = urlparse(auth_info["realm"]).path
                         if realm_path == "/service/token":
                             self._registry_metadata_provider = "harbor"
@@ -553,6 +553,7 @@ class DockerTracker(BaseTracker):
                     media_type = head_resp.headers.get("Content-Type")
                     if digest:
                         from .registry_metadata import registry_date
+
                         modified = registry_date(head_resp.headers.get("Last-Modified"))
                         if modified is not None:
                             self._manifest_modified[(tag, digest.lower())] = modified
@@ -585,6 +586,7 @@ class DockerTracker(BaseTracker):
                         media_type = get_resp.headers.get("Content-Type")
                         if digest:
                             from .registry_metadata import registry_date
+
                             modified = registry_date(get_resp.headers.get("Last-Modified"))
                             if modified is not None:
                                 self._manifest_modified[(tag, digest.lower())] = modified
@@ -603,7 +605,6 @@ class DockerTracker(BaseTracker):
 
         return None, None, last_error, current_token
 
-
     def _tag_to_release(self, tag: str) -> Release:
         """Convert a tag into a Release object"""
         return Release(
@@ -617,16 +618,21 @@ class DockerTracker(BaseTracker):
             prerelease=False,
         )
 
-
     async def _enrich_registry_push_times(self, releases: list[Release]) -> None:
         """Optional digest-bound native dates; failures never block manifest fetching."""
         from .registry_metadata import enrich_registry_times
+
         try:
-            await enrich_registry_times(self, releases,
+            await enrich_registry_times(
+                self,
+                releases,
                 budget_seconds=min(self.timeout, _REGISTRY_PUSH_TIME_BUDGET_SECONDS),
-                max_requests=_REGISTRY_PUSH_TIME_REQUEST_LIMIT)
+                max_requests=_REGISTRY_PUSH_TIME_REQUEST_LIMIT,
+            )
         except (TimeoutError, httpx.HTTPError, ValueError) as exc:
-            logger.debug("DockerTracker: optional registry time unavailable (%s)", type(exc).__name__)
+            logger.debug(
+                "DockerTracker: optional registry time unavailable (%s)", type(exc).__name__
+            )
 
     async def fetch_latest(self, fallback_tags: bool = False) -> Release | None:
         releases = await self.fetch_all(
@@ -686,21 +692,59 @@ class DockerTracker(BaseTracker):
             for tag in sorted_tags:
                 releases.append(self._tag_to_release(tag))
 
-            from ..versioning import container_channel_eligible, container_tag_eligible, release_order_key
+            from ..versioning import (
+                container_channel_eligible,
+                container_tag_eligible,
+                release_order_key,
+            )
+
             releases = [release for release in releases if self._should_include(release)]
             channels = self.config.get("channels", [])
-            candidate_groups = [[release for release in releases if self.should_include_in_channel(release, channel)
-                and container_channel_eligible(release.tag_name, self.version_format, channel)] for channel in channels] if channels else [
-                [release for release in releases if container_tag_eligible(release.tag_name, self.version_format)]]
-            selection_priority = list(dict.fromkeys(max(group, key=release_order_key).tag_name for group in candidate_groups if group))
+            candidate_groups = (
+                [
+                    [
+                        release
+                        for release in releases
+                        if self.should_include_in_channel(release, channel)
+                        and container_channel_eligible(
+                            release.tag_name, self.version_format, channel
+                        )
+                    ]
+                    for channel in channels
+                ]
+                if channels
+                else [
+                    [
+                        release
+                        for release in releases
+                        if container_tag_eligible(release.tag_name, self.version_format)
+                    ]
+                ]
+            )
+            selection_priority = list(
+                dict.fromkeys(
+                    max(group, key=release_order_key).tag_name
+                    for group in candidate_groups
+                    if group
+                )
+            )
             if incremental_alias_scan:
-                selection_priority.sort(key=lambda tag: self._alias_last_observed[tag].isoformat() if self._alias_last_observed and tag in self._alias_last_observed else "")
+                selection_priority.sort(
+                    key=lambda tag: (
+                        self._alias_last_observed[tag].isoformat()
+                        if self._alias_last_observed and tag in self._alias_last_observed
+                        else ""
+                    )
+                )
 
             candidate_window = _select_incremental_probe_window(
                 releases,
                 limit,
                 self._alias_last_observed if incremental_alias_scan else None,
-                priority_aliases=(*selection_priority, *(self._priority_aliases if incremental_alias_scan else ())),
+                priority_aliases=(
+                    *selection_priority,
+                    *(self._priority_aliases if incremental_alias_scan else ()),
+                ),
             )
             candidates_by_tag = {release.tag_name: release for release in releases}
             candidate_tags = [release.tag_name for release in candidate_window]
@@ -716,7 +760,6 @@ class DockerTracker(BaseTracker):
                     and tag not in priority_tags
                 ):
                     priority_tags.insert(0, tag)
-
 
             while len(selected_releases) < limit and (priority_tags or candidate_tags):
                 candidate_tag = priority_tags.pop(0) if priority_tags else candidate_tags.pop(0)
@@ -989,8 +1032,6 @@ def _select_incremental_probe_window(
     remaining.sort(key=by_oldest_observation)
     selected.extend(remaining[: limit - len(selected)])
     return selected
-
-
 
 
 def _is_manifest_index(media_type: str, manifest_json: dict) -> bool:

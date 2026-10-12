@@ -1,4 +1,5 @@
 """Digest probing uses HEAD; manifest membership verification still uses GET."""
+
 import hashlib
 from unittest.mock import AsyncMock
 
@@ -21,10 +22,14 @@ async def test_digest_fallback_never_reads_config_or_labels(monkeypatch, head_di
         calls.append((method, url))
         assert url.endswith("/manifests/1.0.0")
         headers = {"Docker-Content-Digest": DIGEST} if head_digest or method == "GET" else {}
-        return httpx.Response(200, headers=headers, json={
-            "config": {"digest": "sha256:" + "c" * 64},
-            "created": "2026-10-11T12:34:56Z",
-        })
+        return httpx.Response(
+            200,
+            headers=headers,
+            json={
+                "config": {"digest": "sha256:" + "c" * 64},
+                "created": "2026-10-11T12:34:56Z",
+            },
+        )
 
     monkeypatch.setattr(tracker, "_registry_request", request)
     release = (await tracker.fetch_all(limit=1))[0]
@@ -34,7 +39,9 @@ async def test_digest_fallback_never_reads_config_or_labels(monkeypatch, head_di
 
 
 async def test_manifest_head_refreshes_authentication_without_blob_reads(monkeypatch):
-    tracker = DockerTracker("probe", "team/app", registry="registry.test", token="synthetic:password")
+    tracker = DockerTracker(
+        "probe", "team/app", registry="registry.test", token="synthetic:password"
+    )
     tracker._get_bearer_token = AsyncMock(side_effect=["old", "new"])
     tracker._fetch_tags = AsyncMock(return_value=["1.0.0"])
     calls = []
@@ -43,7 +50,9 @@ async def test_manifest_head_refreshes_authentication_without_blob_reads(monkeyp
         auth = kwargs["headers"]["Authorization"]
         calls.append((method, auth))
         assert url.endswith("/manifests/1.0.0")
-        return httpx.Response(401 if auth == "Bearer old" else 200, headers={"Docker-Content-Digest": DIGEST})
+        return httpx.Response(
+            401 if auth == "Bearer old" else 200, headers={"Docker-Content-Digest": DIGEST}
+        )
 
     monkeypatch.setattr(tracker, "_registry_request", request)
     release = (await tracker.fetch_all(limit=1))[0]
@@ -53,12 +62,21 @@ async def test_manifest_head_refreshes_authentication_without_blob_reads(monkeyp
 
 
 @pytest.mark.parametrize("tamper", [False, True])
-async def test_running_manifest_membership_verification_survives_metadata_removal(monkeypatch, tamper):
+async def test_running_manifest_membership_verification_survives_metadata_removal(
+    monkeypatch, tamper
+):
     actual = "sha256:" + "b" * 64
-    body = {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [{
-        "digest": actual, "mediaType": "application/vnd.oci.image.manifest.v1+json",
-        "platform": {"os": "linux", "architecture": "amd64"},
-    }]}
+    body = {
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.index.v1+json",
+        "manifests": [
+            {
+                "digest": actual,
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "platform": {"os": "linux", "architecture": "amd64"},
+            }
+        ],
+    }
     response = httpx.Response(200, json=body)
     pinned = "sha256:" + hashlib.sha256(response.content).hexdigest()
     tracker = DockerTracker("probe", "team/app", registry="registry.test")
@@ -71,5 +89,7 @@ async def test_running_manifest_membership_verification_survives_metadata_remova
         return (httpx.Response(200, json={}) if tamper else response), token
 
     monkeypatch.setattr(tracker, "_request_manifest", request)
-    assert await tracker.verify_running_manifest(pinned, actual) == ("unknown" if tamper else "confirmed")
+    assert await tracker.verify_running_manifest(pinned, actual) == (
+        "unknown" if tamper else "confirmed"
+    )
     assert calls == [("GET", f"https://registry.test/v2/team/app/manifests/{pinned}")]

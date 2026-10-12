@@ -124,9 +124,17 @@ async def test_populated_time_migration_preserves_identities_and_audit(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'schema_migrations'"
             )
         ]
-        tables = [table for table in tables if legacy.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()]
+        tables = [
+            table
+            for table in tables
+            if legacy.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone()
+        ]
         for table in tables:
-            if not legacy.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+            if not legacy.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone():
                 continue
             columns = [r[1] for r in source.execute(f'PRAGMA table_info("{table}")')]
             for row in source.execute(f'SELECT * FROM "{table}"'):
@@ -217,7 +225,10 @@ async def test_populated_time_migration_preserves_identities_and_audit(
         with sqlite3.connect(snapshot) as conn:
             assert list(conn.iterdump()) == before_migration
     else:
-        code, message = _migrate_time_semantics(legacy_path, next(sql for path, sql in migrations if path.name.startswith("20261012000001_")))
+        code, message = _migrate_time_semantics(
+            legacy_path,
+            next(sql for path, sql in migrations if path.name.startswith("20261012000001_")),
+        )
     if damage in {"unknown_fk", "task_relation", "invalid_json"}:
         expected = {
             "unknown_fk": "release_time_unrepairable_foreign_keys_run_audit_database",

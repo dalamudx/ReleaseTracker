@@ -288,10 +288,16 @@ async def test_docker_source_history_preserves_published_at_when_digest_unchange
 
     # Historical tags remain available, but discovery must never become publication.
     release_for = {release.tag_name: release for release in history_releases}
-    assert set(release_for) == {"3355.v388858a_47b_33-20", "3355.v388858a_47b_33-19", "3355.v388858a_47b_33-18", "3355.v388858a_47b_33-2"}
+    assert set(release_for) == {
+        "3355.v388858a_47b_33-20",
+        "3355.v388858a_47b_33-19",
+        "3355.v388858a_47b_33-18",
+        "3355.v388858a_47b_33-2",
+    }
     assert all(release.published_at is None for release in history_releases)
     assert all(release.artifact_created_at is None for release in history_releases)
     assert current_releases == []  # Unparseable tags need an explicit fixed-tag channel.
+
 
 @pytest.mark.asyncio
 async def test_save_source_observations_creates_new_github_history_identity_when_commit_changes(

@@ -253,7 +253,11 @@ def _release_matches_filters(
 
 def _release_listing_sort_key(release: Release) -> tuple[float, float, int]:
     created_at = release.created_at.timestamp() if release.created_at else 0.0
-    return ((release.published_at.timestamp() if release.published_at else float('-inf')), created_at, release.id or 0)
+    return (
+        (release.published_at.timestamp() if release.published_at else float("-inf")),
+        created_at,
+        release.id or 0,
+    )
 
 
 async def get_latest_tracker_releases(storage: "SQLiteStorage", limit: int = 5) -> list[Release]:
@@ -468,7 +472,8 @@ def _release_matches_source_aliases(
     references = [
         reference
         for reference in release.alias_references
-        if reference.is_current and (tracker_source_id is None or reference.tracker_source_id == int(tracker_source_id))
+        if reference.is_current
+        and (tracker_source_id is None or reference.tracker_source_id == int(tracker_source_id))
     ]
     if (tracker_source_id is not None or release.alias_references) and not references:
         return False

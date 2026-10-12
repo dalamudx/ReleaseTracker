@@ -134,12 +134,18 @@ class ReleaseSchedulerAggregateChecks:
                 ]
 
                 from .storage import sqlite_selection
+
                 await sqlite_selection.bootstrap_candidates(self.storage, source)
-                audit_releases = await sqlite_selection.audit_changes(self.storage, source, mapped_releases)
+                audit_releases = await sqlite_selection.audit_changes(
+                    self.storage, source, mapped_releases
+                )
                 fallback_hint = getattr(source_tracker, "last_fallback_hint", None)
-                await sqlite_selection.save_candidates(self.storage, source,
+                await sqlite_selection.save_candidates(
+                    self.storage,
+                    source,
                     mapped_releases if not fallback_hint else [],
-                    listed_tags=getattr(source_tracker, "last_complete_tags", None))
+                    listed_tags=getattr(source_tracker, "last_complete_tags", None),
+                )
                 if fallback_hint:
                     incomplete_source_checks += 1
                     source_errors.append(f"{source.source_key}: {fallback_hint}")
@@ -226,9 +232,15 @@ class ReleaseSchedulerAggregateChecks:
             selection_candidates
         )
 
-        correlated_candidates = await self.storage.get_correlated_release_candidates(aggregate_tracker.id)
-        correlated_ids = {identity for candidate in correlated_candidates if len(candidate["tracker_source_ids"]) >= 2
-                          for identity in candidate["source_history_ids"]}
+        correlated_candidates = await self.storage.get_correlated_release_candidates(
+            aggregate_tracker.id
+        )
+        correlated_ids = {
+            identity
+            for candidate in correlated_candidates
+            if len(candidate["tracker_source_ids"]) >= 2
+            for identity in candidate["source_history_ids"]
+        }
         for release in unique_selection_candidates:
             identity_key = self.storage.release_identity_key_for_source(release)
             source_candidates = candidate_sources.get(identity_key, [])

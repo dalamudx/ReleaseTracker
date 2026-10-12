@@ -1,4 +1,5 @@
 """Deployment direction gates are independent of automatic update range limits."""
+
 from ..versioning import parsed_version
 
 
@@ -32,17 +33,28 @@ def version_policy_reason(task, evidence):
     all_pairs = []
     for target in targets:
         if evidence.recovery == "helm_revision":
-            pairs = [(stable_version(configuration.get("current_chart_version")),
-                      stable_version(target.get("chart_version")))]
+            pairs = [
+                (
+                    stable_version(configuration.get("current_chart_version")),
+                    stable_version(target.get("chart_version")),
+                )
+            ]
         elif evidence.recovery == "container_config":
             desired = target.get("target") or []
-            pairs = [(image_version(configuration.get("current_image")),
-                      stable_version(desired[0] if desired else None))]
+            pairs = [
+                (
+                    image_version(configuration.get("current_image")),
+                    stable_version(desired[0] if desired else None),
+                )
+            ]
         else:
             current = configuration.get("current_services") or {}
-            services = [binding["service"] for binding in payload.get("policy_bindings", [])
-                        if binding.get("tracker_source_id") == target.get("source_id")
-                        and binding.get("channel_name") == target.get("channel")]
+            services = [
+                binding["service"]
+                for binding in payload.get("policy_bindings", [])
+                if binding.get("tracker_source_id") == target.get("source_id")
+                and binding.get("channel_name") == target.get("channel")
+            ]
             desired = target.get("target") or []
             after = stable_version(desired[0] if desired else None)
             pairs = [(image_version(current.get(service)), after) for service in services]
@@ -50,8 +62,9 @@ def version_policy_reason(task, evidence):
             return "version_policy_requires_approval"
         all_pairs.extend(pairs)
     # Neither manual initiation nor "all" authorizes a downgrade/unknown direction.
-    if any(before is not None and after is not None and after < before
-           for before, after in all_pairs):
+    if any(
+        before is not None and after is not None and after < before for before, after in all_pairs
+    ):
         return "version_downgrade_requires_approval"
     if any(before is None or after is None for before, after in all_pairs):
         return "version_unknown_requires_approval"

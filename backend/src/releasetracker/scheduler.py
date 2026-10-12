@@ -81,30 +81,43 @@ class ReleaseScheduler(
             history_releases = await self.storage.get_source_release_history_releases_by_source(
                 tracker_source_id
             )
-        eligible_history = [release for release in history_releases if tracker._should_include(release)]
+        eligible_history = [
+            release for release in history_releases if tracker._should_include(release)
+        ]
         channels = tracker.config.get("channels", [])
         if channels:
             from .versioning import pinned_alias
 
-            winners = list(self.storage.select_best_releases_by_channel(
-                eligible_history, channels, sort_mode="semver",
-                channel_source_type="container", use_source_aliases=True,
-                use_immutable_identity=True,
-            ).values())
+            winners = list(
+                self.storage.select_best_releases_by_channel(
+                    eligible_history,
+                    channels,
+                    sort_mode="semver",
+                    channel_source_type="container",
+                    use_source_aliases=True,
+                    use_immutable_identity=True,
+                ).values()
+            )
             pinned = [
-                pinned_alias(channel) for channel in channels
+                pinned_alias(channel)
+                for channel in channels
                 if (channel.get("enabled", True) if isinstance(channel, dict) else channel.enabled)
             ]
         else:
             winner = self.storage.select_best_release(
-                eligible_history, [], sort_mode="semver", use_immutable_identity=True,
+                eligible_history,
+                [],
+                sort_mode="semver",
+                use_immutable_identity=True,
             )
             winners = [winner] if winner is not None else []
             pinned = []
-        selection = tuple(sorted(
-            {(winner.tag_name, winner.commit_sha or "") for winner in winners}
-            | {(alias, "") for alias in pinned if alias}
-        ))
+        selection = tuple(
+            sorted(
+                {(winner.tag_name, winner.commit_sha or "") for winner in winners}
+                | {(alias, "") for alias in pinned if alias}
+            )
+        )
         if self._container_selection_probe_state.get(tracker_source_id) != selection:
             self._container_selection_probe_state[tracker_source_id] = selection
             self._container_selection_probe_observed[tracker_source_id] = {
@@ -113,13 +126,21 @@ class ReleaseScheduler(
         # Configuration alone is not a successful probe. Keep each pending
         # winner eligible across upstream failures until its observation advances.
         pending = {
-            alias for alias, observed in self._container_selection_probe_observed[tracker_source_id].items()
+            alias
+            for alias, observed in self._container_selection_probe_observed[
+                tracker_source_id
+            ].items()
             if alias_last_observed.get(alias) == observed
         }
-        priority_aliases = tuple(dict.fromkeys([
-            *priority_aliases, *(alias for alias in pinned if alias in pending),
-            *(winner.tag_name for winner in winners if winner.tag_name in pending),
-        ]))
+        priority_aliases = tuple(
+            dict.fromkeys(
+                [
+                    *priority_aliases,
+                    *(alias for alias in pinned if alias in pending),
+                    *(winner.tag_name for winner in winners if winner.tag_name in pending),
+                ]
+            )
+        )
         tracker.configure_incremental_fetch(
             alias_last_observed=alias_last_observed,
             alias_digest_by_name=alias_digest_by_name,
@@ -133,9 +154,15 @@ class ReleaseScheduler(
 
         # A rule migration repairs views locally before jobs can run. It must not
         # issue registry requests, notifications, or new deployment work.
-        if await self.storage.get_setting("internal.release_selection_rebuild_pending") in {"2", "3"}:
+        if await self.storage.get_setting("internal.release_selection_rebuild_pending") in {
+            "2",
+            "3",
+        }:
             for tracker_config in tracker_configs:
-                if tracker_config.enabled and await self.storage.get_aggregate_tracker(tracker_config.name) is not None:
+                if (
+                    tracker_config.enabled
+                    and await self.storage.get_aggregate_tracker(tracker_config.name) is not None
+                ):
                     await self.rebuild_tracker_views_from_storage(tracker_config.name)
             await self.storage.set_setting("internal.release_selection_rebuild_pending", "0")
         await self.storage.cleanup_release_history(reclaim=False)

@@ -48,7 +48,8 @@ async def task(storage, executor_id=1):
         max_retries=0,
         payload={
             "executor_id": executor_id,
-            "config_identity": "synthetic-config", "selection_revision": SELECTION_RULES_VERSION,
+            "config_identity": "synthetic-config",
+            "selection_revision": SELECTION_RULES_VERSION,
             "targets": [{"target": ["1.1.0", "sha256:" + "a" * 64]}],
         },
     )

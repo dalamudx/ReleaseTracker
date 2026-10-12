@@ -1,4 +1,5 @@
 """Keep audit records referenced by unsettled deployment and recovery tasks."""
+
 from __future__ import annotations
 
 import json
@@ -6,7 +7,11 @@ import json
 
 async def protected_artifacts(storage) -> tuple[set[int], set[str]]:
     db = await storage._get_connection()
-    rows = await (await db.execute("SELECT payload,result FROM tasks WHERE kind IN ('deploy','recover') AND state NOT IN ('succeeded','no_change','skipped','failed','cancelled','superseded')")).fetchall()
+    rows = await (
+        await db.execute(
+            "SELECT payload,result FROM tasks WHERE kind IN ('deploy','recover') AND state NOT IN ('succeeded','no_change','skipped','failed','cancelled','superseded')"
+        )
+    ).fetchall()
     ids: set[int] = set()
     artifacts: set[str] = set()
 

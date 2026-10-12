@@ -103,6 +103,7 @@ def plan_fingerprint(task: dict, evidence: TargetEvidence) -> str:
 def public_summary(task: dict, evidence: TargetEvidence) -> dict:
     """Allowlist, not redaction: never expose runtime config, URLs or env values."""
     from .version_policy import version_policy_reason
+
     return {
         "version_policy_reason": version_policy_reason(task, evidence),
         "schema": 1,

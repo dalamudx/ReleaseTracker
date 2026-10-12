@@ -106,7 +106,11 @@ async def test_version_policy_survives_create_update_and_default(storage):
 @pytest.mark.asyncio
 async def test_managed_baseline_still_requires_major_approval(storage):
     store = DeploymentAdmissionStore(storage)
-    payload = task("minor", "2.0.0")["payload"] | {"executor_id": 1, "config_identity": "config", "selection_revision": 3}
+    payload = task("minor", "2.0.0")["payload"] | {
+        "executor_id": 1,
+        "config_identity": "config",
+        "selection_revision": 3,
+    }
     queued = await storage.tasks.enqueue(
         kind="deploy",
         resource_key="deployment-mutations",

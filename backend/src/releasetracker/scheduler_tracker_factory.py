@@ -89,10 +89,14 @@ class ReleaseSchedulerTrackerFactory:
             allow_registry_redirects = await self.storage.get_oci_registry_redirects_enabled()
             metadata_token = None
             if config.metadata_credential_name:
-                metadata_credential = await self.storage.get_credential_by_name(config.metadata_credential_name)
+                metadata_credential = await self.storage.get_credential_by_name(
+                    config.metadata_credential_name
+                )
                 metadata_token = metadata_credential.token if metadata_credential else ""
                 if not metadata_credential:
-                    logger.warning("Container metadata credential is unavailable; native dates may be unknown")
+                    logger.warning(
+                        "Container metadata credential is unavailable; native dates may be unknown"
+                    )
             return DockerTracker(
                 name=config.name,
                 image=config.image or "",

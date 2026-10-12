@@ -66,7 +66,7 @@ async def test_automatic_targets_do_not_resolve_again(monkeypatch):
                             "chart_version": "0.8.0",
                             "chart_digest": "sha256:" + "a" * 64,
                         }
-                    ]
+                    ],
                 },
             )
         )

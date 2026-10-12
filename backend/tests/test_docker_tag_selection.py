@@ -270,10 +270,7 @@ def test_sample_ci_style_tags_rank_by_natural_suffix_after_filter():
             "3355.v388858a_47b_33-2",
         ],
     )
-    ranked_tags = [
-        release.tag_name
-        for release in releases
-    ]
+    ranked_tags = [release.tag_name for release in releases]
 
     assert ranked_tags == [
         "3355.v388858a_47b_33-20",
@@ -295,10 +292,7 @@ def test_prerelease_tags_rank_by_numeric_suffix():
         ["latest", "0.6.3", *[f"0.7.0-rc{index}" for index in range(1, 20)]],
     )
     rc_releases = [release for release in releases if release.tag_name.startswith("0.7.0-rc")]
-    ranked_rc_tags = [
-        release.tag_name
-        for release in rc_releases
-    ]
+    ranked_rc_tags = [release.tag_name for release in rc_releases]
 
     assert ranked_rc_tags[:3] == ["0.7.0-rc19", "0.7.0-rc18", "0.7.0-rc17"]
 

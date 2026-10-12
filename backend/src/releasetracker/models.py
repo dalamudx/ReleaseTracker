@@ -72,7 +72,9 @@ class Release(BaseModel):
             return value
         value = dict(value)
         if value.get("tracker_type") == "container":
-            if value.get("published_at_source") == "artifact_created" and not value.get("artifact_created_at"):
+            if value.get("published_at_source") == "artifact_created" and not value.get(
+                "artifact_created_at"
+            ):
                 value["artifact_created_at"] = value.get("published_at")
             value["published_at"] = None
             value["published_at_source"] = None
@@ -80,10 +82,21 @@ class Release(BaseModel):
             value["published_at_source"] = "upstream_release"
         return value
 
-    @field_validator("published_at", "artifact_created_at", "registry_pushed_at", "registry_created_at", "registry_modified_at", "source_created_at", "first_observed_at", "last_observed_at", mode="before")
+    @field_validator(
+        "published_at",
+        "artifact_created_at",
+        "registry_pushed_at",
+        "registry_created_at",
+        "registry_modified_at",
+        "source_created_at",
+        "first_observed_at",
+        "last_observed_at",
+        mode="before",
+    )
     @classmethod
     def normalize_upstream_time(cls, value):
         from .release_times import parse_time
+
         return parse_time(value)
 
 
@@ -234,13 +247,17 @@ class TrackerSource(BaseModel):
             "gitlab": ({"project", "instance"}, {"project"}),
             "gitea": ({"repo", "instance"}, {"repo"}),
             "helm": ({"repo", "chart"}, {"repo", "chart"}),
-            "container": ({"image", "registry", "metadata_credential_name", "version_format"}, {"image", "registry"}),
+            "container": (
+                {"image", "registry", "metadata_credential_name", "version_format"},
+                {"image", "registry"},
+            ),
         }
 
         if self.source_type == "container":
             # Old databases and clients may still contain the retired metadata mode.
             self.source_config = {
-                key: value for key, value in self.source_config.items()
+                key: value
+                for key, value in self.source_config.items()
                 if key != "published_at_mode"
             }
         allowed_keys, required_keys = provider_requirements[self.source_type]
@@ -265,7 +282,9 @@ class TrackerSource(BaseModel):
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"source_config.{key} must be a non-empty string")
 
-        if self.source_type == "container" and self.source_config.get("version_format", "dotted") not in {"dotted", "pep440"}:
+        if self.source_type == "container" and self.source_config.get(
+            "version_format", "dotted"
+        ) not in {"dotted", "pep440"}:
             raise ValueError("source_config.version_format must be dotted or pep440")
         if self.source_type == "github" and self.source_config.get("fetch_mode") not in {
             None,
@@ -273,7 +292,6 @@ class TrackerSource(BaseModel):
             "rest_first",
         }:
             raise ValueError("source_config.fetch_mode must be one of: graphql_first, rest_first")
-
 
         if self.credential_name and self.source_type in {"gitlab", "gitea", "helm"}:
             if self.source_type == "helm":

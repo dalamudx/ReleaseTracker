@@ -527,7 +527,11 @@ async def _delete_aggregate_tracker(storage: "SQLiteStorage", name: str) -> None
     )
     tracker_history_query = "SELECT id FROM tracker_release_history WHERE aggregate_tracker_id = ?"
     for table, column, query in (
-        ("tracker_channel_selections", "aggregate_tracker_id", "SELECT id FROM aggregate_trackers WHERE id = ?"),
+        (
+            "tracker_channel_selections",
+            "aggregate_tracker_id",
+            "SELECT id FROM aggregate_trackers WHERE id = ?",
+        ),
         ("source_current_candidates", "tracker_source_id", source_query),
         ("source_inventory_scans", "tracker_source_id", source_query),
         ("tracker_release_history_sources", "tracker_release_history_id", tracker_history_query),

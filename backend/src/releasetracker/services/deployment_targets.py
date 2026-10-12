@@ -33,7 +33,11 @@ async def resolve_deployment_targets(storage, executor, *, manual, desired_revis
                     "target": [item["deploy_alias"], item.get("digest")],
                     "chart_version": item.get("chart_version"),
                     "chart_digest": item.get("chart_digest"),
-                    **({"selection_revision": item["selection_revision"]} if item.get("selection_revision") else {}),
+                    **(
+                        {"selection_revision": item["selection_revision"]}
+                        if item.get("selection_revision")
+                        else {}
+                    ),
                 }
                 for item in bindings
             ]
@@ -59,7 +63,11 @@ async def resolve_deployment_targets(storage, executor, *, manual, desired_revis
                 "source_id": source.id,
                 "channel": binding.channel_name,
                 "target": [target.deploy_alias, target.digest] if target else None,
-                **({"selection_revision": target.selection_revision} if target and target.selection_revision else {}),
+                **(
+                    {"selection_revision": target.selection_revision}
+                    if target and target.selection_revision
+                    else {}
+                ),
                 "chart_version": (
                     target.chart_version if target and source.source_type == "helm" else None
                 ),
@@ -78,7 +86,11 @@ async def resolve_deployment_targets(storage, executor, *, manual, desired_revis
                 "source_id": None,
                 "channel": executor.channel_name,
                 "target": [target.deploy_alias, target.digest] if target else None,
-                **({"selection_revision": target.selection_revision} if target and target.selection_revision else {}),
+                **(
+                    {"selection_revision": target.selection_revision}
+                    if target and target.selection_revision
+                    else {}
+                ),
                 "chart_version": None,
                 "chart_digest": None,
             }

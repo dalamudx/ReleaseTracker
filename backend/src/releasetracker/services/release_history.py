@@ -189,7 +189,9 @@ async def get_release_history_page(
                 tag_name=tag_name,
                 name=item["name"] or tag_name,
                 url=item["url"] or "",
-                published_at=(datetime.fromisoformat(item["published_at"]) if item["published_at"] else None),
+                published_at=(
+                    datetime.fromisoformat(item["published_at"]) if item["published_at"] else None
+                ),
                 prerelease=is_prerelease,
             )
             if not storage._release_matches_channel(
@@ -231,7 +233,9 @@ async def get_release_history_page(
                 tag_name=item["tag_name"] or item["version"] or item["identity_key"],
                 name=item["name"] or item["tag_name"] or item["version"] or item["identity_key"],
                 url=item["url"] or "",
-                published_at=(datetime.fromisoformat(item["published_at"]) if item["published_at"] else None),
+                published_at=(
+                    datetime.fromisoformat(item["published_at"]) if item["published_at"] else None
+                ),
                 prerelease=bool(item["prerelease"]),
                 body=item["body"],
                 changelog_url=item["changelog_url"],

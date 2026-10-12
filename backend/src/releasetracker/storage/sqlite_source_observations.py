@@ -79,14 +79,26 @@ async def _upsert_source_release_observation(
         )
         return storage._require_lastrowid(cursor.lastrowid, "source release observation")
 
-    persisted_published_at = (release.published_at.isoformat() if release.published_at else None)
+    persisted_published_at = release.published_at.isoformat() if release.published_at else None
     normalized_existing_commit = storage._normalize_release_value(existing_row["commit_sha"])
     normalized_new_commit = storage._normalize_release_value(release.commit_sha)
 
-    if source_type == "container" and normalized_existing_commit and normalized_existing_commit == normalized_new_commit:
+    if (
+        source_type == "container"
+        and normalized_existing_commit
+        and normalized_existing_commit == normalized_new_commit
+    ):
         existing_payload = storage._load_json(existing_row["raw_payload"])
-        for key in ("artifact_created_at", "registry_pushed_at", "registry_created_at", "registry_modified_at", "source_created_at"):
-            if existing_payload.get(key) is not None and (key == "artifact_created_at" or not persisted_raw_payload.get(key)):
+        for key in (
+            "artifact_created_at",
+            "registry_pushed_at",
+            "registry_created_at",
+            "registry_modified_at",
+            "source_created_at",
+        ):
+            if existing_payload.get(key) is not None and (
+                key == "artifact_created_at" or not persisted_raw_payload.get(key)
+            ):
                 persisted_raw_payload[key] = existing_payload[key]
         raw_payload_json = storage._dump_json(persisted_raw_payload)
 
@@ -163,6 +175,7 @@ async def save_source_observations(
 
     if append_truth:
         from . import sqlite_selection
+
         await sqlite_selection.bootstrap_candidates(storage, tracker_source)
         await sqlite_selection.save_candidates(storage, tracker_source, releases)
         source_fetch_run_id = await storage.create_source_fetch_run(
@@ -225,7 +238,11 @@ async def save_source_observations(
     await storage._rebuild_canonical_releases_for_tracker(db, aggregate_tracker_id)
 
     if append_truth:
-        row = await (await db.execute("SELECT name FROM aggregate_trackers WHERE id=?", (aggregate_tracker_id,))).fetchone()
+        row = await (
+            await db.execute(
+                "SELECT name FROM aggregate_trackers WHERE id=?", (aggregate_tracker_id,)
+            )
+        ).fetchone()
         tracker = await storage.get_aggregate_tracker(row[0])
         await sqlite_selection.refresh_selections(storage, tracker, commit=False)
     await db.commit()

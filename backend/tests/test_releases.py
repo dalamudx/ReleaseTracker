@@ -60,6 +60,7 @@ async def _seed_runtime_release(storage: SQLiteStorage, release: Release) -> Non
         source_type=runtime_source.source_type,
     )
     from releasetracker.storage import sqlite_selection
+
     await sqlite_selection.save_candidates(storage, runtime_source, [release])
     await storage.refresh_tracker_current_releases(aggregate_tracker.id, [release])
 
@@ -88,6 +89,7 @@ async def _materialize_aggregate_truth_and_projection(
                 observed_at=datetime.now(),
             )
         from releasetracker.storage import sqlite_selection
+
         await sqlite_selection.save_candidates(storage, source, releases)
         for release in releases:
             identity_key = storage.release_identity_key_for_source(
@@ -3658,7 +3660,8 @@ def test_select_best_releases_by_channel_excludes_docker_alias_when_folded_versi
 
     assert winners == {}  # Non-version aliases need an explicitly pinned channel.
     pinned = SQLiteStorage.select_best_releases_by_channel(
-        releases, [Channel(name="stable", type="release", include_pattern="^trixie$")],
+        releases,
+        [Channel(name="stable", type="release", include_pattern="^trixie$")],
         use_immutable_identity=True,
     )
     assert pinned["stable"].tag_name == "trixie"

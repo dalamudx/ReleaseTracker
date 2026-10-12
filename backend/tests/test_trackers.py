@@ -1103,7 +1103,9 @@ async def test_create_tracker_reject_legacy_request_shape(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_local_rebuild_status_uses_source_observations_independently_of_legacy_projection(storage):
+async def test_local_rebuild_status_uses_source_observations_independently_of_legacy_projection(
+    storage,
+):
     aggregate_tracker = await storage.create_aggregate_tracker(
         AggregateTracker(
             name="local-rebuild-canonical-only",

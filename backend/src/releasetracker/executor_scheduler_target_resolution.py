@@ -30,7 +30,6 @@ _DOCKER_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True)
-
 class ResolvedTrackerTarget:
     display_version: str
     deploy_alias: str
@@ -87,7 +86,9 @@ async def _load_bound_releases_from_storage(
                 continue
             aliases = tuple(alias["alias"] for alias in alias_rows)
             for alias in alias_rows:
-                if tracker_source_type in {"container", "helm"} and latest_digests.get(alias["alias"]) != (release.artifact_digest or release.commit_sha):
+                if tracker_source_type in {"container", "helm"} and latest_digests.get(
+                    alias["alias"]
+                ) != (release.artifact_digest or release.commit_sha):
                     continue
                 expanded_releases.append(
                     release.model_copy(
@@ -209,21 +210,39 @@ async def _resolve_tracker_latest_target_details_from_storage(
     tracker_source_id: int | None = None,
     tracker_source_type: str | None = None,
 ) -> ResolvedTrackerTarget | None:
-    bound_source = await storage.get_tracker_source(tracker_source_id) if tracker_source_id is not None else None
+    bound_source = (
+        await storage.get_tracker_source(tracker_source_id)
+        if tracker_source_id is not None
+        else None
+    )
     if bound_source is not None:
         tracker_source_type = bound_source.source_type
     if bound_source is not None and await storage._table_exists("tracker_channel_selections"):
         from .storage import sqlite_selection
-        selected, handled = await sqlite_selection.bound_selection(storage, bound_source, channel_name)
+
+        selected, handled = await sqlite_selection.bound_selection(
+            storage, bound_source, channel_name
+        )
         if handled:
             if selected is None:
                 return None
-            return ResolvedTrackerTarget(display_version=selected.logical_version or selected.version, deploy_alias=selected.tag_name,
+            return ResolvedTrackerTarget(
+                display_version=selected.logical_version or selected.version,
+                deploy_alias=selected.tag_name,
                 digest=_normalize_docker_digest(selected.artifact_digest or selected.commit_sha),
                 selection_revision=selected.selection_revision,
                 aliases=tuple(selected.aliases),
-                chart_version=(selected.chart_version or selected.tag_name) if tracker_source_type == "helm" else None,
-                chart_digest=(selected.artifact_digest or selected.commit_sha) if tracker_source_type == "helm" else None)
+                chart_version=(
+                    (selected.chart_version or selected.tag_name)
+                    if tracker_source_type == "helm"
+                    else None
+                ),
+                chart_digest=(
+                    (selected.artifact_digest or selected.commit_sha)
+                    if tracker_source_type == "helm"
+                    else None
+                ),
+            )
     releases = await _load_bound_releases_from_storage(
         storage,
         tracker_name,

@@ -126,7 +126,11 @@ async def enqueue_executor_binding_targets(
     ]
     from .versioning import SELECTION_RULES_VERSION
 
-    serialized_identity = json.dumps({"selection_revision": SELECTION_RULES_VERSION, "bindings": revision_targets}, sort_keys=True, separators=(",", ":"))
+    serialized_identity = json.dumps(
+        {"selection_revision": SELECTION_RULES_VERSION, "bindings": revision_targets},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     revision_identity = (
         "bindings:" + hashlib.sha256(serialized_identity.encode("utf-8")).hexdigest()
     )
