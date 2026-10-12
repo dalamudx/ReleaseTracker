@@ -111,7 +111,7 @@ def test_downgrade_gate_is_independent_of_policy_and_trigger(manual, policy, rec
 
 @pytest.mark.asyncio
 async def test_missing_time_roundtrip_and_build_enrichment(storage):
-    from tests.test_container_published_at_stability import _fresh_container_tracker, _append
+    from test_container_published_at_stability import _fresh_container_tracker, _append
 
     tracker = await _fresh_container_tracker(storage, "isolated-time-nginx")
     digest = "sha256:" + "a" * 64
@@ -137,7 +137,7 @@ async def test_missing_time_roundtrip_and_build_enrichment(storage):
 @pytest.mark.asyncio
 async def test_legacy_selection_task_is_blocked_without_rewriting_target(storage):
     import json
-    from tests.test_deployment_admission import _seed_executor, task, evidence
+    from test_deployment_admission import _seed_executor, task, evidence
     from releasetracker.storage.sqlite_deployment_admission import (
         DeploymentAdmissionStore,
         AdmissionConflict,
@@ -166,7 +166,7 @@ async def test_legacy_selection_task_is_blocked_without_rewriting_target(storage
     "before,after", [("1!1.2.3", "1.2.3"), ("1.2.3.post2", "1.2.3.post1"), ("1.2.3.2", "1.2.3.1")]
 )
 def test_compatibility_versions_keep_full_precedence_in_deployment_gate(before, after):
-    from tests.test_version_policy import task, evidence
+    from test_version_policy import task, evidence
 
     assert parsed_version(after) < parsed_version(before)
     assert (
@@ -202,8 +202,8 @@ def test_initial_management_summary_does_not_hide_downgrade():
 @pytest.mark.asyncio
 async def test_rule_migration_rebuilds_current_alias_without_external_actions(storage, monkeypatch):
     from unittest.mock import AsyncMock
-    from tests.helpers.executor_runtime import save_docker_tracker_config
-    from tests.test_container_published_at_stability import _append
+    from helpers.executor_runtime import save_docker_tracker_config
+    from test_container_published_at_stability import _append
     from releasetracker.scheduler import ReleaseScheduler
 
     await save_docker_tracker_config(storage, name="isolated-rebuild-nginx", image="library/nginx")

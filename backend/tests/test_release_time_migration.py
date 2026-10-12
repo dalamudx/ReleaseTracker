@@ -10,11 +10,11 @@ import sys
 import zipfile
 import pytest
 
-from tests.db_helpers import dbmate_migrations_dir, iter_dbmate_up_sql
-from tests.test_container_published_at_stability import _fresh_container_tracker, _append
-from tests.test_release_selection_semantics import release
+from db_helpers import dbmate_migrations_dir, iter_dbmate_up_sql
+from test_container_published_at_stability import _fresh_container_tracker, _append
+from test_release_selection_semantics import release
 
-from tests.test_executor_snapshots_history import _create_executor
+from test_executor_snapshots_history import _create_executor
 
 
 def _migrate_time_semantics(db_path, up_sql):
