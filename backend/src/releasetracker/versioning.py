@@ -30,7 +30,7 @@ class ComparableVersion:
         return hash(self.key)
 
 
-SELECTION_RULES_VERSION = 4
+SELECTION_RULES_VERSION = 5
 
 
 def normalize_version(value: str) -> str:
@@ -147,6 +147,12 @@ def pinned_alias(channel) -> str | None:
     return literal.replace("\\.", ".").replace("\\+", "+")
 
 
+def tag_specificity(tag: str | None) -> int:
+    """Count the numeric release components a tag spells out (1.17.0 -> 3)."""
+    match = re.match(r"\d+(?:\.\d+)*", normalize_version(tag or ""))
+    return match[0].count(".") + 1 if match else 0
+
+
 def select_version_candidate(releases, *, exact_alias=None):
     candidates = list(releases)
     if exact_alias:
@@ -165,7 +171,15 @@ def select_version_candidate(releases, *, exact_alias=None):
         ).add(release.artifact_digest or release.commit_sha)
     if any(len(identities) > 1 for identities in by_source.values()):
         return None
-    # Equivalent aliases of one artifact need only a deterministic display name.
+    # Equivalent aliases of one artifact prefer the most specific tag, so 1.17.1
+    # wins over 1.17 and 1; only then fall back to a deterministic name order.
     return min(
-        winners, key=lambda r: (r.tracker_type == "container", r.tag_name, r.tracker_type, r.name)
+        winners,
+        key=lambda r: (
+            r.tracker_type == "container",
+            -tag_specificity(r.tag_name),
+            r.tag_name,
+            r.tracker_type,
+            r.name,
+        ),
     )

@@ -53,6 +53,15 @@ def test_equivalent_versions_with_conflicting_digests_are_not_time_resolved():
     assert select_version_candidate([a, b]) is not None
 
 
+def test_equivalent_aliases_of_one_artifact_prefer_the_most_specific_tag():
+    digest = "sha256:same"
+    aliases = [release(tag, digest=digest) for tag in ("1.17", "1", "1.17.0", "latest")]
+    assert select_version_candidate(aliases).tag_name == "1.17.0"
+    assert select_version_candidate(list(reversed(aliases))).tag_name == "1.17.0"
+    newer = [release(tag, digest="sha256:new") for tag in ("1.17", "1", "1.17.1")]
+    assert select_version_candidate([*aliases, *newer]).tag_name == "1.17.1"
+
+
 def test_helm_compares_chart_not_application_version():
     newer_app = release("9.0.0", kind="helm", chart="1.0.0")
     newer_chart = release("8.0.0", kind="helm", chart="2.0.0")
