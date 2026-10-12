@@ -27,6 +27,7 @@ from .services.system_keys import (
     recover_pending_encryption_key_rotation,
 )
 from .services.ssh_compose_snapshot import migrate_legacy_snapshots
+from .storage import sqlite_selection
 from .storage.sqlite import SQLiteStorage
 from .storage.sqlite_retention import prune_fetch_runs
 from .logger import LogConfig
@@ -101,6 +102,13 @@ async def runtime_lifespan(app: FastAPI):
                 "encrypted %s legacy executor snapshots", migrated_snapshots
             )
         LogConfig.setup_logging(level=getattr(logging, await storage.get_system_log_level()))
+        rebuilt, corrected = await sqlite_selection.reconcile_selection_rules(storage)
+        if rebuilt or corrected:
+            logging.getLogger(__name__).info(
+                "Reconciled %s outdated tracker selections and %s candidate versions",
+                rebuilt,
+                corrected,
+            )
         # Initialize configuration without AppConfig
 
         # Bind to app.state

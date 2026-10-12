@@ -1,5 +1,7 @@
 """Selections use current state, never the retained audit-history window."""
 
+import json
+
 import pytest
 
 from releasetracker.models import AggregateTracker, TrackerSource, ReleaseChannel, Release
@@ -443,3 +445,68 @@ async def test_legacy_reason_text_is_reported_as_reason_code(storage):
     await db.execute("UPDATE source_inventory_scans SET origin='bootstrap'")
     await db.commit()
     assert (await selection.snapshots(storage, tracker.id))[0]["reason"] == selection.AWAITING_CHECK
+
+
+async def test_old_rule_snapshot_is_blocked_and_rebuilt_without_fetch_or_deployment(storage):
+    tracker, source = await setup(storage)
+    image = release("v4.2.6")
+    await selection.save_candidates(storage, source, [image], commit=True)
+    await selection.refresh_selections(storage, tracker)
+    db = await storage._get_connection()
+    stored = dict(
+        await (
+            await db.execute(
+                "SELECT * FROM tracker_channel_selections WHERE aggregate_tracker_id=?",
+                (tracker.id,),
+            )
+        ).fetchone()
+    )
+    old = json.loads(stored["release_payload"])
+    old["version"] = "latest"
+    stored["release_payload"] = json.dumps(old)
+    old_revision = selection.selection_revision(
+        stored, rules_version=selection.SELECTION_RULES_VERSION - 1
+    )
+    await db.execute(
+        "UPDATE tracker_channel_selections SET release_payload=?,revision=? WHERE aggregate_tracker_id=?",
+        (stored["release_payload"], old_revision, tracker.id),
+    )
+    await db.execute(
+        "UPDATE source_current_candidates SET payload=json_set(payload, '$.version', 'latest') "
+        "WHERE tracker_source_id=? AND tag_name=?",
+        (source.id, image.tag_name),
+    )
+    before = await (
+        await db.execute(
+            "SELECT updated_at,confirmed FROM source_current_candidates "
+            "WHERE tracker_source_id=? AND tag_name=?",
+            (source.id, image.tag_name),
+        )
+    ).fetchone()
+    tasks_before = (await (await db.execute("SELECT COUNT(*) FROM tasks")).fetchone())[0]
+    await db.commit()
+
+    assert (await selection.snapshots(storage, tracker.id))[0]["state"] == "pending"
+    assert (await selection.bound_selection(storage, source, "stable"))[0] is None
+    assert await selection.reconcile_selection_rules(storage) == (1, 1)
+    current = (await selection.snapshots(storage, tracker.id))[0]
+    assert current["state"] == "ready"
+    assert current["revision"] == selection.selection_revision(current)
+    chosen = Release.model_validate_json(current["release_payload"])
+    assert (chosen.version, chosen.tag_name, chosen.artifact_digest) == (
+        "v4.2.6",
+        "v4.2.6",
+        image.artifact_digest,
+    )
+    candidate = await (
+        await db.execute(
+            "SELECT payload,updated_at,confirmed FROM source_current_candidates "
+            "WHERE tracker_source_id=? AND tag_name=?",
+            (source.id, image.tag_name),
+        )
+    ).fetchone()
+    assert json.loads(candidate["payload"])["version"] == "v4.2.6"
+    assert (candidate["updated_at"], candidate["confirmed"]) == tuple(before)
+    assert (await (await db.execute("SELECT COUNT(*) FROM tasks")).fetchone())[0] == tasks_before
+    assert await (await db.execute("PRAGMA foreign_key_check")).fetchall() == []
+    assert await selection.reconcile_selection_rules(storage) == (0, 0)

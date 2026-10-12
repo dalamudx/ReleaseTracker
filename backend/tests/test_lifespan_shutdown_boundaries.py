@@ -81,6 +81,9 @@ def isolated_app(monkeypatch):
         monkeypatch.setattr(module, symbol, lambda *a, name=name, **kw: services[name])
     monkeypatch.setattr(main, "recover_pending_encryption_key_rotation", AsyncMock())
     monkeypatch.setattr(main, "migrate_legacy_snapshots", AsyncMock(return_value=0))
+    monkeypatch.setattr(
+        main.sqlite_selection, "reconcile_selection_rules", AsyncMock(return_value=(0, 0))
+    )
     monkeypatch.setattr(main, "retention_tiers", lambda: None)
     monkeypatch.setattr(main.LogConfig, "setup_logging", lambda **kw: None)
     return FastAPI(), services, closed
@@ -91,6 +94,7 @@ STARTUP_STAGES = [
     ("storage", "initialize", ["storage"]),
     ("rotation", None, ["storage"]),
     ("migration", None, ["storage"]),
+    ("selection", None, ["storage"]),
     ("auth", "ensure_admin_user", ["storage"]),
     ("backup", "status", ["host", "storage"]),
     *[
@@ -123,6 +127,8 @@ async def test_partial_startup_closes_owned_resources_without_entering_app(
         monkeypatch.setattr(main, "recover_pending_encryption_key_rotation", operation)
     elif component == "migration":
         monkeypatch.setattr(main, "migrate_legacy_snapshots", operation)
+    elif component == "selection":
+        monkeypatch.setattr(main.sqlite_selection, "reconcile_selection_rules", operation)
     else:
         setattr(services[component], method, operation)
     with pytest.raises(type(failure)) as caught:

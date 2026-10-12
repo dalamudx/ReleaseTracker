@@ -47,6 +47,28 @@ def config_hash(source) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
+def selection_revision(row, *, rules_version: int = SELECTION_RULES_VERSION) -> str:
+    """Bind a persisted choice to its selection rules and immutable target."""
+    payload = json.loads(row["release_payload"]) if row["release_payload"] else {}
+    target_identity = [
+        payload.get(field)
+        for field in (
+            "version",
+            "tag_name",
+            "artifact_digest",
+            "commit_sha",
+            "chart_version",
+            "logical_version",
+        )
+    ]
+    return hashlib.sha256(
+        json.dumps(
+            [rules_version, row["config_hash"], row["channel_key"], row["state"], target_identity],
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+
+
 def comparable(source, release, channel) -> bool:
     if source.source_type == "container":
         from ..versioning import container_channel_eligible
@@ -426,24 +448,14 @@ async def refresh_selections(storage, tracker, *, commit=True):
                     "release_payload"
                 ]  # Display the previous result, never deploy it as a confirmed target.
             fingerprint = config_hash(source)
-            identity = json.loads(payload) if payload else {}
-            target_identity = [
-                identity.get(field)
-                for field in (
-                    "version",
-                    "tag_name",
-                    "artifact_digest",
-                    "commit_sha",
-                    "chart_version",
-                    "logical_version",
-                )
-            ]
-            revision = hashlib.sha256(
-                json.dumps(
-                    [SELECTION_RULES_VERSION, fingerprint, key, state, target_identity],
-                    sort_keys=True,
-                ).encode()
-            ).hexdigest()
+            revision = selection_revision(
+                {
+                    "release_payload": payload,
+                    "config_hash": fingerprint,
+                    "channel_key": key,
+                    "state": state,
+                }
+            )
             await db.execute(
                 """INSERT INTO tracker_channel_selections(aggregate_tracker_id,tracker_source_id,
                 channel_key,channel_name,state,reason,release_payload,config_hash,revision,updated_at,inventory_revision)
@@ -469,6 +481,45 @@ async def refresh_selections(storage, tracker, *, commit=True):
     return releases
 
 
+async def reconcile_selection_rules(storage) -> tuple[int, int]:
+    """Rebuild obsolete local choices on startup without fetching or queuing work."""
+    if not await storage._table_exists("tracker_channel_selections"):
+        return 0, 0
+
+    async with storage.tasks.transaction() as db:
+        rows = await (
+            await db.execute(
+                "SELECT aggregate_tracker_id,channel_key,config_hash,state,release_payload,revision "
+                "FROM tracker_channel_selections"
+            )
+        ).fetchall()
+        stale_ids = {
+            row["aggregate_tracker_id"]
+            for row in rows
+            if row["revision"] != selection_revision(row)
+        }
+        # Old scans may have saved a digest-sharing alias as the tag version.
+        # This changes only the version in the candidate payload, not its
+        # observation time, confirmation, tag pointer or digest.
+        normalized = await db.execute(
+            "UPDATE source_current_candidates "
+            "SET payload=json_set(payload, '$.version', tag_name) "
+            "WHERE tracker_source_id IN "
+            "(SELECT id FROM aggregate_tracker_sources WHERE source_type='container') "
+            "AND json_extract(payload, '$.version') IS NOT tag_name"
+        )
+        if stale_ids:
+            for tracker in await storage.get_all_aggregate_trackers():
+                if tracker.id not in stale_ids:
+                    continue
+                await refresh_selections(storage, tracker, commit=False)
+                current = await current_rows(storage, tracker.id) or []
+                await storage.refresh_tracker_current_releases(
+                    tracker.id, [row["release"] for row in current], commit=False
+                )
+        return len(stale_ids), normalized.rowcount
+
+
 async def snapshots(storage, tracker_id):
     db = await storage._get_connection()
     rows = [
@@ -489,8 +540,10 @@ async def snapshots(storage, tracker_id):
         row["reason"] = _LEGACY_REASONS.get(row["reason"], row["reason"])
         if row["state"] == "pending" and row["inventory_origin"] == "bootstrap":
             row["reason"] = AWAITING_CHECK
-        if source is not None and (
-            row["inventory_revision"] != row["current_inventory_revision"]
+        if (
+            row["revision"] != selection_revision(row)
+            or source is None
+            or row["inventory_revision"] != row["current_inventory_revision"]
             or row["config_hash"] != config_hash(source)
         ):
             row["state"], row["reason"] = "pending", AWAITING_CHECK
