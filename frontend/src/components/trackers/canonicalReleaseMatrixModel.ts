@@ -648,3 +648,42 @@ export function buildTrackerCurrentMatrixPresentationModel(
         rows,
     }
 }
+
+/** The current selection owns the channel cells; retained history adds prior artifacts. */
+export function mergeTrackerVersionViewModels(
+    current: TrackerCurrentMatrixPresentationModel,
+    history: TrackerCurrentMatrixPresentationModel,
+): TrackerCurrentMatrixPresentationModel {
+    const rows = [...current.rows]
+    const rowIndexes = new Map(
+        rows.map((row, index) => [normalizeGroupingVersion(row.displayVersion) ?? row.displayVersion, index]),
+    )
+
+    for (const historic of history.rows) {
+        const versionKey = normalizeGroupingVersion(historic.displayVersion) ?? historic.displayVersion
+        const index = rowIndexes.get(versionKey)
+        if (index === undefined) {
+            rowIndexes.set(versionKey, rows.length)
+            rows.push(historic)
+            continue
+        }
+
+        const selected = rows[index]
+        const currentSourceKeys = new Set(selected.sourceContributions.map((item) => item.source_key))
+        const extraContributions = historic.sourceContributions.filter(
+            (item) => !currentSourceKeys.has(item.source_key),
+        )
+        const contributions = [...selected.sourceContributions, ...extraContributions]
+        rows[index] = {
+            ...selected,
+            publishedAt: selected.publishedAt ?? historic.publishedAt,
+            sourceContributions: contributions,
+            sourceTypeBadges: [...new Set(contributions.map((item) => item.source_type))],
+            helmChartVersion: selected.helmChartVersion ?? historic.helmChartVersion,
+            artifacts: mergeArtifactRevisions(selected.artifacts, historic.artifacts),
+            aliases: [...new Set([...selected.aliases, ...historic.aliases])],
+        }
+    }
+
+    return { columns: current.columns, rows }
+}

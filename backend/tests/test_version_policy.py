@@ -5,6 +5,7 @@ import pytest
 from releasetracker.services.version_policy import version_policy_reason
 from releasetracker.services.deployment_plan import TargetEvidence, managed_markers
 from releasetracker.storage.sqlite_deployment_admission import DeploymentAdmissionStore
+from releasetracker.versioning import SELECTION_RULES_VERSION
 
 
 def evidence(current="1.2.3", recovery="container_config"):
@@ -109,7 +110,7 @@ async def test_managed_baseline_still_requires_major_approval(storage):
     payload = task("minor", "2.0.0")["payload"] | {
         "executor_id": 1,
         "config_identity": "config",
-        "selection_revision": 3,
+        "selection_revision": SELECTION_RULES_VERSION,
     }
     queued = await storage.tasks.enqueue(
         kind="deploy",

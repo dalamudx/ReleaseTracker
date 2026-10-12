@@ -442,6 +442,44 @@ async def test_releases_stats_preserve_tracker_defined_channel_categories_when_h
 
 
 @pytest.mark.asyncio
+async def test_cleanup_retains_nonstandard_container_versions_without_deployment_selection(storage):
+    tracker = await storage.create_aggregate_tracker(
+        AggregateTracker(
+            name="jenkins-format-retention",
+            sources=[
+                TrackerSource(
+                    source_key="container",
+                    source_type="container",
+                    source_config={"image": "jenkins/inbound-agent", "registry": "docker.io"},
+                    release_channels=[ReleaseChannel(name="stable", release_channel_key="stable")],
+                )
+            ],
+        )
+    )
+    releases = [
+        Release(
+            tracker_name=tracker.name,
+            tracker_type="container",
+            version=f"338{i}.v353e57a_1b_ea_0-1",
+            tag_name=f"338{i}.v353e57a_1b_ea_0-1",
+            name=f"338{i}.v353e57a_1b_ea_0-1",
+            url="https://example.org/jenkins/inbound-agent",
+            artifact_digest=f"sha256:{i:064x}",
+        )
+        for i in range(8)
+    ]
+    await _materialize_aggregate_truth_and_projection(
+        storage, tracker, {"container": releases}, projection_releases=[]
+    )
+    result = await storage.cleanup_release_history(retention_count=5, reclaim=False)
+    remaining = await storage.get_tracker_release_history_releases(tracker.id)
+    assert len(remaining) == 5
+    assert result["tracker_release_history_deleted"] == 3
+    assert [c["retained_count"] for c in result["channels"]] == [5]
+    assert await storage.get_tracker_current_releases(tracker.id) == []
+
+
+@pytest.mark.asyncio
 async def test_cleanup_release_history_keeps_latest_per_authoritative_channel_and_current_projection(
     storage,
 ):
@@ -3363,7 +3401,7 @@ async def test_latest_current_summary_uses_newest_release_across_channels_in_pub
 
 
 @pytest.mark.asyncio
-async def test_latest_current_summary_prefers_newest_stable_release_in_published_at_mode(
+async def test_latest_current_summary_does_not_use_audit_history_without_current_tag_evidence(
     storage,
 ):
     aggregate_tracker = await storage.create_aggregate_tracker(
@@ -3515,9 +3553,9 @@ async def test_latest_current_summary_prefers_newest_stable_release_in_published
         "sample_canary-summary-order"
     )
 
-    assert latest_summary is not None
-    assert latest_summary["version"] == "0.1.7"
-    assert latest_summary["release"].version == "0.1.7"
+    # These rows are only source observations and audit history. They cannot
+    # establish that any tag still points to its historical digest.
+    assert latest_summary is None
 
 
 def test_select_best_releases_for_tracker_channel_keeps_duplicate_names_distinct_when_ownership_differs():

@@ -69,6 +69,34 @@ async def test_concrete_tag_wins_when_alias_payloads_share_display_version(stora
     assert (await target(storage, tracker, source)).deploy_alias == "2.5.3"
 
 
+async def test_snapshot_uses_selected_tag_version_not_shared_digest_alias(storage):
+    tracker, source = await setup(storage)
+    # Some registries report the same artifact under latest and a concrete tag.
+    # The alias's stored version must not leak into the selected tag's snapshot.
+    image = release("latest").model_copy(update={"aliases": ["0.64.2"]})
+    await selection.save_candidates(storage, source, [image], commit=True)
+    stored = {item.tag_name: item for item in await selection.source_candidates(storage, source)}
+    assert stored["0.64.2"].version == "0.64.2"
+    # Reproduce an already persisted candidate written by the previous version.
+    db = await storage._get_connection()
+    stale = stored["0.64.2"].model_copy(update={"version": "latest"})
+    await db.execute(
+        "UPDATE source_current_candidates SET payload=? WHERE tracker_source_id=? AND tag_name=?",
+        (stale.model_dump_json(), source.id, "0.64.2"),
+    )
+    await db.commit()
+    winners = await selection.refresh_selections(storage, tracker)
+    assert len(winners) == 1
+    assert winners[0].tag_name == "0.64.2"
+    assert winners[0].version == "0.64.2"
+    assert winners[0].artifact_digest == image.artifact_digest
+    snapshot = (await selection.snapshots(storage, tracker.id))[0]
+    assert Release.model_validate_json(snapshot["release_payload"]).version == "0.64.2"
+    assert (await target(storage, tracker, source)).display_version == "0.64.2"
+    current = await storage.get_tracker_current_release_rows(tracker.name)
+    assert current[0]["version"] == "0.64.2"
+
+
 async def test_container_variant_remains_stable_while_dev_requires_prerelease_channel(storage):
     tracker, source = await setup(storage)
     await selection.save_candidates(

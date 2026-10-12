@@ -16,6 +16,7 @@ from releasetracker.config import (
     RuntimeConnectionConfig,
 )
 from releasetracker.models import ExecutorRunHistory, ExecutorSnapshot, ExecutorStatus
+from releasetracker.versioning import SELECTION_RULES_VERSION
 
 
 async def _create_runtime_connection(
@@ -1081,7 +1082,7 @@ async def test_projection_trigger_enqueue_persists_current_truth_desired_state(s
     assert desired_state.pending is True
     assert desired_state.desired_state_revision == "projection-trigger-tracker:1.2.0"
     assert desired_state.desired_target == {
-        "selection_revision": 3,
+        "selection_revision": SELECTION_RULES_VERSION,
         "tracker_name": "projection-trigger-tracker",
         "previous_version": "1.1.0",
         "current_version": "1.2.0",

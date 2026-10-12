@@ -20,6 +20,7 @@ import {
     buildTrackerHistoryMatrixPresentationModel,
     buildTrackerCurrentMatrixPresentationModel,
     getPreferredTrackerCurrentContributionForRow,
+    mergeTrackerVersionViewModels,
 } from "@/components/trackers/canonicalReleaseMatrixModel"
 import { ReleaseNotesModal } from "@/components/dashboard/ReleaseNotesModalLazy"
 import { Badge } from "@/components/ui/badge"
@@ -183,8 +184,7 @@ export function TrackerDetail({
             trackerReleaseHistoryQuery.data?.items ?? [], tracker.version_sort_mode)
         if (!trackerCurrentView?.matrix) return history
         const current = buildTrackerCurrentMatrixPresentationModel(trackerCurrentView.matrix, tracker.version_sort_mode)
-        const currentKeys = new Set(current.rows.map((row) => row.identityKey))
-        return { ...history, rows: [...current.rows, ...history.rows.filter((row) => !currentKeys.has(row.identityKey))] }
+        return mergeTrackerVersionViewModels(current, history)
     }, [tracker, trackerCurrentView, trackerReleaseHistoryQuery.data])
     const showArtifactTimes = Boolean(versionViewMatrixModel)
     const imageTimeView = tracker?.sources.every((source) => source.source_type === "container") ?? false

@@ -5,6 +5,7 @@ import {
     buildTrackerAliasTableRows,
     buildTrackerCurrentMatrixPresentationModel,
     buildTrackerHistoryMatrixPresentationModel,
+    mergeTrackerVersionViewModels,
 } from "@/components/trackers/canonicalReleaseMatrixModel"
 
 describe("tracker current matrix presentation model", () => {
@@ -408,6 +409,72 @@ describe("tracker current matrix presentation model", () => {
         expect(model.rows[0]?.selectedChannelKeys).toEqual(["stable"])
     })
 
+
+    it("shows Affine's current and retained 0.27.4 as one version with all artifacts", () => {
+        const makeRow = (
+            identity: string,
+            version: string,
+            source_key: string,
+            source_type: "github" | "helm" | "container",
+            digest: string,
+            chart_version: string | null = null,
+        ): TrackerCurrentView["matrix"]["rows"][number] => ({
+            tracker_release_history_id: Number(identity),
+            identity_key: identity,
+            version,
+            digest,
+            published_at: null,
+            matched_channel_count: source_type === "github" ? 1 : 0,
+            channel_keys: source_type === "github" ? ["repo-stable"] : [],
+            primary_source: null,
+            source_contributions: [{
+                source_release_history_id: Number(identity),
+                tracker_name: "affine",
+                source_key,
+                source_type,
+                contribution_kind: "primary",
+                version,
+                name: version,
+                tag_name: chart_version ?? version,
+                published_at: null,
+                url: "",
+                prerelease: false,
+                body: source_type === "github" ? "Release notes" : null,
+                digest,
+                app_version: chart_version ? "0.27.4" : null,
+                chart_version,
+                observed_at: "2026-10-12T00:00:00Z",
+                aliases: [chart_version ?? version],
+            }],
+            cells: {},
+        })
+        const columns = [{ channel_key: "repo-stable", channel_type: "release" as const, enabled: true, channel_rank: 0 }]
+        const current = buildTrackerCurrentMatrixPresentationModel({
+            columns,
+            rows: [makeRow("50263", "v0.27.4", "repo", "github", "gh-release")],
+        })
+        const history = buildTrackerCurrentMatrixPresentationModel({
+            columns,
+            rows: [
+                makeRow("50269", "0.27.4", "helm", "helm", "helm-chart-digest", "1.0.11"),
+                makeRow("50270", "0.27.4", "container", "container", "sha256:current"),
+                makeRow("40001", "0.27.4", "container", "container", "sha256:previous"),
+                makeRow("40000", "0.27.3", "container", "container", "sha256:older"),
+            ],
+        })
+
+        const model = mergeTrackerVersionViewModels(current, history)
+        expect(model.rows.map((row) => row.displayVersion)).toEqual(["0.27.4", "0.27.3"])
+        expect(model.rows[0]?.identityKey).toBe("50263")
+        expect(model.rows[0]?.selectedChannelKeys).toEqual(["repo-stable"])
+        expect(model.rows[0]?.helmChartVersion).toBe("1.0.11")
+        expect(model.rows[0]?.sourceTypeBadges).toEqual(["github", "helm", "container"])
+        expect(model.rows[0]?.artifacts.map((artifact) => artifact.digest).sort()).toEqual(
+            ["helm-chart-digest", "sha256:current", "sha256:previous"].sort(),
+        )
+        expect(model.rows[0]?.aliases).toContain("1.0.11")
+        expect(model.rows[0]?.sourceContributions[0]?.body).toBe("Release notes")
+    })
     it("builds the tracker version view from history rows that match channel regexes", () => {
         const tracker = {
             sources: [

@@ -2214,7 +2214,6 @@ class SQLiteStorage:
     @classmethod
     def _retention_channel_candidate(cls, release, channel, retention_groups, sources_by_id):
         from ..config import Channel
-        from .sqlite_selection import comparable
 
         source_id = cls._channel_value(channel, "tracker_source_id")
         source = sources_by_id.get(source_id)
@@ -2251,13 +2250,14 @@ class SQLiteStorage:
                 return None
             candidates = [release]
         configured = Channel(**channel) if isinstance(channel, dict) else channel
+        # Audit retention follows channel membership, regardless of whether a tag can
+        # safely be compared and selected as an automatic deployment target.
         matches = [
             item
             for item in candidates
             if cls._release_matches_channel(
                 item, configured, channel_source_type=source.source_type if source else None
             )
-            and (source is None or comparable(source, item, configured))
         ]
         return max(matches, key=cls._release_order_key) if matches else None
 

@@ -136,6 +136,37 @@ vi.mock("@/hooks/queries", () => ({
 }))
 
 describe("TrackerDetail grouped artifact table", () => {
+  it("renders a current version and a retained version with different identities in one group", () => {
+    const originalCurrent = queries.current.data
+    const retained = queries.history.data.items[0]
+    queries.current.data = {
+      ...originalCurrent,
+      matrix: {
+        columns: [],
+        rows: [{
+          tracker_release_history_id: 2,
+          identity_key: "current-version-identity",
+          version: "v1.2.3",
+          digest: retained.digest,
+          published_at: retained.published_at,
+          matched_channel_count: 1,
+          channel_keys: ["container-stable"],
+          primary_source: null,
+          source_contributions: retained.source_contributions,
+          cells: {},
+        }],
+      },
+    } as typeof originalCurrent
+    try {
+      render(<TrackerDetail trackerName="sample" refreshKey={0} />)
+      expect(screen.getAllByRole("button", {
+        name: /trackers\.aggregate\.detail\.(expandVersion|collapseVersion)/,
+      })).toHaveLength(1)
+    } finally {
+      queries.current.data = originalCurrent
+    }
+  })
+
   it("renders collapsible logical versions with aliases merged into the artifact-version column", () => {
     render(<TrackerDetail trackerName="sample" refreshKey={0} />)
 

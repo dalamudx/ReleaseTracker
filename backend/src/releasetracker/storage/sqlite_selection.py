@@ -112,7 +112,7 @@ async def save_candidates(storage, source, releases, *, listed_tags=None, commit
             update={
                 "tracker_type": source.source_type,
                 "id": None,
-                "version": version,
+                "version": release.tag_name if source.source_type == "container" else version,
                 "app_version": app_version,
                 "chart_version": chart_version,
                 "tag_name": (
@@ -362,9 +362,9 @@ async def refresh_selections(storage, tracker, *, commit=True):
                 else eligible
             )
             selected = select_version_candidate(ranked, exact_alias=pinned_alias(channel))
-            winner = next(
-                (r for r in eligible if selected and r.tag_name == selected.tag_name), None
-            )
+            # Ranking uses the tag version. Keep that same Release in the snapshot;
+            # a digest-shared floating alias may carry a different stored version.
+            winner = selected
             state, reason = "empty", NO_ELIGIBLE_VERSION
             if eligible:
                 state, reason = "conflict", ARTIFACT_CONFLICT
