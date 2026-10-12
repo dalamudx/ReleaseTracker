@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test"
 
 for (const language of ["zh", "en"]) {
     for (const width of [320, 390, 480, 640, 1280]) {
-        test(`Webhook tabs fit their content ${language} ${width}`, async ({ page }) => {
+        test(`Webhook tabs fit their content ${language} ${width}`, async ({ page }, testInfo) => {
             await page.setViewportSize({ width, height: 900 })
             await page.addInitScript(language => {
                 document.cookie = "releasetracker-csrf=fixture; path=/"
@@ -14,6 +14,7 @@ for (const language of ["zh", "en"]) {
                 const path = new URL(route.request().url()).pathname
                 const data = path === "/api/auth/me" ? { id: 1, username: "layout-fixture", is_admin: true }
                     : path === "/api/notifiers" ? { items: [], total: 123 }
+                    : path === "/api/tasks" ? []
                         : path === "/api/webhooks/repositories" ? []
                             : path.includes("/templates") || path.includes("/settings") ? []
                                 : { items: [], total: 0 }
@@ -62,7 +63,7 @@ for (const language of ["zh", "en"]) {
                 for (const tab of await list.getByRole("tab").all()) expect((await tab.boundingBox())!.height).toBeGreaterThanOrEqual(44)
             }
             console.log("Webhook tab layout", JSON.stringify({ language, width, ...layout }))
-            await page.screenshot({ path: `/tmp/rt-webhook-tabs-${language}-${width}.png` })
+            await page.screenshot({ path: testInfo.outputPath("webhook-tabs.png") })
             const tabs = list.getByRole("tab")
             await tabs.nth(1).click()
             await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true")
