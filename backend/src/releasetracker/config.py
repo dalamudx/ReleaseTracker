@@ -68,7 +68,6 @@ class TrackerConfig(BaseModel):
     chart: str | None = None  # Helm chart name
     image: str | None = None  # Docker image name, for example "library/nginx" or "owner/image"
     registry: str | None = None  # Docker registry URL
-    metadata_credential_name: str | None = None  # Optional native registry API token reference
     version_format: Literal["dotted", "pep440"] = "dotted"
     version_sort_mode: Literal["semver"] = "semver"
 

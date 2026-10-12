@@ -728,7 +728,6 @@ class SQLiteStorage:
             image=source_config.get("image"),
             registry=source_config.get("registry"),
             version_format=source_config.get("version_format", "dotted"),
-            metadata_credential_name=source_config.get("metadata_credential_name"),
             credential_name=selected_source.credential_name,
             interval=runtime_config.interval if runtime_config else 360,
             version_sort_mode=(

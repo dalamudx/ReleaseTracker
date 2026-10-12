@@ -30,7 +30,6 @@ export interface TrackerFormSource {
         chart?: string
         image?: string
         registry?: string
-        metadata_credential_name?: string
 
         version_format?: "dotted" | "pep440"
         fetch_mode?: GitHubFetchMode
@@ -187,7 +186,6 @@ export function normalizeSourceForForm(source: AggregateTracker["sources"][numbe
             chart: source.source_config?.chart ?? source.channel_config?.chart ?? "",
             image: source.source_config?.image ?? source.channel_config?.image ?? "",
             registry: source.source_config?.registry ?? source.channel_config?.registry ?? "",
-            metadata_credential_name: source.source_config?.metadata_credential_name ?? source.channel_config?.metadata_credential_name ?? "",
             version_format: source.source_config?.version_format === "pep440" ? "pep440" : source.source_config?.version_format === "dotted" ? "dotted" : undefined,
             fetch_mode: source.source_config?.fetch_mode ?? source.channel_config?.fetch_mode ?? undefined,
         },
@@ -391,7 +389,6 @@ export function buildSanitizedSourceConfig(source: TrackerFormSource): TrackerFo
             return {
                 image: trimOrUndefined(source.source_config.image),
                 registry: trimOrUndefined(source.source_config.registry),
-                metadata_credential_name: trimOrUndefined(source.source_config.metadata_credential_name),
                 ...(source.source_config.version_format ? { version_format: source.source_config.version_format } : {}),
             }
     }

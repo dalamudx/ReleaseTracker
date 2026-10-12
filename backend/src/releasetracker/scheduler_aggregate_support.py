@@ -124,7 +124,6 @@ class ReleaseSchedulerAggregateSupport:
             image=source.source_config.get("image"),
             registry=source.source_config.get("registry"),
             credential_name=source.credential_name,
-            metadata_credential_name=source.source_config.get("metadata_credential_name"),
             version_format=source.source_config.get("version_format", "dotted"),
             interval=tracker_config.interval if tracker_config else 360,
             version_sort_mode=(

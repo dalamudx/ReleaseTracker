@@ -64,7 +64,6 @@ function getTrackerChannelConfigLabel(
     key: string,
     t: ReturnType<typeof useTranslation>["t"],
 ): string {
-    if (key === "metadata_credential_name") return t("tracker.fields.registryMetadataCredential")
     const translated = t(`trackers.aggregate.detail.configLabel.${key}`)
     return translated === `trackers.aggregate.detail.configLabel.${key}` ? key : translated
 }

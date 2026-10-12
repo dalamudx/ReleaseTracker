@@ -1260,8 +1260,6 @@
       "versionFormatDotted": "版本号（例如 1.2.3）",
       "versionFormatInteger": "兼容整数版本（例如 42）",
       "versionFormatHint": "默认排除纯数字构建号和提交标识；确实使用整数版本的项目可启用兼容模式。固定标签由渠道正则明确绑定。",
-      "registryMetadataCredential": "仓库 API 凭证（可选）",
-      "registryMetadataCredentialHelp": "GHCR 需具备 read:packages 权限的 GitHub token；私有 Quay 可单独指定 API OAuth token。不影响镜像拉取凭证。",
       "credential": "凭证",
       "optional": "可选",
       "none": "无",

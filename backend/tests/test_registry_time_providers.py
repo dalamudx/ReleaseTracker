@@ -276,86 +276,27 @@ async def test_native_api_timeout_preserves_verified_manifest_date(monkeypatch):
     assert release.registry_modified_at == EXPECTED
 
 
-async def test_separate_quay_api_token_does_not_replace_pull_token(monkeypatch):
-    tracker = DockerTracker(
-        "test",
-        "owner/app",
-        registry="quay.io",
-        token="robot:pull_secret",
-        metadata_token="quay_api_secret",
-    )
+async def test_quay_metadata_reuses_pull_credential_on_same_origin(monkeypatch):
+    tracker = DockerTracker("test", "owner/app", registry="quay.io", token="robot:pull_secret")
     request = AsyncMock(return_value=httpx.Response(200, json={"tags": []}))
     monkeypatch.setattr(tracker, "_request_with_redirect_policy", request)
     await tracker._enrich_registry_push_times([candidate(tracker)])
-    assert request.call_args.kwargs["headers"]["Authorization"] == "Bearer quay_api_secret"
-    assert tracker._get_auth_header(None)["Authorization"].startswith("Basic ")
+    assert request.call_args.kwargs["headers"]["Authorization"].startswith("Basic ")
 
 
-async def test_factory_loads_separate_api_token_without_changing_pull_credentials():
-    from types import SimpleNamespace
-    from releasetracker.config import TrackerConfig
-    from releasetracker.models import Credential
-    from releasetracker.scheduler_tracker_factory import ReleaseSchedulerTrackerFactory
+def test_retired_api_credential_key_is_dropped_from_container_sources():
+    from releasetracker.models import TrackerSource
 
-    factory = ReleaseSchedulerTrackerFactory()
-    factory.storage = SimpleNamespace(
-        get_oci_registry_redirects_enabled=AsyncMock(return_value=False),
-        get_credential_by_name=AsyncMock(
-            side_effect=[
-                Credential(
-                    name="pull",
-                    type="docker",
-                    token="",
-                    secrets={"username": "robot", "password": "pull_secret"},
-                ),
-                Credential(name="api", type="docker", token="api_secret"),
-            ]
-        ),
+    source = TrackerSource(
+        source_key="image",
+        source_type="container",
+        source_config={
+            "registry": "ghcr.io",
+            "image": "owner/app",
+            "metadata_credential_name": "native-api",
+        },
     )
-    tracker = await factory._create_tracker(
-        TrackerConfig(
-            name="test",
-            type="container",
-            image="owner/app",
-            registry="quay.io",
-            credential_name="pull",
-            metadata_credential_name="api",
-        )
-    )
-    assert tracker.token == "robot:pull_secret" and tracker.metadata_token == "api_secret"
-
-
-async def test_api_credential_reference_prevents_deletion(authed_client, storage):
-    from releasetracker.models import AggregateTracker, TrackerSource
-
-    response = authed_client.post(
-        "/api/credentials", json={"name": "native-api", "type": "github", "token": "ghp_synthetic"}
-    )
-    assert response.status_code == 200
-    credential_id = response.json()["id"]
-    await storage.create_aggregate_tracker(
-        AggregateTracker(
-            name="registry-api-test",
-            sources=[
-                TrackerSource(
-                    source_key="image",
-                    source_type="container",
-                    source_config={
-                        "registry": "ghcr.io",
-                        "image": "owner/app",
-                        "metadata_credential_name": "native-api",
-                    },
-                )
-            ],
-        )
-    )
-    references = authed_client.get(f"/api/credentials/{credential_id}/references")
-    assert references.status_code == 200
-    assert (
-        references.json()["references"]["aggregate_tracker_sources"][0]["tracker_name"]
-        == "registry-api-test"
-    )
-    assert authed_client.delete(f"/api/credentials/{credential_id}").status_code == 409
+    assert source.source_config == {"registry": "ghcr.io", "image": "owner/app"}
 
 
 def test_artifact_summary_keeps_registry_date_semantics():

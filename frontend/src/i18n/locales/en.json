@@ -1260,8 +1260,6 @@
       "versionFormatDotted": "Version numbers (for example 1.2.3)",
       "versionFormatInteger": "Allow integer versions (for example 42)",
       "versionFormatHint": "Numeric build IDs and commit identifiers are excluded by default. Enable compatibility for projects using integer versions. Pin floating tags with an exact channel pattern.",
-      "registryMetadataCredential": "Registry API credential (optional)",
-      "registryMetadataCredentialHelp": "GHCR needs a GitHub token with read:packages; private Quay can use a separate API OAuth token. Image pull credentials are unchanged.",
       "credential": "Credential",
       "optional": "Optional",
       "none": "None",

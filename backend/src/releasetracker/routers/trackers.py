@@ -88,7 +88,6 @@ class AggregateTrackerPayload(BaseModel):
             image=source_config.get("image"),
             registry=source_config.get("registry"),
             credential_name=selected_source.credential_name,
-            metadata_credential_name=source_config.get("metadata_credential_name"),
             version_format=source_config.get("version_format", "dotted"),
             interval=self.interval,
             version_sort_mode=self.version_sort_mode,

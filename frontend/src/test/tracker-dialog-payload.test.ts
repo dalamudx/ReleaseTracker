@@ -9,15 +9,16 @@ import {
 import type { TrackerFormValues } from "@/components/trackers/trackerDialogHelpers"
 
 describe("tracker dialog payload serialization", () => {
-    it("serializes a separate API credential name without changing the pull credential", () => {
+    it("drops the retired registry API credential from container payloads", () => {
         const values = createDefaultValues()
         values.name = "registry-time-test"
         values.sources[0].source_type = "container"
         values.sources[0].credential_name = "pull-secret"
-        values.sources[0].source_config = { registry: "quay.io", image: "team/app", metadata_credential_name: " api-secret " }
+        const legacyConfig = { registry: "quay.io", image: "team/app", metadata_credential_name: "api-secret" }
+        values.sources[0].source_config = legacyConfig
         const payload = buildTrackerPayload(values, "source-1")
         expect(payload.sources[0].credential_name).toBe("pull-secret")
-        expect(payload.sources[0].source_config).toEqual({ registry: "quay.io", image: "team/app", metadata_credential_name: "api-secret" })
+        expect(payload.sources[0].source_config).toEqual({ registry: "quay.io", image: "team/app" })
     })
     it("serializes redesign tracker payload fields without legacy aliases", () => {
         const values = createDefaultValues()

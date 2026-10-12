@@ -248,17 +248,17 @@ class TrackerSource(BaseModel):
             "gitea": ({"repo", "instance"}, {"repo"}),
             "helm": ({"repo", "chart"}, {"repo", "chart"}),
             "container": (
-                {"image", "registry", "metadata_credential_name", "version_format"},
+                {"image", "registry", "version_format"},
                 {"image", "registry"},
             ),
         }
 
         if self.source_type == "container":
-            # Old databases and clients may still contain the retired metadata mode.
+            # Old databases and clients may still contain retired options.
             self.source_config = {
                 key: value
                 for key, value in self.source_config.items()
-                if key != "published_at_mode"
+                if key not in {"published_at_mode", "metadata_credential_name"}
             }
         allowed_keys, required_keys = provider_requirements[self.source_type]
         unknown_keys = sorted(set(self.source_config.keys()) - allowed_keys)

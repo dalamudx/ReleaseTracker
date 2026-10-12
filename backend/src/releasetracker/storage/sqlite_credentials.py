@@ -193,13 +193,10 @@ async def get_credential_references(
                 SELECT ats.id, ats.source_key, ats.source_type, ats.aggregate_tracker_id, at.name AS tracker_name
                 FROM aggregate_tracker_sources ats
                 JOIN aggregate_trackers at ON at.id = ats.aggregate_tracker_id
-                WHERE ats.credential_name = ? OR CASE
-                    WHEN ats.source_type = 'container' AND json_valid(ats.source_config)
-                    THEN json_extract(ats.source_config, '$.metadata_credential_name')
-                END = ?
+                WHERE ats.credential_name = ?
                 ORDER BY at.name, ats.source_rank, ats.source_key
                 """,
-                (credential.name, credential.name),
+                (credential.name,),
             )
         ).fetchall()
         references["aggregate_tracker_sources"] = [

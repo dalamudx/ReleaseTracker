@@ -69,7 +69,6 @@ class DockerTracker(BaseTracker):
         token: str | None = None,
         allow_registry_redirects: bool = False,
         credential_name: str | None = None,
-        metadata_token: str | None = None,
         version_format: str = "dotted",
         **kwargs,
     ):
@@ -89,7 +88,6 @@ class DockerTracker(BaseTracker):
         #   "username:password" → Basic Auth
         #   "ghp_xxxx" / raw Bearer Token
         self.token = token
-        self.metadata_token = metadata_token
         self._credentials_configured = bool(credential_name or token)
         self.allow_registry_redirects = bool(allow_registry_redirects)
         self._alias_last_observed: dict[str, datetime] | None = None

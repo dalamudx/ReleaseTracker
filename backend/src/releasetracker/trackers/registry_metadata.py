@@ -90,9 +90,8 @@ class RegistryMetadataClient:
 
     async def quay(self, releases: list[Release]):
         repository = "/".join(quote(part, safe="") for part in self.tracker.image.split("/"))
-        # Robot Basic credentials are not Quay API OAuth tokens. Keep them on
-        # this origin only; private API access may require a suitable API token.
-        headers = self.metadata_headers()
+        # Same-origin only: the source pull credential, never a cross-origin token.
+        headers = self.tracker._get_auth_header(None)
         for release in releases:
             payload = await self.json(
                 self.tracker._registry_url(),
@@ -111,21 +110,8 @@ class RegistryMetadataClient:
                     release.registry_modified_at = modified
                 break
 
-    def metadata_headers(self) -> dict[str, str]:
-        if self.tracker.metadata_token is not None:
-            return (
-                {"Authorization": f"Bearer {self.tracker.metadata_token}"}
-                if self.tracker.metadata_token
-                else {}
-            )
-        return self.tracker._get_auth_header(None)
-
     async def github(self, releases: list[Release]):
-        token = github_package_token(
-            self.tracker.metadata_token
-            if self.tracker.metadata_token is not None
-            else self.tracker.token
-        )
+        token = github_package_token(self.tracker.token)
         if not token or "/" not in self.tracker.image:
             return
         owner, package = self.tracker.image.split("/", 1)
@@ -178,7 +164,7 @@ class RegistryMetadataClient:
         project, repository = parts
         # Harbor's router requires double-encoding repository path separators.
         repository = quote(quote(repository, safe=""), safe="")
-        headers = self.metadata_headers()
+        headers = self.tracker._get_auth_header(None)
         for release in releases:
             payload = await self.json(
                 self.tracker._registry_url(),
