@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 from ..models import (
     Release,
     AggregateTracker,
@@ -253,7 +253,7 @@ def _release_matches_filters(
 
 def _release_listing_sort_key(release: Release) -> tuple[float, float, int]:
     created_at = release.created_at.timestamp() if release.created_at else 0.0
-    return (release.published_at.timestamp(), created_at, release.id or 0)
+    return ((release.published_at.timestamp() if release.published_at else float('-inf')), created_at, release.id or 0)
 
 
 async def get_latest_tracker_releases(storage: "SQLiteStorage", limit: int = 5) -> list[Release]:
@@ -434,26 +434,10 @@ def _channel_exclude_match_candidates(release: Release) -> list[str]:
 def _release_order_key(
     storage_cls: type["SQLiteStorage"], release: Release, sort_mode: str = "published_at"
 ) -> tuple:
-    from packaging.version import InvalidVersion, parse as parse_version
+    from ..versioning import release_order_key
 
-    normalized_version = storage_cls._normalize_version_for_ordering(release.version)
-    semver_key: tuple[int, Any] | None = None
-    try:
-        semver_key = (1, parse_version(normalized_version))
-    except InvalidVersion:
-        semver_key = None
-
-    published_at_key = release.published_at.timestamp()
-    if sort_mode == "semver":
-        if semver_key is not None:
-            return (*semver_key, published_at_key)
-        return (0, published_at_key, normalized_version)
-
-    # Published-time mode must not let parseable versions outrank newer
-    # non-PEP-440 tags such as build/commit-suffixed development releases.
-    if semver_key is not None:
-        return (published_at_key, *semver_key)
-    return (published_at_key, 0, normalized_version)
+    # Deprecated sort_mode is accepted only for input compatibility.
+    return release_order_key(release)
 
 
 def _channel_selection_key(channel, index: int) -> str:
@@ -484,9 +468,9 @@ def _release_matches_source_aliases(
     references = [
         reference
         for reference in release.alias_references
-        if tracker_source_id is None or reference.tracker_source_id == int(tracker_source_id)
+        if reference.is_current and (tracker_source_id is None or reference.tracker_source_id == int(tracker_source_id))
     ]
-    if tracker_source_id is not None and not references:
+    if (tracker_source_id is not None or release.alias_references) and not references:
         return False
     if not references:
         return storage_cls._release_matches_channel(
@@ -534,7 +518,7 @@ def select_best_releases_by_channel(
     unique_releases = (
         storage_cls.dedupe_releases_by_immutable_identity(releases)
         if use_immutable_identity
-        else storage_cls.dedupe_releases_by_identity(releases)
+        else releases
     )
     winners: dict[str, Release] = {}
 
@@ -567,10 +551,11 @@ def select_best_releases_by_channel(
         if not channel_candidates:
             continue
 
-        winner = max(
-            channel_candidates,
-            key=lambda release: storage_cls._release_order_key(release, sort_mode),
-        )
+        from ..versioning import pinned_alias, select_version_candidate
+
+        winner = select_version_candidate(channel_candidates, exact_alias=pinned_alias(channel))
+        if winner is None:
+            continue
         winner = storage_cls._copy_release_with_channel_name(winner, channel_name)
         winners[storage_cls._channel_selection_key(channel, index)] = winner
 
@@ -618,24 +603,26 @@ def select_best_release(
         return None
 
     if not channels:
-        return max(
+        from ..versioning import select_version_candidate
+
+        return select_version_candidate(
             (
                 storage_cls.dedupe_releases_by_immutable_identity(releases)
                 if use_immutable_identity
-                else storage_cls.dedupe_releases_by_identity(releases)
+                else releases
             ),
-            key=lambda release: storage_cls._release_order_key(release, sort_mode),
         )
 
     enabled_channels = [ch for ch in channels if ch.enabled]
     if not enabled_channels:
-        return max(
+        from ..versioning import select_version_candidate
+
+        return select_version_candidate(
             (
                 storage_cls.dedupe_releases_by_immutable_identity(releases)
                 if use_immutable_identity
-                else storage_cls.dedupe_releases_by_identity(releases)
+                else releases
             ),
-            key=lambda release: storage_cls._release_order_key(release, sort_mode),
         )
 
     channel_winners = storage_cls.select_best_releases_by_channel(
@@ -647,7 +634,8 @@ def select_best_release(
     if not channel_winners:
         return None
 
-    return max(
-        channel_winners.values(),
-        key=lambda release: storage_cls._release_order_key(release, sort_mode),
-    )
+    from ..versioning import select_version_candidate
+
+    if len(channel_winners) == 1:
+        return next(iter(channel_winners.values()))
+    return select_version_candidate(channel_winners.values())

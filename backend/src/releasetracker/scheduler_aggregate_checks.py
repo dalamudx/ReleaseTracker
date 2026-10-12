@@ -133,7 +133,13 @@ class ReleaseSchedulerAggregateChecks:
                     if source_tracker._should_include(release)
                 ]
 
+                from .storage import sqlite_selection
+                await sqlite_selection.bootstrap_candidates(self.storage, source)
+                audit_releases = await sqlite_selection.audit_changes(self.storage, source, mapped_releases)
                 fallback_hint = getattr(source_tracker, "last_fallback_hint", None)
+                await sqlite_selection.save_candidates(self.storage, source,
+                    mapped_releases if not fallback_hint else [],
+                    listed_tags=getattr(source_tracker, "last_complete_tags", None))
                 if fallback_hint:
                     incomplete_source_checks += 1
                     source_errors.append(f"{source.source_key}: {fallback_hint}")
@@ -148,7 +154,7 @@ class ReleaseSchedulerAggregateChecks:
                 source_history_ids_by_identity = await self.storage.append_source_history_for_run(
                     source_fetch_run_id,
                     source,
-                    mapped_releases,
+                    [item for item in audit_releases if item in mapped_releases],
                     aggregate_tracker_id=aggregate_tracker.id,
                 )
                 await self.storage.finalize_source_fetch_run(
@@ -220,6 +226,9 @@ class ReleaseSchedulerAggregateChecks:
             selection_candidates
         )
 
+        correlated_candidates = await self.storage.get_correlated_release_candidates(aggregate_tracker.id)
+        correlated_ids = {identity for candidate in correlated_candidates if len(candidate["tracker_source_ids"]) >= 2
+                          for identity in candidate["source_history_ids"]}
         for release in unique_selection_candidates:
             identity_key = self.storage.release_identity_key_for_source(release)
             source_candidates = candidate_sources.get(identity_key, [])
@@ -238,7 +247,7 @@ class ReleaseSchedulerAggregateChecks:
                 primary_source.id,
                 identity_key,
             )
-            if primary_source_history_id is None:
+            if primary_source_history_id is None or primary_source_history_id in correlated_ids:
                 continue
 
             supporting_source_history_ids: list[int] = []
@@ -260,9 +269,6 @@ class ReleaseSchedulerAggregateChecks:
                 source_type=primary_source.source_type,
             )
 
-        correlated_candidates = await self.storage.get_correlated_release_candidates(
-            aggregate_tracker.id
-        )
         for candidate in correlated_candidates:
             source_history_ids = candidate["source_history_ids"]
             if len(candidate["tracker_source_ids"]) < 2:
@@ -324,6 +330,7 @@ class ReleaseSchedulerAggregateChecks:
         ):
             raise RuntimeError("; ".join(source_errors))
 
+        await self.storage.cleanup_release_history(tracker_name=tracker_name, reclaim=False)
         error = None
         if source_errors:
             error = f"Partial source check failed: {'; '.join(source_errors)}"

@@ -449,6 +449,82 @@ def test_invalid_podman_swappiness_fails_during_payload_preflight(value):
         adapter("podman")._podman_create_arguments({"image": "new", "mem_swappiness": value})
 
 
+def test_podman_cgroupv2_readback_default_matches_omitted_swappiness_without_hiding_limits():
+    from releasetracker.executors.container_configuration import verify_created_configuration
+
+    class NativeClient:
+        __module__ = "podman.client"
+        def info(self):
+            return {"host": {"cgroupVersion": "v2"}}
+
+    current = inspected(config={"Image": "new"}, host={"MemorySwappiness": 0, "Memory": 128000000})
+    client = NativeClient()
+    client.containers = SimpleNamespace(get=lambda _: current)
+    value = adapter("podman", client)
+    expected = value._extract_create_kwargs(current, "new")
+    expected.pop("mem_swappiness")
+    verify_created_configuration(value, current, expected)
+    current.attrs["HostConfig"]["Memory"] = 256000000
+    with pytest.raises(RuntimeError, match="configuration does not match"):
+        verify_created_configuration(value, current, expected)
+
+
+@pytest.mark.parametrize("pids", [0, 2048])
+def test_podman_cgroupv2_unspecified_readback_has_no_empty_resource_objects(pids):
+    from releasetracker.executors.container_configuration import configuration_projection
+    client = SimpleNamespace(info=lambda: {"host": {"cgroupVersion": "v2"}})
+    value = adapter("podman", client)
+    expected = {"image": "new", "mem_swappiness": 0, "pids_limit": pids}
+    actual = {**expected, "mem_swappiness": -1}
+    assert configuration_projection(value, expected, client=client) == configuration_projection(
+        value, actual, client=client
+    )
+    _, payload = value._podman_create_arguments(expected, client=client)
+    assert "memory" not in payload.get("resource_limits", {})
+    assert bool(payload.get("resource_limits")) == bool(pids)
+
+@pytest.mark.parametrize("version,value", [("v1", 0), ("v1", 60), ("v2", 0)])
+def test_podman_runtime_swappiness_preflight_uses_native_cgroup_capability(version, value):
+    client = SimpleNamespace(info=lambda: {"host": {"cgroupVersion": version}})
+    original = {"image": "new", "mem_limit": 128000000, "mem_swappiness": value}
+    kwargs, payload = adapter("podman", client)._podman_create_arguments(original, client=client)
+    memory = payload["resource_limits"]["memory"]
+    assert memory["limit"] == 128000000
+    assert original["mem_swappiness"] == value
+    if version == "v2":
+        assert "swappiness" not in memory
+        assert "mem_swappiness" not in kwargs
+    else:
+        assert memory["swappiness"] == value
+        assert kwargs["mem_swappiness"] == value
+
+
+@pytest.mark.parametrize("info", [{}, {"host": {}}, {"host": {"cgroupVersion": "future"}}])
+def test_podman_unknown_cgroup_fails_before_recreate(info):
+    client = SimpleNamespace(info=lambda: info)
+    with pytest.raises(ValueError, match="Cannot determine Podman cgroup"):
+        adapter("podman", client)._podman_create_arguments(
+            {"image": "new", "mem_swappiness": 0}, client=client
+        )
+
+
+def test_podman_nonzero_swappiness_on_cgroupv2_is_not_silently_dropped():
+    client = SimpleNamespace(info=lambda: {"host": {"cgroupVersion": "v2"}})
+    with pytest.raises(ValueError, match="unsupported on cgroupv2"):
+        adapter("podman", client)._podman_create_arguments(
+            {"image": "new", "mem_swappiness": 60}, client=client
+        )
+
+
+def test_podman_cgroup_api_failure_fails_before_recreate():
+    def unavailable():
+        raise RuntimeError("unavailable")
+    client = SimpleNamespace(info=unavailable)
+    with pytest.raises(ValueError, match="Cannot determine Podman cgroup"):
+        adapter("podman", client)._podman_create_arguments(
+            {"image": "new", "mem_swappiness": 0}, client=client
+        )
+
 def test_native_stop_timeout_and_no_sdk_proxy_injection():
     spec = recreate(inspected(config={"StopTimeout": 45}))
     assert spec.create_config["stop_timeout"] == 45

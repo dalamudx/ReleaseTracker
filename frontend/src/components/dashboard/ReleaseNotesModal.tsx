@@ -486,7 +486,7 @@ export function ReleaseNotesModal({ release, open, onOpenChange }: ReleaseNotesM
                         </div>
                     </DialogTitle>
                     <DialogDescription>
-                        {t('dashboard.releaseNotes.releasedAt', { date: formatDate(release.published_at) })}
+                        {t('dashboard.releaseNotes.releasedAt', { date: (release.published_at ? formatDate(release.published_at) : "—") })}
                     </DialogDescription>
                 </DialogHeader>
 

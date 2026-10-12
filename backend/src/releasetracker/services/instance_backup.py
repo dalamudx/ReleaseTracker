@@ -175,7 +175,15 @@ def pre_migration_backup(db_path, keys_path, directory, migrations_dir):
     if len(keys) > MAX_KEY_BYTES:
         raise ValueError("Invalid key file size")
     _validate_keys(keys)
-    return _create_archive(db_path, keys, directory, reason="pre_migration")
+    # This migration repairs known orphans itself. Its safety copy must retain
+    # the exact original rows, not the cleaned snapshot used by normal backups.
+    return _create_archive(
+        db_path,
+        keys,
+        directory,
+        reason="pre_migration",
+        prune_history="20261012000001" not in pending,
+    )
 
 
 BACKUP_STATUS_SETTING = "system.instance_backup_status"

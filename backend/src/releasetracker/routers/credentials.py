@@ -70,6 +70,7 @@ async def get_credentials(
         payload["runtime_connections_count"] = (
             runtime_counts.get(credential.id, 0) if credential.id is not None else 0
         )
+        payload["reference_counts"] = await storage.get_credential_reference_counts(credential)
         result.append(payload)
 
     return {"items": result, "total": total, "skip": skip, "limit": limit}
@@ -88,6 +89,7 @@ async def get_credential(
     runtime_counts = await storage.get_runtime_connection_counts_by_credential_ids([credential_id])
     payload = _serialize_credential(credential)
     payload["runtime_connections_count"] = runtime_counts.get(credential_id, 0)
+    payload["reference_counts"] = await storage.get_credential_reference_counts(credential)
     return payload
 
 

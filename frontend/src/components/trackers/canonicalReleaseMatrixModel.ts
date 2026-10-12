@@ -18,10 +18,10 @@ export interface TrackerCurrentMatrixPresentationColumn {
 }
 
 export interface TrackerCurrentMatrixPresentationRow {
-    trackerReleaseHistoryId: number
+    trackerReleaseHistoryId: number | null
     identityKey: string
     displayVersion: string
-    publishedAt: string
+    publishedAt: string | null
     publishedAtIsEstimated: boolean
     digest: string
     matchedChannelCount: number
@@ -90,6 +90,12 @@ function mergeArtifactRevisions(
             digest,
             version: artifactIsNewer ? artifact.version : existing?.version,
             published_at: artifactIsNewer ? artifact.published_at : existing?.published_at,
+            artifact_created_at: existing?.artifact_created_at ?? artifact.artifact_created_at,
+            source_created_at: existing?.source_created_at ?? artifact.source_created_at,
+            registry_pushed_at: existing?.registry_pushed_at ?? artifact.registry_pushed_at,
+            registry_created_at: existing?.registry_created_at ?? artifact.registry_created_at,
+            registry_modified_at: existing?.registry_modified_at ?? artifact.registry_modified_at,
+            first_observed_at: existing?.first_observed_at ?? artifact.first_observed_at,
             aliases: [...new Set([...(existing?.aliases ?? []), ...artifact.aliases])],
             source_keys: [...new Set([...(existing?.source_keys ?? []), ...artifact.source_keys])],
         })
@@ -585,6 +591,12 @@ export function buildTrackerCurrentMatrixPresentationModel(
                         ? contribution.chart_version
                         : contribution.version,
                     published_at: contribution.published_at,
+                    artifact_created_at: contribution.artifact_created_at,
+                    source_created_at: contribution.source_created_at,
+                    registry_pushed_at: contribution.registry_pushed_at,
+                    registry_created_at: contribution.registry_created_at,
+                    registry_modified_at: contribution.registry_modified_at,
+                    first_observed_at: contribution.first_observed_at,
                     aliases: contribution.aliases ?? [],
                     source_keys: [contribution.source_key],
                 }))
@@ -621,28 +633,15 @@ export function buildTrackerCurrentMatrixPresentationModel(
     }
 
     const ungroupedRows = Array.from(groupedRows.values())
-    const shouldFallbackToVersionOrder =
-        sortMode === "published_at" &&
-        ungroupedRows.length > 0 &&
-        ungroupedRows.every((row) => /^\d+(?:\.\d+)+$/.test(row.displayVersion)) &&
-        ungroupedRows.some((row) => row.publishedAtIsEstimated)
     const rows = ungroupedRows.sort((left, right) => {
-        const publishedAtComparison = compareIsoDescending(left.publishedAt, right.publishedAt)
-        const versionComparison = compareVersionDescending(left.displayVersion, right.displayVersion)
-        const sourceCountComparison = right.sourceTypeBadges.length - left.sourceTypeBadges.length
-
-        if (sortMode === "published_at") {
-            return shouldFallbackToVersionOrder
-                ? versionComparison || publishedAtComparison || sourceCountComparison
-                : publishedAtComparison || versionComparison || sourceCountComparison
-        }
-        if (sortMode === "semver") {
-            return versionComparison || publishedAtComparison || sourceCountComparison
-        }
-
-        // Keep the legacy presentation order for callers that do not specify a mode.
-        return sourceCountComparison || versionComparison || publishedAtComparison
+        const versionComparison = compareVersionDescending(
+            left.helmChartVersion || left.displayVersion,
+            right.helmChartVersion || right.displayVersion,
+        )
+        // Presentation only: selected cells always come from the server.
+        return versionComparison || left.identityKey.localeCompare(right.identityKey)
     })
+    void sortMode // Accept legacy callers without restoring time-based ranking.
 
     return {
         columns,

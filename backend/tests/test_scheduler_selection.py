@@ -1370,11 +1370,11 @@ async def test_docker_digest_distinct_identities_not_collapsed_in_scheduler_trut
         assert status.last_version == "1.2.3"
         assert len(source_history_rows) == 2
         assert len(tracker_history_rows) == 2
-        assert len(tracker_current_rows) == 2
+        assert len(tracker_current_rows) == 1
         assert {row["digest"] for row in source_history_rows} == {digest_old, digest_new}
         assert {row["digest"] for row in tracker_history_rows} == {digest_old, digest_new}
-        assert {row["digest"] for row in tracker_current_rows} == {digest_old, digest_new}
-        assert {release.commit_sha for release in persisted_current} == {digest_old, digest_new}
+        assert {row["digest"] for row in tracker_current_rows} == {digest_new}
+        assert {release.commit_sha for release in persisted_current} == {digest_new}
     finally:
         await _close_storage(storage)
 
@@ -2119,34 +2119,10 @@ async def test_fetch_tracker_releases_uses_separate_provider_buckets(tmp_path):
         await _close_storage(storage)
 
 
-def test_source_published_at_provenance_infers_legacy_container_fallback():
-    assert (
-        _source_published_at_provenance(
-            source_type="container",
-            raw_payload={},
-            published_at="2026-09-15T19:29:42+00:00",
-            observed_at="2026-09-15T19:27:31+00:00",
-        )
-        == "first_observed"
-    )
-    assert (
-        _source_published_at_provenance(
-            source_type="container",
-            raw_payload={},
-            published_at="2026-08-18T19:29:42+00:00",
-            observed_at="2026-09-15T19:27:31+00:00",
-        )
-        == "artifact_created"
-    )
-    assert (
-        _source_published_at_provenance(
-            source_type="container",
-            raw_payload={"published_at_source": "artifact_created"},
-            published_at="2026-09-15T19:29:42+00:00",
-            observed_at="2026-09-15T19:27:31+00:00",
-        )
-        == "artifact_created"
-    )
+@pytest.mark.parametrize("published", ["2026-09-15T19:29:42+00:00", "2026-08-18T19:29:42+00:00", None])
+def test_source_published_at_provenance_does_not_guess_from_time_distance(published):
+    assert _source_published_at_provenance(source_type="container", raw_payload={}, published_at=published, observed_at="2026-09-15T19:27:31+00:00") == "unknown"
+    assert _source_published_at_provenance(source_type="github", raw_payload={"published_at_source": "upstream_release"}, published_at=published, observed_at=None) == ("upstream_release" if published else "unknown")
 
 
 def test_artifact_summaries_distinguish_image_and_chart_and_ignore_repo_commit():
@@ -2184,6 +2160,8 @@ def test_artifact_summaries_distinguish_image_and_chart_and_ignore_repo_commit()
     assert artifacts == [
         {
             "artifact_type": "container_image",
+            "artifact_created_at": None, "source_created_at": None, "registry_pushed_at": None,
+            "registry_created_at": None, "registry_modified_at": None, "first_observed_at": None,
             "digest": "sha256:" + "b" * 64,
             "version": "0.27.4",
             "published_at": "2026-08-18T18:42:00+00:00",
@@ -2192,6 +2170,8 @@ def test_artifact_summaries_distinguish_image_and_chart_and_ignore_repo_commit()
         },
         {
             "artifact_type": "helm_chart",
+            "artifact_created_at": None, "source_created_at": None, "registry_pushed_at": None,
+            "registry_created_at": None, "registry_modified_at": None, "first_observed_at": None,
             "digest": "sha256:" + helm_digest,
             "version": "1.0.11",
             "published_at": "2026-08-18T18:41:50+00:00",
@@ -2301,21 +2281,22 @@ async def test_aggregate_check_correlates_exact_repo_tag_with_same_digest_contai
         current = await storage.get_tracker_current_releases(aggregate.id)
 
         assert status.last_version == version
-        assert len(history) == 1
+        assert [r.version for r in history] == [version]
         assert history[0].version == version
         assert history[0].artifact_digest == digest
         assert set(history[0].aliases) == {version, "3.6.0-dev", "3.6-dev", "dev"}
         assert len(current) == 1
+        assert {ref.source_type for ref in current[0].alias_references} == {"gitea", "container"}
         assert current[0].version == version
         assert current[0].artifact_digest == digest
         alias_release = current[0].model_copy(
-            update={"version": "3.6.0-dev", "tag_name": "3.6.0-dev"}
+            update={"version": "3.6.0-dev", "tag_name": "3.6.0-dev", "logical_version": version}
         )
         assert scheduler._projection_release_identity(
             current[0]
         ) == scheduler._projection_release_identity(alias_release)
         reused_artifact_release = current[0].model_copy(
-            update={"id": (current[0].id or 0) + 1, "version": "3.6.1-dev"}
+            update={"id": (current[0].id or 0) + 1, "version": "3.6.1-dev", "logical_version": "3.6.1-dev"}
         )
         assert scheduler._projection_release_identity(
             current[0]
@@ -2350,12 +2331,12 @@ async def test_aggregate_check_correlates_exact_repo_tag_with_same_digest_contai
         assert set(prerelease["aliases"]) == {version, "3.6.0-dev", "3.6-dev", "dev"}
         assert prerelease["digest"] == digest
         current_view = await _build_tracker_current_view(storage, aggregate)
-        artifacts = current_view["matrix"]["rows"][0]["artifacts"]
+        artifacts = [artifact for row in current_view["matrix"]["rows"] for artifact in row["artifacts"]]
         assert len(artifacts) == 1
         assert artifacts[0]["artifact_type"] == "container_image"
         assert artifacts[0]["digest"] == digest
         assert artifacts[0]["version"] in {version, "3.6.0-dev", "3.6-dev", "dev"}
-        assert artifacts[0]["published_at"] == published_at.isoformat()
+        assert artifacts[0]["published_at"] is None
         assert artifacts[0]["aliases"] == ["3.6-dev", "3.6.0-dev", version, "dev"]
         assert artifacts[0]["source_keys"] == ["image"]
         assert notification_events == [NotificationEvent.NEW_RELEASE]
@@ -2384,11 +2365,13 @@ async def test_aggregate_check_correlates_exact_repo_tag_with_same_digest_contai
         republished_view = await _build_tracker_current_view(storage, aggregate)
 
         assert republished_status.last_version == version
-        assert len(republished_history) == 1
-        assert republished_history[0].artifact_digest == republished_digest
+        assert len(republished_history) == 2
+        assert {item.artifact_digest for item in republished_history} == {digest, republished_digest}
+        assert len(republished_current) == 1
         assert republished_current[0].artifact_digest == republished_digest
+        assert any(ref.source_type == "container" and ref.digest == republished_digest for ref in republished_current[0].alias_references)
         assert [
-            artifact["digest"] for artifact in republished_view["matrix"]["rows"][0]["artifacts"]
+            artifact["digest"] for row in republished_view["matrix"]["rows"] for artifact in row["artifacts"]
         ] == [republished_digest]
         image_source = next(source for source in aggregate.sources if source.source_key == "image")
         assert image_source.id is not None

@@ -282,7 +282,7 @@ def _build_release_payload(
     published_display = (
         format_localized_time(release.published_at, timezone)
         if timezone
-        else release.published_at.isoformat()
+        else (release.published_at.isoformat() if release.published_at else None)
     )
 
     return {
@@ -317,7 +317,7 @@ def _build_release_payload(
                     },
                 ],
                 "footer": {"text": labels["event_footer"].format(event=event)},
-                "timestamp": release.published_at.isoformat(),
+                "timestamp": (release.published_at.isoformat() if release.published_at else None),
             }
         ],
     }

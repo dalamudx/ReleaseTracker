@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { ExternalLink, FileText } from "lucide-react"
+import { BookOpen, ExternalLink } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { formatDistanceToNow } from "date-fns"
 import { enUS, zhCN } from "date-fns/locale"
@@ -95,7 +95,7 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
                                 const releaseTypeLabel = releaseChannelLabel
                                     ?? (release.prerelease ? t("channel.prerelease") : t("channel.stable"))
                                 const versionLabel = release.tag_name || release.version
-                                const relativePublished = formatRelative(release.published_at)
+                                const relativePublished = (release.published_at ? formatRelative(release.published_at) : "—")
                                 const linkHref = resolveLinkTarget(release)
 
                                 return (
@@ -137,7 +137,7 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
 
                                         {/* Right: Published time + Actions */}
                                         <div className="flex shrink-0 items-center justify-between gap-1.5 @min-[36rem]/recent:justify-start">
-                                            <span className="text-right text-[11px] tabular-nums text-muted-foreground whitespace-nowrap" title={formatDate(release.published_at)}>
+                                            <span className="text-right text-[11px] tabular-nums text-muted-foreground whitespace-nowrap" title={(release.published_at ? formatDate(release.published_at) : "—")}>
                                                 {relativePublished}
                                             </span>
 
@@ -145,13 +145,13 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
                                                 <Button
                                                     variant="ghost"
                                                     size="icon"
-                                                    disabled={!release.body}
+                                                    disabled={!release.body?.trim()}
                                                     onClick={() => handleViewNotes(release)}
                                                     title={t("dashboard.recentReleases.viewNotes")}
                                                     aria-label={t("dashboard.recentReleases.viewNotes")}
-                                                    className="size-11 @min-[36rem]/recent:size-6"
+                                                    className="size-11 text-foreground disabled:text-muted-foreground @min-[36rem]/recent:size-6"
                                                 >
-                                                    <FileText className="h-3.5 w-3.5" />
+                                                    <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />
                                                 </Button>
                                                 {linkHref ? (
                                                     <Button

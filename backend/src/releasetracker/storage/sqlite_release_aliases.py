@@ -250,12 +250,10 @@ async def get_source_alias_latest_digests(
                 JOIN source_release_history srh
                   ON srh.id = sra.source_release_history_id
                 WHERE sra.tracker_source_id = ?
-                  AND srh.digest IS NOT NULL
-                  AND srh.digest != ''
             )
             SELECT alias, digest
             FROM ranked_aliases
-            WHERE rank = 1
+            WHERE rank = 1 AND digest IS NOT NULL AND digest != ''
             """,
             (tracker_source_id,),
         )

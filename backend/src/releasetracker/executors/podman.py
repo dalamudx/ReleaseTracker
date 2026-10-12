@@ -163,7 +163,7 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
             )
         )
 
-        self._podman_create_arguments(create_kwargs)
+        self._podman_create_arguments(create_kwargs, client=client)
         verify_existing_volumes(client, create_kwargs)
         client.images.pull(new_image)
         from ..services.deployment_diff import verify_update_state
@@ -361,7 +361,7 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
 
         self._validate_snapshot_target_identity(target_ref, snapshot)
         create_config = self._podman_container_create_config(create_config)
-        self._podman_create_arguments(create_config)
+        self._podman_create_arguments(create_config, client=client)
         verify_existing_volumes(client, create_config)
         self._cleanup_replacement_conflict(client, snapshot, create_config)
 
@@ -627,7 +627,7 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
             labels.update(markers)
             create_config["labels"] = labels
         verify_existing_volumes(client, create_config)
-        create_kwargs, payload = self._podman_create_arguments(create_config)
+        create_kwargs, payload = self._podman_create_arguments(create_config, client=client)
 
         api_client = getattr(client, "api", None)
         if api_client is None or not hasattr(api_client, "post"):
@@ -643,7 +643,7 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
             raise RuntimeError("podman create response missing container id")
         return client.containers.get(container_id)
 
-    def _podman_create_arguments(self, create_config):
+    def _podman_create_arguments(self, create_config, *, client=None):
         """Render the exact native body before stopping or deleting anything."""
         from copy import deepcopy
 
@@ -654,6 +654,29 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
             payload, source_named_volume_names=source_named_volume_names
         )
         self._sanitize_podman_final_mount_payload(payload)
+        memory = (payload.get("resource_limits") or {}).get("memory") or {}
+        swappiness = memory.get("swappiness")
+        if client is not None and swappiness is not None:
+            try:
+                info = client.info()
+                host = info.get("host") if isinstance(info, dict) else None
+                cgroup_version = host.get("cgroupVersion") if isinstance(host, dict) else None
+            except Exception as exc:
+                raise ValueError("Cannot determine Podman cgroup version before recreate") from exc
+            if cgroup_version not in {"v1", "v2"}:
+                raise ValueError("Cannot determine Podman cgroup version before recreate")
+            if cgroup_version == "v2":
+                if swappiness != 0:
+                    raise ValueError("Podman memory swappiness is unsupported on cgroupv2")
+                # Native inspect reports zero when unset on cgroupv2, but OCI
+                # rejects even zero if explicitly replayed. Keep inspect evidence
+                # intact; omit only this non-applicable compatibility default.
+                memory.pop("swappiness")
+                create_kwargs.pop("mem_swappiness", None)
+                if not memory:
+                    payload["resource_limits"].pop("memory", None)
+                    if not payload["resource_limits"]:
+                        payload.pop("resource_limits")
         return create_kwargs, payload
 
     def _podman_low_level_create_compatibility_summary(self, client) -> tuple[bool, bool]:

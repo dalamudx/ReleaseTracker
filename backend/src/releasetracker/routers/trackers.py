@@ -5,16 +5,14 @@ from typing import Annotated, Any, Literal
 
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..config import Channel, TrackerConfig
 from ..dependencies import get_current_admin_user, get_scheduler, get_storage
 from ..models import AggregateTracker, Release, TrackerReleaseNotesConfig, TrackerSource
 from ..scheduler import ReleaseScheduler
-from ..executor_scheduler_target_resolution import (
-    _resolve_tracker_latest_target_details_from_storage,
-)
 from ..storage.sqlite import SQLiteStorage
+from ..storage import sqlite_selection
 
 router = APIRouter(prefix="/api/trackers", tags=["trackers"])
 logger = logging.getLogger(__name__)
@@ -31,7 +29,12 @@ class AggregateTrackerPayload(BaseModel):
     release_notes: TrackerReleaseNotesConfig = Field(default_factory=TrackerReleaseNotesConfig)
     sources: Annotated[list[TrackerSource], Field(min_length=1)]
     interval: int = 360
-    version_sort_mode: Literal["published_at", "semver"] = "published_at"
+    version_sort_mode: Literal["semver"] = "semver"
+
+    @field_validator("version_sort_mode", mode="before")
+    @classmethod
+    def migrate_version_sort_mode(cls, value):
+        return "semver" if value == "published_at" else value
     fetch_limit: int = 10
     fetch_timeout: int = 15
     fallback_tags: bool = False
@@ -83,8 +86,9 @@ class AggregateTrackerPayload(BaseModel):
             chart=source_config.get("chart"),
             image=source_config.get("image"),
             registry=source_config.get("registry"),
-            published_at_mode=source_config.get("published_at_mode") or "auto",
             credential_name=selected_source.credential_name,
+            metadata_credential_name=source_config.get("metadata_credential_name"),
+            version_format=source_config.get("version_format", "dotted"),
             interval=self.interval,
             version_sort_mode=self.version_sort_mode,
             fetch_limit=self.fetch_limit,
@@ -229,7 +233,7 @@ async def _load_tracker_history_items(
                 tag_name=item["tag_name"] or item["version"] or item["identity_key"],
                 name=item["name"] or item["tag_name"] or item["version"] or item["identity_key"],
                 url=item["url"] or "",
-                published_at=datetime.fromisoformat(item["published_at"]),
+                published_at=(datetime.fromisoformat(item["published_at"]) if item["published_at"] else None),
                 prerelease=bool(item["prerelease"]),
                 body=item["body"],
                 changelog_url=item["changelog_url"],
@@ -271,23 +275,9 @@ def _source_published_at_provenance(
     published_at: str | None,
     observed_at: str | None,
 ) -> str:
-    explicit = raw_payload.get("published_at_source")
-    if explicit in {"source", "artifact_created", "first_observed"}:
-        return explicit
-    if source_type != "container":
-        return "source"
-
-    # Older container observations predate explicit provenance. Registry fallbacks
-    # were generated close to the collection time; real OCI creation times are
-    # normally materially older. Keep the heuristic API-only for compatibility.
-    try:
-        published = datetime.fromisoformat(str(published_at).replace("Z", "+00:00"))
-        observed = datetime.fromisoformat(str(observed_at).replace("Z", "+00:00"))
-        if abs((published - observed).total_seconds()) <= 3600:
-            return "first_observed"
-    except (TypeError, ValueError):
-        return "first_observed"
-    return "artifact_created"
+    if published_at and raw_payload.get("published_at_source") in {"source", "upstream_release"}:
+        return "upstream_release"
+    return "unknown"
 
 
 async def _load_current_source_contributions(
@@ -363,6 +353,12 @@ async def _load_current_source_contributions(
                 "version": row["version"],
                 "tag_name": row["tag_name"],
                 "published_at": row["published_at"],
+                "artifact_created_at": raw_payload.get("artifact_created_at"),
+                "registry_pushed_at": raw_payload.get("registry_pushed_at"),
+                "registry_created_at": raw_payload.get("registry_created_at"),
+                "registry_modified_at": raw_payload.get("registry_modified_at"),
+                "source_created_at": raw_payload.get("source_created_at"),
+                "first_observed_at": row["first_observed_at"],
                 "published_at_source": _source_published_at_provenance(
                     source_type=row["source_type"],
                     raw_payload=raw_payload,
@@ -411,6 +407,7 @@ def _build_artifact_summaries(
                     else contribution.get("version")
                 ),
                 "published_at": contribution.get("published_at"),
+                **{key: contribution.get(key) for key in ("artifact_created_at", "source_created_at", "registry_pushed_at", "registry_created_at", "registry_modified_at", "first_observed_at")},
                 "aliases": [],
                 "source_keys": [],
             },
@@ -462,27 +459,22 @@ async def _build_container_source_release_channel_current_values(
     for source in tracker.sources:
         if source.source_type != "container" or not source.release_channels:
             continue
-        # Resolve through the same backend path as execution so UI previews cannot
-        # substitute an aggregate or representative alias.
         source_values: dict[str, dict[str, Any]] = {}
+        snapshots = {item["channel_key"]: item for item in await sqlite_selection.snapshots(storage, tracker.id)
+                     if item["tracker_source_id"] == source.id}
         for channel_rank, channel in enumerate(source.release_channels):
-            if not channel.enabled or source.id is None:
+            key = storage._channel_selection_key(channel, channel_rank)
+            snapshot = snapshots.get(key)
+            if not channel.enabled or not snapshot or not snapshot["release_payload"]:
                 continue
-            target = await _resolve_tracker_latest_target_details_from_storage(
-                storage,
-                tracker.name,
-                channel.name,
-                tracker_source_id=source.id,
-                tracker_source_type=source.source_type,
-            )
-            if target is None:
-                continue
-            source_values[storage._channel_selection_key(channel, channel_rank)] = {
-                "last_version": target.deploy_alias,
-                "display_version": target.display_version,
-                "deploy_alias": target.deploy_alias,
-                "digest": target.digest,
-                "aliases": list(target.aliases),
+            release = Release.model_validate_json(snapshot["release_payload"])
+            source_values[key] = {
+                "last_version": release.tag_name,
+                "display_version": release.logical_version or release.version,
+                "deploy_alias": release.tag_name,
+                "digest": release.artifact_digest or release.commit_sha,
+                "aliases": list(release.aliases),
+                "selection_state": snapshot["state"],
             }
         values[source.source_key] = source_values
     return values
@@ -517,11 +509,13 @@ async def _build_tracker_current_view(
     columns = [
         {
             "channel_key": storage._channel_selection_key(channel, channel_rank),
-            "channel_type": channel.type,
-            "enabled": channel.enabled,
+            "channel_name": channel.get("name"),
+            "tracker_source_id": channel.get("tracker_source_id"),
+            "channel_type": channel.get("type"),
+            "enabled": channel.get("enabled", True),
             "channel_rank": channel_rank,
         }
-        for channel_rank, channel in enumerate(runtime_channels)
+        for channel_rank, channel in enumerate(storage.authoritative_release_channels_for_tracker(tracker))
     ]
     enabled_columns = [column for column in columns if column["enabled"]]
 
@@ -561,12 +555,13 @@ async def _build_tracker_current_view(
 
     contributions_by_history_id = await _load_current_source_contributions(
         storage,
-        [row["tracker_release_history_id"] for row in current_rows],
+        [row["tracker_release_history_id"] for row in current_rows if row["tracker_release_history_id"] is not None],
     )
 
     rows: list[dict[str, Any]] = []
     for row in current_rows:
-        selected_channel_keys = channel_keys_by_identity.get(row["identity_key"], [])
+        contributions = row.get("source_contributions") or contributions_by_history_id.get(row["tracker_release_history_id"], [])
+        selected_channel_keys = row.get("channel_keys", channel_keys_by_identity.get(row["identity_key"], []))
         rows.append(
             {
                 "tracker_release_history_id": row["tracker_release_history_id"],
@@ -584,21 +579,12 @@ async def _build_tracker_current_view(
                     if row["primary_source"] is not None
                     else None
                 ),
-                "source_contributions": contributions_by_history_id.get(
-                    row["tracker_release_history_id"], []
-                ),
-                "artifacts": _build_artifact_summaries(
-                    contributions_by_history_id.get(row["tracker_release_history_id"], [])
-                ),
-                "aliases": list(
-                    dict.fromkeys(
-                        alias
-                        for contribution in contributions_by_history_id.get(
-                            row["tracker_release_history_id"], []
-                        )
-                        for alias in contribution.get("aliases", [])
-                    )
-                ),
+                "source_contributions": contributions,
+                "artifacts": _build_artifact_summaries(contributions),
+                "aliases": list(dict.fromkeys(alias for contribution in contributions for alias in contribution.get("aliases", []))),
+                "selection_state": row.get("selection_state", "ready"),
+                "selection_reason": row.get("selection_reason"),
+                "selection_revision": row.get("selection_revision"),
                 "cells": {
                     column["channel_key"]: (
                         {
@@ -625,6 +611,8 @@ async def _build_tracker_current_view(
             "error": tracker_status["error"],
         },
         "latest_release": _serialize_current_summary(latest_summary),
+        "channel_selections": [{key: item[key] for key in ("tracker_source_id", "channel_key", "channel_name", "state", "reason", "revision")}
+            for item in await sqlite_selection.snapshots(storage, tracker.id)],
         "matrix": {
             "columns": columns,
             "rows": rows,

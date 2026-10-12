@@ -30,6 +30,9 @@ HISTORY_TABLES = frozenset(
         "repository_webhooks",
         "webhook_deliveries",
         "source_refresh_requests",
+        "source_current_candidates",
+        "source_inventory_scans",
+        "tracker_channel_selections",
     }
 )
 

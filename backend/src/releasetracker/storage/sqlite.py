@@ -10,7 +10,7 @@ import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
 import aiosqlite
@@ -727,10 +727,8 @@ class SQLiteStorage:
             chart=source_config.get("chart"),
             image=source_config.get("image"),
             registry=source_config.get("registry"),
-            published_at_mode=cast(
-                Literal["auto", "prefer_real", "first_observed"],
-                source_config.get("published_at_mode") or "auto",
-            ),
+            version_format=source_config.get("version_format", "dotted"),
+            metadata_credential_name=source_config.get("metadata_credential_name"),
             credential_name=selected_source.credential_name,
             interval=runtime_config.interval if runtime_config else 360,
             version_sort_mode=(
@@ -763,7 +761,7 @@ class SQLiteStorage:
             version=row["version"],
             app_version=raw_payload.get("appVersion"),
             chart_version=raw_payload.get("chartVersion"),
-            published_at=datetime.fromisoformat(row["published_at"]),
+            published_at=(datetime.fromisoformat(row["published_at"]) if row["published_at"] else None),
             url=row["url"],
             changelog_url=row["changelog_url"],
             prerelease=bool(row["prerelease"]),
@@ -786,7 +784,7 @@ class SQLiteStorage:
             version=row["version"],
             name=row["name"],
             tag_name=row["tag_name"],
-            published_at=datetime.fromisoformat(row["published_at"]),
+            published_at=(datetime.fromisoformat(row["published_at"]) if row["published_at"] else None),
             url=row["url"],
             changelog_url=row["changelog_url"],
             prerelease=bool(row["prerelease"]),
@@ -826,6 +824,9 @@ class SQLiteStorage:
     ) -> None:
         placeholders = ", ".join("?" for _ in removed_source_ids)
 
+        for table in ("tracker_channel_selections", "source_current_candidates", "source_inventory_scans"):
+            if await self._table_exists(table):
+                await db.execute(f"DELETE FROM {table} WHERE tracker_source_id IN ({placeholders})", tuple(removed_source_ids))
         if await self._table_exists("executors"):
             await db.execute(
                 f"UPDATE executors SET tracker_source_id = NULL WHERE tracker_source_id IN ({placeholders})",
@@ -1035,6 +1036,8 @@ class SQLiteStorage:
             content = migration_path.read_text(encoding="utf-8")
             up_section = content.split("-- migrate:down", 1)[0]
             up_sql = up_section.split("-- migrate:up", 1)[1].strip()
+            if up_sql.startswith("transaction:"):
+                up_sql = up_sql.split("\n", 1)[1]
             statements.append((migration_path.name.split("_", 1)[0], up_sql))
         return statements
 
@@ -1083,6 +1086,9 @@ class SQLiteStorage:
             "tracker_release_history",
             "tracker_release_history_sources",
             "tracker_current_releases",
+            "source_current_candidates",
+            "source_inventory_scans",
+            "tracker_channel_selections",
         }
         if not required_tables.issubset(existing_tables):
             return False
@@ -1124,10 +1130,7 @@ class SQLiteStorage:
             normalized_registry = self._normalize_optional_string(config.registry)
             if normalized_registry is not None:
                 source_config["registry"] = normalized_registry
-            # Only persist the mode when it diverges from the default "auto",
-            # so legacy trackers stay clean of the new key.
-            if config.published_at_mode and config.published_at_mode != "auto":
-                source_config["published_at_mode"] = config.published_at_mode
+            source_config["version_format"] = config.version_format
 
         aggregate_tracker = AggregateTracker(
             name=config.name,
@@ -1608,7 +1611,7 @@ class SQLiteStorage:
                 0 if row["source_type"] in {"github", "gitlab", "gitea"} else 1,
                 row["source_rank"],
                 -(
-                    datetime.fromisoformat(row["published_at"]).timestamp()
+                    (datetime.fromisoformat(row["published_at"]) if row["published_at"] else None).timestamp()
                     if row["published_at"]
                     else 0
                 ),
@@ -1644,7 +1647,7 @@ class SQLiteStorage:
             key=lambda row: (
                 row["source_rank"],
                 -(
-                    datetime.fromisoformat(row["published_at"]).timestamp()
+                    (datetime.fromisoformat(row["published_at"]) if row["published_at"] else None).timestamp()
                     if row["published_at"]
                     else 0
                 ),
@@ -1675,7 +1678,7 @@ class SQLiteStorage:
                     0 if row["source_type"] in {"github", "gitlab", "gitea"} else 1,
                     row["source_rank"],
                     -(
-                        datetime.fromisoformat(row["published_at"]).timestamp()
+                        (datetime.fromisoformat(row["published_at"]) if row["published_at"] else None).timestamp()
                         if row["published_at"]
                         else 0
                     ),
@@ -2189,10 +2192,34 @@ class SQLiteStorage:
         channel_identity = cls._channel_identity_for_retention(cls._channel_value(channel, "name"))
         return release_group[1] in {channel_identity, "__default__"}
 
+    @classmethod
+    def _retention_channel_candidate(cls, release, channel, retention_groups, sources_by_id):
+        from ..config import Channel
+        from .sqlite_selection import comparable
+        source_id = cls._channel_value(channel, "tracker_source_id")
+        source = sources_by_id.get(source_id)
+        references = [ref for ref in release.alias_references if source_id is None or ref.tracker_source_id == source_id]
+        if references:
+            candidates = [release.model_copy(update={"tag_name": ref.alias, "version": ref.alias,
+                "tracker_type": source.source_type if source else release.tracker_type,
+                "chart_version": ref.alias if source and source.source_type == "helm" else None,
+                "artifact_digest": ref.digest, "commit_sha": ref.digest,
+                "prerelease": ref.prerelease, "alias_references": [], "aliases": [ref.alias]}) for ref in references]
+        else:
+            group = retention_groups.get(release.id)
+            if source_id is not None and (group is None or group[0] != cls._source_identity_for_retention(tracker_source_id=source_id)):
+                return None
+            candidates = [release]
+        configured = Channel(**channel) if isinstance(channel, dict) else channel
+        matches = [item for item in candidates if cls._release_matches_channel(item, configured,
+            channel_source_type=source.source_type if source else None) and (source is None or comparable(source, item, configured))]
+        return max(matches, key=cls._release_order_key) if matches else None
     async def cleanup_release_history(
         self,
         *,
         retention_count: int | None = None,
+        tracker_name: str | None = None,
+        reclaim: bool = True,
     ) -> dict[str, Any]:
         retention = retention_count or await self.get_release_history_retention_count()
         retention = max(
@@ -2202,6 +2229,8 @@ class SQLiteStorage:
         result: dict[str, Any] = {
             "retention_count": retention,
             "trackers_scanned": 0,
+            "channels": [],
+            "protected_history_count": 0,
             "tracker_release_history_deleted": 0,
             "tracker_release_history_sources_deleted": 0,
             "source_release_history_deleted": 0,
@@ -2212,18 +2241,28 @@ class SQLiteStorage:
         }
 
         aggregate_trackers = await self.get_all_aggregate_trackers()
+        if tracker_name is not None:
+            aggregate_trackers = [tracker for tracker in aggregate_trackers if tracker.name == tracker_name]
         db = await self._get_connection()
         db.row_factory = aiosqlite.Row
+        from .sqlite_retention_protection import protected_artifacts
+        task_history_ids, task_artifacts = await protected_artifacts(self)
 
         for aggregate_tracker in aggregate_trackers:
             if aggregate_tracker.id is None:
                 continue
             result["trackers_scanned"] += 1
+            from .sqlite_retention_merged import prune_merged
+            merged_deleted, merged_protected = await prune_merged(self, aggregate_tracker.id, task_history_ids, task_artifacts)
+            result["tracker_release_history_deleted"] += merged_deleted
+            result["protected_history_count"] += merged_protected
             history_releases = await self.get_tracker_release_history_releases(aggregate_tracker.id)
             if not history_releases:
                 continue
 
             keep_ids: set[int] = set()
+            keep_ids.update(int(release.id) for release in history_releases if release.id is not None
+                and (release.id in task_history_ids or (release.artifact_digest or release.commit_sha) in task_artifacts))
             current_rows = await self._get_tracker_current_projection_rows(aggregate_tracker.id)
             keep_ids.update(
                 int(row["tracker_release_history_id"])
@@ -2231,6 +2270,8 @@ class SQLiteStorage:
                 if row["tracker_release_history_id"] is not None
             )
 
+            quota_ids: set[int] = set()
+            sources_by_id = {source.id: source for source in aggregate_tracker.sources}
             tracker_config = await self.get_tracker_config(aggregate_tracker.name)
             sort_mode = tracker_config.version_sort_mode if tracker_config else "published_at"
             enabled_channels = [
@@ -2244,20 +2285,10 @@ class SQLiteStorage:
             )
             if enabled_channels:
                 for channel in enabled_channels:
-                    channel_source_type = self._channel_value(channel, "source_type")
                     channel_candidates = [
-                        release
+                        candidate
                         for release in history_releases
-                        if self._release_matches_retention_source_channel(
-                            release,
-                            retention_groups,
-                            channel,
-                        )
-                        and self._release_matches_channel(
-                            release,
-                            channel,
-                            channel_source_type=channel_source_type,
-                        )
+                        if (candidate := self._retention_channel_candidate(release, channel, retention_groups, sources_by_id)) is not None
                     ]
                     deduped_releases = self.dedupe_releases_by_immutable_identity(
                         channel_candidates
@@ -2270,6 +2301,11 @@ class SQLiteStorage:
                     keep_ids.update(
                         int(release.id) for release in top_releases if release.id is not None
                     )
+                    retained_ids = {int(release.id) for release in top_releases if release.id is not None}
+                    quota_ids.update(retained_ids)
+                    result["channels"].append({"tracker": aggregate_tracker.name,
+                        "tracker_source_id": channel.get("tracker_source_id"), "channel_key": self._channel_selection_key(channel, 0),
+                        "retained_count": len(retained_ids), "limit": retention})
             else:
                 releases_by_group: dict[tuple[str, str], list[Release]] = {}
                 for release in history_releases:
@@ -2291,6 +2327,7 @@ class SQLiteStorage:
                         int(release.id) for release in top_releases if release.id is not None
                     )
 
+            result["protected_history_count"] += len(keep_ids - quota_ids)
             all_ids = {int(release.id) for release in history_releases if release.id is not None}
             delete_ids = all_ids - keep_ids
             if not delete_ids:
@@ -2337,6 +2374,7 @@ class SQLiteStorage:
             )
             result["tracker_release_history_sources_deleted"] += max(cursor.rowcount, 0)
 
+            await db.execute(f"DELETE FROM tracker_current_releases WHERE aggregate_tracker_id=? AND tracker_release_history_id IN ({placeholders})", (aggregate_tracker.id, *delete_ids))
             cursor = await db.execute(
                 f"DELETE FROM tracker_release_history WHERE id IN ({placeholders})",
                 tuple(delete_ids),
@@ -2368,6 +2406,7 @@ class SQLiteStorage:
                                     SELECT MAX(run.id) FROM source_fetch_runs run
                                     WHERE run.tracker_source_id = source_release_history.tracker_source_id
                                       AND run.status = 'success'
+                                    AND NOT EXISTS (SELECT 1 FROM source_inventory_scans i WHERE i.tracker_source_id=source_release_history.tracker_source_id)
                                 )
                           )
                         """,
@@ -2385,6 +2424,8 @@ class SQLiteStorage:
                         tuple(orphan_source_ids),
                     )
                     result["source_release_run_observations_deleted"] += max(cursor.rowcount, 0)
+                    await db.execute(f"DELETE FROM source_release_alias_run_observations WHERE source_release_alias_id IN (SELECT id FROM source_release_aliases WHERE source_release_history_id IN ({orphan_placeholders}))", tuple(orphan_source_ids))
+                    await db.execute(f"DELETE FROM source_release_aliases WHERE source_release_history_id IN ({orphan_placeholders})", tuple(orphan_source_ids))
                     cursor = await db.execute(
                         f"DELETE FROM source_release_history WHERE id IN ({orphan_placeholders})",
                         tuple(orphan_source_ids),
@@ -2401,10 +2442,10 @@ class SQLiteStorage:
                 "source_release_run_observations_deleted",
             )
         )
-        reclaim_result = await self.reclaim_sqlite_space_after_history_cleanup(
-            deleted_rows=deleted_rows
-        )
-        result.update(reclaim_result)
+        if reclaim:
+            result.update(await self.reclaim_sqlite_space_after_history_cleanup(deleted_rows=deleted_rows))
+        await self.set_setting("internal.release_history_cleanup_last_result", self._dump_json(result))
+        await self.set_setting("internal.release_history_cleanup_last_success", datetime.now().isoformat())
         return result
 
     async def reclaim_sqlite_space_after_history_cleanup(
@@ -2923,7 +2964,7 @@ class SQLiteStorage:
             1 for release in releases if _normalize_datetime(release.created_at) > yesterday
         )
         latest_update = max(
-            (_normalize_datetime(release.published_at) for release in releases), default=None
+            (_normalize_datetime(release.published_at) for release in releases if release.published_at is not None), default=None
         )
 
         target_tz_name = await self.get_system_timezone()
@@ -2948,6 +2989,8 @@ class SQLiteStorage:
             release_type_stats[release_type] = release_type_stats.get(release_type, 0) + 1
 
             pub_dt = release.published_at
+            if pub_dt is None:
+                continue
             if pub_dt.tzinfo is None:
                 pub_dt = pub_dt.replace(tzinfo=target_tz)
             local_date = pub_dt.astimezone(target_tz).date()
@@ -3010,7 +3053,7 @@ class SQLiteStorage:
             name=row["name"],
             tag_name=row["tag_name"],
             version=row["version"],
-            published_at=datetime.fromisoformat(row["published_at"]),
+            published_at=(datetime.fromisoformat(row["published_at"]) if row["published_at"] else None),
             url=row["url"],
             prerelease=bool(row["prerelease"]),
             body=row["body"],

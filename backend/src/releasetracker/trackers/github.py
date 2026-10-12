@@ -1,6 +1,7 @@
 """GitHub tracker"""
 
 from datetime import datetime
+from ..release_times import parse_time
 
 import httpx
 import logging
@@ -52,7 +53,8 @@ class GitHubTracker(BaseTracker):
             version=tag_name,
             url=item["html_url"],
             prerelease=item.get("prerelease", False),
-            published_at=datetime.fromisoformat(item["published_at"].replace("Z", "+00:00")),
+            published_at=parse_time(item.get("published_at")),
+            published_at_source="upstream_release",
             created_at=datetime.now(),
             body=item.get("body"),
             commit_sha=None,
@@ -134,7 +136,8 @@ class GitHubTracker(BaseTracker):
                 version=item["tagName"],
                 url=item["url"],
                 prerelease=item["isPrerelease"],
-                published_at=datetime.fromisoformat(item["publishedAt"].replace("Z", "+00:00")),
+                published_at=parse_time(item.get("publishedAt")),
+                published_at_source="upstream_release",
                 created_at=datetime.now(),
                 body=body,
                 commit_sha=commit_sha,
@@ -196,7 +199,7 @@ class GitHubTracker(BaseTracker):
             target = item.get("target") or {}
             commit_sha = None
             body = ""
-            published_at = datetime.now()
+            published_at = None
             if target.get("__typename") == "Commit":
                 commit_sha = target.get("oid")
                 body = target.get("message", "")
@@ -222,7 +225,8 @@ class GitHubTracker(BaseTracker):
                 version=tag_name,
                 url=f"https://github.com/{owner}/{name}/releases/tag/{tag_name}",
                 prerelease=False,
-                published_at=published_at,
+                published_at=None,
+                source_created_at=published_at,
                 created_at=datetime.now(),
                 body=body,
                 commit_sha=commit_sha,
@@ -234,7 +238,7 @@ class GitHubTracker(BaseTracker):
 
     async def _fetch_rest_tag_commit(
         self, client: httpx.AsyncClient, commit_url: str
-    ) -> tuple[str | None, str, datetime]:
+    ) -> tuple[str | None, str, datetime | None]:
         response = await client.get(commit_url, headers=self._get_headers(), timeout=15.0)
         response.raise_for_status()
         data = response.json()
@@ -245,7 +249,7 @@ class GitHubTracker(BaseTracker):
             (
                 datetime.fromisoformat(committed_date.replace("Z", "+00:00"))
                 if committed_date
-                else datetime.now()
+                else None
             ),
         )
 
@@ -297,7 +301,7 @@ class GitHubTracker(BaseTracker):
             tag_name = item.get("name")
             commit_sha = item.get("commit", {}).get("sha")
             body = ""
-            published_at = datetime.now()
+            published_at = None
             commit_url = item.get("commit", {}).get("url")
             if commit_url:
                 try:
@@ -314,7 +318,8 @@ class GitHubTracker(BaseTracker):
                 version=tag_name,
                 url=f"https://github.com/{owner}/{name}/releases/tag/{tag_name}",
                 prerelease=False,
-                published_at=published_at,
+                published_at=None,
+                source_created_at=published_at,
                 created_at=datetime.now(),
                 body=body,
                 commit_sha=commit_sha,

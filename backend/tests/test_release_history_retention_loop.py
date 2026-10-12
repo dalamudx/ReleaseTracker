@@ -110,7 +110,8 @@ async def test_retention_does_not_cause_refetch_churn_or_false_changes(storage, 
     assert (await fetch(storage, handler, queue, tracker.name))["state"] == "no_change"
 
     cleanup = await storage.cleanup_release_history()
-    assert cleanup["tracker_release_history_deleted"] > 0
+    assert cleanup["tracker_release_history_deleted"] == 0  # Already pruned after the successful fetch.
+    assert (await surface(storage, tracker.id))["tracker_release_history"][0] == 2
     pruned = await surface(storage, tracker.id)
     current = await storage.get_tracker_current_releases(tracker.id)
 

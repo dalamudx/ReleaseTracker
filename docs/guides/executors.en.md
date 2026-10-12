@@ -50,7 +50,9 @@ Helm releases do not use these fields; they select chart versions. A matching Gi
 
 ## Automatic version limits {#version-policy}
 
-Choose no limit (default), minor-and-patch only, or patch only. The latter two compare running and target versions as stable SemVer: changes outside the limit, downgrades, prereleases, and tags/digests that cannot be mapped to a version go to [deployment plan approval](#approval) without spending retries. Containers use image tags; Helm uses chart versions, not appVersion; groups compare bound services only. Paths without a reliable running version, such as SSH Compose, always require approval. Manual deployments are exempt from these limits.
+Choose no limit (default), minor-and-patch only, or patch only. Range checks share target-selection parsing and retain comparable legacy formats; prereleases still need review. Out-of-range changes go to [deployment plan approval](#approval) without spending retries. **Every policy and manual trigger requires explicit approval for downgrades or unknown direction.** No limit allows major upgrades, not unattended downgrades. Containers use running image tags; Helm uses chart versions, not appVersion; groups compare bound services only. Missing reliable running versions always require approval. Manual initiation bypasses upgrade-range limits, not direction checks. A changed digest under one tag is an artifact change, not necessarily an upgrade.
+
+After selection rules change, old tasks retain their original targets but cannot reuse old approval to execute. Review the new target and create a new task; an approved target is never silently replaced.
 
 ## Deployment plan approval {#approval}
 

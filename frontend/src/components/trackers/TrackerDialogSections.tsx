@@ -283,6 +283,26 @@ export function TrackerDialogTrackerChannelsSection({
                                 <div className={channelType === "container" ? "grid items-start gap-4 md:grid-cols-3" : "grid items-start gap-4 md:grid-cols-2"}>
                                     <TrackerDialogSourceConfigFields form={form} index={index} channelType={channelType} group="primary" />
                                     <TrackerDialogSourceConfigFields form={form} index={index} channelType={channelType} group="secondary" />
+                                    {channelType === "container" ? (
+                                        <FormField control={form.control} name={`sources.${index}.source_config.metadata_credential_name`}
+                                            render={({ field }) => (
+                                                <FormItem className="w-full">
+                                                    <FormLabel>{t("tracker.fields.registryMetadataCredential")}</FormLabel>
+                                                    <Select value={field.value || "none"} onValueChange={(value) => field.onChange(value === "none" ? "" : value)}>
+                                                        <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                                                        <SelectContent>
+                                                            <SelectItem value="none">{t("trackers.aggregate.fields.none")}</SelectItem>
+                                                            {credentialOptions.map((credential) => (
+                                                                <SelectItem key={credential.id} value={credential.name}>{credential.name} ({getCredentialTypeLabel(t, credential.type)})</SelectItem>
+                                                            ))}
+                                                        </SelectContent>
+                                                    </Select>
+                                                    <FormDescription>{t("tracker.fields.registryMetadataCredentialHelp")}</FormDescription>
+                                                    <FormMessage />
+                                                </FormItem>
+                                            )}
+                                        />
+                                    ) : null}
                                 </div>
                             </div>
 
@@ -770,27 +790,6 @@ export function TrackerDialogFetchingSection({ form }: TrackerDialogFetchingSect
                     )}
                 />
 
-                <FormField
-                    control={form.control}
-                    name="version_sort_mode"
-                    render={({ field }) => (
-                        <FormItem className="w-full max-w-sm">
-                            <FormLabel>{t("tracker.fields.versionSortMode")}</FormLabel>
-                            <Select value={field.value} onValueChange={(value) => field.onChange(value as "published_at" | "semver")}>
-                                <FormControl>
-                                    <SelectTrigger>
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                    <SelectItem value="published_at">{t("tracker.fields.sortModePublished")}</SelectItem>
-                                    <SelectItem value="semver">{t("tracker.fields.sortModeSemVer")}</SelectItem>
-                                </SelectContent>
-                            </Select>
-                            <FormMessage />
-                        </FormItem>
-                    )}
-                />
 
                 <FormField
                     control={form.control}

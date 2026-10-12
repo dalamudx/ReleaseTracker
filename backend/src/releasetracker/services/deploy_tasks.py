@@ -160,7 +160,10 @@ class DeployTasks:
             base_key = f"desired:{executor_id}:{desired_revision}:{identity}"
             retries = await self._pre_mutation_failures(base_key)
             trigger_key = base_key if retries == 0 else f"{base_key}:retry{retries}"
+        from ..versioning import SELECTION_RULES_VERSION
+
         payload = {
+            "selection_revision": SELECTION_RULES_VERSION,
             "executor_id": executor_id,
             "manual": manual,
             "auto_update_policy": executor.auto_update_policy,

@@ -15,6 +15,8 @@ APPROVABLE = frozenset(
         "marker_missing",
         "configuration_drift",
         "version_policy_requires_approval",
+        "version_downgrade_requires_approval",
+        "version_unknown_requires_approval",
         "manual_update_review",
     }
 )
@@ -183,13 +185,18 @@ class DeploymentAdmissionStore:
                 reason = "configuration_drift"
 
             policy_reason = version_policy_reason(task, evidence)
-            if policy_reason and reason is None:
+            if policy_reason and reason in {None, "unmanaged", "configuration_drift"}:
                 reason = policy_reason
             if evidence.configuration_diff is not None:
                 if evidence.configuration_diff.get("truncated"):
                     reason = "configuration_diff_incomplete"
                 elif task["payload"].get("manual") and reason is None:
                     reason = "manual_update_review"
+
+            from ..versioning import SELECTION_RULES_VERSION
+
+            if task["payload"].get("selection_revision") != SELECTION_RULES_VERSION:
+                reason = "selection_rules_changed"
 
             old = await (
                 await db.execute(

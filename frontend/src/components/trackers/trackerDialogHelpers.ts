@@ -4,7 +4,6 @@ import type {
     AggregateTracker,
     ChangelogExtractionMode,
     ChangelogRefStrategy,
-    ContainerPublishedAtMode,
     CreateTrackerRequest,
     GitHubFetchMode,
     ReleaseChannelInput,
@@ -31,8 +30,10 @@ export interface TrackerFormSource {
         chart?: string
         image?: string
         registry?: string
+        metadata_credential_name?: string
+
+        version_format?: "dotted" | "pep440"
         fetch_mode?: GitHubFetchMode
-        published_at_mode?: ContainerPublishedAtMode
     }
     release_channels: ReleaseChannelInput[]
     source_rank: number
@@ -159,7 +160,7 @@ export function createDefaultValues(): TrackerFormValues {
         release_notes: createDefaultReleaseNotes(),
         sources: [createDefaultSource(0)],
         interval: 360,
-        version_sort_mode: "published_at",
+        version_sort_mode: "semver",
         fetch_limit: 10,
         fetch_timeout: 15,
         fallback_tags: false,
@@ -186,11 +187,9 @@ export function normalizeSourceForForm(source: AggregateTracker["sources"][numbe
             chart: source.source_config?.chart ?? source.channel_config?.chart ?? "",
             image: source.source_config?.image ?? source.channel_config?.image ?? "",
             registry: source.source_config?.registry ?? source.channel_config?.registry ?? "",
+            metadata_credential_name: source.source_config?.metadata_credential_name ?? source.channel_config?.metadata_credential_name ?? "",
+            version_format: source.source_config?.version_format === "pep440" ? "pep440" : source.source_config?.version_format === "dotted" ? "dotted" : undefined,
             fetch_mode: source.source_config?.fetch_mode ?? source.channel_config?.fetch_mode ?? undefined,
-            published_at_mode:
-                source.source_config?.published_at_mode
-                ?? source.channel_config?.published_at_mode
-                ?? undefined,
         },
     }
 }
@@ -229,7 +228,7 @@ export function buildTrackerFormValues(trackerData: AggregateTracker): TrackerFo
         },
         sources: trackerData.sources.map(normalizeSourceForForm),
         interval: trackerData.interval,
-        version_sort_mode: trackerData.version_sort_mode,
+        version_sort_mode: "semver",
         fetch_limit: trackerData.fetch_limit,
         fetch_timeout: trackerData.fetch_timeout,
         fallback_tags: trackerData.fallback_tags,
@@ -388,20 +387,13 @@ export function buildSanitizedSourceConfig(source: TrackerFormSource): TrackerFo
                 repo: trimOrUndefined(source.source_config.repo),
                 chart: trimOrUndefined(source.source_config.chart),
             }
-        case "container": {
-            const normalizedMode =
-                source.source_config.published_at_mode === "prefer_real"
-                || source.source_config.published_at_mode === "first_observed"
-                    ? source.source_config.published_at_mode
-                    : undefined
+        case "container":
             return {
                 image: trimOrUndefined(source.source_config.image),
                 registry: trimOrUndefined(source.source_config.registry),
-                // Only send when the user picks something other than "auto" so
-                // legacy trackers round-trip without extra keys.
-                ...(normalizedMode ? { published_at_mode: normalizedMode } : {}),
+                metadata_credential_name: trimOrUndefined(source.source_config.metadata_credential_name),
+                ...(source.source_config.version_format ? { version_format: source.source_config.version_format } : {}),
             }
-        }
     }
 }
 
@@ -550,7 +542,7 @@ export function buildTrackerPayload(values: TrackerFormValues, effectivePrimaryS
         sources,
         channels: sources.flatMap((source) => source.release_channels),
         interval: values.interval,
-        version_sort_mode: values.version_sort_mode,
+        version_sort_mode: "semver",
         fetch_limit: values.fetch_limit,
         fetch_timeout: values.fetch_timeout,
         fallback_tags: values.fallback_tags,

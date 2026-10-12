@@ -83,10 +83,11 @@ def managed_markers(installation_id: str, target_id: str, task_id: int) -> dict[
 def plan_fingerprint(task: dict, evidence: TargetEvidence) -> str:
     return fingerprint(
         {
-            "schema": 1,
+            "schema": 2,
             "task_id": task["id"],
             "config_identity": task["payload"]["config_identity"],
             "targets": task["payload"].get("targets", []),
+            "selection_revision": task["payload"].get("selection_revision"),
             "version_policy": task["payload"].get("auto_update_policy", "all"),
             "policy_bindings": task["payload"].get("policy_bindings", []),
             "identity": evidence.identity_key,
@@ -101,7 +102,9 @@ def plan_fingerprint(task: dict, evidence: TargetEvidence) -> str:
 
 def public_summary(task: dict, evidence: TargetEvidence) -> dict:
     """Allowlist, not redaction: never expose runtime config, URLs or env values."""
+    from .version_policy import version_policy_reason
     return {
+        "version_policy_reason": version_policy_reason(task, evidence),
         "schema": 1,
         "target_label": task["target_label"],
         "identity_key": evidence.identity_key,

@@ -39,7 +39,7 @@ def task(policy="patch", after="1.2.4", manual=False):
         ("minor", "latest", "1.3.0", False),
         ("minor", "1.2.3", "1.3.0-beta.1", False),
         ("patch", "1.2.3", "latest", False),
-        ("all", "latest", "latest", True),
+        ("all", "latest", "latest", False),
     ],
 )
 @pytest.mark.parametrize("recovery", ["container_config", "helm_revision"])
@@ -106,7 +106,7 @@ async def test_version_policy_survives_create_update_and_default(storage):
 @pytest.mark.asyncio
 async def test_managed_baseline_still_requires_major_approval(storage):
     store = DeploymentAdmissionStore(storage)
-    payload = task("minor", "2.0.0")["payload"] | {"executor_id": 1, "config_identity": "config"}
+    payload = task("minor", "2.0.0")["payload"] | {"executor_id": 1, "config_identity": "config", "selection_revision": 3}
     queued = await storage.tasks.enqueue(
         kind="deploy",
         resource_key="deployment-mutations",

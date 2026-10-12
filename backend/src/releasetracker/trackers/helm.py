@@ -1,6 +1,7 @@
 """Helm Chart tracker"""
 
 from datetime import datetime
+from ..versioning import release_order_key
 
 import httpx
 import yaml
@@ -59,8 +60,8 @@ class HelmTracker(BaseTracker):
             chart_versions = data["entries"][self.chart]
             releases = [self._parse_chart_version(item) for item in chart_versions]
 
-            # Sort by time
-            releases.sort(key=lambda r: r.published_at, reverse=True)
+            # Select by Chart version before truncating the fetch window.
+            releases.sort(key=release_order_key, reverse=True)
 
             return [r for r in releases if self._should_include(r)][:limit]
 
@@ -76,9 +77,9 @@ class HelmTracker(BaseTracker):
             try:
                 published_at = datetime.fromisoformat(created.replace("Z", "+00:00"))
             except (ValueError, AttributeError):
-                published_at = datetime.now()
+                published_at = None
         else:
-            published_at = datetime.now()
+            published_at = None
 
         return Release(
             tracker_name=self.name,
@@ -88,7 +89,8 @@ class HelmTracker(BaseTracker):
             version=app_version,
             app_version=app_version,
             chart_version=chart_version,
-            published_at=published_at,
+            published_at=None,
+            source_created_at=published_at,
             url=self.repo,
             prerelease=("-" in app_version)
             or ("alpha" in app_version)

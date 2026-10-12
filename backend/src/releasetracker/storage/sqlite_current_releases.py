@@ -64,7 +64,7 @@ async def refresh_tracker_current_releases(
                 history_row["id"],
                 release.name,
                 release.tag_name,
-                release.published_at.isoformat(),
+                (release.published_at.isoformat() if release.published_at else None),
                 release.url,
                 release.changelog_url,
                 1 if release.prerelease else 0,
@@ -74,6 +74,12 @@ async def refresh_tracker_current_releases(
             ),
         )
 
+    if await storage._table_exists("tracker_channel_selections"):
+        from . import sqlite_selection
+        row = await (await db.execute("SELECT name FROM aggregate_trackers WHERE id=?", (aggregate_tracker_id,))).fetchone()
+        tracker = await storage.get_aggregate_tracker(row[0]) if row else None
+        if tracker is not None:
+            await sqlite_selection.refresh_selections(storage, tracker, commit=False)
     if commit:
         await db.commit()
 
@@ -121,7 +127,7 @@ async def _get_tracker_current_projection_rows_by_aggregate_tracker_id(
                 "identity_key": row["identity_key"],
                 "version": row["version"],
                 "digest": row["digest"],
-                "published_at": datetime.fromisoformat(row["published_at"]),
+                "published_at": (datetime.fromisoformat(row["published_at"]) if row["published_at"] else None),
                 "name": row["name"],
                 "tag_name": row["tag_name"],
                 "prerelease": bool(row["prerelease"]),
@@ -147,7 +153,7 @@ async def _get_tracker_current_projection_rows_by_aggregate_tracker_id(
                     version=row["version"],
                     app_version=raw_payload.get("appVersion"),
                     chart_version=raw_payload.get("chartVersion"),
-                    published_at=datetime.fromisoformat(row["published_at"]),
+                    published_at=(datetime.fromisoformat(row["published_at"]) if row["published_at"] else None),
                     url=row["url"],
                     changelog_url=row["changelog_url"],
                     prerelease=bool(row["prerelease"]),
@@ -172,6 +178,11 @@ async def get_tracker_current_releases(
 async def _get_tracker_current_projection_rows(
     storage: "SQLiteStorage", aggregate_tracker_id: int
 ) -> list[dict[str, Any]]:
+    if await storage._table_exists("tracker_channel_selections"):
+        from . import sqlite_selection
+        selected = await sqlite_selection.current_rows(storage, aggregate_tracker_id)
+        if selected is not None:
+            return selected
     db = await storage._get_connection()
     db.row_factory = aiosqlite.Row
     rows = await (
@@ -205,7 +216,7 @@ async def _get_tracker_current_projection_rows(
                 "identity_key": row["identity_key"],
                 "version": row["version"],
                 "digest": row["digest"],
-                "published_at": datetime.fromisoformat(row["published_at"]),
+                "published_at": (datetime.fromisoformat(row["published_at"]) if row["published_at"] else None),
                 "name": row["name"],
                 "tag_name": row["tag_name"],
                 "prerelease": bool(row["prerelease"]),
@@ -231,7 +242,7 @@ async def _get_tracker_current_projection_rows(
                     version=row["version"],
                     app_version=raw_payload.get("appVersion"),
                     chart_version=raw_payload.get("chartVersion"),
-                    published_at=datetime.fromisoformat(row["published_at"]),
+                    published_at=(datetime.fromisoformat(row["published_at"]) if row["published_at"] else None),
                     url=row["url"],
                     changelog_url=row["changelog_url"],
                     prerelease=bool(row["prerelease"]),
@@ -301,6 +312,11 @@ async def get_tracker_current_release_rows(
     if aggregate_tracker is None or aggregate_tracker.id is None:
         return []
 
+    if await storage._table_exists("tracker_channel_selections"):
+        from . import sqlite_selection
+        selected = await sqlite_selection.current_rows(storage, aggregate_tracker.id)
+        if selected is not None:
+            return selected
     current_rows = await storage._get_tracker_current_projection_rows(aggregate_tracker.id)
     tracker_config = await storage.get_tracker_config(tracker_name)
     channels = tracker_config.channels if tracker_config is not None else []
@@ -418,6 +434,15 @@ async def get_tracker_current_release_rows_for_aggregate_trackers(
     runtime_configs: dict[str, Any],
 ) -> dict[str, list[dict[str, Any]]]:
     """Return channel-visible current rows for every tracker in a loaded page."""
+    if await storage._table_exists("tracker_channel_selections"):
+        from . import sqlite_selection
+        result = {}
+        for tracker in trackers:
+            selected = await sqlite_selection.current_rows(storage, tracker.id)
+            if selected is None:
+                selected = await storage._get_tracker_current_projection_rows(tracker.id)
+            result[tracker.name] = selected
+        return result
     tracker_ids = [tracker.id for tracker in trackers if tracker.id is not None]
     projections_by_id = await storage._get_tracker_current_projection_rows_by_aggregate_tracker_id(
         tracker_ids

@@ -1,6 +1,7 @@
 """Gitea tracker"""
 
 from datetime import datetime
+from ..release_times import parse_time
 
 import httpx
 import logging
@@ -130,11 +131,11 @@ class GiteaTracker(BaseTracker):
         prerelease = data.get("prerelease", False)
 
         # Published time
-        published_at_str = data.get("published_at") or data.get("created_at")
+        published_at_str = data.get("published_at")
         if published_at_str:
-            published_at = datetime.fromisoformat(published_at_str.replace("Z", "+00:00"))
+            published_at = parse_time(published_at_str)
         else:
-            published_at = datetime.now()
+            published_at = None
 
         # Commit SHA（read from target_commitish）
         commit_sha = data.get("target_commitish")
@@ -146,6 +147,7 @@ class GiteaTracker(BaseTracker):
             tag_name=tag_name,
             version=tag_name,
             published_at=published_at,
+            published_at_source="upstream_release",
             url=f"{self.instance}/{self.repo}/releases/tag/{tag_name}",
             prerelease=prerelease,
             body=data.get("body"),
@@ -166,9 +168,9 @@ class GiteaTracker(BaseTracker):
             try:
                 published_at = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
             except ValueError:
-                published_at = datetime.now()
+                published_at = None
         else:
-            published_at = datetime.now()
+            published_at = None
 
         return Release(
             tracker_name=self.name,
@@ -176,7 +178,8 @@ class GiteaTracker(BaseTracker):
             name=tag_name,
             tag_name=tag_name,
             version=tag_name,
-            published_at=published_at,
+            published_at=None,
+            source_created_at=published_at,
             url=f"{self.instance}/{self.repo}/src/tag/{tag_name}",
             prerelease=False,  # Tags do not indicate prerelease status, so default to stable releases
             body=None,

@@ -49,6 +49,8 @@ const queries = vi.hoisted(() => {
     digest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     version: "1.2.3",
     published_at: "2026-09-15T00:00:00Z",
+    registry_created_at: "2026-10-11T13:15:24Z",
+    registry_modified_at: "2026-10-12T13:15:24Z",
     aliases: ["1.2.3", "gamma", "stable", "zeta"],
     source_keys: ["container"],
   }
@@ -143,6 +145,12 @@ describe("TrackerDetail grouped artifact table", () => {
     expect(table.parentElement).toHaveClass("overflow-hidden")
     expect(screen.getByText("trackers.aggregate.detail.artifactTable.source")).toBeInTheDocument()
     expect(screen.getByText("trackers.aggregate.detail.artifactTable.version")).toBeInTheDocument()
+    expect(screen.getByText("trackers.aggregate.detail.artifactTable.registryTime")).toBeInTheDocument()
+    const date = table.querySelector("time")
+    expect(date).toHaveTextContent("2026-10-11")
+    expect(date).toHaveAttribute("tabindex", "0")
+    expect(date?.getAttribute("aria-label")).toContain("trackers.aggregate.detail.artifactTable.registered")
+    expect(date?.getAttribute("aria-label")).toContain("trackers.aggregate.detail.artifactTable.modified")
     expect(screen.queryByText("trackers.aggregate.detail.artifactTable.aliases")).not.toBeInTheDocument()
     const artifactVersionCell = screen.getByText("stable").closest("td")
     expect(artifactVersionCell).toHaveTextContent("1.2.3")

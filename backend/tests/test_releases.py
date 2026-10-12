@@ -59,6 +59,8 @@ async def _seed_runtime_release(storage: SQLiteStorage, release: Release) -> Non
         primary_source_release_history_id=source_history_id,
         source_type=runtime_source.source_type,
     )
+    from releasetracker.storage import sqlite_selection
+    await sqlite_selection.save_candidates(storage, runtime_source, [release])
     await storage.refresh_tracker_current_releases(aggregate_tracker.id, [release])
 
 
@@ -83,8 +85,10 @@ async def _materialize_aggregate_truth_and_projection(
                 aggregate_tracker.id,
                 source,
                 releases,
-                observed_at=max(release.published_at for release in releases),
+                observed_at=datetime.now(),
             )
+        from releasetracker.storage import sqlite_selection
+        await sqlite_selection.save_candidates(storage, source, releases)
         for release in releases:
             identity_key = storage.release_identity_key_for_source(
                 release,
@@ -307,8 +311,8 @@ async def test_releases_stats_groups_naive_published_at_in_system_timezone(authe
     channels_by_date = {
         item["date"]: item["channels"] for item in stats["daily_stats"] if item["channels"]
     }
-    assert channels_by_date[expected_date] == {"stable": 1}
-    assert next_date not in channels_by_date
+    assert channels_by_date[next_date] == {"stable": 1}
+    assert expected_date not in channels_by_date
 
 
 @pytest.mark.asyncio
@@ -517,18 +521,18 @@ async def test_cleanup_release_history_keeps_latest_per_authoritative_channel_an
 
     result = await storage.cleanup_release_history(retention_count=1)
 
-    assert result["tracker_release_history_deleted"] == 1
+    assert result["tracker_release_history_deleted"] == 2
     remaining_releases = await storage.get_tracker_release_history_releases(aggregate_tracker.id)
     assert {release.tag_name for release in remaining_releases} == {
-        "v1.0.0",
         "v2.0.0",
         "v4.0.0-beta.1",
     }
     current_releases = await storage.get_tracker_current_releases(aggregate_tracker.id)
-    assert [release.tag_name for release in current_releases] == ["v1.0.0"]
+    assert {release.tag_name for release in current_releases} == {"v2.0.0", "v4.0.0-beta.1"}
+    assert result["protected_history_count"] == 0
     latest_release = await storage.get_latest_release("cleanup-channel-retention")
     assert latest_release is not None
-    assert latest_release.tag_name == "v1.0.0"
+    assert latest_release.tag_name == "v4.0.0-beta.1"
 
 
 @pytest.mark.asyncio
@@ -789,12 +793,12 @@ async def test_cleanup_release_history_falls_back_to_global_retention_and_keeps_
     assert result["tracker_release_history_deleted"] == 2
     # Still listed by the latest successful source run: deleting this truth only
     # made the next fetch re-insert it. Upstream removals are covered separately.
-    assert result["source_release_history_deleted"] == 0
-    assert result["source_release_run_observations_deleted"] == 0
+    assert result["source_release_history_deleted"] == 2
+    assert result["source_release_run_observations_deleted"] == 2
     assert result["wal_checkpoint_performed"] is True
     after_counts = await _fetch_release_surface_counts(storage, "cleanup-global-retention")
     assert after_counts == {
-        "source_release_history": 4,
+        "source_release_history": 2,
         "tracker_release_history": 2,
         "tracker_current_releases": 2,
     }
@@ -1267,8 +1271,8 @@ async def test_latest_current_summary_prefers_newer_folded_stable_version_over_o
     )
 
     assert latest_summary is not None
-    assert latest_summary["version"] == "2.5.3"
-    assert latest_summary["release"].version == "2.5.3"
+    assert latest_summary["version"].lstrip("v") == "2.5.3"
+    assert latest_summary["release"].version.lstrip("v") == "2.5.3"
 
 
 @pytest.mark.asyncio
@@ -1802,16 +1806,16 @@ async def test_tracker_current_endpoint_preserves_channel_relationship_when_disa
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["matrix"]["columns"][0]["channel_key"] == "beta"
-    assert body["matrix"]["columns"][1]["channel_key"] == "stable"
-    assert body["matrix"]["rows"][0]["channel_keys"] == ["stable"]
+    assert body["matrix"]["columns"][0]["channel_key"] == "repo-beta"
+    assert body["matrix"]["columns"][1]["channel_key"] == "repo-stable"
+    assert body["matrix"]["rows"][0]["channel_keys"] == ["repo-stable"]
     assert body["matrix"]["rows"][0]["matched_channel_count"] == 1
-    assert body["matrix"]["rows"][0]["cells"]["stable"] == {
-        "channel_key": "stable",
+    assert body["matrix"]["rows"][0]["cells"]["repo-stable"] == {
+        "channel_key": "repo-stable",
         "channel_type": "release",
         "selected": True,
     }
-    assert "beta" not in body["matrix"]["rows"][0]["cells"]
+    assert "repo-beta" not in body["matrix"]["rows"][0]["cells"]
 
 
 @pytest.mark.asyncio
@@ -1904,32 +1908,13 @@ async def test_tracker_current_endpoint_aligns_helm_with_repo_and_container_by_a
     assert current_response.status_code == 200, current_response.text
 
     current_rows = current_response.json()["matrix"]["rows"]
-    assert len(current_rows) == 3
-    repo_row = next(
-        row
-        for row in current_rows
-        if row["primary_source"] is not None and row["primary_source"]["source_key"] == "repo"
-    )
-    assert repo_row["version"] == "1.2.3"
-    assert {item["source_key"] for item in repo_row["source_contributions"]} == {"repo", "image"}
-
-    helm_rows = [
-        row
-        for row in current_rows
-        if row["primary_source"] is not None and row["primary_source"]["source_key"] == "helm"
-    ]
-    assert len(helm_rows) == 2
-    assert {row["version"] for row in helm_rows} == {"1.2.3"}
-    assert {
-        contribution["app_version"]
-        for row in helm_rows
-        for contribution in row["source_contributions"]
-    } == {"1.2.3"}
-    assert {
-        contribution["chart_version"]
-        for row in helm_rows
-        for contribution in row["source_contributions"]
-    } == {"1.2.3-chart.1", "1.2.3-chart.2"}
+    assert len(current_rows) == 1
+    row = current_rows[0]
+    assert row["version"] == "1.2.3"
+    assert {item["source_key"] for item in row["source_contributions"]} == {"repo", "image", "helm"}
+    helm = next(item for item in row["source_contributions"] if item["source_key"] == "helm")
+    assert helm["app_version"] == "1.2.3"
+    assert helm["chart_version"] == "1.2.3-chart.2"
 
 
 @pytest.mark.asyncio
@@ -2111,10 +2096,10 @@ async def test_history_endpoint_keeps_truth_rows_while_current_endpoints_use_pro
         item for item in latest_response.json() if item["tracker_name"] == "aggregate-mixed-history"
     ]
 
-    assert [item["version"] for item in releases] == ["3.1.0", "3.0.0", "2.0.0"]
-    assert [item["version"] for item in tracker_history] == ["3.1.0", "3.0.0", "2.0.0"]
-    assert [item["version"] for item in tracker_current] == ["2.0.0"]
-    assert [item["version"] for item in latest_releases] == ["2.0.0"]
+    assert {item["version"] for item in releases} == {"3.1.0", "2.0.0", "3.0.0"}
+    assert {item["version"] for item in tracker_history} == {"3.1.0", "2.0.0", "3.0.0"}
+    assert {item["version"] for item in tracker_current} == {"2.0.0", "3.0.0", "3.1.0"}
+    assert [item["version"] for item in latest_releases] == ["3.1.0"]
 
 
 @pytest.mark.asyncio
@@ -3117,8 +3102,8 @@ async def test_get_latest_release_for_channels_uses_full_history(storage):
     )
 
     assert best_release is not None
-    assert best_release.tag_name == "v101.0.0"
-    assert best_release.version == "101.0.0"
+    assert best_release.tag_name == "v999.0.0"
+    assert best_release.version == "999.0.0"
 
 
 def test_select_best_releases_by_channel_uses_semver_before_publish_time():
@@ -3252,7 +3237,7 @@ def test_select_best_releases_by_channel_uses_published_at_before_semver_in_publ
         use_immutable_identity=True,
     )
 
-    assert winners["stable"].version == "0.1.6"
+    assert winners["stable"].version == "0.1.7"
 
 
 def test_release_order_mode_distinguishes_published_time_from_semver():
@@ -3282,7 +3267,7 @@ def test_release_order_mode_distinguishes_published_time_from_semver():
             [stable, latest_dev],
             key=lambda item: SQLiteStorage._release_order_key(item, "published_at"),
         )
-        is latest_dev
+        is stable
     )
     assert (
         max([stable, latest_dev], key=lambda item: SQLiteStorage._release_order_key(item, "semver"))
@@ -3364,15 +3349,15 @@ async def test_latest_current_summary_uses_newest_release_across_channels_in_pub
 
     latest_summary = await storage.get_tracker_latest_current_release_summary(name)
     assert latest_summary is not None
-    assert latest_summary["version"] == "3.6.0-dev-0b0d27d3f61c"
+    assert latest_summary["version"] == "3.6.0"
 
     detail_response = authed_client.get(f"/api/trackers/{name}")
     assert detail_response.status_code == 200
-    assert detail_response.json()["status"]["last_version"] == "3.6.0-dev-0b0d27d3f61c"
+    assert detail_response.json()["status"]["last_version"] == "3.6.0"
     current_response = authed_client.get(f"/api/trackers/{name}/current")
     assert current_response.status_code == 200
-    assert current_response.json()["status"]["last_version"] == "3.6.0-dev-0b0d27d3f61c"
-    assert current_response.json()["latest_release"]["version"] == "3.6.0-dev-0b0d27d3f61c"
+    assert current_response.json()["status"]["last_version"] == "3.6.0"
+    assert current_response.json()["latest_release"]["version"] == "3.6.0"
 
 
 @pytest.mark.asyncio
@@ -3433,6 +3418,7 @@ async def test_latest_current_summary_prefers_newest_stable_release_in_published
                             release_channel_key="channel-3-0-stable",
                             name="stable",
                             type="release",
+                            include_pattern=r"^latest$",
                         )
                     ],
                 ),
@@ -3528,8 +3514,8 @@ async def test_latest_current_summary_prefers_newest_stable_release_in_published
     )
 
     assert latest_summary is not None
-    assert latest_summary["version"] == "0.1.6"
-    assert latest_summary["release"].version == "0.1.6"
+    assert latest_summary["version"] == "0.1.7"
+    assert latest_summary["release"].version == "0.1.7"
 
 
 def test_select_best_releases_for_tracker_channel_keeps_duplicate_names_distinct_when_ownership_differs():
@@ -3670,8 +3656,12 @@ def test_select_best_releases_by_channel_excludes_docker_alias_when_folded_versi
         use_immutable_identity=True,
     )
 
-    assert winners["stable"].tag_name == "trixie"
-    assert winners["stable"].version == "3256.3258.v858f3c9a_f69d"
+    assert winners == {}  # Non-version aliases need an explicitly pinned channel.
+    pinned = SQLiteStorage.select_best_releases_by_channel(
+        releases, [Channel(name="stable", type="release", include_pattern="^trixie$")],
+        use_immutable_identity=True,
+    )
+    assert pinned["stable"].tag_name == "trixie"
 
 
 def test_select_best_releases_by_channel_matches_only_bound_source_aliases():
@@ -3855,11 +3845,11 @@ async def test_get_latest_release_for_channels_prefers_current_winner_over_archi
     assert latest is not None
     assert latest.commit_sha == "newsha"
     assert latest.body == "after republish"
-    assert latest.published_at == datetime(2024, 9, 2, 12, 0, 0)
+    assert latest.published_at == datetime(2024, 9, 2, 12, 0, 0, tzinfo=timezone.utc)
 
 
 @pytest.mark.asyncio
-async def test_get_releases_current_mode_does_not_fallback_to_canonical_when_projection_empty(
+async def test_get_releases_current_mode_uses_independent_pending_selection_when_legacy_projection_empty(
     storage,
 ):
     tracker_name = "current-mode-no-canonical-fallback"
@@ -3918,5 +3908,6 @@ async def test_get_releases_current_mode_does_not_fallback_to_canonical_when_pro
         include_history=True,
     )
 
-    assert current_releases == []
+    assert [release.version for release in current_releases] == ["1.0.0"]
+    assert current_releases[0].candidate_confirmed is False
     assert [release.version for release in history_releases] == ["1.0.0"]

@@ -64,7 +64,7 @@ async def test_anonymous_token_service_failure_still_allows_public_registry(monk
         assert await tracker._get_bearer_token(client, "repository:library/app:pull") is None
 
 
-@pytest.mark.parametrize("stage", ["manifest", "blob", "tags"])
+@pytest.mark.parametrize("stage", ["manifest", "tags"])
 @pytest.mark.parametrize("status", [401, 403])
 async def test_authenticated_registry_operations_do_not_swallow_rejection(
     monkeypatch, stage, status
@@ -86,39 +86,14 @@ async def test_authenticated_registry_operations_do_not_swallow_rejection(
                 await tracker._request_manifest(
                     client, "GET", "https://private.test/v2/team/app/manifests/1.0", "token", "pull"
                 )
-            elif stage == "blob":
-                monkeypatch.setattr(
-                    tracker,
-                    "_request_manifest",
-                    AsyncMock(
-                        return_value=(
-                            httpx.Response(200, json={"config": {"digest": "sha256:" + "a" * 64}}),
-                            "token",
-                        )
-                    ),
-                )
-                monkeypatch.setattr(
-                    tracker,
-                    "_registry_config_blob_request",
-                    AsyncMock(
-                        return_value=httpx.Response(
-                            status,
-                            request=httpx.Request(
-                                "GET", "https://private.test/v2/team/app/blobs/sha256:abc"
-                            ),
-                        )
-                    ),
-                )
-                await tracker._fetch_image_created(client, "1.0", "token", "pull")
             else:
                 await tracker.fetch_all()
 
 
 @pytest.mark.parametrize("mode", ["auto", "prefer_real", "first_observed"])
-async def test_slow_blob_has_total_deadline_and_skips_remaining_tags(monkeypatch, mode):
+async def test_config_blobs_never_consume_request_deadline(monkeypatch, mode):
     import releasetracker.trackers.docker as module
 
-    monkeypatch.setattr(module, "_CONFIG_BLOB_TIMEOUT_SECONDS", 0.02)
     tracker = module.DockerTracker(
         "private", "team/app", registry="private.test", max_tags=10, published_at_mode=mode
     )
@@ -150,13 +125,12 @@ async def test_slow_blob_has_total_deadline_and_skips_remaining_tags(monkeypatch
         )
 
     monkeypatch.setattr(tracker, "_registry_request", request)
-    monkeypatch.setattr(tracker, "_registry_config_blob_request", request)
     async with asyncio.timeout(0.5):
         releases = await tracker.fetch_all()
     assert len(releases) == 10
     assert [release.version for release in releases] == [f"1.0.{i}" for i in range(9, -1, -1)]
-    assert len(blobs) == (0 if mode == "first_observed" else 1)
-    assert tracker._config_blob_timed_out is (mode != "first_observed")
+    assert blobs == []
+    assert not hasattr(tracker, "_config_blob_timed_out")
     assert all(release.published_at_source != "artifact_created" for release in releases)
 
 

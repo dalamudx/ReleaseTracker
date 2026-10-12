@@ -21,7 +21,7 @@ export const isDismissedNotification = (task: QueueTask, dismissed: Readonly<Rec
 
 // Read and dismissed versions are notification-only state. Neither store writes
 // to the queue or modifies the shared query cache. Keep the existing read key.
-function versionStore(key: string) {
+function versionStore(key: string, maxTasks = MAX_TASKS) {
     const eventName = `${key}:changed`
     let cachedRaw: string | null | undefined
     let cached: Readonly<Record<number, number>> = EMPTY
@@ -41,7 +41,7 @@ function versionStore(key: string) {
                         Array.isArray(entry) && entry.length === 2 &&
                         Number.isSafeInteger(entry[0]) && entry[0] > 0 &&
                         typeof entry[1] === "number" && Number.isFinite(entry[1]) && entry[1] >= 0,
-                    ).slice(0, MAX_TASKS)
+                    ).slice(0, maxTasks)
                     cached = Object.fromEntries(entries)
                 }
             }
@@ -80,7 +80,7 @@ function versionStore(key: string) {
         const entries = Object.entries(next)
             .map(([id, updatedAt]) => [Number(id), updatedAt])
             .sort((a, b) => b[1] - a[1] || b[0] - a[0])
-            .slice(0, MAX_TASKS)
+            .slice(0, maxTasks)
         const raw = JSON.stringify({ version: 1, tasks: entries })
         cached = Object.fromEntries(entries)
         cachedRaw = raw
@@ -96,7 +96,8 @@ function versionStore(key: string) {
 }
 
 const readStore = versionStore(TASK_NOTIFICATION_READ_KEY)
-const dismissedStore = versionStore(TASK_NOTIFICATION_DISMISSED_KEY)
+// Dismissal must cover the full queue history, including records beyond the read cap.
+const dismissedStore = versionStore(TASK_NOTIFICATION_DISMISSED_KEY, Infinity)
 const markRead = readStore.remember
 function dismissRead(tasks: readonly QueueTask[]) {
     const read = readStore.getSnapshot()
@@ -104,8 +105,11 @@ function dismissRead(tasks: readonly QueueTask[]) {
         read[task.id] !== undefined && task.updated_at <= read[task.id]))
 }
 
+function dismissAll(tasks: readonly QueueTask[]) {
+    return dismissedStore.remember(tasks.filter(isClearableNotification))
+}
 export function useTaskNotificationRead() {
     const read = useSyncExternalStore(readStore.subscribe, readStore.getSnapshot, () => EMPTY)
     const dismissed = useSyncExternalStore(dismissedStore.subscribe, dismissedStore.getSnapshot, () => EMPTY)
-    return { read, dismissed, markRead, dismissRead }
+    return { read, dismissed, markRead, dismissRead, dismissAll }
 }

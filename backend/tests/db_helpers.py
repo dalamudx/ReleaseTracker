@@ -19,6 +19,8 @@ def iter_dbmate_up_sql(migrations_dir: Path) -> list[tuple[Path, str]]:
         content = migration_path.read_text(encoding="utf-8")
         up_section = content.split("-- migrate:down", 1)[0]
         up_sql = up_section.split("-- migrate:up", 1)[1].strip()
+        if up_sql.startswith("transaction:"):
+            up_sql = up_sql.split("\n", 1)[1]
         statements.append((migration_path, up_sql))
     return statements
 

@@ -1,4 +1,4 @@
-import { Edit, KeyRound, MoreHorizontal, Server, ShieldCheck, Terminal, Trash2 } from "lucide-react"
+import { Boxes, Edit, KeyRound, MoreHorizontal, Plug2, Trash2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { formatDistanceToNow } from "date-fns"
 import { enUS, zhCN } from "date-fns/locale"
@@ -30,29 +30,18 @@ interface CredentialListProps {
     onDelete: (id: number) => void
 }
 
-function getCredentialCategoryBadge(type: ApiCredential["type"], t: ReturnType<typeof useTranslation>["t"]) {
-    if (type === "ssh") {
-        return (
-            <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
-                <Terminal className="h-3 w-3 text-warning" />
-                {t("credentials.categories.ssh")}
-            </span>
-        )
-    }
-    if (type.endsWith("_runtime")) {
-        return (
-            <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
-                <Server className="h-3 w-3 text-info" />
-                {t("credentials.categories.runtime")}
-            </span>
-        )
-    }
-    return (
-        <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
-            <ShieldCheck className="h-3 w-3 text-success" />
-            {t("credentials.categories.tracker")}
-        </span>
-    )
+// Runtime connections and trackers reuse the sidebar icons so the column reads at a glance.
+function getCredentialReferenceGroups(cred: ApiCredential, t: ReturnType<typeof useTranslation>["t"]) {
+    const counts = cred.reference_counts ?? { runtime_connections: cred.runtime_connections_count ?? 0 }
+    return [
+        { key: "runtime", Icon: Plug2, label: t("credentials.references.runtimeConnections"), count: counts.runtime_connections ?? 0 },
+        {
+            key: "trackers",
+            Icon: Boxes,
+            label: t("credentials.references.trackerSources"),
+            count: (counts.aggregate_tracker_sources ?? 0) + (counts.trackers ?? 0),
+        },
+    ].filter((group) => group.count > 0)
 }
 
 export function CredentialList({ credentials, loading, onEdit, onDelete }: CredentialListProps) {
@@ -66,7 +55,7 @@ export function CredentialList({ credentials, loading, onEdit, onDelete }: Crede
                     <TableRow>
                         <TableHead className="min-w-[10rem]">{t("credentials.table.name")}</TableHead>
                         <TableHead className="hidden sm:table-cell">{t("credentials.table.type")}</TableHead>
-                        <TableHead className="hidden text-center sm:table-cell">{t("credentials.table.runtimeConnections")}</TableHead>
+                        <TableHead className="whitespace-nowrap">{t("credentials.table.references")}</TableHead>
                         <TableHead className="hidden md:table-cell">
                             {t("credentials.table.description")}
                         </TableHead>
@@ -93,6 +82,7 @@ export function CredentialList({ credentials, loading, onEdit, onDelete }: Crede
                         </TableRow>
                     ) : (
                         credentials.map((cred) => {
+                            const referenceGroups = getCredentialReferenceGroups(cred, t)
                             return (
                                 <TableRow key={cred.id} className="transition-colors hover:bg-muted/40">
                                     <TableCell className="py-3 align-middle">
@@ -104,18 +94,9 @@ export function CredentialList({ credentials, loading, onEdit, onDelete }: Crede
                                                 <div className="truncate font-medium text-foreground" title={cred.name}>
                                                     {cred.name}
                                                 </div>
-                                                <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                                                    {getCredentialCategoryBadge(cred.type, t)}
-                                                    <Badge variant="outline" className="h-4 px-1.5 text-[9px] sm:hidden">
-                                                        {getCredentialTypeLabel(t, cred.type)}
-                                                    </Badge>
-                                                    {typeof cred.runtime_connections_count === "number" && cred.runtime_connections_count > 0 ? (
-                                                        <span className="inline-flex items-center gap-1 text-[10px] text-info sm:hidden">
-                                                            <Server className="size-3" aria-hidden="true" />
-                                                            {t("credentials.runtimeConnectionsCount", { count: cred.runtime_connections_count })}
-                                                        </span>
-                                                    ) : null}
-                                                </div>
+                                                <Badge variant="outline" className="mt-0.5 h-4 px-1.5 text-[9px] sm:hidden">
+                                                    {getCredentialTypeLabel(t, cred.type)}
+                                                </Badge>
                                             </div>
                                         </div>
                                     </TableCell>
@@ -129,14 +110,23 @@ export function CredentialList({ credentials, loading, onEdit, onDelete }: Crede
                                         </Badge>
                                     </TableCell>
 
-                                    <TableCell className="hidden py-3 text-center align-middle sm:table-cell">
-                                        {typeof cred.runtime_connections_count === "number" && cred.runtime_connections_count > 0 ? (
-                                            <span className="inline-flex items-center gap-1 rounded-full border border-info/30 bg-info/10 px-2 py-0.5 font-mono text-xs font-medium text-info">
-                                                <Server className="h-3 w-3" />
-                                                {cred.runtime_connections_count}
-                                            </span>
+                                    <TableCell className="py-3 align-middle">
+                                        {referenceGroups.length > 0 ? (
+                                            <div className="flex flex-wrap items-center gap-1.5">
+                                                {referenceGroups.map(({ key, Icon, label, count }) => (
+                                                    <span
+                                                        key={key}
+                                                        title={`${label}: ${count}`}
+                                                        aria-label={`${label}: ${count}`}
+                                                        className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/30 px-2 py-0.5 font-mono text-xs font-medium tabular-nums text-foreground"
+                                                    >
+                                                        <Icon className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
+                                                        {count}
+                                                    </span>
+                                                ))}
+                                            </div>
                                         ) : (
-                                            <span className="text-xs text-muted-foreground tabular-nums">0</span>
+                                            <span className="text-xs text-muted-foreground" title={t("credentials.table.noReferences")}>—</span>
                                         )}
                                     </TableCell>
 

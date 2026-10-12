@@ -12,7 +12,7 @@ export interface ReleaseNotesSubject {
     name: string
     tag_name: string
     version: string
-    published_at: string
+    published_at: string | null
     url: string
     changelog_url?: string | null
     prerelease: boolean
@@ -33,6 +33,12 @@ export interface ReleaseArtifactRevision {
     digest: string
     version?: string | null
     published_at?: string | null
+    artifact_created_at?: string | null
+    source_created_at?: string | null
+    registry_pushed_at?: string | null
+    registry_created_at?: string | null
+    registry_modified_at?: string | null
+    first_observed_at?: string | null
     aliases: string[]
     source_keys: string[]
 }
@@ -52,7 +58,7 @@ export interface ReleaseHistoryItem extends ReleaseNotesSubject {
 }
 
 export interface LatestCurrentReleaseSummary extends ReleaseNotesSubject {
-    tracker_release_history_id: number
+    tracker_release_history_id: number | null
     identity_key: string
     digest: string
     primary_source: ReleaseHistoryPrimarySource | null
@@ -61,12 +67,18 @@ export interface LatestCurrentReleaseSummary extends ReleaseNotesSubject {
 }
 
 export interface TrackerCurrentSourceContribution extends ReleaseNotesSubject {
-    source_release_history_id: number
+    source_release_history_id: number | null
     source_key: string
     source_type: TrackerSourceType
     contribution_kind: 'primary' | 'supporting'
     digest: string | null
-    published_at_source?: 'source' | 'artifact_created' | 'first_observed'
+    published_at_source?: 'source' | 'artifact_created' | 'first_observed' | 'upstream_release' | 'unknown'
+    artifact_created_at?: string | null
+    registry_pushed_at?: string | null
+    registry_created_at?: string | null
+    registry_modified_at?: string | null
+    source_created_at?: string | null
+    first_observed_at?: string | null
     app_version?: string | null
     chart_version?: string | null
     observed_at: string
@@ -87,11 +99,11 @@ export interface TrackerCurrentMatrixCell {
 }
 
 export interface TrackerCurrentMatrixRow {
-    tracker_release_history_id: number
+    tracker_release_history_id: number | null
     identity_key: string
     version: string
     digest: string
-    published_at: string
+    published_at: string | null
     matched_channel_count: number
     channel_keys: string[]
     primary_source: ReleaseHistoryPrimarySource | null
@@ -115,6 +127,7 @@ export interface TrackerCurrentView {
         error: string | null
     }
     latest_release: LatestCurrentReleaseSummary | null
+    channel_selections?: Array<{ tracker_source_id: number; channel_key: string; channel_name: string; state: "ready" | "pending" | "conflict" | "empty"; reason: string | null; revision: string }>
     matrix: {
         columns: TrackerCurrentMatrixColumn[]
         rows: TrackerCurrentMatrixRow[]
@@ -149,8 +162,9 @@ export interface TrackerChannel {
         chart?: string
         image?: string
         registry?: string
+        metadata_credential_name?: string
+        version_format?: "dotted" | "pep440"
         fetch_mode?: GitHubFetchMode
-        published_at_mode?: ContainerPublishedAtMode
     }
     release_channels?: ReleaseChannelInput[]
     channel_rank: number
@@ -165,8 +179,9 @@ export interface TrackerChannel {
         chart?: string
         image?: string
         registry?: string
+        metadata_credential_name?: string
+        version_format?: "dotted" | "pep440"
         fetch_mode?: GitHubFetchMode
-        published_at_mode?: ContainerPublishedAtMode
     }
     source_rank?: number
 }
@@ -175,7 +190,6 @@ export interface TrackerChannel {
  * Controls how accurately we try to record a container tag's publish time.
  * See backend/src/releasetracker/trackers/docker.py for the full behaviour.
  */
-export type ContainerPublishedAtMode = "auto" | "prefer_real" | "first_observed"
 
 export interface TrackerReleaseNotesConfig {
     source: ReleaseNotesSource
@@ -281,7 +295,7 @@ export interface CanonicalReleaseObservationSummary {
     app_version?: string | null
     chart_version?: string | null
     tag_name: string
-    published_at: string
+    published_at: string | null
     url: string
 }
 
@@ -291,7 +305,7 @@ export interface CanonicalReleaseItem {
     version: string
     name: string
     tag_name: string
-    published_at: string
+    published_at: string | null
     url: string
     changelog_url?: string | null
     prerelease: boolean
@@ -335,7 +349,7 @@ export interface SourceReleaseObservationItem {
     version: string
     app_version?: string | null
     chart_version?: string | null
-    published_at: string
+    published_at: string | null
     url: string
     changelog_url?: string | null
     prerelease: boolean
@@ -386,6 +400,7 @@ export interface ApiCredential {
     description?: string | null
     created_at: string
     runtime_connections_count?: number
+    reference_counts?: Partial<Record<"runtime_connections" | "aggregate_tracker_sources" | "trackers", number>>
 }
 
 export interface CredentialReferenceItem {

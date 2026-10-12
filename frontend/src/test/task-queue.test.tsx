@@ -19,6 +19,21 @@ function show() {
 beforeEach(async () => { vi.clearAllMocks(); await i18n.changeLanguage("zh") })
 
 describe("persistent task queue", () => {
+    it("returns to the previous cursor page without clearing or changing queue entries", async () => {
+        const tasks = Array.from({ length: 105 }, (_, i) => ({ ...task("succeeded"), id: 105 - i, target_label: `page-${105 - i}` }))
+        vi.mocked(api.getTasks).mockImplementation(async params => tasks.filter(item => !params?.before || item.id < params.before).slice(0, 50))
+        show()
+        await screen.findByText("page-105")
+        fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.older") }))
+        await screen.findByText("page-55")
+        fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.older") }))
+        await screen.findByText("page-5")
+        fireEvent.click(screen.getByRole("button", { name: i18n.t("pagination.previous") }))
+        expect(await screen.findByText("page-55")).toBeVisible()
+        expect(api.getTasks).toHaveBeenLastCalledWith({ state: undefined, before: 56 })
+        expect(api.clearFinishedTasks).not.toHaveBeenCalled()
+    })
+
     it("shows changed-only update diff and refreshes live review without a popup", async () => {
         const pending = { ...task("queued", "deploy"), approval_pending: true }
         vi.mocked(api.getTasks).mockResolvedValue([pending])
@@ -79,6 +94,18 @@ describe("persistent task queue", () => {
         await screen.findByText("nginx-test")
         fireEvent.click(screen.getByRole("button", {name:i18n.t("tasks.details", {id:17})}))
         expect(await screen.findByText(i18n.t("versionPolicy:approval"))).toBeVisible()
+    })
+
+    it("keeps downgrade warnings visible during initial onboarding", async () => {
+        const pending = { ...task("awaiting_approval", "deploy"), approval_pending: true, error_code: "version_downgrade_requires_approval" }
+        vi.mocked(api.getTasks).mockResolvedValue([pending])
+        vi.mocked(api.getTask).mockResolvedValue(pending)
+        vi.mocked(api.getDeploymentPlan).mockResolvedValue({ id: 9, task_id: 17, fingerprint: "downgrade", state: "pending", reason: "initial_management", expires_at: 1789706800, summary: { version_policy_reason: "version_downgrade_requires_approval" } })
+        show()
+        await screen.findByText("nginx-test")
+        fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.details", { id: 17 }) }))
+        expect(await screen.findByText(i18n.t("versionPolicy:downgrade"))).toBeVisible()
+        expect(screen.queryByText(i18n.t("tasks.errors.other"))).not.toBeInTheDocument()
     })
 
     it.each(["zh", "en"])("explains missing images in the task and attempt history (%s)", async (language) => {

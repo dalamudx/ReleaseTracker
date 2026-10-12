@@ -1,3 +1,4 @@
+import hashlib
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -175,6 +176,7 @@ async def seed_docker_release(
         published_at=published_at or datetime(2026, 3, 24, tzinfo=timezone.utc),
         url=f"https://example.com/{version}",
         prerelease=prerelease,
+        commit_sha="sha256:" + hashlib.sha256(f"{tracker_name}:{version}".encode()).hexdigest(),
     )
     aggregate_tracker = await storage.get_aggregate_tracker(tracker_name)
     assert aggregate_tracker is not None
@@ -192,3 +194,6 @@ async def seed_docker_release(
     assert runtime_source is not None
 
     await storage.save_source_observations(aggregate_tracker.id, runtime_source, [release])
+    from releasetracker.storage import sqlite_selection
+    await sqlite_selection.save_candidates(storage, runtime_source, [release], commit=True)
+    await sqlite_selection.refresh_selections(storage, aggregate_tracker)

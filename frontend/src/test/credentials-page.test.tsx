@@ -102,24 +102,25 @@ describe("CredentialsPage Visual & Filter Enhancements", () => {
     expect(screen.getByRole("button", { name: /添加凭证/ })).toBeInTheDocument()
     expect(screen.getByTitle("刷新")).toBeInTheDocument()
 
-    // 表头包含“运行时连接”
-    expect(screen.getByText("运行时连接")).toBeInTheDocument()
+    // 表头为“引用”，不再单列运行时连接
+    expect(screen.getByText("引用")).toBeInTheDocument()
+    expect(screen.queryByText("运行时连接")).not.toBeInTheDocument()
 
-    // 凭证列表内容、用途徽标及被引用的运行时连接数
+    // 名称下方不再显示用途图标标签
     expect(screen.getByText("github-pat")).toBeInTheDocument()
-    expect(screen.getByText("来源服务")).toBeInTheDocument()
+    expect(screen.queryByText("来源服务")).not.toBeInTheDocument()
+    expect(screen.queryByText("主机 SSH")).not.toBeInTheDocument()
 
+    // 引用以图标加数量展示，并提供可读名称
     expect(screen.getByText("k8s-cluster-token")).toBeInTheDocument()
-    expect(screen.getByText("运行时")).toBeInTheDocument()
-    expect(screen.getByText("3")).toBeInTheDocument() // 运行时连接数量展示
+    expect(screen.getByLabelText("运行时连接: 3")).toHaveTextContent("3")
 
     expect(screen.getByText("bastion-ssh")).toBeInTheDocument()
-    expect(screen.getByText("主机 SSH")).toBeInTheDocument()
   })
 
   it("verifies i18n keys for credential filters and table in zh and en locales", () => {
-    expect(zhLocale.credentials.table.runtimeConnections).toBe("运行时连接")
-    expect(enLocale.credentials.table.runtimeConnections).toBe("Runtime Connections")
+    expect(zhLocale.credentials.table.references).toBe("引用")
+    expect(enLocale.credentials.table.references).toBe("References")
 
     expect(zhLocale.credentials.filters.allCategories).toBe("全部用途")
     expect(enLocale.credentials.filters.allCategories).toBe("All categories")

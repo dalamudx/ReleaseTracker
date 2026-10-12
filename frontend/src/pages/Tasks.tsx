@@ -24,7 +24,6 @@ import { api } from "@/api/client"
 import type { QueueTask, TaskState } from "@/api/task-types"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent } from "@/components/ui/card"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
@@ -44,6 +43,7 @@ import { canRecheckReadiness } from "@/lib/readiness"
 
 const states: TaskState[] = [
     "queued",
+    "awaiting_approval",
     "running",
     "retry_wait",
     "succeeded",
@@ -133,6 +133,9 @@ function approvalErrorMessageKey(error: unknown): string {
 function formatApprovalReason(t: (key: string, options?: Record<string, unknown>) => string, reason: string | undefined): string | null {
     if (!reason) return null
     if (reason === "version_policy_requires_approval") return t("versionPolicy:approval")
+    if (reason === "version_downgrade_requires_approval") return t("versionPolicy:downgrade")
+    if (reason === "version_unknown_requires_approval") return t("versionPolicy:unknown")
+    if (reason === "selection_rules_changed") return t("versionPolicy:rulesChanged")
     const reasonMap: Record<string, string> = {
         unmanaged: t("tasks.reasonUnmanaged", { defaultValue: "初次纳管目标" }),
         marker_missing: t("tasks.reasonMarkerMissing", { defaultValue: "缺少纳管标记" }),
@@ -207,31 +210,13 @@ function TaskItem({ task }: { task: QueueTask }) {
 
     const time = (seconds: number) => new Date(seconds * 1000).toLocaleString(i18n.language)
 
-    const getStateClass = (state: TaskState): string | undefined => {
-        switch (state) {
-            case "running":
-                return "border-info/35 bg-info/[0.025]"
-            case "needs_attention":
-            case "failed":
-                return "border-destructive/35 bg-destructive/[0.025]"
-            case "retry_wait":
-                return "border-warning/35 bg-warning/[0.025]"
-            case "succeeded":
-            case "no_change":
-                return "border-success/30 bg-success/[0.02]"
-            default:
-                return undefined
-        }
-    }
 
     const waiting = task.state === "queued" || task.state === "retry_wait"
     const summaryTime = waiting ? task.due_at : task.created_at
 
     return (
-        <Card className={cn("glass-card @container min-w-0 gap-0 py-0 transition-colors hover:border-border/80", getStateClass(task.state))}>
-            <CardContent className="px-3 py-2">
-                <ReadinessSummary result={task.result?.health_check} recheck={task.result?.readiness_recheck} />
-                <ReadinessSummary result={task.result?.health_recheck} recheck />
+        <div className="@container min-w-0 transition-colors hover:bg-muted/30">
+            <div className="px-4 py-3">
                 <Collapsible open={open} onOpenChange={setOpen}>
                     <div data-testid="task-summary" className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 @[760px]:grid-cols-[minmax(0,1fr)_9rem_7rem_13rem_2rem]">
                         <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-2">
@@ -267,10 +252,16 @@ function TaskItem({ task }: { task: QueueTask }) {
                             </Button>
                         </CollapsibleTrigger>
                     </div>
+                    {(task.result?.health_check || task.result?.health_recheck) && (
+                        <div className="mt-2 space-y-1">
+                            <ReadinessSummary result={task.result?.health_check} recheck={task.result?.readiness_recheck} />
+                            <ReadinessSummary result={task.result?.health_recheck} recheck />
+                        </div>
+                    )}
                     <CollapsibleContent>
-                        <div className="mt-2 space-y-3 border-t border-border/60 pt-3">
+                        <div className="mt-3 space-y-3 border-t border-border/60 pt-4">
                             {waiting && <div className="flex items-center gap-1 text-xs text-muted-foreground"><Clock className="size-3" aria-hidden="true" /><time dateTime={new Date(task.created_at * 1000).toISOString()}>{time(task.created_at)}</time></div>}
-                            {task.error_code && <p className="break-words text-xs font-medium text-destructive">{taskErrorLabel(t, task.error_code)}</p>}
+                            {task.error_code && !task.approval_pending && <p className="break-words text-xs font-medium text-destructive">{taskErrorLabel(t, task.error_code)}</p>}
                             {task.message && <p className="whitespace-pre-wrap break-words text-xs text-muted-foreground">{task.message}</p>}
                             {task.state === "needs_attention" && (
                                 <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
@@ -306,6 +297,11 @@ function TaskItem({ task }: { task: QueueTask }) {
                                                     {t("tasks.approvalReason", { reason: formatApprovalReason(t, plan.data.reason) })}
                                                 </p>
                                             ) : null}
+                                            {typeof plan.data.summary.version_policy_reason === "string" && plan.data.summary.version_policy_reason !== plan.data.reason && (
+                                                <p className="font-medium text-warning">
+                                                    {formatApprovalReason(t, plan.data.summary.version_policy_reason)}
+                                                </p>
+                                            )}
                                             <p>{t("tasks.planTarget", { target: plan.data.summary.target_label ?? task.target_label })}</p>
                                             <p className="break-all">{t("tasks.planIdentity", { identity: plan.data.summary.identity_key ?? "—" })}</p>
                                             {plan.data.fingerprint && (
@@ -483,8 +479,8 @@ function TaskItem({ task }: { task: QueueTask }) {
                         </div>
                     </CollapsibleContent>
                 </Collapsible>
-            </CardContent>
-        </Card>
+            </div>
+        </div>
     )
 }
 
@@ -492,6 +488,7 @@ export default function TasksPage() {
     const { t } = useTranslation()
     const [state, setState] = useState("all")
     const [before, setBefore] = useState<number>()
+    const [previousPages, setPreviousPages] = useState<Array<number | undefined>>([])
     const [clearOpen, setClearOpen] = useState(false)
     const cache = useQueryClient()
     const clearTasks = useMutation({
@@ -499,6 +496,7 @@ export default function TasksPage() {
         onSuccess: async ({ cleared }) => {
             setClearOpen(false)
             setBefore(undefined)
+            setPreviousPages([])
             toast.success(t("tasks.cleared", { count: cleared }))
             await cache.invalidateQueries({ queryKey: ["tasks"] })
         },
@@ -517,29 +515,28 @@ export default function TasksPage() {
         <div className="flex h-full min-h-0 flex-col gap-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5">
-                    <h1 className="text-xl font-bold tracking-tight">{t("tasks.title")}</h1>
+                    <h1 className="text-lg font-semibold">{t("tasks.title")}</h1>
                     {tasks.data && (
                         <div className="flex items-center gap-1.5">
                             {activeCount > 0 ? (
                                 <Badge variant="info" className="text-xs gap-1">
                                     <span className="relative flex h-1.5 w-1.5">
-                                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-info-foreground/45" />
                                         <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-info-foreground" />
                                     </span>
                                     {t("tasks.activeTasks", { count: activeCount })}
                                 </Badge>
                             ) : null}
                             <span className="text-xs text-muted-foreground">
-                                {t("tasks.totalTasks", { count: totalCount })}
+                                {t("tasks.pageCount", { count: totalCount })}
                             </span>
                         </div>
                     )}
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2 ml-auto">
+                <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
                     <AlertDialog open={clearOpen} onOpenChange={open => { if (!clearTasks.isPending) setClearOpen(open) }}>
                         <AlertDialogTrigger asChild>
-                            <Button variant="outline" size="sm" className="h-8" disabled={clearTasks.isPending}>
+                            <Button variant="outline" size="sm" disabled={clearTasks.isPending}>
                                 <ListX className="size-3.5" aria-hidden="true" />
                                 {t("tasks.clearFinished")}
                             </Button>
@@ -566,9 +563,10 @@ export default function TasksPage() {
                         onValueChange={(value) => {
                             setState(value)
                             setBefore(undefined)
+                            setPreviousPages([])
                         }}
                     >
-                        <SelectTrigger className="w-40 h-8 text-xs" aria-label={t("tasks.filter")}>
+                        <SelectTrigger size="sm" className="min-w-0 flex-1 sm:w-44 sm:flex-none" aria-label={t("tasks.filter")}>
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -583,53 +581,60 @@ export default function TasksPage() {
 
                     <Button
                         variant="outline"
-                        size="icon"
-                        className="size-8"
+                        size="icon-sm"
                         disabled={tasks.isFetching}
                         onClick={() => void tasks.refetch()}
                         aria-label={t("tasks.refresh")}
                     >
-                        <RefreshCw className={cn("size-3.5", tasks.isFetching && "animate-spin text-primary")} />
+                        <RefreshCw className={cn("size-4", tasks.isFetching && "motion-safe:animate-spin")} />
                     </Button>
                 </div>
             </div>
 
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-                {tasks.isLoading && (
-                    <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-2">
-                        <Spinner className="size-6 text-primary" />
-                        <span className="text-xs">{t("common.loading", { defaultValue: "Loading tasks..." })}</span>
-                    </div>
-                )}
-
-                {tasks.isError && (
-                    <QueryErrorState onRetry={() => void tasks.refetch()} />
-                )}
-
-                {!tasks.isLoading && !tasks.isError && (!tasks.data || tasks.data.length === 0) && (
-                    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/80 p-12 text-center">
-                        <div className="rounded-full bg-muted/60 p-3 text-muted-foreground mb-3">
-                            <Inbox className="size-6" />
+            <div className="glass-card flex min-h-0 flex-1 flex-col rounded-xl">
+                <div className="min-h-0 flex-1 divide-y divide-border/60 overflow-y-auto overscroll-contain" aria-busy={tasks.isFetching}>
+                    {tasks.isLoading && (
+                        <div className="flex flex-col items-center justify-center gap-2 py-12 text-muted-foreground">
+                            <Spinner className="size-6" />
+                            <span className="text-sm">{t("common.loading")}</span>
                         </div>
-                        <p className="text-sm font-medium text-foreground">{t("tasks.empty")}</p>
+                    )}
+                    {tasks.isError && <QueryErrorState onRetry={() => void tasks.refetch()} />}
+                    {!tasks.isLoading && !tasks.isError && (!tasks.data || tasks.data.length === 0) && (
+                        <div className="flex flex-col items-center justify-center gap-3 p-12 text-center">
+                            <Inbox className="size-6 text-muted-foreground" aria-hidden="true" />
+                            <p className="text-sm text-muted-foreground">{t("tasks.empty")}</p>
+                        </div>
+                    )}
+                    {tasks.data?.map((task) => <TaskItem key={task.id} task={task} />)}
+                </div>
+                {(before || tasks.data?.length === 50) && (
+                    <div className="flex flex-none flex-wrap items-center justify-end gap-2 border-t border-border/60 px-4 py-3">
+                        {previousPages.length > 0 && (
+                            <Button variant="outline" size="sm" disabled={tasks.isFetching} onClick={() => {
+                                setBefore(previousPages[previousPages.length - 1])
+                                setPreviousPages(previous => previous.slice(0, -1))
+                            }}>
+                                {t("pagination.previous")}
+                            </Button>
+                        )}
+                        {before && (
+                            <Button variant="outline" size="sm" disabled={tasks.isFetching} onClick={() => {
+                                setBefore(undefined)
+                                setPreviousPages([])
+                            }}>
+                                {t("tasks.latest")}
+                            </Button>
+                        )}
+                        {tasks.data?.length === 50 && (
+                            <Button variant="outline" size="sm" disabled={tasks.isFetching} onClick={() => {
+                                setPreviousPages(previous => [...previous, before])
+                                setBefore(tasks.data?.[tasks.data.length - 1]?.id)
+                            }}>
+                                {t("tasks.older")}
+                            </Button>
+                        )}
                     </div>
-                )}
-
-                {tasks.data?.map((task) => (
-                    <TaskItem key={task.id} task={task} />
-                ))}
-            </div>
-
-            <div className="flex justify-end gap-2 pt-1">
-                {before && (
-                    <Button variant="outline" size="sm" onClick={() => setBefore(undefined)}>
-                        {t("tasks.latest")}
-                    </Button>
-                )}
-                {tasks.data?.length === 50 && (
-                    <Button variant="outline" size="sm" onClick={() => setBefore(tasks.data?.[tasks.data.length - 1]?.id)}>
-                        {t("tasks.older")}
-                    </Button>
                 )}
             </div>
         </div>

@@ -5,6 +5,7 @@ import time
 from dataclasses import replace
 
 import pytest
+from releasetracker.versioning import SELECTION_RULES_VERSION
 
 from releasetracker.services.deployment_admission_notifications import (
     DeploymentAdmissionNotificationOutbox,
@@ -26,6 +27,7 @@ def evidence(**overrides):
                 "target_identity": "service-a",
                 "configuration": {
                     "image": "registry.example.test/team/service-a:1.0.0",
+                    "current_image": "registry.example.test/team/service-a:1.0.0",
                     "env": ["PASSWORD=fictional-only"],
                 },
                 "markers": ({},),
@@ -46,7 +48,7 @@ async def task(storage, executor_id=1):
         max_retries=0,
         payload={
             "executor_id": executor_id,
-            "config_identity": "synthetic-config",
+            "config_identity": "synthetic-config", "selection_revision": SELECTION_RULES_VERSION,
             "targets": [{"target": ["1.1.0", "sha256:" + "a" * 64]}],
         },
     )

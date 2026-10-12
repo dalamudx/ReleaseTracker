@@ -161,7 +161,7 @@ def verify_existing_volumes(client, config):
             ) from None
 
 
-def configuration_projection(adapter, config):
+def configuration_projection(adapter, config, *, client=None):
     """Compare effective creation semantics, not inspect IDs/counters or spellings."""
     import json
     from ..services.deployment_plan import MARKER_KEYS
@@ -179,7 +179,7 @@ def configuration_projection(adapter, config):
             value.pop(field, None)
     if adapter.runtime_connection.type == "podman":
         value["image"] = "comparison-only"
-        _, value = adapter._podman_create_arguments(value)
+        _, value = adapter._podman_create_arguments(value, client=client)
         value.pop("image", None)
         value.pop("pod", None)
     # Mount and option ordering is irrelevant; argv ordering is not.
@@ -212,8 +212,8 @@ def verify_created_configuration(adapter, container, expected):
             )
         expected = deepcopy(expected)
         expected["labels"] = {**(expected.get("labels") or {}), **markers}
-    observed = configuration_projection(adapter, actual)
-    reviewed = configuration_projection(adapter, expected)
+    observed = configuration_projection(adapter, actual, client=client)
+    reviewed = configuration_projection(adapter, expected, client=client)
     if observed != reviewed:
         # Only fixed top-level field names, never values or nested secret keys.
         fields = sorted(

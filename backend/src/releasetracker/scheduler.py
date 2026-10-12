@@ -60,6 +60,8 @@ class ReleaseScheduler(
             provider: asyncio.Semaphore(limit)
             for provider, limit in MAX_CONCURRENT_FETCHES_PER_PROVIDER.items()
         }
+        self._container_selection_probe_state: dict[int, tuple[tuple[str, str], ...]] = {}
+        self._container_selection_probe_observed: dict[int, dict[str, datetime | None]] = {}
 
     async def _configure_container_tracker_fetch_state(
         self,
@@ -71,39 +73,56 @@ class ReleaseScheduler(
     ) -> None:
         if not isinstance(tracker, DockerTracker):
             return
+        alias_last_observed = await self.storage.get_source_alias_last_observed(tracker_source_id)
+        alias_digest_by_name = await self.storage.get_source_alias_latest_digests(tracker_source_id)
+        # Recheck displayed winners once after startup or selection changes.
+        # Repeating this every scan would starve history when fetch_limit is 1.
         if history_releases is None:
             history_releases = await self.storage.get_source_release_history_releases_by_source(
                 tracker_source_id
             )
-        alias_last_observed = await self.storage.get_source_alias_last_observed(tracker_source_id)
-        alias_digest_by_name = await self.storage.get_source_alias_latest_digests(tracker_source_id)
-        artifact_created_by_digest: dict[str, datetime] = {}
-        artifact_metadata_by_digest: dict[str, dict[str, str]] = {}
-        for release in history_releases:
-            digest = release.artifact_digest or release.commit_sha
-            if (
-                isinstance(digest, str)
-                and digest
-                and release.published_at_source == "artifact_created"
-            ):
-                artifact_created_by_digest[digest] = release.published_at
-            if isinstance(digest, str) and digest:
-                metadata = {
-                    key: value
-                    for key, value in {
-                        "version": release.oci_version,
-                        "revision": release.oci_revision,
-                        "source": release.oci_source,
-                    }.items()
-                    if value
-                }
-                if metadata:
-                    artifact_metadata_by_digest[digest] = metadata
+        eligible_history = [release for release in history_releases if tracker._should_include(release)]
+        channels = tracker.config.get("channels", [])
+        if channels:
+            from .versioning import pinned_alias
+
+            winners = list(self.storage.select_best_releases_by_channel(
+                eligible_history, channels, sort_mode="semver",
+                channel_source_type="container", use_source_aliases=True,
+                use_immutable_identity=True,
+            ).values())
+            pinned = [
+                pinned_alias(channel) for channel in channels
+                if (channel.get("enabled", True) if isinstance(channel, dict) else channel.enabled)
+            ]
+        else:
+            winner = self.storage.select_best_release(
+                eligible_history, [], sort_mode="semver", use_immutable_identity=True,
+            )
+            winners = [winner] if winner is not None else []
+            pinned = []
+        selection = tuple(sorted(
+            {(winner.tag_name, winner.commit_sha or "") for winner in winners}
+            | {(alias, "") for alias in pinned if alias}
+        ))
+        if self._container_selection_probe_state.get(tracker_source_id) != selection:
+            self._container_selection_probe_state[tracker_source_id] = selection
+            self._container_selection_probe_observed[tracker_source_id] = {
+                alias: alias_last_observed.get(alias) for alias, _ in selection
+            }
+        # Configuration alone is not a successful probe. Keep each pending
+        # winner eligible across upstream failures until its observation advances.
+        pending = {
+            alias for alias, observed in self._container_selection_probe_observed[tracker_source_id].items()
+            if alias_last_observed.get(alias) == observed
+        }
+        priority_aliases = tuple(dict.fromkeys([
+            *priority_aliases, *(alias for alias in pinned if alias in pending),
+            *(winner.tag_name for winner in winners if winner.tag_name in pending),
+        ]))
         tracker.configure_incremental_fetch(
             alias_last_observed=alias_last_observed,
             alias_digest_by_name=alias_digest_by_name,
-            artifact_created_by_digest=artifact_created_by_digest,
-            artifact_metadata_by_digest=artifact_metadata_by_digest,
             priority_aliases=priority_aliases,
         )
 
@@ -112,6 +131,14 @@ class ReleaseScheduler(
         # Load tracker configuration from the database
         tracker_configs = await self.storage.get_all_tracker_configs()
 
+        # A rule migration repairs views locally before jobs can run. It must not
+        # issue registry requests, notifications, or new deployment work.
+        if await self.storage.get_setting("internal.release_selection_rebuild_pending") in {"2", "3"}:
+            for tracker_config in tracker_configs:
+                if tracker_config.enabled and await self.storage.get_aggregate_tracker(tracker_config.name) is not None:
+                    await self.rebuild_tracker_views_from_storage(tracker_config.name)
+            await self.storage.set_setting("internal.release_selection_rebuild_pending", "0")
+        await self.storage.cleanup_release_history(reclaim=False)
         for tracker_config in tracker_configs:
             await self._add_or_update_tracker_job(tracker_config)
 

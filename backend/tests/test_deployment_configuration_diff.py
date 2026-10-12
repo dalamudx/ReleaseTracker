@@ -26,7 +26,7 @@ from test_recovery_configuration_diff import container
 
 
 async def setup(storage, reference_mode="digest"):
-    await save_docker_tracker_config(storage, name="diff-update", image="library/nginx")
+    await save_docker_tracker_config(storage, name="diff-update", image="library/nginx", channels=[{"name": "stable", "type": "release", "include_pattern": "^stable$"}])
     from datetime import datetime, timezone
     from releasetracker.models import Release
 

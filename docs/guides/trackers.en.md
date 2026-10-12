@@ -39,11 +39,29 @@ For example, `^v?1\.2\.\d+$` selects three-part versions on the `1.2.x` line. Ru
 | Check interval | Default 360 minutes; shorter intervals increase upstream requests |
 | Fetch depth | Default 10 entries; increase for frequently updated projects |
 | Request timeout | Default 15 seconds; applies to source fetching, not runtime updates |
-| Publish-time sorting | Follows recent releases, including new patches on older release lines |
-| SemVer sorting | Follows the highest semantic version; patches on older lines do not become the highest version |
+| Version selection | Highest comparable version; Helm compares chart version, not appVersion |
 | Release fallback | Can fetch raw Git tags when upstream returns no releases |
 
-Container publish-time strategies include automatic, image build time, and first observed time. First observed time is not the upstream publication time and cannot reconstruct the exact historical release order.
+Time-based selection is no longer offered. Legacy `published_at` sorting settings remain readable but use version selection. Time never breaks ties between different artifacts of an equivalent version: a tag follows its current digest; conflicting equivalent-version aliases must be resolved first. Non-version tags such as `latest` and `nightly` require an explicit exact include rule, such as `^nightly$`, and do not compete for the highest version.
+
+Container fetching never reads Config blobs, build times or OCI labels; legacy `published_at_mode` is ignored. Dates never rank versions. Compact dates prefer genuine push time, then registry registration, then explicitly labeled registry modification. Unknown dates never use discovery/build fallbacks. Hover/focus reveals full semantics; the column remains on mobile.
+
+| Registry | Native date and semantics |
+| --- | --- |
+| Docker Hub | Public tag API `tag_last_pushed`, exact tag/top-level digest matching; no registry credentials sent |
+| GHCR | Packages version `created_at`, exact digest/tag matching, labeled registration; never `updated_at` as push time |
+| Quay / self-hosted Quay | Tag API `start_ts` / `last_modified`, exact tag/manifest matching, labeled tag registration / modification |
+| Harbor | Artifact API `push_time`, digest/tag matching; detected via same-origin `/service/token` challenge |
+| JFrog / other OCI registries | `Last-Modified` from the manifest HEAD/GET supplying the digest, explicitly modification not push, no additional requests |
+
+Native metadata shares a 10-request / 5-second budget. Errors, permissions, throttling or timeouts never block tags/digests. Known dates persist for the same digest but never transfer to its replacement. Observation dates remain internal.
+
+An optional “Registry API credential” references an existing encrypted credential without replacing pull authentication. GHCR may need a GitHub token with `read:packages` even for public packages; private Quay can use a separate API OAuth token. Without one, GHCR only reuses identifiable configured GitHub tokens for the fixed first-party GHCR/GitHub API pair, never exchanged OCI bearer tokens. Quay/Harbor authentication stays same-origin; self-hosted Quay uses the `/v2/auth` challenge. Metadata refuses cross-origin redirects. Unavailable native metadata may still display a verified manifest modification date; otherwise Unknown.
+
+The upgrade preserves historical identities and queued task records but invalidates legacy approvals. Startup rebuilds current views from local history without fetching, notifying or deploying. Legacy automatic target snapshots are rejected rather than silently replaced; regenerate review under the new selection rules.
+History retention is independent for each tracking channel. Two channels with a limit of 20 retain up to 20 records each. Shared records count against each channel independently; pruning keeps the union. Records required by current targets and unsettled deployment/recovery tasks are separately protected. Cleanup runs after fetches and at startup, with scheduled maintenance as a fallback.
+
+Current tag pointers and channel decisions are independent of retained history. The version view includes the current snapshot even when history is paginated. Container channels default to dotted versions; integer versions require explicit compatibility mode. Floating tags require an exact match. An unconfirmed highest manifest, equivalent-version artifact conflict, or a locally bootstrapped inventory prevents automatic deployment rather than falling back to a lower version. Non-container sources still depend on upstream fetch coverage.
 
 ## Custom changelog {#changelog}
 

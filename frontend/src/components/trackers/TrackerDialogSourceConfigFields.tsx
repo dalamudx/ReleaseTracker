@@ -4,7 +4,6 @@ import { useTranslation } from "react-i18next"
 import type { GitHubFetchMode, TrackerChannelType } from "@/api/types"
 import {
     FormControl,
-    FormDescription,
     FormField,
     FormItem,
     FormLabel,
@@ -224,41 +223,22 @@ export function TrackerDialogSourceConfigFields({
                     </FormItem>
                 )}
             />
-
-            <FormField
-                control={form.control}
-                name={`sources.${index}.source_config.published_at_mode`}
+            <FormField control={form.control} name={`sources.${index}.source_config.version_format`}
                 render={({ field }) => (
                     <FormItem className="w-full">
-                        <FormLabel>{t("tracker.fields.publishedAtMode.label")}</FormLabel>
-                        <FormDescription>{t("tracker.fields.publishedAtMode.description")}</FormDescription>
-                        <Select
-                            value={field.value ?? "auto"}
-                            onValueChange={(value) =>
-                                field.onChange(value as "auto" | "prefer_real" | "first_observed")
-                            }
-                        >
-                            <FormControl>
-                                <SelectTrigger>
-                                    <SelectValue />
-                                </SelectTrigger>
-                            </FormControl>
+                        <FormLabel>{t("tracker.fields.versionFormat")}</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value ?? "dotted"}>
+                            <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
                             <SelectContent>
-                                <SelectItem value="auto">
-                                    {t("tracker.fields.publishedAtMode.auto")}
-                                </SelectItem>
-                                <SelectItem value="prefer_real">
-                                    {t("tracker.fields.publishedAtMode.preferReal")}
-                                </SelectItem>
-                                <SelectItem value="first_observed">
-                                    {t("tracker.fields.publishedAtMode.firstObserved")}
-                                </SelectItem>
+                                <SelectItem value="dotted">{t("tracker.fields.versionFormatDotted")}</SelectItem>
+                                <SelectItem value="pep440">{t("tracker.fields.versionFormatInteger")}</SelectItem>
                             </SelectContent>
                         </Select>
+                        <p className="text-xs text-muted-foreground">{t("tracker.fields.versionFormatHint")}</p>
                         <FormMessage />
                     </FormItem>
-                )}
-            />
+                )} />
+
         </>
     )
 }

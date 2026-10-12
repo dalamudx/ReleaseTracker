@@ -95,7 +95,7 @@ async def update_compose_services(
     adapter._validate_podman_grouped_recreate_specs(specs, target_pod_id=target_pod_id)
     for spec in specs:
         configuration = adapter._podman_grouped_create_config_for_spec(spec, client=client)
-        adapter._podman_create_arguments(configuration)
+        adapter._podman_create_arguments(configuration, client=client)
         verify_existing_volumes(client, configuration)
     for image in sorted(set(update_plan.values())):
         client.images.pull(image)
@@ -291,7 +291,7 @@ async def _recover_compose_from_snapshot(
         container_recovery.prepare_image(adapter, item)
         adapter._inspect_recovery_conflict(item["create_config"])
         configuration = adapter._podman_grouped_create_config_for_snapshot(item, client=client)
-        adapter._podman_create_arguments(configuration)
+        adapter._podman_create_arguments(configuration, client=client)
         verify_existing_volumes(client, configuration)
     current_pod_refs = adapter._recover_snapshot_pods(client, snapshots)
     for item in snapshots:

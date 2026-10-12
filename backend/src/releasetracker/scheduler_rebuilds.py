@@ -38,8 +38,7 @@ class ReleaseSchedulerRebuilds:
         result = await self._process_aggregate_tracker_local_rebuild(
             name, aggregate_tracker, config
         )
-        if result["latest_version"]:
-            latest_version = result["latest_version"]
+        latest_version = result["latest_version"]
 
         # Rebuilding local views performs no fetch. Neither invent a failure
         # for empty history nor clear a genuine previous fetch failure.

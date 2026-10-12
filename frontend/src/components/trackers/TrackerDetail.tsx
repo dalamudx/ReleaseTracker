@@ -1,9 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
-import { BookOpen, ChevronDown, Copy, Edit, Inbox, Loader2, Play } from "lucide-react"
+import { BookOpen, ChevronDown, Clock, Copy, Edit, Inbox, Loader2, Play, TriangleAlert } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
-import { formatDistanceToNow } from "date-fns"
-import { enUS, zhCN } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 
 import type {
@@ -20,6 +18,7 @@ import {
 import {
     buildTrackerAliasTableRows,
     buildTrackerHistoryMatrixPresentationModel,
+    buildTrackerCurrentMatrixPresentationModel,
     getPreferredTrackerCurrentContributionForRow,
 } from "@/components/trackers/canonicalReleaseMatrixModel"
 import { ReleaseNotesModal } from "@/components/dashboard/ReleaseNotesModalLazy"
@@ -45,7 +44,8 @@ import {
     CollapsibleContent,
     CollapsibleTrigger,
 } from "@/components/ui/collapsible"
-import { getTrackerChannelConfigValueLabel } from "./trackerDetailHelpers"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { getArtifactReleaseTimes, getTrackerChannelConfigEntries, getTrackerChannelConfigValueLabel } from "./trackerDetailHelpers"
 
 function getTrackerChannelTypeLabel(
     channelType: string | null | undefined,
@@ -63,6 +63,7 @@ function getTrackerChannelConfigLabel(
     key: string,
     t: ReturnType<typeof useTranslation>["t"],
 ): string {
+    if (key === "metadata_credential_name") return t("tracker.fields.registryMetadataCredential")
     const translated = t(`trackers.aggregate.detail.configLabel.${key}`)
     return translated === `trackers.aggregate.detail.configLabel.${key}` ? key : translated
 }
@@ -96,6 +97,18 @@ interface TrackerDetailProps {
     checking?: boolean
 }
 
+type ChannelSelectionNotice = { key: string; Icon: typeof Clock; warning: boolean; checkable: boolean }
+
+// Reason codes come from the backend; only "awaiting_check" resolves on its own after a check.
+function getChannelSelectionNotice(selection: { state: string; reason: string | null }): ChannelSelectionNotice {
+    if (selection.state === "conflict") return { key: "selectionConflict", Icon: TriangleAlert, warning: true, checkable: false }
+    if (selection.state === "empty") return { key: "selectionEmpty", Icon: Inbox, warning: false, checkable: false }
+    if (selection.reason === "manifest_unconfirmed") {
+        return { key: "selectionManifestUnconfirmed", Icon: TriangleAlert, warning: true, checkable: true }
+    }
+    return { key: "selectionAwaitingCheck", Icon: Clock, warning: false, checkable: true }
+}
+
 function normalizeArtifactDigest(digest: string): string {
     return /^[0-9a-f]{64}$/i.test(digest) ? `sha256:${digest}` : digest
 }
@@ -107,22 +120,11 @@ export function TrackerDetail({
     onCheck,
     checking = false,
 }: TrackerDetailProps) {
-    const { t, i18n } = useTranslation()
+    const { t } = useTranslation()
     const formatDate = useDateFormatter()
     const [sourcesOpen, setSourcesOpen] = useState(true)
     const [selectedRelease, setSelectedRelease] = useState<ReleaseNotesSubject | null>(null)
 
-    const formatRelative = (dateString: string | null | undefined): string => {
-        if (!dateString) return ""
-        try {
-            return formatDistanceToNow(new Date(dateString), {
-                addSuffix: true,
-                locale: i18n.language === "zh" ? zhCN : enUS,
-            })
-        } catch {
-            return formatDate(dateString)
-        }
-    }
     const [releaseNotesOpen, setReleaseNotesOpen] = useState(false)
     const [expandedVersionIdentity, setExpandedVersionIdentity] = useState<string | null | undefined>(undefined)
     const [expandedArtifactAliases, setExpandedArtifactAliases] = useState<Set<string>>(() => new Set())
@@ -175,17 +177,17 @@ export function TrackerDetail({
         void refetchDetailQueries()
     }, [refetchDetailQueries, refreshKey, trackerName])
 
-    const versionViewMatrixModel = useMemo(
-        () =>
-            tracker && trackerReleaseHistoryQuery.data
-                ? buildTrackerHistoryMatrixPresentationModel(
-                    tracker.sources,
-                    trackerReleaseHistoryQuery.data.items,
-                    tracker.version_sort_mode,
-                )
-                : null,
-        [tracker, trackerReleaseHistoryQuery.data],
-    )
+    const versionViewMatrixModel = useMemo(() => {
+        if (!tracker) return null
+        const history = buildTrackerHistoryMatrixPresentationModel(tracker.sources,
+            trackerReleaseHistoryQuery.data?.items ?? [], tracker.version_sort_mode)
+        if (!trackerCurrentView?.matrix) return history
+        const current = buildTrackerCurrentMatrixPresentationModel(trackerCurrentView.matrix, tracker.version_sort_mode)
+        const currentKeys = new Set(current.rows.map((row) => row.identityKey))
+        return { ...history, rows: [...current.rows, ...history.rows.filter((row) => !currentKeys.has(row.identityKey))] }
+    }, [tracker, trackerCurrentView, trackerReleaseHistoryQuery.data])
+    const showArtifactTimes = Boolean(versionViewMatrixModel)
+    const imageTimeView = tracker?.sources.every((source) => source.source_type === "container") ?? false
     const effectiveExpandedVersionIdentity = expandedVersionIdentity === null
         ? null
         : versionViewMatrixModel?.rows.some((row) => row.identityKey === expandedVersionIdentity)
@@ -365,8 +367,7 @@ export function TrackerDetail({
                         <CardContent className="grid gap-2.5 p-3.5 pt-0 sm:grid-cols-2">
                     {tracker.sources.map((channel) => {
                         const isPrimary = tracker.primary_changelog_source_key === channel.source_key
-                        const channelConfigEntries = Object.entries(channel.source_config ?? {})
-                            .filter(([, value]) => Boolean(value))
+                        const channelConfigEntries = getTrackerChannelConfigEntries(channel.source_config ?? {})
 
                         return (
                             <div
@@ -441,6 +442,38 @@ export function TrackerDetail({
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="p-3.5 pt-0">
+                    {trackerCurrentView?.channel_selections?.filter((selection) => selection.state !== "ready").map((selection) => {
+                        const notice = getChannelSelectionNotice(selection)
+                        return (
+                            <div
+                                key={`${selection.tracker_source_id}:${selection.channel_key}`}
+                                role="status"
+                                className={cn(
+                                    "mb-2 flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs",
+                                    notice.warning
+                                        ? "border-warning/30 bg-warning/10 text-warning"
+                                        : "border-border/60 bg-muted/40 text-muted-foreground",
+                                )}
+                            >
+                                <notice.Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                <span className="min-w-0 flex-1">
+                                    {t(`trackers.aggregate.detail.${notice.key}`, { channel: selection.channel_name })}
+                                </span>
+                                {notice.checkable && onCheck && (
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-6 shrink-0 px-2 text-xs text-foreground"
+                                        onClick={() => onCheck(tracker.name)}
+                                        disabled={checking}
+                                    >
+                                        {checking ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Play className="mr-1 h-3 w-3 text-primary" />}
+                                        <span>{t("trackers.aggregate.detail.checkNow")}</span>
+                                    </Button>
+                                )}
+                            </div>
+                        )
+                    })}
                     {versionViewMatrixModel.rows.length === 0 ? (
                         <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/60 py-8 text-center">
                             <span className="text-xs text-muted-foreground">
@@ -500,7 +533,7 @@ export function TrackerDetail({
                                         return (
                                             <Fragment key={row.identityKey}>
                                                 <TableRow className="bg-muted/30 hover:bg-muted/40">
-                                                    <TableCell colSpan={4} className="whitespace-normal p-0">
+                                                    <TableCell colSpan={showArtifactTimes ? 4 : 3} className="whitespace-normal p-0">
                                                         <div className="flex min-w-0 items-center gap-2 px-3 py-1">
                                                             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                                                                 <span
@@ -516,12 +549,12 @@ export function TrackerDetail({
                                                                 </span>
                                                             </div>
                                                             <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
-                                                                {row.publishedAt ? (
+                                                                {row.publishedAt && row.sourceTypeBadges.some((type) => type !== "container") ? (
                                                                     <span
                                                                         className="text-[11px] tabular-nums text-muted-foreground whitespace-nowrap"
                                                                         title={formatDate(row.publishedAt)}
                                                                     >
-                                                                        {formatRelative(row.publishedAt)}
+                                                                        {formatDate(row.publishedAt, "yyyy-MM-dd")}
                                                                     </span>
                                                                 ) : null}
                                                                 <div className="flex items-center gap-1">
@@ -585,7 +618,7 @@ export function TrackerDetail({
                                                         </TableHead>
                                                         <TableHead
                                                             scope="col"
-                                                            className="h-7 py-0 w-[72%] whitespace-normal text-[10px] md:w-[50%] xl:w-[42%]"
+                                                            className="h-7 py-0 w-[44%] whitespace-normal text-[10px] md:w-[32%] xl:w-[42%]"
                                                         >
                                                             {t("trackers.aggregate.detail.artifactTable.version")}
                                                         </TableHead>
@@ -595,19 +628,21 @@ export function TrackerDetail({
                                                         >
                                                             {t("trackers.aggregate.detail.artifactTable.digest")}
                                                         </TableHead>
-                                                        <TableHead
-                                                            scope="col"
-                                                            className="hidden h-7 py-0 whitespace-normal text-[10px] xl:table-cell xl:w-[15%]"
-                                                        >
-                                                            {t("trackers.aggregate.detail.artifactTable.publishedAt")}
-                                                        </TableHead>
+                                                        {showArtifactTimes ? (
+                                                            <TableHead
+                                                                scope="col"
+                                                                className="h-7 py-0 whitespace-nowrap text-[10px] w-[28%] md:w-[18%] xl:w-[15%]"
+                                                            >
+                                                                {t(`trackers.aggregate.detail.artifactTable.${imageTimeView ? "registryTime" : "publishedAt"}`)}
+                                                            </TableHead>
+                                                        ) : null}
                                                     </TableRow>
                                                 ) : null}
 
                                                 {isExpanded && (artifacts.length === 0 ? (
                                                     <TableRow>
                                                         <TableCell
-                                                            colSpan={4}
+                                                            colSpan={showArtifactTimes ? 4 : 3}
                                                             className="whitespace-normal py-4 text-center text-xs text-muted-foreground"
                                                         >
                                                             {t("trackers.aggregate.detail.noArtifactRevisions")}
@@ -622,6 +657,27 @@ export function TrackerDetail({
                                                         artifactIndex,
                                                     ].join(":")
                                                     const artifactVersion = artifact.version ?? row.displayVersion
+                                                    const artifactTimes = getArtifactReleaseTimes(artifact)
+                                                    const artifactTimeTitle = artifactTimes.map(({ kind, value }) =>
+                                                        `${t(`trackers.aggregate.detail.artifactTable.${kind}`)}: ${formatDate(value)}`,
+                                                    ).join("\n")
+                                                    const artifactTimeDisplay = artifactTimes.length > 0 ? (
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                <time
+                                                                    dateTime={artifactTimes[0].value}
+                                                                    tabIndex={0}
+                                                                    aria-label={artifactTimeTitle}
+                                                                    className="whitespace-nowrap tabular-nums focus-visible:outline-2 focus-visible:outline-ring"
+                                                                >
+                                                                    {formatDate(artifactTimes[0].value, "yyyy-MM-dd")}
+                                                                </time>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent className="whitespace-pre-line">
+                                                                {artifactTimeTitle}
+                                                            </TooltipContent>
+                                                        </Tooltip>
+                                                    ) : null
                                                     const aliases = [...new Set([
                                                         ...artifact.aliases,
                                                         ...aliasRows
@@ -704,13 +760,6 @@ export function TrackerDetail({
                                                                         </li>
                                                                     ) : null}
                                                                 </ul>
-                                                                <span
-                                                                    className="mt-1 block truncate text-[10px] text-muted-foreground xl:hidden"
-                                                                >
-                                                                    {artifact.published_at
-                                                                        ? formatDate(artifact.published_at)
-                                                                        : "—"}
-                                                                </span>
                                                                 <div className="mt-1 flex min-w-0 items-center gap-1 md:hidden">
                                                                     <code
                                                                         className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-foreground"
@@ -752,13 +801,11 @@ export function TrackerDetail({
                                                                     </Button>
                                                                 </div>
                                                             </TableCell>
-                                                            <TableCell
-                                                                className="hidden whitespace-normal py-1.5 px-2.5 align-middle text-xs text-muted-foreground xl:table-cell"
-                                                            >
-                                                                {artifact.published_at
-                                                                    ? formatDate(artifact.published_at)
-                                                                    : "—"}
-                                                            </TableCell>
+                                                            {showArtifactTimes ? (
+                                                                <TableCell className="whitespace-nowrap py-1.5 px-2.5 align-middle text-xs text-muted-foreground">
+                                                                    {artifactTimeDisplay ?? t("trackers.aggregate.detail.channelType.unknown")}
+                                                                </TableCell>
+                                                            ) : null}
                                                         </TableRow>
                                                     )
                                                 }))}

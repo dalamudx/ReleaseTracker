@@ -57,18 +57,24 @@ async def test_probe_reports_only_verified_results(probe_module, monkeypatch, ca
                     "https://registry.test/v2/team/app/blobs/sha256:test",
                     timeout=6 if case == "blob_deadline" else 5,
                 )
+            if case == "success":
+                await self._request_with_redirect_policy(
+                    None, "GET", "https://hub.docker.com/v2/namespaces/library/repositories/nginx/tags/1.2.0"
+                )
             if case == "short_result":
                 return []
             return [SimpleNamespace(commit_sha=None if case == "missing_digest" else "sha256:test")]
 
     monkeypatch.setattr(probe_module, "DockerTracker", Tracker)
     result = await probe_module.probe(
-        registry="registry.test", image="team/app", mode="first_observed", limit=1
+        registry="registry.test", image="team/app", limit=1
     )
     assert result["status"] == ("passed" if case == "success" else "failed")
     assert result["request_timeout"] == 10
+    if case == "success":
+        assert result["request_counts"]["push_time:GET"] == 1
     assert constructors == [
-        {"registry": "registry.test", "published_at_mode": "first_observed", "timeout": 10}
+        {"registry": "registry.test", "timeout": 10}
     ]
     assert "synthetic-private" not in json.dumps(result)
     assert result["request_counts"]["tags:GET"] == 1

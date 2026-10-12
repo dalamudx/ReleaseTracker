@@ -142,6 +142,8 @@ Use **System Settings → Security Keys** and take a backup before and after. If
 
 When migrations are pending, `migrate` / `migrate-and-serve` first write a `reason: pre_migration` archive to the backup directory and abort if that fails. The archive can only be restored with the pre-upgrade image and counts toward retention, so download it if you need it long term; set `RELEASETRACKER_PRE_MIGRATION_BACKUP=0` if another backup mechanism is in place. The schema is managed by dbmate; never edit tables manually. See [Startup and migration troubleshooting](../reference/troubleshooting.md#startup).
 
+`make dbmate-migrate` uses the same entrypoint to back up the database and keys first. Time-semantics migration `20261012000001` automatically repairs known missing-parent `CASCADE` / `SET NULL` relations using the existing allowlist **in the same transaction** as the table rebuild; a separate `prune-orphans` command is not required. Its safety archive retains the **original, unpruned rows**. Counts are recorded in `internal.release_time_pruned_orphans`; the task queue is unchanged. Unknown foreign-key corruption or inconsistent deployment observations roll back the entire migration, including cleanup. Stop other database writers first. Direct dbmate callers must back up the database and keys themselves; an unmodified safety archive containing orphans requires offline repair before it can pass normal restore validation.
+
 ## Prune historical orphans {#prune-orphans}
 
 When a backup is created, orphan rows left by deleted trackers/executors are pruned only in the **archive copy** (counted in the manifest's `pruned_orphans`); the live database is unchanged. To repair the live database, preview first, then stop all instances and run:

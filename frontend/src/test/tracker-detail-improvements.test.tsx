@@ -160,4 +160,33 @@ describe("TrackerDetail layout improvements", () => {
     // Should display published time
     expect(screen.getByTitle(/2026/)).toBeInTheDocument()
   })
+
+  it("explains each channel selection reason and offers a check for recoverable states", () => {
+    const original = queries.current.data
+    queries.current.data = {
+      ...original,
+      channel_selections: [
+        { tracker_source_id: 2, channel_key: "a", channel_name: "stable", state: "pending", reason: "awaiting_check", revision: "r1" },
+        { tracker_source_id: 2, channel_key: "b", channel_name: "beta", state: "pending", reason: "manifest_unconfirmed", revision: "r2" },
+        { tracker_source_id: 2, channel_key: "c", channel_name: "rc", state: "conflict", reason: "artifact_conflict", revision: "r3" },
+      ],
+    } as typeof original
+    const onCheck = vi.fn()
+    try {
+      render(<TrackerDetail trackerName="test-tracker" refreshKey={0} onCheck={onCheck} />)
+      const notices = screen.getAllByRole("status").map((node) => node.textContent)
+      expect(notices).toEqual([
+        expect.stringContaining("trackers.aggregate.detail.selectionAwaitingCheck"),
+        expect.stringContaining("trackers.aggregate.detail.selectionManifestUnconfirmed"),
+        "trackers.aggregate.detail.selectionConflict",
+      ])
+      expect(notices.join(" ")).not.toContain("selectionPending")
+      const checkButtons = screen.getAllByRole("button", { name: /trackers.aggregate.detail.checkNow/ })
+      expect(checkButtons).toHaveLength(2)
+      fireEvent.click(checkButtons[0])
+      expect(onCheck).toHaveBeenCalledWith("test-tracker")
+    } finally {
+      queries.current.data = original
+    }
+  })
 })

@@ -196,6 +196,7 @@ async def test_cleanup_release_history_endpoint_uses_saved_retention(authed_clie
             published_at=datetime(2026, 5, version, tzinfo=timezone.utc),
             url=f"https://example.com/{version}.0.0",
             prerelease=False,
+            commit_sha=f"sha256:{version:064x}",
         )
         for version in range(1, 4)
     ]

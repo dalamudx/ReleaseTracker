@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from .config import TrackerConfig
 from .models import (
@@ -123,11 +123,9 @@ class ReleaseSchedulerAggregateSupport:
             chart=source.source_config.get("chart"),
             image=source.source_config.get("image"),
             registry=source.source_config.get("registry"),
-            published_at_mode=cast(
-                Literal["auto", "prefer_real", "first_observed"],
-                source.source_config.get("published_at_mode") or "auto",
-            ),
             credential_name=source.credential_name,
+            metadata_credential_name=source.source_config.get("metadata_credential_name"),
+            version_format=source.source_config.get("version_format", "dotted"),
             interval=tracker_config.interval if tracker_config else 360,
             version_sort_mode=(
                 tracker_config.version_sort_mode if tracker_config else "published_at"
@@ -173,9 +171,6 @@ class ReleaseSchedulerAggregateSupport:
         if aggregate_tracker.id is None:
             raise ValueError("Aggregate tracker is missing a persisted ID")
 
-        projection_releases = await self.storage.get_tracker_current_releases(aggregate_tracker.id)
-        for release in projection_releases:
-            release.tracker_name = tracker_name
 
         history_releases = await self.storage.get_tracker_release_history_releases(
             aggregate_tracker.id
@@ -183,45 +178,19 @@ class ReleaseSchedulerAggregateSupport:
         for release in history_releases:
             release.tracker_name = tracker_name
 
-        candidate_releases = projection_releases if projection_releases else history_releases
 
-        sort_mode = tracker_config.version_sort_mode if tracker_config else "published_at"
-        selection_candidates: list[Release]
-        if tracker_config is not None and tracker_config.channels:
-            selection_candidates = list(
-                self.storage.select_best_releases_by_channel(
-                    history_releases,
-                    tracker_config.channels,
-                    sort_mode=sort_mode,
-                    use_immutable_identity=True,
-                    use_source_aliases=True,
-                ).values()
-            )
-        else:
-            selection_candidates = self.storage.dedupe_releases_by_immutable_identity(
-                history_releases
-            )
+        from .storage import sqlite_selection
+        selection_candidates = await sqlite_selection.refresh_selections(self.storage, aggregate_tracker)
+        # Rebuild the materialized view from source truth, never stale projections.
+        # This path deliberately emits neither executor work nor release notifications.
+        await self.storage.refresh_tracker_current_releases(
+            aggregate_tracker.id, selection_candidates
+        )
+        from .versioning import select_version_candidate
 
-        best_release = None
-        if selection_candidates:
-            best_release = max(
-                self.storage.dedupe_releases_by_immutable_identity(selection_candidates),
-                key=lambda release: self.storage._release_order_key(
-                    release,
-                    sort_mode,
-                ),
-            )
-        elif candidate_releases:
-            best_release = max(
-                self.storage.dedupe_releases_by_immutable_identity(candidate_releases),
-                key=lambda release: self.storage._release_order_key(
-                    release,
-                    sort_mode,
-                ),
-            )
-
+        best_release = selection_candidates[0] if len(selection_candidates) == 1 else select_version_candidate(selection_candidates)
         return {
-            "releases": candidate_releases,
+            "releases": selection_candidates,
             "latest_version": best_release.version if best_release else None,
             "error": None,
         }

@@ -5,6 +5,7 @@ import pytest
 
 from releasetracker.services import deployment_targets
 from releasetracker.executor_scheduler_target_resolution import ResolvedTrackerTarget
+from releasetracker.versioning import SELECTION_RULES_VERSION
 
 
 @pytest.mark.asyncio
@@ -54,6 +55,7 @@ async def test_automatic_targets_do_not_resolve_again(monkeypatch):
             return_value=SimpleNamespace(
                 desired_state_revision="pinned",
                 desired_target={
+                    "selection_revision": SELECTION_RULES_VERSION,
                     "binding_targets": [
                         {
                             "tracker_name": "app",

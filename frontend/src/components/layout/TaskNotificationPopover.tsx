@@ -1,7 +1,8 @@
 import { ReadinessSummary } from "@/components/executors/ReadinessSummary"
-import { useEffect, useId, useState } from "react"
+import { useEffect, useId, useMemo, useState } from "react"
+import { useCompletedFetchInvalidation } from "@/hooks/use-completed-fetch-invalidation"
 import { Link } from "react-router"
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
 import { taskErrorLabel } from "@/lib/task-errors"
@@ -27,6 +28,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { isClearableNotification, isDismissedNotification, isUnreadTask, useTaskNotificationRead } from "@/hooks/use-task-notification-read"
+import { getAllTaskNotifications, TASK_NOTIFICATION_PAGE_SIZE } from "@/lib/task-notifications"
 
 function getKindIcon(kind: QueueTask["kind"]) {
     switch (kind) {
@@ -48,7 +50,7 @@ function MiniStateBadge({ state, phase }: { state: TaskState; phase?: string }) 
     switch (state) {
         case "running":
             return (
-                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-info">
+                <span className="inline-flex shrink-0 items-center whitespace-nowrap gap-1 text-[11px] font-medium text-info">
                     <span className="size-1.5 rounded-full bg-info" aria-hidden="true" />
                     {label}
                 </span>
@@ -56,14 +58,14 @@ function MiniStateBadge({ state, phase }: { state: TaskState; phase?: string }) 
         case "succeeded":
         case "no_change":
             return (
-                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-success">
+                <span className="inline-flex shrink-0 items-center whitespace-nowrap gap-1 text-[11px] font-medium text-success">
                     <CheckCircle2 className="size-3 text-success" />
                     {label}
                 </span>
             )
         case "retry_wait":
             return (
-                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-warning">
+                <span className="inline-flex shrink-0 items-center whitespace-nowrap gap-1 text-[11px] font-medium text-warning">
                     <Timer className="size-3 text-warning" />
                     {label}
                 </span>
@@ -71,14 +73,14 @@ function MiniStateBadge({ state, phase }: { state: TaskState; phase?: string }) 
         case "needs_attention":
         case "failed":
             return (
-                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-destructive">
+                <span className="inline-flex shrink-0 items-center whitespace-nowrap gap-1 text-[11px] font-medium text-destructive">
                     <AlertTriangle className="size-3 text-destructive" />
                     {label}
                 </span>
             )
         default:
             return (
-                <span className="text-[11px] text-muted-foreground">
+                <span className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground">
                     {label}
                 </span>
             )
@@ -89,17 +91,51 @@ export function TaskNotificationPopover() {
     const { t, i18n } = useTranslation()
     const [open, setOpen] = useState(false)
     const descriptionId = useId()
-    const { read, dismissed, markRead, dismissRead } = useTaskNotificationRead()
+    const { read, dismissed, markRead, dismissAll } = useTaskNotificationRead()
+    const [visibleCount, setVisibleCount] = useState(20)
+    const [olderTasks, setOlderTasks] = useState<QueueTask[]>([])
+    const [olderExhausted, setOlderExhausted] = useState(false)
 
     const tasksQuery = useQuery({
         queryKey: ["tasks", "recent-popover"],
         queryFn: () => api.getTasks(),
         refetchInterval: 5000,
     })
+    useCompletedFetchInvalidation(tasksQuery.data)
 
-    const tasks = (Array.isArray(tasksQuery.data) ? tasksQuery.data : [])
-        .filter(task => !isDismissedNotification(task, dismissed))
-    const recentTasks = tasks.slice(0, 5)
+    const loadedTasks = useMemo(() => {
+        const byId = new Map<number, QueueTask>()
+        for (const task of olderTasks) byId.set(task.id, task)
+        for (const task of tasksQuery.data ?? []) byId.set(task.id, task)
+        return [...byId.values()].sort((a, b) => b.id - a.id)
+    }, [tasksQuery.data, olderTasks])
+    const tasks = useMemo(() => loadedTasks.filter(task => !isDismissedNotification(task, dismissed)), [loadedTasks, dismissed])
+    const recentTasks = tasks.slice(0, visibleCount)
+    const hasOlder = !olderExhausted && (tasksQuery.data?.length ?? 0) >= TASK_NOTIFICATION_PAGE_SIZE
+    const loadMore = useMutation({
+        mutationFn: async () => {
+            if (visibleCount + 20 <= tasks.length || !hasOlder) return null
+            return api.getTasks({ before: loadedTasks[loadedTasks.length - 1]?.id })
+        },
+        onSuccess: (page) => {
+            if (page) {
+                setOlderTasks(previous => [...previous, ...page])
+                setOlderExhausted(page.length < TASK_NOTIFICATION_PAGE_SIZE)
+            }
+            setVisibleCount(previous => previous + 20)
+        },
+        onError: () => toast.error(t("tasks.loadFailed")),
+    })
+    const clearNotifications = useMutation({
+        mutationFn: getAllTaskNotifications,
+        onSuccess: (snapshot) => {
+            const cleared = dismissAll(snapshot)
+            setOlderTasks(snapshot)
+            setOlderExhausted(true)
+            toast.success(t("tasks.clearedRead", { count: cleared }))
+        },
+        onError: () => toast.error(t("tasks.clearNotificationsFailed")),
+    })
 
     const runningCount = tasks.filter((t) => t.state === "running").length
     const attentionCount = tasks.filter((task) => task.state === "needs_attention").length
@@ -109,8 +145,6 @@ export function TaskNotificationPopover() {
     const retryCount = tasks.filter((t) => t.state === "retry_wait").length
     const activeCount = tasks.filter((t) => ["queued", "running", "retry_wait"].includes(t.state)).length
 
-    const readTasks = recentTasks.filter((task) => isClearableNotification(task) &&
-        read[task.id] !== undefined && task.updated_at <= read[task.id])
     const indicator = attentionCount > 0 || unreadFailures ? "attention"
         : approvalCount > 0 || retryCount > 0 ? "warning"
         : unread.length > 0 ? "unread"
@@ -123,12 +157,11 @@ export function TaskNotificationPopover() {
         : runningCount > 0 ? t("tasks.state.running") : t("tasks.allRead")
 
     useEffect(() => {
-        // Only the rows actually presented in the popover become read. New
-        // results received while closed or outside this five-row list do not.
+        // Only loaded rows presented in the open list become read.
         if (open && !tasksQuery.isError && Array.isArray(tasksQuery.data)) {
-            markRead(tasksQuery.data.filter(task => !isDismissedNotification(task, dismissed)).slice(0, 5))
+            markRead(tasks.filter(task => !isDismissedNotification(task, dismissed)).slice(0, visibleCount))
         }
-    }, [open, tasksQuery.data, tasksQuery.isError, dismissed, markRead])
+    }, [open, tasks, visibleCount, tasksQuery.data, tasksQuery.isError, dismissed, markRead])
 
     const formatRelative = (seconds: number): string => {
         try {
@@ -192,7 +225,7 @@ export function TaskNotificationPopover() {
                     </Button>
                 </div>
 
-                <div className="max-h-[340px] overflow-y-auto divide-y divide-border/40">
+                <div className="max-h-[min(28rem,calc(100dvh-12rem))] overflow-y-auto overscroll-contain divide-y divide-border/40" aria-busy={loadMore.isPending}>
                     {tasksQuery.isLoading ? (
                         <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
                             <Spinner className="size-4" />
@@ -259,20 +292,25 @@ export function TaskNotificationPopover() {
                             </div>
                         ))
                     )}
+                    {(visibleCount < tasks.length || hasOlder) && !tasksQuery.isError && (
+                        <div className="p-2">
+                            <Button variant="ghost" size="sm" className="w-full" disabled={loadMore.isPending || clearNotifications.isPending} onClick={() => loadMore.mutate()}>
+                                {loadMore.isPending && <Spinner className="size-3.5" />}
+                                {t("tasks.loadMore")}
+                            </Button>
+                        </div>
+                    )}
                 </div>
 
                 <div className="flex items-center justify-between gap-2 border-t border-border/60 p-1.5">
                     <Button
                         variant="ghost"
                         size="xs"
-                        disabled={tasksQuery.isError || readTasks.length === 0}
+                        disabled={tasksQuery.isError || clearNotifications.isPending || (!hasOlder && !tasks.some(isClearableNotification))}
                         title={t("tasks.clearReadDescription")}
-                        onClick={() => {
-                            const cleared = dismissRead(readTasks)
-                            if (cleared) toast.success(t("tasks.clearedRead", { count: cleared }))
-                        }}
+                        onClick={() => clearNotifications.mutate()}
                     >
-                        <ListX className="size-3.5" aria-hidden="true" />
+                        {clearNotifications.isPending ? <Spinner className="size-3.5" /> : <ListX className="size-3.5" aria-hidden="true" />}
                         {t("tasks.clearRead")}
                     </Button>
                     <Button

@@ -30,6 +30,7 @@ _DOCKER_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True)
+
 class ResolvedTrackerTarget:
     display_version: str
     deploy_alias: str
@@ -37,6 +38,7 @@ class ResolvedTrackerTarget:
     aliases: tuple[str, ...] = ()
     chart_version: str | None = None
     chart_digest: str | None = None
+    selection_revision: str | None = None
 
 
 async def _resolve_tracker_binding_by_source_id_from_storage(
@@ -77,6 +79,7 @@ async def _load_bound_releases_from_storage(
         aliases_by_history_id = await storage.get_source_release_aliases_for_source(
             tracker_source_id
         )
+        latest_digests = await storage.get_source_alias_latest_digests(tracker_source_id)
         for release in history_releases:
             alias_rows = aliases_by_history_id.get(release.id or -1, [])
             if not alias_rows:
@@ -84,6 +87,8 @@ async def _load_bound_releases_from_storage(
                 continue
             aliases = tuple(alias["alias"] for alias in alias_rows)
             for alias in alias_rows:
+                if tracker_source_type in {"container", "helm"} and latest_digests.get(alias["alias"]) != (release.artifact_digest or release.commit_sha):
+                    continue
                 expanded_releases.append(
                     release.model_copy(
                         update={
@@ -132,7 +137,7 @@ async def _load_bound_releases_from_storage(
     releases = await storage.get_tracker_current_releases(aggregate_tracker.id)
     for release in releases:
         release.tracker_name = tracker_name
-    return releases
+    return [release for release in releases if release.candidate_confirmed is not False]
 
 
 async def _resolve_tracker_latest_version_from_storage(
@@ -185,7 +190,7 @@ async def _resolve_correlated_container_alias(
         if alias_release is not None:
             matching_targets.append(
                 (
-                    candidate_release.published_at.timestamp(),
+                    storage._release_order_key(candidate_release),
                     candidate_release.version,
                     alias_release.tag_name,
                 )
@@ -204,6 +209,21 @@ async def _resolve_tracker_latest_target_details_from_storage(
     tracker_source_id: int | None = None,
     tracker_source_type: str | None = None,
 ) -> ResolvedTrackerTarget | None:
+    bound_source = await storage.get_tracker_source(tracker_source_id) if tracker_source_id is not None else None
+    if bound_source is not None:
+        tracker_source_type = bound_source.source_type
+    if bound_source is not None and await storage._table_exists("tracker_channel_selections"):
+        from .storage import sqlite_selection
+        selected, handled = await sqlite_selection.bound_selection(storage, bound_source, channel_name)
+        if handled:
+            if selected is None:
+                return None
+            return ResolvedTrackerTarget(display_version=selected.logical_version or selected.version, deploy_alias=selected.tag_name,
+                digest=_normalize_docker_digest(selected.artifact_digest or selected.commit_sha),
+                selection_revision=selected.selection_revision,
+                aliases=tuple(selected.aliases),
+                chart_version=(selected.chart_version or selected.tag_name) if tracker_source_type == "helm" else None,
+                chart_digest=(selected.artifact_digest or selected.commit_sha) if tracker_source_type == "helm" else None)
     releases = await _load_bound_releases_from_storage(
         storage,
         tracker_name,
@@ -217,11 +237,8 @@ async def _resolve_tracker_latest_target_details_from_storage(
     sort_mode = tracker_config.version_sort_mode if tracker_config else "published_at"
 
     scoped_channels = tracker_config.channels if tracker_config else []
-    bound_source = None
-    if tracker_source_id is not None:
-        bound_source = await storage.get_tracker_source(tracker_source_id)
-        if bound_source is not None and bound_source.release_channels:
-            scoped_channels = bound_source.release_channels
+    if bound_source is not None and bound_source.release_channels:
+        scoped_channels = bound_source.release_channels
 
     bound_channels = scoped_channels
     if channel_name and (scoped_channels or tracker_source_type != "helm"):

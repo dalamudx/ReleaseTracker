@@ -1,26 +1,13 @@
-import importlib.util
 import logging
-import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import httpx
 import pytest
 
 from releasetracker.config import Channel
-
-docker_path = (
-    Path(__file__).resolve().parents[1] / "src" / "releasetracker" / "trackers" / "docker.py"
-)
-spec = importlib.util.spec_from_file_location("releasetracker.trackers.docker", docker_path)
-assert spec is not None
-assert spec.loader is not None
-docker_module = importlib.util.module_from_spec(spec)
-sys.modules["releasetracker.trackers.docker"] = docker_module
-spec.loader.exec_module(docker_module)
+from releasetracker.trackers import docker as docker_module
 
 DockerTracker = docker_module.DockerTracker
-_apply_semver_published_at = docker_module._apply_semver_published_at
 _select_incremental_probe_window = docker_module._select_incremental_probe_window
 _sort_tags = docker_module._sort_tags
 
@@ -29,7 +16,7 @@ def _build_filtered_releases(tracker: DockerTracker, tags: list[str]):
     releases = [tracker._tag_to_release(tag) for tag in _sort_tags(tags)]
 
     releases = [release for release in releases if tracker._should_include(release)]
-    _apply_semver_published_at(releases)
+    assert all(release.published_at is None for release in releases)
     return releases
 
 
@@ -138,7 +125,7 @@ def test_docker_semver_beats_older_after_exclude_filter():
     )
     tags = ["v0.9.18", "v0.9.22", "v0.9.22-arm64", "v0.9.18-arm64"]
     releases = _build_filtered_releases(tracker, tags)
-    latest = max(releases, key=lambda rel: rel.published_at)
+    latest = releases[0]
 
     assert latest.tag_name == "v0.9.22"
 
@@ -151,7 +138,7 @@ def test_docker_exclude_suffix_keeps_base_tag():
     )
     tags = ["v1.2.3", "v1.2.3-arm64"]
     releases = _build_filtered_releases(tracker, tags)
-    latest = max(releases, key=lambda rel: rel.published_at)
+    latest = releases[0]
 
     assert latest.tag_name == "v1.2.3"
 
@@ -169,7 +156,7 @@ def test_docker_filter_does_not_promote_older_semver():
         "v0.9.9",
     ]
     releases = _build_filtered_releases(tracker, tags)
-    latest = max(releases, key=lambda rel: rel.published_at)
+    latest = releases[0]
 
     assert latest.tag_name == "v1.1.0"
 
@@ -179,7 +166,7 @@ def test_sample_base_style_two_part_tags_rank_by_version():
     tags = ["14.04.5", "22.04", "24.04", "latest"]
     releases = _build_filtered_releases(tracker, tags)
     version_releases = [r for r in releases if r.tag_name != "latest"]
-    winner = max(version_releases, key=lambda r: r.published_at)
+    winner = version_releases[0]
 
     assert winner.tag_name == "24.04"
 
@@ -188,7 +175,7 @@ def test_two_part_tag_not_demoted_below_older_three_part():
     tracker = DockerTracker(name="sample-base-test", image="library/sample-base")
     tags = ["14.04.5", "22.04", "24.04"]
     releases = _build_filtered_releases(tracker, tags)
-    ranked = sorted(releases, key=lambda r: r.published_at, reverse=True)
+    ranked = releases
     tag_order = [r.tag_name for r in ranked]
 
     assert tag_order == ["24.04", "22.04", "14.04.5"]
@@ -202,7 +189,7 @@ def test_sample_base_style_filter_interaction_numeric_winner_survives():
     )
     tags = ["14.04.5", "22.04", "24.04", "24.04-amd64", "22.04-amd64"]
     releases = _build_filtered_releases(tracker, tags)
-    winner = max(releases, key=lambda r: r.published_at)
+    winner = releases[0]
 
     assert winner.tag_name == "24.04"
 
@@ -285,7 +272,7 @@ def test_sample_ci_style_tags_rank_by_natural_suffix_after_filter():
     )
     ranked_tags = [
         release.tag_name
-        for release in sorted(releases, key=lambda release: release.published_at, reverse=True)
+        for release in releases
     ]
 
     assert ranked_tags == [
@@ -310,7 +297,7 @@ def test_prerelease_tags_rank_by_numeric_suffix():
     rc_releases = [release for release in releases if release.tag_name.startswith("0.7.0-rc")]
     ranked_rc_tags = [
         release.tag_name
-        for release in sorted(rc_releases, key=lambda release: release.published_at, reverse=True)
+        for release in rc_releases
     ]
 
     assert ranked_rc_tags[:3] == ["0.7.0-rc19", "0.7.0-rc18", "0.7.0-rc17"]
@@ -326,7 +313,8 @@ def test_latest_alias_stays_independent_from_numeric_tags():
 
     assert latest_alias.version == "latest"
     assert newest_numeric_release.version == "2.5.3"
-    assert newest_numeric_release.published_at > numeric_release.published_at
+    assert releases.index(newest_numeric_release) < releases.index(numeric_release)
+    assert newest_numeric_release.published_at is None
 
 
 def test_sample_secret_arch_exclude_keeps_raw_tag_matches():
@@ -450,17 +438,17 @@ async def test_fetch_all_enriches_digest_with_head_then_get_fallback(monkeypatch
 
     releases = await tracker.fetch_all(limit=3)
 
-    assert [release.tag_name for release in releases] == ["latest", "24.04.1", "24.04"]
-    assert [release.version for release in releases] == ["latest", "24.04.1", "24.04"]
+    assert [release.tag_name for release in releases] == ["24.04.1", "latest", "24.04"]
+    assert [release.version for release in releases] == ["24.04.1", "latest", "24.04"]
     assert [release.commit_sha for release in releases] == [
-        "sha256:digest-latest",
         "sha256:digest-24041",
+        "sha256:digest-latest",
         "sha256:digest-2404",
     ]
     assert request_calls[:4] == [
+        ("HEAD", "https://registry-1.docker.io/v2/library/sample-base/manifests/24.04.1"),
         ("HEAD", "https://registry-1.docker.io/v2/library/sample-base/manifests/latest"),
         ("GET", "https://registry-1.docker.io/v2/library/sample-base/manifests/latest"),
-        ("HEAD", "https://registry-1.docker.io/v2/library/sample-base/manifests/24.04.1"),
         ("HEAD", "https://registry-1.docker.io/v2/library/sample-base/manifests/24.04"),
     ]
 
@@ -504,15 +492,14 @@ async def test_fetch_all_normalizes_full_ghcr_image_ref(monkeypatch):
 
     assert token_scopes == ["repository:example/sample-secret:pull"]
     assert tag_fetches == [("ghcr.io", "example/sample-secret")]
-    # Metadata-enabled probes resolve every tag with one GET, reusing its
-    # body instead of HEAD plus a second mutable-tag GET.
+    # Tag probing only needs a manifest digest, not a Config Blob.
     assert manifest_calls == [
-        ("GET", "https://ghcr.io/v2/example/sample-secret/manifests/latest"),
-        ("GET", "https://ghcr.io/v2/example/sample-secret/manifests/2.5.3"),
+        ("HEAD", "https://ghcr.io/v2/example/sample-secret/manifests/2.5.3"),
+        ("HEAD", "https://ghcr.io/v2/example/sample-secret/manifests/latest"),
     ]
     assert [release.url for release in releases] == [
-        "https://ghcr.io/example/sample-secret:latest",
         "https://ghcr.io/example/sample-secret:2.5.3",
+        "https://ghcr.io/example/sample-secret:latest",
     ]
 
 
@@ -535,8 +522,8 @@ async def test_fetch_all_keeps_candidates_when_digest_lookup_fails(monkeypatch):
 
     releases = await tracker.fetch_all(limit=3)
 
-    assert [release.tag_name for release in releases] == ["latest", "24.04.1", "24.04"]
-    assert [release.version for release in releases] == ["latest", "24.04.1", "24.04"]
+    assert [release.tag_name for release in releases] == ["24.04.1", "latest", "24.04"]
+    assert [release.version for release in releases] == ["24.04.1", "latest", "24.04"]
     assert all(release.commit_sha is None for release in releases)
 
 
@@ -549,7 +536,6 @@ async def test_fetch_latest_ignores_incremental_alias_rotation(monkeypatch):
     )
     tracker.configure_incremental_fetch(
         alias_last_observed={"latest": datetime(2026, 9, 16, tzinfo=timezone.utc)},
-        artifact_created_by_digest={},
     )
 
     async def fake_get_bearer_token(self, client, scope):
@@ -568,7 +554,7 @@ async def test_fetch_latest_ignores_incremental_alias_rotation(monkeypatch):
     release = await tracker.fetch_latest()
 
     assert release is not None
-    assert release.tag_name == "latest"
+    assert release.tag_name == "2.0.0"
 
 
 @pytest.mark.asyncio

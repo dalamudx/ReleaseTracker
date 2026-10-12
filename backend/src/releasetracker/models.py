@@ -21,14 +21,19 @@ class ReleaseAliasReference(BaseModel):
     source_type: str
     alias: str
     prerelease: bool = False
-    published_at: datetime
+    published_at: datetime | None = None
     digest: str | None = None
+    is_current: bool = True
 
 
 class Release(BaseModel):
     """Release model"""
 
     id: int | None = None
+    selection_revision: str | None = None
+    selection_source_id: int | None = None
+    logical_version: str | None = None
+    candidate_confirmed: bool | None = None
     tracker_name: str
     tracker_type: str = "github"
     name: str
@@ -36,8 +41,15 @@ class Release(BaseModel):
     version: str
     app_version: str | None = None
     chart_version: str | None = None
-    published_at: datetime
+    published_at: datetime | None = None
     published_at_source: str | None = None
+    artifact_created_at: datetime | None = None
+    registry_pushed_at: datetime | None = None
+    registry_created_at: datetime | None = None
+    registry_modified_at: datetime | None = None
+    source_created_at: datetime | None = None
+    first_observed_at: datetime | None = None
+    last_observed_at: datetime | None = None
     url: str
     changelog_url: str | None = None
     prerelease: bool = False
@@ -52,6 +64,27 @@ class Release(BaseModel):
     alias_references: list[ReleaseAliasReference] = Field(default_factory=list)
     republish_count: int = 0  # Republish count
     created_at: datetime = Field(default_factory=datetime.now)
+
+    @model_validator(mode="before")
+    @classmethod
+    def separate_legacy_container_time(cls, value):
+        if not isinstance(value, dict):
+            return value
+        value = dict(value)
+        if value.get("tracker_type") == "container":
+            if value.get("published_at_source") == "artifact_created" and not value.get("artifact_created_at"):
+                value["artifact_created_at"] = value.get("published_at")
+            value["published_at"] = None
+            value["published_at_source"] = None
+        elif value.get("published_at") is not None and not value.get("published_at_source"):
+            value["published_at_source"] = "upstream_release"
+        return value
+
+    @field_validator("published_at", "artifact_created_at", "registry_pushed_at", "registry_created_at", "registry_modified_at", "source_created_at", "first_observed_at", "last_observed_at", mode="before")
+    @classmethod
+    def normalize_upstream_time(cls, value):
+        from .release_times import parse_time
+        return parse_time(value)
 
 
 class TrackerStatus(BaseModel):
@@ -201,9 +234,15 @@ class TrackerSource(BaseModel):
             "gitlab": ({"project", "instance"}, {"project"}),
             "gitea": ({"repo", "instance"}, {"repo"}),
             "helm": ({"repo", "chart"}, {"repo", "chart"}),
-            "container": ({"image", "registry", "published_at_mode"}, {"image", "registry"}),
+            "container": ({"image", "registry", "metadata_credential_name", "version_format"}, {"image", "registry"}),
         }
 
+        if self.source_type == "container":
+            # Old databases and clients may still contain the retired metadata mode.
+            self.source_config = {
+                key: value for key, value in self.source_config.items()
+                if key != "published_at_mode"
+            }
         allowed_keys, required_keys = provider_requirements[self.source_type]
         unknown_keys = sorted(set(self.source_config.keys()) - allowed_keys)
         if unknown_keys:
@@ -226,6 +265,8 @@ class TrackerSource(BaseModel):
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"source_config.{key} must be a non-empty string")
 
+        if self.source_type == "container" and self.source_config.get("version_format", "dotted") not in {"dotted", "pep440"}:
+            raise ValueError("source_config.version_format must be dotted or pep440")
         if self.source_type == "github" and self.source_config.get("fetch_mode") not in {
             None,
             "graphql_first",
@@ -233,15 +274,6 @@ class TrackerSource(BaseModel):
         }:
             raise ValueError("source_config.fetch_mode must be one of: graphql_first, rest_first")
 
-        if self.source_type == "container" and self.source_config.get("published_at_mode") not in {
-            None,
-            "auto",
-            "prefer_real",
-            "first_observed",
-        }:
-            raise ValueError(
-                "source_config.published_at_mode must be one of: auto, prefer_real, first_observed"
-            )
 
         if self.credential_name and self.source_type in {"gitlab", "gitea", "helm"}:
             if self.source_type == "helm":
@@ -268,7 +300,7 @@ class SourceReleaseObservation(BaseModel):
     version: str
     app_version: str | None = None
     chart_version: str | None = None
-    published_at: datetime
+    published_at: datetime | None = None
     url: str
     changelog_url: str | None = None
     prerelease: bool = False
@@ -293,7 +325,7 @@ class CanonicalRelease(BaseModel):
     version: str
     name: str
     tag_name: str
-    published_at: datetime
+    published_at: datetime | None = None
     url: str
     changelog_url: str | None = None
     prerelease: bool = False
@@ -331,7 +363,7 @@ class SourceReleaseHistory(BaseModel):
     identity_key: str
     name: str
     tag_name: str
-    published_at: datetime
+    published_at: datetime | None = None
     url: str
     changelog_url: str | None = None
     prerelease: bool = False
@@ -401,7 +433,7 @@ class TrackerCurrentRelease(BaseModel):
     tracker_release_history_id: int
     name: str
     tag_name: str
-    published_at: datetime
+    published_at: datetime | None = None
     url: str
     changelog_url: str | None = None
     prerelease: bool = False
@@ -630,7 +662,7 @@ class ReleaseHistory(BaseModel):
     id: int | None = None
     release_id: int
     commit_sha: str
-    published_at: datetime
+    published_at: datetime | None = None
     body: str | None = None
     channel_name: str | None = None
     recorded_at: datetime = Field(default_factory=datetime.now)

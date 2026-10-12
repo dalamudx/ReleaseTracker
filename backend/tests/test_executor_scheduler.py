@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from datetime import datetime, timezone
 import importlib.util
 import sys
@@ -1229,6 +1230,7 @@ async def _create_tracker_release(
                 version=version,
                 published_at=release_published_at,
                 url=f"https://example.com/{tracker_name}/{version}",
+                commit_sha=f"sha256:{hashlib.sha256(version.encode()).hexdigest()}",
                 prerelease=prerelease,
                 channel_name="canary" if prerelease else "stable",
             )
@@ -1269,7 +1271,7 @@ async def _create_bound_tracker_release(
                 published_at=published_at,
                 url=f"https://example.com/{tracker_name}/{version}",
                 prerelease=prerelease,
-                commit_sha=commit_sha,
+                commit_sha=commit_sha or f"sha256:{hashlib.sha256(version.encode()).hexdigest()}",
                 channel_name="canary" if prerelease else "stable",
             )
         ],
@@ -3125,6 +3127,7 @@ async def test_two_executors_on_same_tracker_resolve_different_channels(storage)
         published_at=datetime(2026, 3, 1, tzinfo=timezone.utc),
         url="https://example.com/1.0.0",
         prerelease=False,
+        commit_sha="sha256:" + "1" * 64,
     )
     canary_release = Release(
         tracker_name=tracker_name,
@@ -3135,6 +3138,7 @@ async def test_two_executors_on_same_tracker_resolve_different_channels(storage)
         published_at=datetime(2026, 3, 20, tzinfo=timezone.utc),
         url="https://example.com/2.0.0-rc1",
         prerelease=True,
+        commit_sha="sha256:" + "2" * 64,
     )
     aggregate_tracker = await storage.get_aggregate_tracker(tracker_name)
     assert aggregate_tracker is not None
@@ -3189,10 +3193,10 @@ async def test_two_executors_on_same_tracker_resolve_different_channels(storage)
     canary_outcome = await scheduler.run_executor_now(canary_executor_id)
 
     assert stable_outcome.status == "success"
-    assert stable_adapter.update_calls == ["multi-channel-app:1.0.0"]
+    assert stable_adapter.update_calls == ["multi-channel-app@sha256:" + "1" * 64]
 
     assert canary_outcome.status == "success"
-    assert canary_adapter.update_calls == ["multi-channel-app:2.0.0-rc1"]
+    assert canary_adapter.update_calls == ["multi-channel-app@sha256:" + "2" * 64]
 
 
 @pytest.mark.asyncio
@@ -3279,6 +3283,7 @@ async def test_source_bound_executor_canary_uses_bound_source_channels_when_trac
                 published_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
                 url=f"https://example.com/{tracker_name}/0.6.0",
                 prerelease=False,
+                commit_sha="sha256:" + "1" * 64,
                 channel_name="stable",
             )
         ],
@@ -3296,6 +3301,7 @@ async def test_source_bound_executor_canary_uses_bound_source_channels_when_trac
                 published_at=datetime(2026, 4, 10, tzinfo=timezone.utc),
                 url=f"https://example.com/{tracker_name}/0.7.0-rc17",
                 prerelease=True,
+                commit_sha="sha256:" + "2" * 64,
                 channel_name="canary",
             ),
             Release(
@@ -3307,6 +3313,7 @@ async def test_source_bound_executor_canary_uses_bound_source_channels_when_trac
                 published_at=datetime(2026, 4, 11, tzinfo=timezone.utc),
                 url=f"https://example.com/{tracker_name}/0.7.0-rc18",
                 prerelease=True,
+                commit_sha="sha256:" + "3" * 64,
                 channel_name="canary",
             ),
         ],
@@ -3349,7 +3356,7 @@ async def test_source_bound_executor_canary_uses_bound_source_channels_when_trac
     outcome = await scheduler.run_executor_now(executor_id)
 
     assert outcome.status == "success"
-    assert adapter.update_calls == ["ghcr.io/acme/sample_canary:0.7.0-rc18"]
+    assert adapter.update_calls == ["ghcr.io/acme/sample_canary@sha256:" + "3" * 64]
 
 
 @pytest.mark.asyncio

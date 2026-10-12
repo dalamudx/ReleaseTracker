@@ -62,7 +62,7 @@ version: ## Synchronize the version number. Usage: make version VERSION=1.0.1
 
 dbmate-migrate: ## Run dbmate migrations against the current releases.db
 	@echo "🛫 Running dbmate migrations..."
-	cd backend && dbmate --url "sqlite:$$(pwd)/data/releases.db" --migrations-dir dbmate/migrations migrate
+	cd backend && DBMATE_MIGRATIONS_DIR="$$(pwd)/dbmate/migrations" $(UV) run --locked sh scripts/docker-entrypoint.sh migrate
 
 clean: ## Clean build artifacts and caches
 	@echo "🧹 Cleaning build artifacts and caches..."

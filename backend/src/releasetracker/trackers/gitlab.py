@@ -1,6 +1,7 @@
 """GitLab tracker"""
 
 from datetime import datetime
+from ..release_times import parse_time
 from urllib.parse import quote
 import asyncio
 
@@ -161,11 +162,8 @@ class GitLabTracker(BaseTracker):
             name=data.get("name") or tag_name,
             tag_name=tag_name,
             version=tag_name,
-            published_at=datetime.fromisoformat(
-                data["released_at"].replace("Z", "+00:00")
-                if data.get("released_at")
-                else data["created_at"].replace("Z", "+00:00")
-            ),
+            published_at=parse_time(data.get("released_at")),
+            published_at_source="upstream_release",
             url=f"{self.instance}/{self.project}/-/releases/{tag_name}",
             prerelease=False,  # GitLab does not provide an explicit prerelease flag
             body=data.get("description"),  # Release Notes
@@ -195,9 +193,9 @@ class GitLabTracker(BaseTracker):
             try:
                 published_at = datetime.fromisoformat(committed_date.replace("Z", "+00:00"))
             except ValueError:
-                published_at = datetime.now()
+                published_at = None
         else:
-            published_at = datetime.now()
+            published_at = None
 
         return Release(
             tracker_name=self.name,
@@ -205,7 +203,8 @@ class GitLabTracker(BaseTracker):
             name=tag_name,
             tag_name=tag_name,
             version=tag_name,
-            published_at=published_at,
+            published_at=None,
+            source_created_at=published_at,
             url=f"{self.instance}/{self.project}/-/tags/{tag_name}",
             prerelease=False,
             body=data.get("message"),

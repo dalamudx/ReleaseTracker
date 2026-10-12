@@ -680,7 +680,7 @@ describe("tracker current matrix presentation model", () => {
         expect(model.rows.map((row) => row.sourceTypeBadges.length)).toEqual([2, 2, 1])
     })
 
-    it("orders tracker history strictly by published time when configured", () => {
+    it("ignores legacy time sorting when presenting tracker history", () => {
         const sources = [
             {
                 id: 1, channel_key: "repo", channel_type: "gitea", enabled: true,
@@ -725,7 +725,7 @@ describe("tracker current matrix presentation model", () => {
 
         const model = buildTrackerHistoryMatrixPresentationModel(sources, items, "published_at")
         expect(model.rows.map((row) => row.displayVersion)).toEqual([
-            "3.6.0-dev-0b0d27d3f61c", "3.6.0-dev", "3.6.0-dev-ce40a02fc70b", "3.6.0",
+            "3.6.0", "3.6.0-dev-0b0d27d3f61c", "3.6.0-dev-ce40a02fc70b", "3.6.0-dev",
         ])
     })
 

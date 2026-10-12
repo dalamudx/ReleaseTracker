@@ -96,6 +96,7 @@ async def enqueue_executor_binding_targets(
                 "chart_version": (target.chart_version if source_type == "helm" else None),
                 "chart_digest": (target.chart_digest if source_type == "helm" else None),
                 "identity_key": _target_identity_key(version, digest),
+                "selection_revision": target.selection_revision,
             }
         )
 
@@ -119,10 +120,13 @@ async def enqueue_executor_binding_targets(
             "identity_key": target["identity_key"],
             "chart_version": target["chart_version"],
             "chart_digest": target["chart_digest"],
+            "selection_revision": target["selection_revision"],
         }
         for target in targets
     ]
-    serialized_identity = json.dumps(revision_targets, sort_keys=True, separators=(",", ":"))
+    from .versioning import SELECTION_RULES_VERSION
+
+    serialized_identity = json.dumps({"selection_revision": SELECTION_RULES_VERSION, "bindings": revision_targets}, sort_keys=True, separators=(",", ":"))
     revision_identity = (
         "bindings:" + hashlib.sha256(serialized_identity.encode("utf-8")).hexdigest()
     )

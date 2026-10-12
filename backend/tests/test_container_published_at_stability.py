@@ -168,8 +168,8 @@ async def test_container_published_at_upgrades_once_to_real_artifact_created(sto
 
     releases = await storage.get_source_release_history_releases_by_source(source.id)
     assert len(releases) == 1
-    assert releases[0].published_at == artifact_created
-    assert releases[0].published_at_source == "artifact_created"
+    assert releases[0].artifact_created_at == artifact_created
+    assert releases[0].published_at is None
 
     await _append(
         storage,
@@ -187,7 +187,7 @@ async def test_container_published_at_upgrades_once_to_real_artifact_created(sto
     )
     enriched = await storage.get_source_release_history_releases_by_source(source.id)
     assert len(enriched) == 1
-    assert enriched[0].published_at == artifact_created
+    assert enriched[0].artifact_created_at == artifact_created
     assert enriched[0].oci_version == "v1.2.3-build123"
     assert enriched[0].oci_revision == "build123"
     assert enriched[0].oci_source == "https://example.com/owner/sample"
@@ -223,7 +223,9 @@ async def test_container_published_at_refreshes_when_digest_changes(storage):
     )
 
     recorded = await _query_published_at(storage, source_id, "latest")
-    assert recorded == rebuilt_at.isoformat()
+    assert recorded is None
+    rows = await storage.get_source_release_history_releases_by_source(source_id)
+    assert {r.commit_sha for r in rows} == {"sha256:" + "a" * 64, "sha256:" + "b" * 64}
 
 
 @pytest.mark.asyncio
@@ -257,7 +259,7 @@ async def test_container_published_at_preserved_when_new_digest_is_missing(stora
     )
 
     recorded = await _query_published_at(storage, source_id, "v1.2.3")
-    assert recorded == first_seen.isoformat()
+    assert recorded is None
 
 
 @pytest.mark.asyncio

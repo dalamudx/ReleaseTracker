@@ -374,8 +374,8 @@ export default function HistoryPage() {
                                     const releaseChannelLabel = getReleaseChannelDisplayLabel(release, t)
                                     const identityPrefix = buildReleaseIdentityPrefix(release)
                                     const linkHref = release.changelog_url || release.url
-                                    const absolutePublished = formatDate(release.published_at)
-                                    const relativePublished = formatRelative(release.published_at)
+                                    const absolutePublished = (release.published_at ? formatDate(release.published_at) : "—")
+                                    const relativePublished = (release.published_at ? formatRelative(release.published_at) : "—")
 
                                     return (
                                         <TableRow

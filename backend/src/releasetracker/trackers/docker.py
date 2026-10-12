@@ -5,10 +5,8 @@ import base64
 import logging
 import random
 import re
-import time
 from collections.abc import Iterable
-from datetime import datetime, timedelta, timezone
-from typing import Literal
+from datetime import datetime
 from urllib.parse import urljoin
 
 import httpx
@@ -34,36 +32,11 @@ _REGISTRY_AUTH = {
 
 _DEFAULT_REGISTRY = "registry-1.docker.io"
 
-# Anonymous pulls on these registries share a small shared quota (docker.io is
-# the notorious one), so by default we skip config-blob reads when there is no
-# credential to prove we're not a scrape bot.
-_RATE_LIMITED_ANONYMOUS_REGISTRIES = frozenset(
-    {
-        "registry-1.docker.io",
-        "docker.io",
-        "quay.io",
-    }
-)
 
-# Process-local cooldown per registry host. When a registry returns 429 or
-# signals exhausted remaining quota, we skip config-blob reads for this long
-# to avoid amplifying the problem.
-_RATE_LIMIT_COOLDOWN_SECONDS = 600  # 10 minutes
-_registry_cooldowns: dict[str, float] = {}
-
-# Config-blob bodies are typically small; cap to defend against malicious /
-# mis-configured registries that could send very large JSON.
-_MAX_CONFIG_BLOB_BYTES = 256 * 1024  # 256 KiB
-_CONFIG_BLOB_TIMEOUT_SECONDS = 5.0
 _REGISTRY_MAX_REDIRECTS = 5
+_REGISTRY_PUSH_TIME_BUDGET_SECONDS = 5.0
+_REGISTRY_PUSH_TIME_REQUEST_LIMIT = 10
 _REGISTRY_MAX_TAG_PAGES = 100
-
-# Reproducible builds often set config.created to the Unix epoch. Treat any
-# timestamp before 2000 as "not a real publish time" and ignore it.
-_MIN_CREDIBLE_CREATED = datetime(2000, 1, 1, tzinfo=timezone.utc)
-
-PublishedAtMode = Literal["auto", "prefer_real", "first_observed"]
-
 # Matches both two-part (x.y) and three-part (x.y.z) numeric version tags,
 # with an optional suffix separated by '.' or '-'.
 # Group 1: major, Group 2: minor, Group 3: patch (optional), Group 4: suffix (optional)
@@ -84,14 +57,6 @@ _MANIFEST_ACCEPT = ", ".join(
     ]
 )
 
-# Preferred architecture for platform selection when resolving multi-arch
-# manifest indexes. We only need one platform's config to read `created`; all
-# platforms in a multi-arch build share the same upstream build time.
-_PLATFORM_PREFERENCES = (
-    ("linux", "amd64"),
-    ("linux", "arm64"),
-    ("linux", "arm"),
-)
 
 
 class DockerTracker(BaseTracker):
@@ -103,12 +68,17 @@ class DockerTracker(BaseTracker):
         image: str,
         registry: str | None = None,
         token: str | None = None,
-        published_at_mode: PublishedAtMode = "auto",
         allow_registry_redirects: bool = False,
         credential_name: str | None = None,
+        metadata_token: str | None = None,
+        version_format: str = "dotted",
         **kwargs,
     ):
+        # Legacy direct callers may still pass this removed option; it has no effect.
+        kwargs.pop("published_at_mode", None)
         super().__init__(name, **kwargs)
+        self.version_format = version_format
+        self.last_complete_tags: tuple[str, ...] | None = None
         # Normalize registry and image: runtime configuration uses registry plus repository path as the canonical structure,
         # but UI or legacy bridge paths may still pass ghcr.io/owner/repo. OCI API path/scope must remove the registry host.
         self.registry = _normalize_registry(registry)
@@ -120,24 +90,20 @@ class DockerTracker(BaseTracker):
         #   "username:password" → Basic Auth
         #   "ghp_xxxx" / raw Bearer Token
         self.token = token
+        self.metadata_token = metadata_token
         self._credentials_configured = bool(credential_name or token)
-        self._config_blob_timed_out = False
-        self.published_at_mode: PublishedAtMode = published_at_mode
         self.allow_registry_redirects = bool(allow_registry_redirects)
         self._alias_last_observed: dict[str, datetime] | None = None
         self._alias_digest_by_name: dict[str, str] = {}
-        self._artifact_created_by_digest: dict[str, datetime] = {}
-        self._artifact_metadata_by_digest: dict[str, dict[str, str]] = {}
-        self._oci_metadata_by_tag: dict[str, dict[str, str]] = {}
         self._priority_aliases: tuple[str, ...] = ()
+        self._manifest_modified: dict[tuple[str, str], datetime] = {}
+        self._registry_metadata_provider: str | None = None
 
     def configure_incremental_fetch(
         self,
         *,
         alias_last_observed: dict[str, datetime],
-        artifact_created_by_digest: dict[str, datetime],
         alias_digest_by_name: dict[str, str] | None = None,
-        artifact_metadata_by_digest: dict[str, dict[str, str]] | None = None,
         priority_aliases: Iterable[str] | None = None,
     ) -> None:
         """Configure persisted state used for bounded alias reconciliation."""
@@ -146,16 +112,6 @@ class DockerTracker(BaseTracker):
             alias: digest.lower()
             for alias, digest in (alias_digest_by_name or {}).items()
             if alias and digest
-        }
-        self._artifact_created_by_digest = {
-            digest.lower(): created_at
-            for digest, created_at in artifact_created_by_digest.items()
-            if digest and created_at
-        }
-        self._artifact_metadata_by_digest = {
-            digest.lower(): {key: value for key, value in metadata.items() if value}
-            for digest, metadata in (artifact_metadata_by_digest or {}).items()
-            if digest and metadata
         }
         self._priority_aliases = tuple(
             dict.fromkeys(alias for alias in (priority_aliases or ()) if alias)
@@ -293,31 +249,6 @@ class DockerTracker(BaseTracker):
 
         raise ValueError("Container registry redirect chain exceeded limit")
 
-    async def _registry_config_blob_request(
-        self,
-        client: httpx.AsyncClient,
-        method: str,
-        url: str,
-        *,
-        headers: dict[str, str] | None = None,
-        **kwargs,
-    ) -> httpx.Response:
-        """Fetch an OCI config blob with bounded credential-free storage redirects."""
-        validated_url = self._validate_registry_request_url(url)
-        if method.upper() != "GET" or f"/v2/{self.image}/blobs/" not in validated_url:
-            raise ValueError(
-                "Container registry config blob redirect is only allowed for blob GETs"
-            )
-
-        return await self._request_with_redirect_policy(
-            client,
-            method,
-            validated_url,
-            headers=headers,
-            origin_url=self._registry_url(),
-            allow_cross_origin_without_credentials=True,
-            **kwargs,
-        )
 
     async def _registry_request(
         self,
@@ -339,28 +270,6 @@ class DockerTracker(BaseTracker):
             **kwargs,
         )
 
-    def _should_fetch_config_blob(self) -> bool:
-        """Decide whether config-blob reading is worth attempting for this registry.
-
-        - `prefer_real`: try on every registry; user accepts the request cost.
-        - `first_observed`: never try; entirely skip the extra request.
-        - `auto` (default):
-            - If we have a credential (`self.token`), always try.
-            - Otherwise skip on registries known to aggressively rate-limit
-              anonymous pulls (docker.io, quay.io).
-            - Skip on any registry currently in cooldown (recently 429'd).
-        """
-        if self.published_at_mode == "first_observed":
-            return False
-        if self.published_at_mode == "prefer_real":
-            return not _is_registry_cooling_down(self.registry)
-
-        # auto mode
-        if _is_registry_cooling_down(self.registry):
-            return False
-        if self.token:
-            return True
-        return self.registry not in _RATE_LIMITED_ANONYMOUS_REGISTRIES
 
     async def _get_bearer_token(self, client: httpx.AsyncClient, scope: str) -> str | None:
         """Fetch access token from auth service via Bearer Token flow"""
@@ -374,6 +283,13 @@ class DockerTracker(BaseTracker):
                 if resp.status_code == 401:
                     www_auth = resp.headers.get("www-authenticate", "")
                     auth_info = _parse_www_authenticate(www_auth)
+                    if auth_info and same_origin_https(self._registry_url(), auth_info.get("realm", "")):
+                        from urllib.parse import urlparse
+                        realm_path = urlparse(auth_info["realm"]).path
+                        if realm_path == "/service/token":
+                            self._registry_metadata_provider = "harbor"
+                        elif realm_path == "/v2/auth":
+                            self._registry_metadata_provider = "quay"
                 else:
                     return None  # Authentication is not required
             except (httpx.TimeoutException, httpx.RequestError):
@@ -466,7 +382,7 @@ class DockerTracker(BaseTracker):
                 logger.error(
                     f"DockerTracker: Failed to parse tags, response is not valid JSON. URL={url}"
                 )
-                break
+                raise ValueError("Container registry tag list is not valid JSON")
 
             tags.extend(data.get("tags") or [])
             # Pagination: Link header
@@ -603,30 +519,10 @@ class DockerTracker(BaseTracker):
         tag: str,
         bearer_token: str | None,
         scope: str,
-        *,
-        manifest_bodies: dict[str, httpx.Response] | None = None,
     ) -> tuple[str | None, str | None, str | None, str | None]:
         manifest_url = f"{self._registry_url()}/v2/{self.image}/manifests/{tag}"
         current_token = bearer_token
         last_error: str | None = None
-        # Reuse only a successful GET that resolves its own digest. Metadata is
-        # optional: missing headers, transport failures or a cooling-down GET
-        # fall back to the established HEAD resolver. Auth rejection still raises.
-        if manifest_bodies is not None:
-            try:
-                response, current_token = await self._request_manifest(
-                    client, "GET", manifest_url, current_token, scope
-                )
-            except (httpx.TimeoutException, httpx.RequestError):
-                pass
-            else:
-                if response.status_code == 429:
-                    _mark_registry_rate_limited(self.registry)
-                if 200 <= response.status_code < 300:
-                    digest = response.headers.get("Docker-Content-Digest")
-                    if digest:
-                        manifest_bodies[tag] = response
-                        return digest, response.headers.get("Content-Type"), None, current_token
 
         for attempt in range(3):
             try:
@@ -645,8 +541,6 @@ class DockerTracker(BaseTracker):
                     return None, None, "manifest_unauthorized", current_token
                 if head_status == 429 or 500 <= head_status < 600:
                     last_error = f"manifest_head_http_{head_status}"
-                    if head_status == 429:
-                        _mark_registry_rate_limited(self.registry)
                 elif 400 <= head_status < 500:
                     return (
                         None,
@@ -658,6 +552,10 @@ class DockerTracker(BaseTracker):
                     digest = head_resp.headers.get("Docker-Content-Digest")
                     media_type = head_resp.headers.get("Content-Type")
                     if digest:
+                        from .registry_metadata import registry_date
+                        modified = registry_date(head_resp.headers.get("Last-Modified"))
+                        if modified is not None:
+                            self._manifest_modified[(tag, digest.lower())] = modified
                         return digest, media_type, None, current_token
 
                     get_resp, current_token = await self._request_manifest(
@@ -675,8 +573,6 @@ class DockerTracker(BaseTracker):
                         return None, None, "manifest_unauthorized", current_token
                     if get_status == 429 or 500 <= get_status < 600:
                         last_error = f"manifest_get_http_{get_status}"
-                        if get_status == 429:
-                            _mark_registry_rate_limited(self.registry)
                     elif 400 <= get_status < 500:
                         return (
                             None,
@@ -688,8 +584,10 @@ class DockerTracker(BaseTracker):
                         digest = get_resp.headers.get("Docker-Content-Digest")
                         media_type = get_resp.headers.get("Content-Type")
                         if digest:
-                            if manifest_bodies is not None:
-                                manifest_bodies[tag] = get_resp
+                            from .registry_metadata import registry_date
+                            modified = registry_date(get_resp.headers.get("Last-Modified"))
+                            if modified is not None:
+                                self._manifest_modified[(tag, digest.lower())] = modified
                             return digest, media_type, None, current_token
                         return None, media_type, "manifest_digest_header_missing", current_token
             except httpx.TimeoutException:
@@ -705,166 +603,8 @@ class DockerTracker(BaseTracker):
 
         return None, None, last_error, current_token
 
-    async def _fetch_image_created(
-        self,
-        client: httpx.AsyncClient,
-        tag: str,
-        bearer_token: str | None,
-        scope: str,
-        *,
-        manifest_response: httpx.Response | None = None,
-    ) -> tuple[datetime | None, str | None]:
-        """Fetch the image's build time from the OCI config blob.
 
-        Returns (created_at, current_bearer_token). `created_at` is None when
-        any step fails (missing config, unusable platforms, HTTP errors,
-        implausible timestamp, etc.) so the caller can fall back gracefully.
-
-        The extra HTTP cost is:
-          * one GET manifest unless digest resolution already supplied its body;
-          * if it's a multi-arch index, one more GET for a platform manifest;
-          * one GET config blob.
-
-        That's at most 3 calls per tag — only invoked when the tag is new to
-        the database, so amortised cost per scheduler tick is near zero once
-        the tracker is in steady state.
-        """
-        manifest_url = f"{self._registry_url()}/v2/{self.image}/manifests/{tag}"
-        current_token = bearer_token
-
-        # Step 1: GET the manifest body to find the config digest.
-        if manifest_response is not None:
-            response = manifest_response
-        else:
-            try:
-                response, current_token = await self._request_manifest(
-                    client, "GET", manifest_url, current_token, scope
-                )
-            except (httpx.TimeoutException, httpx.RequestError) as exc:
-                logger.debug(
-                    "DockerTracker: config blob fetch transport error on %s:%s: %s",
-                    self.image,
-                    tag,
-                    exc,
-                )
-                return None, current_token
-
-        if response.status_code == 429:
-            _mark_registry_rate_limited(self.registry)
-            return None, current_token
-        if response.status_code >= 400:
-            return None, current_token
-
-        try:
-            manifest_json = response.json()
-        except ValueError:
-            return None, current_token
-
-        media_type = response.headers.get("Content-Type", "") or manifest_json.get("mediaType", "")
-
-        # Step 2: if we got an index / manifest list, pick one platform and
-        # GET that sub-manifest. Otherwise the body already contains config.
-        if _is_manifest_index(media_type, manifest_json):
-            sub_digest = _pick_platform_manifest(manifest_json)
-            if sub_digest is None:
-                return None, current_token
-            sub_url = f"{self._registry_url()}/v2/{self.image}/manifests/{sub_digest}"
-            try:
-                response, current_token = await self._request_manifest(
-                    client, "GET", sub_url, current_token, scope
-                )
-            except (httpx.TimeoutException, httpx.RequestError):
-                return None, current_token
-
-            if response.status_code == 429:
-                _mark_registry_rate_limited(self.registry)
-                return None, current_token
-            if response.status_code >= 400:
-                return None, current_token
-            try:
-                manifest_json = response.json()
-            except ValueError:
-                return None, current_token
-
-        config_descriptor = manifest_json.get("config")
-        if not isinstance(config_descriptor, dict):
-            return None, current_token
-        config_digest = config_descriptor.get("digest")
-        if not isinstance(config_digest, str) or not config_digest:
-            return None, current_token
-
-        # Step 3: fetch the config blob and read `created`.
-        blob_url = f"{self._registry_url()}/v2/{self.image}/blobs/{config_digest}"
-        try:
-            budget = min(float(self.timeout), _CONFIG_BLOB_TIMEOUT_SECONDS)
-            # Bound the entire redirect chain, not only individual read waits.
-            async with asyncio.timeout(budget):
-                blob_resp = await self._registry_config_blob_request(
-                    client,
-                    "GET",
-                    blob_url,
-                    headers=self._get_auth_header(current_token),
-                    timeout=budget,
-                )
-        except (TimeoutError, httpx.TimeoutException):
-            # One slow storage endpoint is enough: skip remaining blobs this run.
-            self._config_blob_timed_out = True
-            return None, current_token
-        except (ValueError, httpx.RequestError):
-            return None, current_token
-
-        self._raise_authentication_error(blob_resp)
-        if blob_resp.status_code == 429:
-            _mark_registry_rate_limited(self.registry)
-            return None, current_token
-        if blob_resp.status_code >= 400:
-            return None, current_token
-
-        # Defend against oversized / malicious config bodies.
-        raw_body = blob_resp.content[:_MAX_CONFIG_BLOB_BYTES]
-        try:
-            import json
-
-            config_json = json.loads(raw_body)
-        except ValueError:
-            return None, current_token
-
-        image_config = config_json.get("config")
-        labels = image_config.get("Labels") if isinstance(image_config, dict) else None
-        if isinstance(labels, dict):
-            metadata = {
-                field: value.strip()
-                for field, label in {
-                    "version": "org.opencontainers.image.version",
-                    "revision": "org.opencontainers.image.revision",
-                    "source": "org.opencontainers.image.source",
-                }.items()
-                if isinstance((value := labels.get(label)), str)
-                and value.strip()
-                and len(value.strip()) <= 1024
-            }
-            if metadata:
-                self._oci_metadata_by_tag[tag] = metadata
-
-        created_str = config_json.get("created")
-        if not isinstance(created_str, str) or not created_str.strip():
-            return None, current_token
-
-        try:
-            created_at = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
-        except ValueError:
-            return None, current_token
-
-        # Reject reproducible-build placeholder (epoch) and other clearly
-        # implausible times so the UI doesn't show "55 years ago" for those.
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
-        if created_at < _MIN_CREDIBLE_CREATED:
-            return None, current_token
-
-        return created_at, current_token
-
-    def _tag_to_release(self, tag: str, created_at: datetime | None = None) -> Release:
+    def _tag_to_release(self, tag: str) -> Release:
         """Convert a tag into a Release object"""
         return Release(
             tracker_name=self.name,
@@ -872,11 +612,21 @@ class DockerTracker(BaseTracker):
             name=tag,
             tag_name=tag,
             version=tag,
-            published_at=created_at or datetime.now(),
-            published_at_source=("artifact_created" if created_at else "first_observed"),
+            published_at=None,
             url=f"https://{self.registry}/{self.image}:{tag}",
             prerelease=False,
         )
+
+
+    async def _enrich_registry_push_times(self, releases: list[Release]) -> None:
+        """Optional digest-bound native dates; failures never block manifest fetching."""
+        from .registry_metadata import enrich_registry_times
+        try:
+            await enrich_registry_times(self, releases,
+                budget_seconds=min(self.timeout, _REGISTRY_PUSH_TIME_BUDGET_SECONDS),
+                max_requests=_REGISTRY_PUSH_TIME_REQUEST_LIMIT)
+        except (TimeoutError, httpx.HTTPError, ValueError) as exc:
+            logger.debug("DockerTracker: optional registry time unavailable (%s)", type(exc).__name__)
 
     async def fetch_latest(self, fallback_tags: bool = False) -> Release | None:
         releases = await self.fetch_all(
@@ -891,19 +641,14 @@ class DockerTracker(BaseTracker):
         *,
         incremental_alias_scan: bool = True,
     ) -> list[Release]:
-        """Fetch the first `limit` tags matching filter rules.
+        """Fetch a bounded set of matching tags and their manifest digests.
 
-        The `published_at` handling works in two layers:
-          * Per-tag: when the tracker can read the image's config blob, we
-            replace the placeholder timestamp with the real build time.
-          * Across tags: the remaining tags keep the default placeholder
-            (now() offset by rank). The storage layer takes care of NOT
-            overwriting an already-stored published_at when the digest hasn't
-            changed, so steady state is stable even when config-blob reading
-            is skipped.
+        No Config blobs or build metadata are read. Observation times are only
+        used to schedule bounded incremental probes, never to rank versions.
         """
+        self.last_complete_tags = None
         scope = f"repository:{self.image}:pull"
-        self._config_blob_timed_out = False
+        self._manifest_modified.clear()
 
         logger.info(
             f"DockerTracker: Fetching tags from {self.registry}/{self.image} (limit={limit})"
@@ -916,6 +661,7 @@ class DockerTracker(BaseTracker):
             # 2. Fetch tag list
             try:
                 all_tags = await self._fetch_tags(client, bearer_token)
+                self.last_complete_tags = tuple(all_tags)
             except httpx.HTTPStatusError as e:
                 logger.error(
                     f"DockerTracker: Fetch tag list failed {e.response.status_code}: {e.response.text}"
@@ -940,28 +686,27 @@ class DockerTracker(BaseTracker):
             for tag in sorted_tags:
                 releases.append(self._tag_to_release(tag))
 
+            from ..versioning import container_channel_eligible, container_tag_eligible, release_order_key
             releases = [release for release in releases if self._should_include(release)]
-            _apply_semver_published_at(releases)
+            channels = self.config.get("channels", [])
+            candidate_groups = [[release for release in releases if self.should_include_in_channel(release, channel)
+                and container_channel_eligible(release.tag_name, self.version_format, channel)] for channel in channels] if channels else [
+                [release for release in releases if container_tag_eligible(release.tag_name, self.version_format)]]
+            selection_priority = list(dict.fromkeys(max(group, key=release_order_key).tag_name for group in candidate_groups if group))
+            if incremental_alias_scan:
+                selection_priority.sort(key=lambda tag: self._alias_last_observed[tag].isoformat() if self._alias_last_observed and tag in self._alias_last_observed else "")
 
             candidate_window = _select_incremental_probe_window(
                 releases,
                 limit,
                 self._alias_last_observed if incremental_alias_scan else None,
-                priority_aliases=self._priority_aliases if incremental_alias_scan else (),
+                priority_aliases=(*selection_priority, *(self._priority_aliases if incremental_alias_scan else ())),
             )
             candidates_by_tag = {release.tag_name: release for release in releases}
             candidate_tags = [release.tag_name for release in candidate_window]
             priority_tags: list[str] = []
             processed_tags: set[str] = set()
             selected_releases: list[Release] = []
-            allow_config_blob = self._should_fetch_config_blob()
-            artifact_created_by_digest = dict(self._artifact_created_by_digest)
-            artifact_metadata_by_digest = {
-                digest: dict(metadata)
-                for digest, metadata in self._artifact_metadata_by_digest.items()
-            }
-            metadata_attempted_digests: set[str] = set()
-            self._oci_metadata_by_tag = {}
 
             def prioritize_tag(tag: str | None) -> None:
                 if (
@@ -972,10 +717,6 @@ class DockerTracker(BaseTracker):
                 ):
                     priority_tags.insert(0, tag)
 
-            def apply_metadata(candidate: Release, metadata: dict[str, str]) -> None:
-                candidate.oci_version = metadata.get("version")
-                candidate.oci_revision = metadata.get("revision")
-                candidate.oci_source = metadata.get("source")
 
             while len(selected_releases) < limit and (priority_tags or candidate_tags):
                 candidate_tag = priority_tags.pop(0) if priority_tags else candidate_tags.pop(0)
@@ -985,26 +726,12 @@ class DockerTracker(BaseTracker):
                 processed_tags.add(candidate_tag)
                 selected_releases.append(candidate)
 
-                known_digest = self._alias_digest_by_name.get(candidate.tag_name)
-                want_body = (
-                    allow_config_blob
-                    and not self._config_blob_timed_out
-                    and not _is_registry_cooling_down(self.registry)
-                    and not artifact_metadata_by_digest.get(known_digest)
-                    and known_digest not in metadata_attempted_digests
-                )
-                # Bounded to this candidate and this round; never cache a tag
-                # response across runs or combine a GET body with a later HEAD.
-                manifest_bodies: dict[str, httpx.Response] = {}
-                resolve_options = {"manifest_bodies": manifest_bodies} if want_body else {}
                 digest, _, error_reason, bearer_token = await self._resolve_manifest_digest(
                     client,
                     candidate.tag_name,
                     bearer_token,
                     scope,
-                    **resolve_options,
                 )
-                manifest_response = manifest_bodies.pop(candidate.tag_name, None)
                 if digest:
                     candidate.commit_sha = digest
                     normalized_digest = digest.lower()
@@ -1018,54 +745,12 @@ class DockerTracker(BaseTracker):
                         for sibling_tag in reversed(sibling_tags):
                             prioritize_tag(sibling_tag)
 
-                    cached_created = artifact_created_by_digest.get(normalized_digest)
-                    if cached_created is not None:
-                        candidate.published_at = cached_created
-                        candidate.published_at_source = "artifact_created"
-
-                    metadata = artifact_metadata_by_digest.get(normalized_digest)
-                    if metadata:
-                        apply_metadata(candidate, metadata)
-                    elif (
-                        normalized_digest not in metadata_attempted_digests
-                        and allow_config_blob
-                        and not self._config_blob_timed_out
-                        and not _is_registry_cooling_down(self.registry)
-                    ):
-                        # OCI config metadata is immutable for a manifest digest. Fetch it
-                        # once per unique artifact, not once per alias, then persist it
-                        # through source history for future runs.
-                        metadata_attempted_digests.add(normalized_digest)
-                        real_created, bearer_token = await self._fetch_image_created(
-                            client,
-                            candidate.tag_name,
-                            bearer_token,
-                            scope,
-                            **(
-                                {"manifest_response": manifest_response}
-                                if manifest_response is not None
-                                else {}
-                            ),
-                        )
-                        if real_created is not None:
-                            artifact_created_by_digest[normalized_digest] = real_created
-                            candidate.published_at = real_created
-                            candidate.published_at_source = "artifact_created"
-                        metadata = self._oci_metadata_by_tag.get(candidate.tag_name)
-                        if metadata:
-                            artifact_metadata_by_digest[normalized_digest] = metadata
-                            apply_metadata(candidate, metadata)
-
-                    # A build's immutable OCI version label is a bounded discovery hint,
-                    # not correlation evidence: probe that exact repository tag next and
-                    # still require the manifest digest to match before storage associates it.
-                    prioritize_tag(candidate.oci_version)
                     continue
 
+                candidate.candidate_confirmed = False
                 # Digest resolution failed. We still emit the candidate so
                 # first-time tags can get tracked; the storage layer is
-                # responsible for preserving the previous published_at when
-                # a digest is already on file for the same tag.
+                # Storage retains the last known digest when an optional probe fails.
                 logger.warning(
                     "DockerTracker: digest resolution failed, keep candidate without digest "
                     "(image=%s, tag=%s, reason=%s)",
@@ -1074,6 +759,7 @@ class DockerTracker(BaseTracker):
                     error_reason or "unknown",
                 )
 
+            await self._enrich_registry_push_times(selected_releases)
             return selected_releases
 
 
@@ -1305,19 +991,6 @@ def _select_incremental_probe_window(
     return selected
 
 
-def _apply_semver_published_at(releases: list[Release]) -> None:
-    """Assign placeholder `published_at` values that preserve the rank order.
-
-    The storage layer treats container releases specially: when the digest
-    has not changed, the stored `published_at` is retained rather than
-    overwritten with this placeholder. So each tag's timestamp only sticks
-    the FIRST time we see it; after that the DB keeps the real first-seen
-    time even if this function runs again on the next scheduler tick.
-    """
-    base_time = datetime.now()
-    total = len(releases)
-    for index, release in enumerate(releases):
-        release.published_at = base_time + timedelta(seconds=total - index)
 
 
 def _is_manifest_index(media_type: str, manifest_json: dict) -> bool:
@@ -1332,80 +1005,3 @@ def _is_manifest_index(media_type: str, manifest_json: dict) -> bool:
             return True
     # Some older Docker media types still use "manifests" array.
     return isinstance(manifest_json.get("manifests"), list)
-
-
-def _pick_platform_manifest(index_json: dict) -> str | None:
-    """Pick a platform manifest from an index, preferring amd64/arm64 Linux.
-
-    Returns the digest string of the chosen manifest, or None if none match.
-    We explicitly skip attestation manifests (`vnd.in-toto+json` etc.) that
-    some registries add to image indexes.
-    """
-    manifests = index_json.get("manifests")
-    if not isinstance(manifests, list):
-        return None
-
-    # Filter to real image manifests (skip attestation / signature artifacts).
-    candidates: list[dict] = []
-    for entry in manifests:
-        if not isinstance(entry, dict):
-            continue
-        media_type = entry.get("mediaType", "")
-        if not isinstance(media_type, str):
-            continue
-        lowered = media_type.lower()
-        if "manifest" not in lowered or "signature" in lowered or "attestation" in lowered:
-            continue
-        if "in-toto" in lowered:
-            continue
-        candidates.append(entry)
-
-    if not candidates:
-        return None
-
-    # Prefer preferred (os, arch) pairs in order.
-    for os_name, arch_name in _PLATFORM_PREFERENCES:
-        for entry in candidates:
-            platform = entry.get("platform") or {}
-            if not isinstance(platform, dict):
-                continue
-            if (
-                platform.get("os") == os_name
-                and platform.get("architecture") == arch_name
-                and platform.get("variant") in (None, "", "v8")
-            ):
-                digest = entry.get("digest")
-                if isinstance(digest, str) and digest:
-                    return digest
-
-    # Fall back to first Linux image, then any image manifest.
-    for entry in candidates:
-        platform = entry.get("platform") or {}
-        if isinstance(platform, dict) and platform.get("os") == "linux":
-            digest = entry.get("digest")
-            if isinstance(digest, str) and digest:
-                return digest
-
-    first_digest = candidates[0].get("digest")
-    return first_digest if isinstance(first_digest, str) and first_digest else None
-
-
-def _is_registry_cooling_down(registry: str) -> bool:
-    deadline = _registry_cooldowns.get(registry)
-    if deadline is None:
-        return False
-    if time.monotonic() < deadline:
-        return True
-    # expired — clean up so the dict doesn't grow unbounded
-    _registry_cooldowns.pop(registry, None)
-    return False
-
-
-def _mark_registry_rate_limited(registry: str, seconds: float | None = None) -> None:
-    cooldown = seconds if seconds is not None else _RATE_LIMIT_COOLDOWN_SECONDS
-    _registry_cooldowns[registry] = time.monotonic() + cooldown
-    logger.info(
-        "DockerTracker: registry %s rate-limited, skipping config blob reads for %ss",
-        registry,
-        cooldown,
-    )

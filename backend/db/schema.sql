@@ -160,45 +160,6 @@ CREATE TABLE aggregate_tracker_sources (
     FOREIGN KEY (aggregate_tracker_id) REFERENCES aggregate_trackers(id) ON DELETE CASCADE,
     UNIQUE(aggregate_tracker_id, source_key)
 );
-CREATE TABLE source_release_observations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tracker_source_id INTEGER NOT NULL,
-    source_release_key TEXT NOT NULL,
-    name TEXT NOT NULL,
-    tag_name TEXT NOT NULL,
-    version TEXT NOT NULL,
-    published_at TEXT NOT NULL,
-    url TEXT NOT NULL,
-    changelog_url TEXT,
-    prerelease INTEGER DEFAULT 0,
-    body TEXT,
-    commit_sha TEXT,
-    raw_payload TEXT NOT NULL DEFAULT '{}',
-    observed_at TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY (tracker_source_id) REFERENCES aggregate_tracker_sources(id) ON DELETE CASCADE,
-    UNIQUE(tracker_source_id, source_release_key)
-);
-CREATE TABLE canonical_releases (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    aggregate_tracker_id INTEGER NOT NULL,
-    canonical_key TEXT NOT NULL,
-    version TEXT NOT NULL,
-    name TEXT NOT NULL,
-    tag_name TEXT NOT NULL,
-    published_at TEXT NOT NULL,
-    url TEXT NOT NULL,
-    changelog_url TEXT,
-    prerelease INTEGER DEFAULT 0,
-    body TEXT,
-    primary_observation_id INTEGER,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY (aggregate_tracker_id) REFERENCES aggregate_trackers(id) ON DELETE CASCADE,
-    FOREIGN KEY (primary_observation_id) REFERENCES source_release_observations(id) ON DELETE SET NULL,
-    UNIQUE(aggregate_tracker_id, canonical_key)
-);
 CREATE TABLE canonical_release_observations (
     canonical_release_id INTEGER NOT NULL,
     source_release_observation_id INTEGER NOT NULL,
@@ -207,33 +168,6 @@ CREATE TABLE canonical_release_observations (
     PRIMARY KEY (canonical_release_id, source_release_observation_id),
     FOREIGN KEY (canonical_release_id) REFERENCES canonical_releases(id) ON DELETE CASCADE,
     FOREIGN KEY (source_release_observation_id) REFERENCES source_release_observations(id) ON DELETE CASCADE
-);
-CREATE TABLE source_release_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tracker_source_id INTEGER NOT NULL,
-    first_source_fetch_run_id INTEGER NOT NULL,
-    source_type TEXT NOT NULL,
-    source_release_key TEXT NOT NULL,
-    version TEXT NOT NULL,
-    digest TEXT,
-    digest_algorithm TEXT,
-    digest_media_type TEXT,
-    digest_platform TEXT,
-    identity_key TEXT NOT NULL,
-    name TEXT NOT NULL,
-    tag_name TEXT NOT NULL,
-    published_at TEXT NOT NULL,
-    url TEXT NOT NULL,
-    changelog_url TEXT,
-    prerelease INTEGER DEFAULT 0,
-    body TEXT,
-    commit_sha TEXT,
-    raw_payload TEXT NOT NULL DEFAULT '{}',
-    first_observed_at TEXT NOT NULL,
-    created_at TEXT NOT NULL, immutable_key TEXT,
-    FOREIGN KEY (tracker_source_id) REFERENCES aggregate_tracker_sources(id) ON DELETE CASCADE,
-    FOREIGN KEY (first_source_fetch_run_id) REFERENCES source_fetch_runs(id) ON DELETE RESTRICT,
-    UNIQUE(tracker_source_id, identity_key)
 );
 CREATE TABLE source_release_run_observations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -270,26 +204,6 @@ CREATE TABLE tracker_release_history_sources (
     FOREIGN KEY (tracker_release_history_id) REFERENCES tracker_release_history(id) ON DELETE CASCADE,
     FOREIGN KEY (source_release_history_id) REFERENCES source_release_history(id) ON DELETE CASCADE,
     CHECK (contribution_kind IN ('primary', 'supporting'))
-);
-CREATE TABLE tracker_current_releases (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    aggregate_tracker_id INTEGER NOT NULL,
-    identity_key TEXT NOT NULL,
-    version TEXT NOT NULL,
-    digest TEXT,
-    tracker_release_history_id INTEGER NOT NULL,
-    name TEXT NOT NULL,
-    tag_name TEXT NOT NULL,
-    published_at TEXT NOT NULL,
-    url TEXT NOT NULL,
-    changelog_url TEXT,
-    prerelease INTEGER DEFAULT 0,
-    body TEXT,
-    projected_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL, immutable_key TEXT,
-    FOREIGN KEY (aggregate_tracker_id) REFERENCES aggregate_trackers(id) ON DELETE CASCADE,
-    FOREIGN KEY (tracker_release_history_id) REFERENCES tracker_release_history(id) ON DELETE CASCADE,
-    UNIQUE(aggregate_tracker_id, identity_key)
 );
 CREATE TABLE executor_service_bindings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -329,21 +243,9 @@ CREATE INDEX idx_aggregate_tracker_sources_tracker_id
     ON aggregate_tracker_sources(aggregate_tracker_id);
 CREATE INDEX idx_aggregate_tracker_sources_type
     ON aggregate_tracker_sources(source_type);
-CREATE INDEX idx_source_release_observations_source_id
-    ON source_release_observations(tracker_source_id);
-CREATE INDEX idx_source_release_observations_version
-    ON source_release_observations(version);
-CREATE INDEX idx_canonical_releases_tracker_id
-    ON canonical_releases(aggregate_tracker_id);
-CREATE INDEX idx_canonical_releases_primary_observation_id
-    ON canonical_releases(primary_observation_id);
 CREATE INDEX idx_canonical_release_observations_source_observation_id
     ON canonical_release_observations(source_release_observation_id);
 CREATE INDEX idx_executors_tracker_source_id ON executors(tracker_source_id);
-CREATE INDEX idx_source_release_history_source_published_at
-    ON source_release_history(tracker_source_id, published_at DESC);
-CREATE INDEX idx_source_release_history_digest
-    ON source_release_history(digest);
 CREATE INDEX idx_source_release_run_observations_history_observed_at
     ON source_release_run_observations(source_release_history_id, observed_at DESC);
 CREATE INDEX idx_tracker_release_history_tracker_created_at
@@ -352,8 +254,6 @@ CREATE INDEX idx_tracker_release_history_tracker_version
     ON tracker_release_history(aggregate_tracker_id, version);
 CREATE INDEX idx_tracker_release_history_sources_source_release_history_id
     ON tracker_release_history_sources(source_release_history_id);
-CREATE INDEX idx_tracker_current_releases_tracker_published_at
-    ON tracker_current_releases(aggregate_tracker_id, published_at DESC);
 CREATE INDEX idx_executor_service_bindings_executor_id
     ON executor_service_bindings(executor_id);
 CREATE INDEX idx_executor_service_bindings_tracker_source_id
@@ -362,12 +262,8 @@ CREATE INDEX idx_executor_desired_state_pending_claim
     ON executor_desired_state(pending, claim_until, next_eligible_at);
 CREATE INDEX idx_executor_desired_state_revision
     ON executor_desired_state(desired_state_revision);
-CREATE UNIQUE INDEX idx_source_release_history_immutable_key
-    ON source_release_history(tracker_source_id, immutable_key);
 CREATE UNIQUE INDEX idx_tracker_release_history_immutable_key
     ON tracker_release_history(aggregate_tracker_id, immutable_key);
-CREATE UNIQUE INDEX idx_tracker_current_releases_immutable_key
-    ON tracker_current_releases(aggregate_tracker_id, immutable_key);
 CREATE TABLE IF NOT EXISTS "executor_snapshots" (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     executor_id INTEGER NOT NULL,
@@ -735,6 +631,140 @@ CREATE TABLE release_notification_outbox (
     UNIQUE(notifier_id, dedupe_key)
 );
 CREATE INDEX release_notification_outbox_due ON release_notification_outbox(status, available_at, id);
+CREATE TABLE IF NOT EXISTS "source_release_observations" (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tracker_source_id INTEGER NOT NULL,
+    source_release_key TEXT NOT NULL,
+    name TEXT NOT NULL,
+    tag_name TEXT NOT NULL,
+    version TEXT NOT NULL,
+    published_at TEXT,
+    url TEXT NOT NULL,
+    changelog_url TEXT,
+    prerelease INTEGER DEFAULT 0,
+    body TEXT,
+    commit_sha TEXT,
+    raw_payload TEXT NOT NULL DEFAULT '{}',
+    observed_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (tracker_source_id) REFERENCES aggregate_tracker_sources(id) ON DELETE CASCADE,
+    UNIQUE(tracker_source_id, source_release_key)
+);
+CREATE TABLE IF NOT EXISTS "canonical_releases" (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    aggregate_tracker_id INTEGER NOT NULL,
+    canonical_key TEXT NOT NULL,
+    version TEXT NOT NULL,
+    name TEXT NOT NULL,
+    tag_name TEXT NOT NULL,
+    published_at TEXT,
+    url TEXT NOT NULL,
+    changelog_url TEXT,
+    prerelease INTEGER DEFAULT 0,
+    body TEXT,
+    primary_observation_id INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (aggregate_tracker_id) REFERENCES aggregate_trackers(id) ON DELETE CASCADE,
+    FOREIGN KEY (primary_observation_id) REFERENCES source_release_observations(id) ON DELETE SET NULL,
+    UNIQUE(aggregate_tracker_id, canonical_key)
+);
+CREATE TABLE IF NOT EXISTS "source_release_history" (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tracker_source_id INTEGER NOT NULL,
+    first_source_fetch_run_id INTEGER NOT NULL,
+    source_type TEXT NOT NULL,
+    source_release_key TEXT NOT NULL,
+    version TEXT NOT NULL,
+    digest TEXT,
+    digest_algorithm TEXT,
+    digest_media_type TEXT,
+    digest_platform TEXT,
+    identity_key TEXT NOT NULL,
+    name TEXT NOT NULL,
+    tag_name TEXT NOT NULL,
+    published_at TEXT,
+    url TEXT NOT NULL,
+    changelog_url TEXT,
+    prerelease INTEGER DEFAULT 0,
+    body TEXT,
+    commit_sha TEXT,
+    raw_payload TEXT NOT NULL DEFAULT '{}',
+    first_observed_at TEXT NOT NULL,
+    created_at TEXT NOT NULL, immutable_key TEXT,
+    FOREIGN KEY (tracker_source_id) REFERENCES aggregate_tracker_sources(id) ON DELETE CASCADE,
+    FOREIGN KEY (first_source_fetch_run_id) REFERENCES source_fetch_runs(id) ON DELETE RESTRICT,
+    UNIQUE(tracker_source_id, identity_key)
+);
+CREATE TABLE IF NOT EXISTS "tracker_current_releases" (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    aggregate_tracker_id INTEGER NOT NULL,
+    identity_key TEXT NOT NULL,
+    version TEXT NOT NULL,
+    digest TEXT,
+    tracker_release_history_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    tag_name TEXT NOT NULL,
+    published_at TEXT,
+    url TEXT NOT NULL,
+    changelog_url TEXT,
+    prerelease INTEGER DEFAULT 0,
+    body TEXT,
+    projected_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL, immutable_key TEXT,
+    FOREIGN KEY (aggregate_tracker_id) REFERENCES aggregate_trackers(id) ON DELETE CASCADE,
+    FOREIGN KEY (tracker_release_history_id) REFERENCES tracker_release_history(id) ON DELETE CASCADE,
+    UNIQUE(aggregate_tracker_id, identity_key)
+);
+CREATE INDEX idx_source_release_observations_source_id
+    ON source_release_observations(tracker_source_id);
+CREATE INDEX idx_source_release_observations_version
+    ON source_release_observations(version);
+CREATE INDEX idx_canonical_releases_tracker_id
+    ON canonical_releases(aggregate_tracker_id);
+CREATE INDEX idx_canonical_releases_primary_observation_id
+    ON canonical_releases(primary_observation_id);
+CREATE INDEX idx_source_release_history_source_published_at
+    ON source_release_history(tracker_source_id, published_at DESC);
+CREATE INDEX idx_source_release_history_digest
+    ON source_release_history(digest);
+CREATE INDEX idx_tracker_current_releases_tracker_published_at
+    ON tracker_current_releases(aggregate_tracker_id, published_at DESC);
+CREATE UNIQUE INDEX idx_source_release_history_immutable_key
+    ON source_release_history(tracker_source_id, immutable_key);
+CREATE UNIQUE INDEX idx_tracker_current_releases_immutable_key
+    ON tracker_current_releases(aggregate_tracker_id, immutable_key);
+CREATE TABLE source_current_candidates (
+    tracker_source_id INTEGER NOT NULL REFERENCES aggregate_tracker_sources(id) ON DELETE CASCADE,
+    tag_name TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    listed INTEGER NOT NULL DEFAULT 1,
+    confirmed INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (tracker_source_id, tag_name)
+);
+CREATE TABLE source_inventory_scans (
+    tracker_source_id INTEGER PRIMARY KEY REFERENCES aggregate_tracker_sources(id) ON DELETE CASCADE,
+    origin TEXT NOT NULL,
+    listed_at TEXT,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE tracker_channel_selections (
+    aggregate_tracker_id INTEGER NOT NULL REFERENCES aggregate_trackers(id) ON DELETE CASCADE,
+    tracker_source_id INTEGER NOT NULL REFERENCES aggregate_tracker_sources(id) ON DELETE CASCADE,
+    channel_key TEXT NOT NULL,
+    channel_name TEXT NOT NULL,
+    inventory_revision TEXT NOT NULL,
+    state TEXT NOT NULL,
+    reason TEXT,
+    release_payload TEXT,
+    config_hash TEXT NOT NULL,
+    revision TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (tracker_source_id, channel_key)
+);
+CREATE INDEX idx_channel_selection_tracker ON tracker_channel_selections(aggregate_tracker_id);
 -- Dbmate schema migrations
 INSERT INTO "schema_migrations" (version) VALUES
   ('20000101000001'),
@@ -760,4 +790,6 @@ INSERT INTO "schema_migrations" (version) VALUES
   ('20260922000003'),
   ('20261001000001'),
   ('20261002000001'),
-  ('20261002000002');
+  ('20261002000002'),
+  ('20261012000001'),
+  ('20261012000002');

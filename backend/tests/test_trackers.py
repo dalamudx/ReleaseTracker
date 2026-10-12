@@ -67,7 +67,7 @@ async def _materialize_projection_rows(
                 aggregate_tracker.id,
                 source,
                 releases,
-                observed_at=max(release.published_at for release in releases),
+                observed_at=datetime.now(),
             )
         for release in releases:
             identity_key = storage.release_identity_key_for_source(
@@ -292,7 +292,7 @@ async def test_canonical_runtime_config_wins_over_conflicting_legacy_trackers_ro
     assert config.image is None
     assert config.credential_name is None
     assert config.interval == 360
-    assert config.version_sort_mode == "published_at"
+    assert config.version_sort_mode == "semver"
     assert config.fetch_limit == 10
     assert config.fetch_timeout == 15
     assert config.fallback_tags is False
@@ -641,7 +641,7 @@ async def test_source_channel_versions_are_independent_of_aggregate_winners(
             "repo": [repo],
             "image": [
                 release("container", "3.6.0", 4, stable_digest),
-                release("container", "3.6.0-dev-old", 1, "sha256:" + "c" * 64),
+                release("container", "3.5.0-dev", 1, "sha256:" + "c" * 64),
                 release("container", "3.6.0-dev", 3, dev_digest),
             ],
             "other-image": [release("container", "9.0.0-dev", 6, "sha256:" + "d" * 64)],
@@ -649,7 +649,7 @@ async def test_source_channel_versions_are_independent_of_aggregate_winners(
         projection_releases=[] if empty_projection else [repo],
     )
     current = await storage.get_tracker_current_release_rows(name)
-    assert [row["version"] for row in current] == ([] if empty_projection else ["3.6.0"])
+    assert sorted(row["version"] for row in current) == ["3.6.0", "3.6.0-dev", "9.0.0-dev"]
 
     for endpoint in ("/api/trackers", f"/api/trackers/{name}", f"/api/trackers/{name}/config"):
         response = authed_client.get(endpoint)
@@ -980,7 +980,7 @@ async def test_update_tracker_rebuilds_existing_observations_without_remote_refe
     current_rows = current_response.json()["matrix"]["rows"]
     assert [item["version"] for item in current_rows] == ["2.0.0"]
     selected_row = next(row for row in current_rows if row["version"] == "2.0.0")
-    assert selected_row["channel_keys"] == ["stable"]
+    assert selected_row["channel_keys"] == ["repo-stable"]
 
 
 @pytest.mark.asyncio
@@ -1103,7 +1103,7 @@ async def test_create_tracker_reject_legacy_request_shape(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_local_rebuild_status_ignores_canonical_only_rows_without_redesign_authority(storage):
+async def test_local_rebuild_status_uses_source_observations_independently_of_legacy_projection(storage):
     aggregate_tracker = await storage.create_aggregate_tracker(
         AggregateTracker(
             name="local-rebuild-canonical-only",
@@ -1173,7 +1173,7 @@ async def test_local_rebuild_status_ignores_canonical_only_rows_without_redesign
     scheduler = ReleaseScheduler(storage)
     status = await scheduler.rebuild_tracker_views_from_storage("local-rebuild-canonical-only")
 
-    assert status.last_version is None
+    assert status.last_version == "9.9.9"
     assert status.error is None
     assert status.last_check is None
 

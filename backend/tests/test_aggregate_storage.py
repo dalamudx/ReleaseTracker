@@ -1,6 +1,6 @@
 # pyright: reportCallIssue=false
 
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 
 import aiosqlite
@@ -286,19 +286,12 @@ async def test_docker_source_history_preserves_published_at_when_digest_unchange
     )
     current_releases = await storage.get_tracker_current_releases(aggregate_tracker.id)
 
-    # v-20 exists with its original first-seen time, not the second-fetch time.
-    release_for = {release.tag_name: release for release in current_releases}
-    assert release_for["3355.v388858a_47b_33-20"].published_at == datetime.fromisoformat(
-        "2026-05-06T01:21:48"
-    )
-    assert release_for["3355.v388858a_47b_33-19"].published_at == datetime.fromisoformat(
-        "2026-05-06T01:21:47"
-    )
-    # The newly-discovered -18 uses the second fetch's timestamp.
-    assert release_for["3355.v388858a_47b_33-18"].published_at == datetime.fromisoformat(
-        "2026-05-06T01:45:38"
-    )
-
+    # Historical tags remain available, but discovery must never become publication.
+    release_for = {release.tag_name: release for release in history_releases}
+    assert set(release_for) == {"3355.v388858a_47b_33-20", "3355.v388858a_47b_33-19", "3355.v388858a_47b_33-18", "3355.v388858a_47b_33-2"}
+    assert all(release.published_at is None for release in history_releases)
+    assert all(release.artifact_created_at is None for release in history_releases)
+    assert current_releases == []  # Unparseable tags need an explicit fixed-tag channel.
 
 @pytest.mark.asyncio
 async def test_save_source_observations_creates_new_github_history_identity_when_commit_changes(
@@ -1587,8 +1580,8 @@ async def test_source_observation_preserves_published_at_for_digestless_docker_a
     assert len(source_observations) == 1
     assert source_observations[0].tag_name == "latest"
     assert source_observations[0].version == "24.10.1"
-    # published_at stays at the first-seen time; only observed_at moves.
-    assert source_observations[0].published_at == first_seen_at
+    # Discovery is not an upstream publication event.
+    assert source_observations[0].published_at is None
     assert source_observations[0].observed_at == later_poll_at
 
 
@@ -1662,7 +1655,7 @@ async def test_source_observation_preserves_published_at_for_unchanged_gitlab_ta
     assert source_observations[0].tag_name == "v3.1.0"
     assert source_observations[0].version == "v3.1.0"
     assert source_observations[0].commit_sha == "abc123"
-    assert source_observations[0].published_at == first_seen_at
+    assert source_observations[0].published_at == first_seen_at.replace(tzinfo=timezone.utc)
     assert source_observations[0].observed_at == later_poll_at
 
 

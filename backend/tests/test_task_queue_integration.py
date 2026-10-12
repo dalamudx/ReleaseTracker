@@ -241,7 +241,8 @@ async def test_queued_deploy_pins_target_and_retains_run_reference(storage, monk
     if done["state"] != "succeeded":
         done = await run_one(storage, queue, "deploy")
     assert done["state"] == "succeeded", done
-    assert observed == [("1.0.0", None)]
+    assert observed == [("1.0.0", task["payload"]["targets"][0]["target"][1])]
+    assert observed[0][1].startswith("sha256:")
     assert done["result"]["run_id"]
 
 
@@ -274,7 +275,8 @@ async def test_automatic_deploy_uses_desired_target_not_newer_release(storage):
         executor_id, manual=False, desired_revision=desired.desired_state_revision
     )
     task = await storage.tasks.get(receipt["task_id"])
-    assert task["payload"]["targets"][0]["target"] == ["1.0.0", None]
+    expected = desired.desired_target["binding_targets"][0]
+    assert task["payload"]["targets"][0]["target"] == [expected["deploy_alias"], expected["digest"]]
     with pytest.raises(ValueError, match="revision changed"):
         await handler.enqueue(executor_id, manual=False, desired_revision="stale")
 

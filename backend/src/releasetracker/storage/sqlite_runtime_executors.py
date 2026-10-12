@@ -1044,7 +1044,10 @@ async def enqueue_executor_projection_trigger_work(
         field="current_identity_key",
     )
     revision = f"{normalized_tracker_name}:{normalized_current_identity_key}"
+    from ..versioning import SELECTION_RULES_VERSION
+
     desired_target = {
+        "selection_revision": SELECTION_RULES_VERSION,
         "tracker_name": normalized_tracker_name,
         "previous_version": previous_version,
         "current_version": normalized_current_version,

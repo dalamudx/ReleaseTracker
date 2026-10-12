@@ -142,6 +142,8 @@ RELEASETRACKER_DB_PATH=/restore/new-data/releases.db python -m releasetracker.cl
 
 存在待执行迁移时，`migrate` / `migrate-and-serve` 会先在备份目录生成 `reason: pre_migration` 归档，失败则中止迁移。该归档只能用升级前的镜像恢复，并参与保留轮换，需要长期保存时及时下载；已有其他备份机制时可设 `RELEASETRACKER_PRE_MIGRATION_BACKUP=0` 关闭。数据库 schema 由 dbmate 管理，不要手工改表；相关错误见[启动与迁移排障](../reference/troubleshooting.md#startup)。
 
+`make dbmate-migrate` 也复用上述入口，在迁移前备份数据库及密钥。时间语义迁移 `20261012000001` 会在**同一事务**中按既有白名单自动清理已删除父记录遗留的 `CASCADE` / `SET NULL` 关系，然后重建表；无需提前手动执行 `prune-orphans`。此次迁移的安全归档保留**清理前原始记录**，不会提前清理备份副本。清理统计写入设置 `internal.release_time_pruned_orphans`，任务队列不变；未知外键损坏或部署观察关系异常会导致整次迁移（含清理）回滚。执行前仍须停止其他写库实例。直接调用 dbmate 时，应自行先备份数据库及密钥；含孤儿记录的原样安全归档须离线处理后才能通过普通恢复校验。
+
 ## 清理历史孤儿记录 {#prune-orphans}
 
 创建备份时，已删除追踪器/执行器遗留的孤儿行只在**归档副本**中清理（统计于清单 `pruned_orphans`），在线数据库不变。需要修复在线数据库时，先预览，再停止所有实例后执行：
