@@ -427,7 +427,8 @@ class TaskStore:
             return True
 
     async def checkpoint(self, task, result, *, private_payload=None):
-        payload = json.dumps(task["payload"] | private_payload) if private_payload else None
+        merged = task["payload"] | private_payload if private_payload else None
+        payload = json.dumps(merged) if merged is not None else None
         async with self.transaction() as db:
             cursor = await db.execute(
                 "UPDATE tasks SET result=?,payload=COALESCE(?,payload) WHERE id=? AND owner=? AND state='running' AND lease_until>?",
@@ -435,7 +436,10 @@ class TaskStore:
             )
             if cursor.rowcount != 1:
                 raise RuntimeError("Task lease lost")
-            return True
+        if merged is not None:
+            # Later lease checks compare this claim's payload with the stored row.
+            task["payload"] = merged
+        return True
 
     async def heartbeat(self, task, *, lease_seconds=60, now=None):
         now = time.time() if now is None else now

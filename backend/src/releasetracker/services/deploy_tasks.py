@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import time
 from datetime import datetime, timedelta
 
@@ -18,6 +19,7 @@ from .task_effects import MUTATION_GUARD
 from .deployment_plan import MANAGED_MARKERS, TargetEvidence, fingerprint, managed_markers
 from ..storage.sqlite_deployment_admission import AdmissionConflict, DeploymentAdmissionStore
 
+logger = logging.getLogger(__name__)
 PRE_MUTATION_RETRIES = 2
 # Consecutive read-only inspection failures (30 s apart, only counted while the
 # task is otherwise eligible to run) before an operator must look at the target.
@@ -168,9 +170,15 @@ class DeployTasks:
         try:
             evidence = await self._collect_admission_evidence(executor)
             await self.admission.mark_applied(task, evidence)
-        except Exception:
+        except Exception as exc:
             # The remote result is already authoritative; a failed read only keeps
             # the local target conservative for the next deployment.
+            logger.warning(
+                "Deployment admission baseline not recorded for task %s: %s%s",
+                task["id"],
+                type(exc).__name__,
+                f" ({exc})" if isinstance(exc, AdmissionConflict) else "",
+            )
             return False
         return True
 

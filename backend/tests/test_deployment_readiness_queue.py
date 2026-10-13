@@ -873,6 +873,61 @@ async def test_prewrite_baseline_failure_prevents_mutation(storage, monkeypatch)
     mutated.assert_not_awaited()
 
 
+async def test_deferred_readiness_handoff_records_admission_baseline(storage, monkeypatch):
+    from releasetracker.services.deployment_readiness_context import READINESS_FINALIZER
+    from releasetracker.services.task_effects import mark_deployment_mutation
+
+    executor, scheduler, observer, _, _, prior, _ = await setup(storage, monkeypatch, stable=0)
+    await observe(storage, observer, prior["id"])
+    handler = scheduler.deploy_tasks
+    await handler.enqueue(executor.id, manual=True)
+    task = await storage.tasks.claim("deploy")
+    evidence = await handler._collect_admission_evidence(executor)
+    plan = await handler.admission.stage(task, evidence)
+    if plan["state"] == "pending":
+        await handler.admission.approve(task["id"], plan["id"], plan["fingerprint"], "test-admin")
+        task = await storage.tasks.claim("deploy")
+    await storage.tasks.start_attempt(task)
+    db = await storage._get_connection()
+    await db.execute(
+        "UPDATE managed_targets SET baseline=NULL,last_task_id=NULL WHERE executor_id=?",
+        (executor.id,),
+    )
+    await db.commit()
+
+    async def execute(config, *, run_id, **kwargs):
+        # The pre-write checkpoint stores the private readiness baseline.
+        await mark_deployment_mutation()
+        return await READINESS_FINALIZER.get()(
+            config,
+            run_id,
+            status="success",
+            from_version="registry.example.test/team/service-a:1.0.0",
+            to_version="registry.example.test/team/service-a:2.0.0",
+            message="updated",
+            last_error=None,
+            diagnostics={"services": []},
+        )
+
+    scheduler._run_executor_with_overlap_guard = execute
+    monkeypatch.setattr(
+        "releasetracker.services.deployment_readiness_probes.capture_deployment_baseline",
+        AsyncMock(return_value={"kind": "container"}),
+    )
+    result = await handler.execute(task)
+    assert result.state == "observing"
+    stored = await storage.tasks.get(task["id"])
+    assert stored["payload"]["readiness_baseline"] == {"kind": "container"}
+    assert (await handler.admission.latest(task["id"]))["state"] == "applied"
+    target = await (
+        await db.execute(
+            "SELECT baseline,last_task_id FROM managed_targets WHERE executor_id=?",
+            (executor.id,),
+        )
+    ).fetchone()
+    assert tuple(target) == (evidence.evidence_hash, task["id"])
+
+
 @pytest.mark.parametrize("recovers", [True, False])
 async def test_missing_layer_uses_native_probe_and_bounded_queue_recovery(
     storage, monkeypatch, recovers
