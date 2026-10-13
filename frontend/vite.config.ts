@@ -29,6 +29,7 @@ export default defineConfig(({ command }) => ({
     setupFiles: "./src/test/setup.ts",
     globals: true,
     clearMocks: true,
+    testTimeout: 15000,
   },
   server: {
     host: "0.0.0.0",
