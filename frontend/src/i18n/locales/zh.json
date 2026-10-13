@@ -405,6 +405,7 @@
     "description": "配置和管理版本追踪器",
     "addNew": "添加追踪器",
     "searchPlaceholder": "按名称、描述或源搜索",
+    "totalCount": "共 {{count}} 个追踪器",
     "resizePanels": "调整追踪器列表与详情面板宽度",
     "backToList": "返回追踪器列表",
     "table": {
@@ -634,6 +635,7 @@
     "description": "将追踪到的版本连接到运行时目标。",
     "addNew": "添加执行器",
     "searchPlaceholder": "按名称、描述、追踪器或运行时搜索",
+    "totalCount": "共 {{count}} 个执行器",
     "deleteConfirm": "确定要删除这个执行器吗？",
     "prerequisites": {
       "runtime": {
@@ -1100,6 +1102,7 @@
     "description": "管理执行器可用的连接。",
     "addNew": "添加运行时连接",
     "searchPlaceholder": "按名称、描述、类型或凭证搜索",
+    "totalCount": "共 {{count}} 个连接",
     "deleteConfirm": "确认删除此运行时连接吗？",
     "toasts": {
       "loadFailed": "加载运行时连接失败"
@@ -1416,6 +1419,7 @@
       "description": "配置 Webhook 以接收版本更新通知",
       "add": "添加通知渠道",
       "searchPlaceholder": "按名称、URL 或描述搜索",
+      "totalCount": "共 {{count}} 个通知渠道",
       "types": {
         "webhook": "通用 Webhook",
         "wecom": "企业微信",
@@ -1561,7 +1565,6 @@
     "clearReadDescription": "隐藏全部已结束的任务动态，包括未读和未加载记录；保留进行中、待确认和需人工处理的任务，不影响任务队列与历史。",
     "clearedRead": "已清理 {{count}} 条最近任务",
     "loadMore": "加载更多任务",
-    "pageCount": "本页 {{count}} 条任务",
     "clearNotificationsFailed": "清理失败，未隐藏任何任务，请重试。",
     "unreadTasks": "{{count}} 条未读任务动态",
     "attentionNotifications": "{{count}} 个任务需要人工处理",

@@ -119,7 +119,7 @@ export default function RuntimeConnectionsPage() {
                 </div>
                 <div className="flex items-center gap-2 self-end sm:self-center">
                     <span className="hidden text-xs text-muted-foreground sm:inline-block">
-                        {t("runtimeConnections.totalCount", { count: total, defaultValue: `共 ${total} 个连接` })}
+                        {t("runtimeConnections.totalCount", { count: total })}
                     </span>
                     <Button
                         variant="outline"

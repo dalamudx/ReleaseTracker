@@ -21,13 +21,14 @@ import {
     BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb"
 import { useBreadcrumb } from "@/hooks/useBreadcrumb"
+import { changeAppLanguage } from "@/i18n/config"
 
 export function Header() {
     const breadcrumbItems = useBreadcrumb()
-    const { i18n, t } = useTranslation()
+    const { t } = useTranslation()
 
     const changeLanguage = (lng: string) => {
-        i18n.changeLanguage(lng)
+        void changeAppLanguage(lng)
         localStorage.setItem('language', lng)
     }
 

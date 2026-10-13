@@ -266,7 +266,7 @@ export default function TrackersPage() {
                 </div>
                 <div className="flex items-center gap-2 self-end sm:self-center">
                     <span className="hidden text-xs text-muted-foreground sm:inline-block">
-                        {t("trackers.totalCount", { count: total, defaultValue: `共 ${total} 个追踪器` })}
+                        {t("trackers.totalCount", { count: total })}
                     </span>
                     {mobileDetailOpen && (
                         <Button type="button" variant="outline" className="h-9 min-w-0 shrink lg:hidden" onClick={() => setMobileDetailOpen(false)}>

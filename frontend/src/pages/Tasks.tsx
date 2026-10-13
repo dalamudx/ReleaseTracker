@@ -2,8 +2,8 @@ import { ReadinessSummary } from "@/components/executors/ReadinessSummary"
 import { QueryErrorState } from "@/components/common/QueryErrorState"
 import { DataPagination } from "@/components/common/DataPagination"
 import { usePageSize } from "@/hooks/use-page-size"
-import { useMemo, useState } from "react"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useEffect, useState } from "react"
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router"
 import { useTranslation } from "react-i18next"
 import { taskErrorLabel } from "@/lib/task-errors"
@@ -520,85 +520,49 @@ export default function TasksPage() {
     const { t } = useTranslation()
     const [state, setState] = useState("all")
     const [search, setSearch] = useState("")
+    const [debouncedSearch, setDebouncedSearch] = useState("")
     const [page, setPage] = useState(1)
     const [pageSize, setPageSize] = usePageSize(undefined, 50)
-    const [before, setBefore] = useState<number>()
-    const [previousPages, setPreviousPages] = useState<Array<number | undefined>>([])
     const [clearOpen, setClearOpen] = useState(false)
     const cache = useQueryClient()
+
+    useEffect(() => {
+        const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300)
+        return () => clearTimeout(timer)
+    }, [search])
+
     const clearTasks = useMutation({
         mutationFn: () => api.clearFinishedTasks(),
         onSuccess: async ({ cleared }) => {
             setClearOpen(false)
-            setBefore(undefined)
-            setPreviousPages([])
             setPage(1)
             toast.success(t("tasks.cleared", { count: cleared }))
             await cache.invalidateQueries({ queryKey: ["tasks"] })
         },
         onError: () => toast.error(t("tasks.clearFailed")),
     })
+    const skip = (page - 1) * pageSize
     const tasks = useQuery({
-        queryKey: ["tasks", { state, before, limit: pageSize }],
-        queryFn: () => api.getTasks({ state: state === "all" ? undefined : state, before, limit: pageSize }),
+        queryKey: ["tasks", "page", { state, skip, limit: pageSize, search: debouncedSearch }],
+        queryFn: () => api.getTaskPage({
+            state: state === "all" ? undefined : state,
+            offset: skip,
+            limit: pageSize,
+            search: debouncedSearch || undefined,
+        }),
         refetchInterval: 5000,
+        // Keep the current rows while the next page loads instead of flashing a spinner.
+        placeholderData: keepPreviousData,
     })
 
-    const activeCount = tasks.data?.filter((t) => ["queued", "running", "retry_wait"].includes(t.state)).length ?? 0
-    const totalCount = tasks.data?.length ?? 0
-
-    const filteredTasks = useMemo(() => {
-        const list = tasks.data ?? []
-        const query = search.trim().toLowerCase()
-        if (!query) return list
-        return list.filter((task) => {
-            return (
-                task.target_label?.toLowerCase().includes(query) ||
-                String(task.id).includes(query) ||
-                task.kind?.toLowerCase().includes(query) ||
-                task.state?.toLowerCase().includes(query) ||
-                task.message?.toLowerCase().includes(query) ||
-                task.error_code?.toLowerCase().includes(query)
-            )
-        })
-    }, [tasks.data, search])
-
-    const handlePageChange = (nextPage: number) => {
-        if (nextPage === page) return
-        if (nextPage > page) {
-            if (tasks.data && tasks.data.length > 0) {
-                setPreviousPages((prev) => [...prev, before])
-                setBefore(tasks.data[tasks.data.length - 1]?.id)
-                setPage(nextPage)
-            }
-        } else {
-            const targetIndex = nextPage - 1
-            const targetBefore = targetIndex === 0 ? undefined : previousPages[targetIndex]
-            setBefore(targetBefore)
-            setPreviousPages((prev) => prev.slice(0, targetIndex))
-            setPage(nextPage)
-        }
-    }
+    const pageTasks = tasks.data?.items ?? []
+    const total = tasks.data?.total ?? 0
+    const activeCount = pageTasks.filter((t) => ["queued", "running", "retry_wait"].includes(t.state)).length
 
     const handlePageSizeChange = (newSize: number) => {
         setPageSize(newSize)
         setPage(1)
-        setBefore(undefined)
-        setPreviousPages([])
     }
-
-    const paginatedTasks = useMemo(() => {
-        return filteredTasks.slice(0, pageSize)
-    }, [filteredTasks, pageSize])
-
-    const total = useMemo(() => {
-        if (!tasks.data || tasks.data.length === 0) return 0
-        if (search.trim()) return filteredTasks.length
-        if (tasks.data.length === pageSize) {
-            return page * pageSize + 1
-        }
-        return (page - 1) * pageSize + tasks.data.length
-    }, [tasks.data, search, filteredTasks.length, page, pageSize])
 
     return (
         <div className="flex h-full min-h-0 flex-col gap-4">
@@ -617,7 +581,10 @@ export default function TasksPage() {
                             <InputGroupInput
                                 placeholder={t("tasks.searchPlaceholder")}
                                 value={search}
-                                onChange={(e) => setSearch(e.target.value)}
+                                onChange={(e) => {
+                                    setSearch(e.target.value)
+                                    setPage(1)
+                                }}
                             />
                             {search ? (
                                 <InputGroupAddon align="inline-end">
@@ -625,7 +592,10 @@ export default function TasksPage() {
                                         variant="ghost"
                                         size="icon"
                                         className="size-6"
-                                        onClick={() => setSearch("")}
+                                        onClick={() => {
+                                            setSearch("")
+                                            setPage(1)
+                                        }}
                                         title={t("common.clear")}
                                     >
                                         <X className="size-3.5" />
@@ -639,8 +609,7 @@ export default function TasksPage() {
                         value={state}
                         onValueChange={(value) => {
                             setState(value)
-                            setBefore(undefined)
-                            setPreviousPages([])
+                            setPage(1)
                         }}
                     >
                         <SelectTrigger className="h-9 min-w-0 w-full sm:w-40 sm:flex-none" aria-label={t("tasks.filter")}>
@@ -667,7 +636,7 @@ export default function TasksPage() {
                         </Badge>
                     )}
                     <span className="hidden text-xs text-muted-foreground sm:inline-block">
-                        {t("tasks.pageCount", { count: totalCount })}
+                        {t("tasks.totalTasks", { count: total })}
                     </span>
                     <AlertDialog open={clearOpen} onOpenChange={open => { if (!clearTasks.isPending) setClearOpen(open) }}>
                         <AlertDialogTrigger asChild>
@@ -717,19 +686,13 @@ export default function TasksPage() {
                             </div>
                         )}
                         {tasks.isError && <QueryErrorState onRetry={() => void tasks.refetch()} />}
-                        {!tasks.isLoading && !tasks.isError && (!tasks.data || tasks.data.length === 0) && (
+                        {!tasks.isLoading && !tasks.isError && pageTasks.length === 0 && (
                             <div className="flex flex-col items-center justify-center gap-3 p-12 text-center">
                                 <Inbox className="size-6 text-muted-foreground" aria-hidden="true" />
-                                <p className="text-sm text-muted-foreground">{t("tasks.empty")}</p>
+                                <p className="text-sm text-muted-foreground">{t(debouncedSearch ? "tasks.noMatching" : "tasks.empty")}</p>
                             </div>
                         )}
-                        {!tasks.isLoading && !tasks.isError && tasks.data && tasks.data.length > 0 && filteredTasks.length === 0 && (
-                            <div className="flex flex-col items-center justify-center gap-3 p-12 text-center">
-                                <Inbox className="size-6 text-muted-foreground" aria-hidden="true" />
-                                <p className="text-sm text-muted-foreground">{t("tasks.noMatching")}</p>
-                            </div>
-                        )}
-                        {paginatedTasks.map((task) => <TaskItem key={task.id} task={task} />)}
+                        {pageTasks.map((task) => <TaskItem key={task.id} task={task} />)}
                     </div>
                 </div>
 
@@ -737,7 +700,7 @@ export default function TasksPage() {
                     page={page}
                     pageSize={pageSize}
                     total={total}
-                    onPageChange={handlePageChange}
+                    onPageChange={setPage}
                     onPageSizeChange={handlePageSizeChange}
                 />
             </div>

@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { ExecutorListItem, ExecutorTargetRef, RuntimeConnection, RuntimeType, TrackerStatus } from "@/api/types"
@@ -191,10 +192,13 @@ function createTracker(overrides: Partial<TrackerStatus> = {}): TrackerStatus {
 }
 
 function renderExecutorsPage() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <MemoryRouter>
-      <ExecutorsPage />
-    </MemoryRouter>,
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <ExecutorsPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
   )
 }
 

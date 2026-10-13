@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react"
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type RefObject } from "react"
 import { READINESS_FIELDS } from "@/lib/readiness"
 import { Activity, AlertTriangle, Archive, Clock3, Database, Globe, KeyRound, Layers, Link2, RotateCcw, RotateCw, Save, Settings2, Tag, Zap } from "lucide-react"
+import type { LucideIcon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { useTranslation } from "react-i18next"
 import { appPath } from "@/lib/base-path"
@@ -12,7 +13,16 @@ import settingsChinese from "@/i18n/locales/system-settings.zh.json"
 import securityEnglish from "@/i18n/locales/security-keys.en.json"
 import securityChinese from "@/i18n/locales/security-keys.zh.json"
 import { BackupSettings } from "@/components/settings/BackupSettings"
+
+// Neither section takes props, so memo keeps them out of the form's per-keystroke re-renders.
+const SafeBackupSettings = memo(function SafeBackupSettings() {
+    const client = useContext(QueryClientContext)
+    if (!client) return null
+    return <BackupSettings />
+})
 import { OIDCProvidersManagement } from "@/components/admin/OIDCProvidersManagement"
+
+const MemoOIDCProvidersManagement = memo(OIDCProvidersManagement)
 import { clearAuthStorage } from "@/api/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -35,7 +45,8 @@ import {
     SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { cn } from "@/lib/utils"
+import { QueryClientContext } from "@tanstack/react-query"
 import {
     useCleanupReleaseHistory,
     useCleanupSnapshotHistory,
@@ -115,7 +126,7 @@ function BaseUrlSettingItem({
     const { t } = useTranslation()
 
     return (
-        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] md:items-start">
+        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] md:items-start">
             <div className="flex min-w-0 gap-3">
                 <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                     <Link2 className="h-4 w-4" />
@@ -155,7 +166,7 @@ function LogLevelSettingItem({
     const { t } = useTranslation()
 
     return (
-        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] md:items-start">
+        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] md:items-start">
             <div className="flex min-w-0 gap-3">
                 <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                     <Settings2 className="h-4 w-4" />
@@ -204,7 +215,7 @@ function ReleaseHistoryCountSettingItem({
     const { t } = useTranslation()
 
     return (
-        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] md:items-start">
+        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] md:items-start">
             <div className="flex min-w-0 gap-3">
                 <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                     <Tag className="h-4 w-4" />
@@ -267,7 +278,7 @@ function SnapshotHistoryCountSettingItem({
     const { t } = useTranslation()
 
     return (
-        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] md:items-start">
+        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] md:items-start">
             <div className="flex min-w-0 gap-3">
                 <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                     <Layers className="h-4 w-4" />
@@ -328,7 +339,7 @@ function BackupRetentionSettingItem({
     const { t } = useTranslation()
 
     return (
-        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] md:items-start">
+        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] md:items-start">
             <div className="flex min-w-0 gap-3">
                 <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                     <Archive className="h-4 w-4" />
@@ -382,7 +393,7 @@ function BackupIntervalSettingItem({
     const { t } = useTranslation()
 
     return (
-        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] md:items-start">
+        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] md:items-start">
             <div className="flex min-w-0 gap-3">
                 <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                     <Clock3 className="h-4 w-4" />
@@ -434,7 +445,7 @@ function OciRegistryRedirectsSettingItem({
     const { t } = useTranslation()
 
     return (
-        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] md:items-start">
+        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] md:items-start">
             <div className="flex min-w-0 gap-3">
                 <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                     <Zap className="h-4 w-4" />
@@ -482,7 +493,7 @@ function FetchRetryCountSettingItem({
     const { t } = useTranslation()
 
     return (
-        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] md:items-start">
+        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] md:items-start">
             <div className="flex min-w-0 gap-3">
                 <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                     <RotateCcw className="h-4 w-4" />
@@ -528,7 +539,7 @@ function ReadinessDefaultsSettingItem({
     const { t } = useTranslation()
 
     return (
-        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] md:items-start">
+        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] md:items-start">
             <div className="flex min-w-0 gap-3">
                 <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                     <Activity className="h-4 w-4" />
@@ -584,7 +595,7 @@ function TimezoneSettingItem({
     const { t } = useTranslation()
 
     return (
-        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] md:items-start">
+        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] md:items-start">
             <div className="flex min-w-0 gap-3">
                 <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                     <Clock3 className="h-4 w-4" />
@@ -760,6 +771,152 @@ function RotateSecurityKeyDialog({
     )
 }
 
+type SettingsSection = {
+    id: string
+    icon: LucideIcon
+    label: string
+}
+
+// Owns the scroll-spy state so section changes only re-render the navigator,
+// not the whole settings form, while the user scrolls.
+const SettingsSectionNav = memo(function SettingsSectionNav({
+    sections,
+    scrollRootRef,
+}: {
+    sections: SettingsSection[]
+    scrollRootRef: RefObject<HTMLDivElement | null>
+}) {
+    const { t } = useTranslation()
+    const [activeSection, setActiveSection] = useState(sections[0]?.id ?? "")
+    const programmaticScrollRef = useRef(false)
+    const unlockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+    const unlockScrollSpy = useCallback(() => {
+        programmaticScrollRef.current = false
+        if (unlockTimerRef.current) {
+            clearTimeout(unlockTimerRef.current)
+            unlockTimerRef.current = null
+        }
+    }, [])
+
+    const scrollToSection = (id: string) => {
+        // Pin the clicked anchor: sections passed during the smooth scroll must not take over.
+        programmaticScrollRef.current = true
+        setActiveSection(id)
+        if (unlockTimerRef.current) clearTimeout(unlockTimerRef.current)
+        document.getElementById(id)?.scrollIntoView?.({ behavior: "smooth", block: "start" })
+        // Released by scrollend / scroll idle; this covers clicks that need no scrolling.
+        unlockTimerRef.current = setTimeout(unlockScrollSpy, 300)
+    }
+
+    useEffect(() => {
+        const root = scrollRootRef.current
+        if (!root || typeof IntersectionObserver === "undefined") return
+
+        const visible = new Set<string>()
+        let reachedEnd = false
+        const syncActive = () => {
+            if (programmaticScrollRef.current) return
+            const next = reachedEnd
+                ? sections[sections.length - 1]?.id
+                : sections.find((section) => visible.has(section.id))?.id
+            if (next) setActiveSection(next)
+        }
+
+        // The first section inside the top third of the scroll area is the current one.
+        const sectionObserver = new IntersectionObserver((entries) => {
+            for (const entry of entries) {
+                if (entry.isIntersecting) visible.add(entry.target.id)
+                else visible.delete(entry.target.id)
+            }
+            syncActive()
+        }, { root, rootMargin: "0px 0px -65% 0px" })
+        // Short trailing sections never reach the top band, so the bottom selects the last one.
+        const endObserver = new IntersectionObserver(([entry]) => {
+            reachedEnd = entry?.isIntersecting ?? false
+            syncActive()
+        }, { root })
+
+        for (const section of sections) {
+            const element = document.getElementById(section.id)
+            if (element) sectionObserver.observe(element)
+        }
+        const endMarker = root.querySelector("[data-settings-scroll-end]")
+        if (endMarker) endObserver.observe(endMarker)
+
+        const handleScroll = () => {
+            if (!programmaticScrollRef.current) return
+            if (unlockTimerRef.current) clearTimeout(unlockTimerRef.current)
+            unlockTimerRef.current = setTimeout(unlockScrollSpy, 150)
+        }
+        root.addEventListener("scroll", handleScroll, { passive: true })
+        root.addEventListener("scrollend", unlockScrollSpy)
+        root.addEventListener("wheel", unlockScrollSpy, { passive: true })
+        root.addEventListener("touchmove", unlockScrollSpy, { passive: true })
+        window.addEventListener("keydown", unlockScrollSpy)
+
+        return () => {
+            sectionObserver.disconnect()
+            endObserver.disconnect()
+            root.removeEventListener("scroll", handleScroll)
+            root.removeEventListener("scrollend", unlockScrollSpy)
+            root.removeEventListener("wheel", unlockScrollSpy)
+            root.removeEventListener("touchmove", unlockScrollSpy)
+            window.removeEventListener("keydown", unlockScrollSpy)
+            unlockScrollSpy()
+        }
+    }, [sections, scrollRootRef, unlockScrollSpy])
+
+    return (
+        <aside className="w-full shrink-0 self-start lg:w-60 xl:w-64">
+            <div className="rounded-xl border border-border/60 bg-card/80 p-1.5 shadow-xs lg:p-4">
+                <div className="mb-4 hidden items-center justify-between border-b border-border/40 pb-3 lg:flex">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                        <Settings2 className="size-4 text-primary" />
+                        <span>{t("systemSettings.tabs.navigator", { defaultValue: "设置导航" })}</span>
+                    </div>
+                    <span className="text-[11px] text-muted-foreground font-mono">
+                        {sections.findIndex((s) => s.id === activeSection) + 1} / {sections.length}
+                    </span>
+                </div>
+
+                {/* Below lg the navigator collapses into one horizontally scrolling row so the cards keep the viewport. */}
+                <nav className="flex gap-1 overflow-x-auto lg:flex-col lg:overflow-visible">
+                    {sections.map((section) => {
+                        const isActive = activeSection === section.id
+                        const Icon = section.icon
+                        return (
+                            <button
+                                key={section.id}
+                                type="button"
+                                onClick={() => scrollToSection(section.id)}
+                                aria-current={isActive ? "location" : undefined}
+                                className={cn(
+                                    "group flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+                                    isActive
+                                        ? "bg-primary/10 text-primary font-semibold"
+                                        : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                                )}
+                            >
+                                <span
+                                    className={cn(
+                                        "flex size-5 shrink-0 items-center justify-center rounded-md border transition-colors",
+                                        isActive
+                                            ? "border-primary/50 bg-primary/20 text-primary"
+                                            : "border-border/60 bg-muted/40 text-muted-foreground group-hover:border-primary/40 group-hover:text-foreground"
+                                    )}
+                                >
+                                    <Icon className="size-3" />
+                                </span>
+                                <span className="min-w-0 truncate lg:flex-1">{section.label}</span>
+                            </button>
+                        )
+                    })}
+                </nav>
+            </div>
+        </aside>
+    )
+})
 export function SystemSettingsPage() {
     const { t } = useTranslation()
     const { data: settings = [] } = useSettings()
@@ -1047,164 +1204,201 @@ export function SystemSettingsPage() {
     const undecryptableCount = securityKeys?.encryption_key.undecryptable_count ?? 0
     const hasUndecryptableValues = undecryptableCount > 0
 
+    const scrollContainerRef = useRef<HTMLDivElement>(null)
+
+    const timelineSections = useMemo<SettingsSection[]>(
+        () => [
+            {
+                id: "section-basic",
+                icon: Globe,
+                label: t("systemSettings.global.sections.basic.title"),
+            },
+            {
+                id: "section-fetch-readiness",
+                icon: Zap,
+                label: t("systemSettings.global.sections.fetchAndReadiness.title"),
+            },
+            {
+                id: "section-storage-retention",
+                icon: Archive,
+                label: t("systemSettings.global.sections.storageAndRetention.title"),
+            },
+            {
+                id: "section-security",
+                icon: KeyRound,
+                label: t("systemSettings.securityKeys.title"),
+            },
+            {
+                id: "section-oidc",
+                icon: Link2,
+                label: t("systemSettings.tabs.oidc"),
+            },
+            {
+                id: "section-backups",
+                icon: Database,
+                label: t("title", { ns: "backups", defaultValue: "实例备份" }),
+            },
+        ],
+        [t],
+    )
+
     return (
-        <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col gap-4">
-            <Tabs defaultValue="general" className="flex min-h-0 flex-1 flex-col gap-4">
-                <TabsList className="grid w-full grid-cols-2 gap-1 group-data-[orientation=horizontal]/tabs:h-auto sm:inline-flex sm:w-fit">
-                    <TabsTrigger value="general" className="h-auto min-h-11 sm:min-h-9">{t("systemSettings.tabs.general")}</TabsTrigger>
-                    <TabsTrigger value="security" className="h-auto min-h-11 sm:min-h-9">{t("systemSettings.tabs.security")}</TabsTrigger>
-                    <TabsTrigger value="oidc" className="h-auto min-h-11 sm:min-h-9">{t("systemSettings.tabs.oidc")}</TabsTrigger>
-                    <TabsTrigger value="backups" className="h-auto min-h-11 sm:min-h-9">{t("backups.tab")}</TabsTrigger>
-                </TabsList>
+        <div className="flex h-full min-h-0 w-full flex-col gap-4 lg:flex-row lg:gap-6">
+            <SettingsSectionNav sections={timelineSections} scrollRootRef={scrollContainerRef} />
 
-                <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-                    <TabsContent value="general" className="mt-0 space-y-6">
-                        {/* Section 1: 基础运行环境 */}
-                        <Card className="border-border/60 bg-card/80 shadow-xs">
-                            <CardHeader className="border-b border-border/40 pb-4">
-                                <CardTitle className="flex items-center gap-2 text-base font-semibold">
-                                    <Globe className="h-4 w-4 text-primary" />
-                                    {t("systemSettings.global.sections.basic.title")}
-                                </CardTitle>
-                                <CardDescription className="text-xs">
-                                    {t("systemSettings.global.sections.basic.description")}
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent className="pt-2">
-                                <div className="divide-y divide-border/60">
-                                    <BaseUrlSettingItem
-                                        baseUrl={baseUrl}
-                                        onBaseUrlChange={setBaseUrlDraft}
-                                    />
-                                    <TimezoneSettingItem
-                                        timezone={timezone}
-                                        timezoneOptions={timezoneOptions}
-                                        onTimezoneChange={setTimezoneDraft}
-                                    />
-                                    <LogLevelSettingItem
-                                        logLevel={logLevel}
-                                        onLogLevelChange={setLogLevelDraft}
-                                    />
-                                </div>
-                            </CardContent>
-                        </Card>
+            {/* 右侧：锚定配置内容区域 */}
+            <div
+                ref={scrollContainerRef}
+                className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto pr-1 pb-10"
+            >
+                {/* Section 1: 基础运行环境 */}
+                <div id="section-basic" className="scroll-mt-6">
+                    <Card className="border-border/60 bg-card/80 shadow-xs">
+                        <CardHeader className="border-b border-border/40 pb-4">
+                            <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                                <Globe className="h-4 w-4 text-primary" />
+                                {t("systemSettings.global.sections.basic.title")}
+                            </CardTitle>
+                            <CardDescription className="text-xs">
+                                {t("systemSettings.global.sections.basic.description")}
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="pt-2">
+                            <div className="divide-y divide-border/60">
+                                <BaseUrlSettingItem
+                                    baseUrl={baseUrl}
+                                    onBaseUrlChange={setBaseUrlDraft}
+                                />
+                                <TimezoneSettingItem
+                                    timezone={timezone}
+                                    timezoneOptions={timezoneOptions}
+                                    onTimezoneChange={setTimezoneDraft}
+                                />
+                                <LogLevelSettingItem
+                                    logLevel={logLevel}
+                                    onLogLevelChange={setLogLevelDraft}
+                                />
+                            </div>
+                        </CardContent>
+                    </Card>
+                </div>
 
-                        {/* Section 2: 版本抓取与就绪策略 */}
-                        <Card className="border-border/60 bg-card/80 shadow-xs">
-                            <CardHeader className="border-b border-border/40 pb-4">
-                                <CardTitle className="flex items-center gap-2 text-base font-semibold">
-                                    <Zap className="h-4 w-4 text-primary" />
-                                    {t("systemSettings.global.sections.fetchAndReadiness.title")}
-                                </CardTitle>
-                                <CardDescription className="text-xs">
-                                    {t("systemSettings.global.sections.fetchAndReadiness.description")}
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent className="pt-2">
-                                <div className="divide-y divide-border/60">
-                                    <OciRegistryRedirectsSettingItem
-                                        enabled={ociRegistryRedirectsEnabled}
-                                        onEnabledChange={setOciRegistryRedirectsEnabledDraft}
-                                    />
-                                    <FetchRetryCountSettingItem
-                                        retryCount={retryCount}
-                                        validRetryCount={validRetryCount}
-                                        onRetryCountChange={setRetryCountDraft}
-                                    />
-                                    <ReadinessDefaultsSettingItem
-                                        readinessValue={readinessValue}
-                                        validReadiness={validReadiness}
-                                        onReadinessChange={(key, value) =>
-                                            setReadinessDraft((current) => ({ ...current, [key]: value }))
-                                        }
-                                    />
-                                </div>
-                            </CardContent>
-                        </Card>
+                {/* Section 2: 版本抓取与就绪策略 */}
+                <div id="section-fetch-readiness" className="scroll-mt-6">
+                    <Card className="border-border/60 bg-card/80 shadow-xs">
+                        <CardHeader className="border-b border-border/40 pb-4">
+                            <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                                <Zap className="h-4 w-4 text-primary" />
+                                {t("systemSettings.global.sections.fetchAndReadiness.title")}
+                            </CardTitle>
+                            <CardDescription className="text-xs">
+                                {t("systemSettings.global.sections.fetchAndReadiness.description")}
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="pt-2">
+                            <div className="divide-y divide-border/60">
+                                <OciRegistryRedirectsSettingItem
+                                    enabled={ociRegistryRedirectsEnabled}
+                                    onEnabledChange={setOciRegistryRedirectsEnabledDraft}
+                                />
+                                <FetchRetryCountSettingItem
+                                    retryCount={retryCount}
+                                    validRetryCount={validRetryCount}
+                                    onRetryCountChange={setRetryCountDraft}
+                                />
+                                <ReadinessDefaultsSettingItem
+                                    readinessValue={readinessValue}
+                                    validReadiness={validReadiness}
+                                    onReadinessChange={(key, value) =>
+                                        setReadinessDraft((current) => ({ ...current, [key]: value }))
+                                    }
+                                />
+                            </div>
+                        </CardContent>
+                    </Card>
+                </div>
 
-                        {/* Section 3: 存储与历史保留 */}
-                        <Card className="border-border/60 bg-card/80 shadow-xs">
-                            <CardHeader className="border-b border-border/40 pb-4">
-                                <CardTitle className="flex items-center gap-2 text-base font-semibold">
-                                    <Database className="h-4 w-4 text-primary" />
-                                    {t("systemSettings.global.sections.storageAndRetention.title")}
-                                </CardTitle>
-                                <CardDescription className="text-xs">
-                                    {t("systemSettings.global.sections.storageAndRetention.description")}
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent className="pt-4">
-                                <div className="space-y-6">
-                                    {/* 子组 1：业务数据历史 */}
-                                    <div>
-                                        <div className="border-b border-border/40 pb-2">
-                                            <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                                                {t("systemSettings.global.sections.storageAndRetention.operationalGroup")}
-                                            </h4>
-                                        </div>
-                                        <div className="divide-y divide-border/60">
-                                            <ReleaseHistoryCountSettingItem
-                                                countDraft={releaseHistoryCountValue}
-                                                cleanupPending={cleanupReleaseHistory.isPending}
-                                                onCountDraftChange={setReleaseHistoryCountDraft}
-                                                onCleanup={handleCleanupReleaseHistory}
-                                            />
-                                            <SnapshotHistoryCountSettingItem
-                                                countDraft={snapshotHistoryCountValue}
-                                                cleanupPending={cleanupSnapshotHistory.isPending}
-                                                onCountDraftChange={setSnapshotHistoryCountDraft}
-                                                onCleanup={handleCleanupSnapshotHistory}
-                                            />
-                                        </div>
+                {/* Section 3: 存储与历史保留 */}
+                <div id="section-storage-retention" className="scroll-mt-6">
+                    <Card className="border-border/60 bg-card/80 shadow-xs">
+                        <CardHeader className="border-b border-border/40 pb-4">
+                            <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                                <Archive className="h-4 w-4 text-primary" />
+                                {t("systemSettings.global.sections.storageAndRetention.title")}
+                            </CardTitle>
+                            <CardDescription className="text-xs">
+                                {t("systemSettings.global.sections.storageAndRetention.description")}
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="pt-4">
+                            <div className="space-y-6">
+                                {/* 子组 1：业务数据历史 */}
+                                <div>
+                                    <div className="border-b border-border/40 pb-2">
+                                        <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                                            {t("systemSettings.global.sections.storageAndRetention.operationalGroup")}
+                                        </h4>
                                     </div>
-
-                                    {/* 子组 2：系统全量灾备策略 */}
-                                    <div>
-                                        <div className="border-b border-border/40 pb-2">
-                                            <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                                                {t("systemSettings.global.sections.storageAndRetention.backupGroup")}
-                                            </h4>
-                                        </div>
-                                        <div className="divide-y divide-border/60">
-                                            <BackupRetentionSettingItem
-                                                retentionDraft={backupRetention}
-                                                onRetentionDraftChange={setBackupRetentionDraft}
-                                                isValid={isValidBackupRetention}
-                                            />
-                                            <BackupIntervalSettingItem
-                                                intervalDraft={backupIntervalHours}
-                                                onIntervalDraftChange={setBackupIntervalHoursDraft}
-                                                isValid={isValidBackupIntervalHours}
-                                            />
-                                        </div>
+                                    <div className="divide-y divide-border/60">
+                                        <ReleaseHistoryCountSettingItem
+                                            countDraft={releaseHistoryCountValue}
+                                            cleanupPending={cleanupReleaseHistory.isPending}
+                                            onCountDraftChange={setReleaseHistoryCountDraft}
+                                            onCleanup={handleCleanupReleaseHistory}
+                                        />
+                                        <SnapshotHistoryCountSettingItem
+                                            countDraft={snapshotHistoryCountValue}
+                                            cleanupPending={cleanupSnapshotHistory.isPending}
+                                            onCountDraftChange={setSnapshotHistoryCountDraft}
+                                            onCleanup={handleCleanupSnapshotHistory}
+                                        />
                                     </div>
                                 </div>
-                            </CardContent>
-                        </Card>
 
-                        {/* 底部保存条 */}
-                        <div className="sticky bottom-0 z-10 flex items-center justify-between rounded-xl border border-border/70 bg-background/95 p-3.5 shadow-md backdrop-blur-sm">
-                            <p className="text-xs text-muted-foreground">
-                                {t("systemSettings.global.description")}
-                            </p>
-                            <Button
-                                type="button"
-                                onClick={handleSaveGlobalSettings}
-                                disabled={updateSetting.isPending}
-                                className="shadow-xs"
-                            >
-                                <Save className="mr-2 h-4 w-4" />
-                                {t("common.save")}
-                            </Button>
-                        </div>
-                    </TabsContent>
+                                {/* 子组 2：系统全量灾备策略 */}
+                                <div>
+                                    <div className="border-b border-border/40 pb-2">
+                                        <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                                            {t("systemSettings.global.sections.storageAndRetention.backupGroup")}
+                                        </h4>
+                                    </div>
+                                    <div className="divide-y divide-border/60">
+                                        <BackupRetentionSettingItem
+                                            retentionDraft={backupRetention}
+                                            onRetentionDraftChange={setBackupRetentionDraft}
+                                            isValid={isValidBackupRetention}
+                                        />
+                                        <BackupIntervalSettingItem
+                                            intervalDraft={backupIntervalHours}
+                                            onIntervalDraftChange={setBackupIntervalHoursDraft}
+                                            isValid={isValidBackupIntervalHours}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </div>
 
-                <TabsContent value="backups" className="mt-0">
-                    <BackupSettings />
-                </TabsContent>
+                {/* 底部保存条 (常规全局设置) */}
+                <div className="sticky bottom-0 z-10 flex items-center justify-between rounded-xl border border-border/70 bg-background p-3.5 shadow-md">
+                    <p className="text-xs text-muted-foreground">
+                        {t("systemSettings.global.description")}
+                    </p>
+                    <Button
+                        type="button"
+                        onClick={handleSaveGlobalSettings}
+                        disabled={updateSetting.isPending}
+                        className="shadow-xs"
+                    >
+                        <Save className="mr-2 h-4 w-4" />
+                        {t("common.save")}
+                    </Button>
+                </div>
 
-                <TabsContent value="security" className="mt-0">
-                    <Card className="border-border/60 bg-card/80">
+                {/* Section 4: 安全密钥 */}
+                <div id="section-security" className="scroll-mt-6">
+                    <Card className="border-border/60 bg-card/80 shadow-xs">
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2">
                                 <KeyRound className="h-5 w-5 text-primary" />
@@ -1253,17 +1447,33 @@ export function SystemSettingsPage() {
                             </div>
                         </CardContent>
                     </Card>
-                </TabsContent>
+                </div>
 
-                <TabsContent value="oidc" className="mt-0">
-                    <Card className="border-border/60 bg-card/80">
+                {/* Section 5: OIDC 身份提供商 */}
+                <div id="section-oidc" className="scroll-mt-6">
+                    <Card className="border-border/60 bg-card/80 shadow-xs">
+                        <CardHeader className="border-b border-border/40 pb-4">
+                            <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                                <Link2 className="h-4 w-4 text-primary" />
+                                {t("systemSettings.tabs.oidc")}
+                            </CardTitle>
+                            <CardDescription className="text-xs">
+                                {t("systemSettings.tabs.oidcDescription", { defaultValue: "管理第三方单点登录 (OIDC) 提供商及权限映射。" })}
+                            </CardDescription>
+                        </CardHeader>
                         <CardContent className="p-6">
-                            <OIDCProvidersManagement />
+                            <MemoOIDCProvidersManagement />
                         </CardContent>
                     </Card>
-                </TabsContent>
                 </div>
-            </Tabs>
+
+                {/* Section 6: 系统全量灾备还原 */}
+                <div id="section-backups" className="scroll-mt-6">
+                    <SafeBackupSettings />
+                </div>
+
+                <div data-settings-scroll-end aria-hidden="true" className="h-px shrink-0" />
+            </div>
 
             <RotateSecurityKeyDialog
                 open={jwtDialogOpen}

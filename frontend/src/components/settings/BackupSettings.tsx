@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
-import { Download, Loader2, Trash2 } from "lucide-react"
+import { Database, Download, Loader2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import i18nInstance from "@/i18n/config"
 import backupEnglish from "@/i18n/locales/backups.en.json"
@@ -67,14 +67,17 @@ export function BackupSettings() {
         },
         onError: () => toast.error(t("downloadFailed")),
     })
-    if (receipt) return <Card><CardHeader><CardTitle>{t("title")}</CardTitle></CardHeader><CardContent><OnlineRestoreProgress /></CardContent></Card>
+    if (receipt) return <Card className="border-border/60 bg-card/80 shadow-xs"><CardHeader className="border-b border-border/40 pb-4"><CardTitle className="flex items-center gap-2 text-base font-semibold"><Database className="h-4 w-4 text-primary" />{t("title")}</CardTitle></CardHeader><CardContent className="pt-6"><OnlineRestoreProgress /></CardContent></Card>
     return (
-        <Card>
-            <CardHeader>
-                <CardTitle>{t("title")}</CardTitle>
-                <CardDescription>{t("description")}</CardDescription>
+        <Card className="border-border/60 bg-card/80 shadow-xs">
+            <CardHeader className="border-b border-border/40 pb-4">
+                <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                    <Database className="h-4 w-4 text-primary" />
+                    {t("title")}
+                </CardTitle>
+                <CardDescription className="text-xs">{t("description")}</CardDescription>
             </CardHeader>
-            <CardContent className="flex min-w-0 flex-col gap-6">
+            <CardContent className="flex min-w-0 flex-col gap-6 pt-6">
                 <OnlineRestoreProgress />
                 <p className="text-sm text-warning">{t("sensitive")}</p>
                 {query.data?.restore_review_required && <section className="flex flex-col gap-2 rounded-md border p-3 text-sm">

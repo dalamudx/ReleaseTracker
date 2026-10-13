@@ -250,23 +250,44 @@ class TaskStore:
                 """UPDATE tasks SET cleared_at=?
                    WHERE cleared_at IS NULL AND state IN (
                        'succeeded','no_change','skipped','failed','cancelled','superseded'
-                   ) AND (? IS NULL OR updated_at<=?)""" + condition,
+                   ) AND (? IS NULL OR updated_at<=?)"""
+                + condition,
                 params,
             )
             return cursor.rowcount
 
-    async def list(self, *, limit=50, before=None, state=None):
+    @staticmethod
+    def _visible_filter(*, before=None, state=None, search=None):
+        """Shared WHERE clause so the page rows and the total use identical filters."""
+        effective_state = "CASE WHEN approval_pending=1 AND state='queued' THEN 'awaiting_approval' ELSE state END"
+        query = (search or "").strip().lower() or None
+        clause = (
+            "cleared_at IS NULL AND (? IS NULL OR id<?)"
+            f" AND (? IS NULL OR {effective_state}=?)"
+            " AND (? IS NULL OR instr(lower(target_label), ?) > 0 OR instr(kind, ?) > 0"
+            f" OR instr({effective_state}, ?) > 0 OR instr(lower(coalesce(message, '')), ?) > 0"
+            " OR instr(lower(coalesce(error_code, '')), ?) > 0 OR instr(CAST(id AS TEXT), ?) > 0)"
+        )
+        return clause, (before, before, state, state, query, *([query] * 6))
+
+    async def list(self, *, limit=50, before=None, state=None, offset=0, search=None):
         db = await self.storage._get_connection()
+        clause, params = self._visible_filter(before=before, state=state, search=search)
         rows = await (
             await db.execute(
-                """SELECT * FROM tasks WHERE cleared_at IS NULL AND (? IS NULL OR id<?)
-                   AND (? IS NULL OR CASE WHEN approval_pending=1 AND state='queued'
-                       THEN 'awaiting_approval' ELSE state END=?)
-               ORDER BY id DESC LIMIT ?""",
-                (before, before, state, state, min(100, max(1, limit))),
+                f"SELECT * FROM tasks WHERE {clause} ORDER BY id DESC LIMIT ? OFFSET ?",
+                (*params, min(100, max(1, limit)), max(0, offset)),
             )
         ).fetchall()
         return [decode(row) for row in rows]
+
+    async def count(self, *, before=None, state=None, search=None):
+        db = await self.storage._get_connection()
+        clause, params = self._visible_filter(before=before, state=state, search=search)
+        row = await (
+            await db.execute(f"SELECT COUNT(*) FROM tasks WHERE {clause}", params)
+        ).fetchone()
+        return row[0] if row else 0
 
     async def detail(self, task_id):
         task = await self.get(task_id)

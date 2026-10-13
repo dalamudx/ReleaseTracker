@@ -39,12 +39,15 @@ import {
 import { DataPagination } from "@/components/common/DataPagination"
 import { QueryErrorState } from "@/components/common/QueryErrorState"
 import { usePageSize } from "@/hooks/use-page-size"
+import { queryKeys } from "@/hooks/queries"
+import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 
 const SYSTEM_TIMEZONE_SETTING_KEY = "system.timezone"
 const EXECUTOR_RUN_POLL_INTERVAL_MS = 2000
 const EXECUTOR_RUN_POLL_TIMEOUT_MS = 5 * 60 * 1000
 const TERMINAL_EXECUTOR_RUN_STATUSES = new Set(["success", "failed", "skipped"])
+const EXECUTOR_PREREQUISITE_PAGE = { skip: 0, limit: 1000 }
 
 function supportsFullConfigSnapshots(executor: ExecutorListItem | null) {
     if (!executor) {
@@ -87,6 +90,7 @@ export default function ExecutorsPage() {
     const [total, setTotal] = useState(0)
     const [page, setPage] = useState(1)
     const [pageSize, setPageSize] = usePageSize()
+    const queryClient = useQueryClient()
     const [search, setSearch] = useState("")
     const [submittingExecutorIds, setSubmittingExecutorIds] = useState<ReadonlySet<number>>(new Set())
     const submittingExecutorIdsRef = useRef(new Set<number>())
@@ -131,9 +135,18 @@ export default function ExecutorsPage() {
         })
         const auxiliaryRequest = refreshAuxiliary
             ? Promise.all([
-                api.getRuntimeConnections({ skip: 0, limit: 1000 }),
-                api.getTrackers({ skip: 0, limit: 1000 }),
-                api.getSettings(),
+                // Shared cache keys: revisiting the page reuses fresh data, and tracker/connection/settings mutations invalidate it.
+                queryClient.fetchQuery({
+                    queryKey: queryKeys.runtimeConnections(EXECUTOR_PREREQUISITE_PAGE),
+                    queryFn: () => api.getRuntimeConnections(EXECUTOR_PREREQUISITE_PAGE),
+                    staleTime: 60_000,
+                }),
+                queryClient.fetchQuery({
+                    queryKey: queryKeys.trackers(EXECUTOR_PREREQUISITE_PAGE),
+                    queryFn: () => api.getTrackers(EXECUTOR_PREREQUISITE_PAGE),
+                    staleTime: 30_000,
+                }),
+                queryClient.fetchQuery({ queryKey: queryKeys.settings, queryFn: () => api.getSettings(), staleTime: 120_000 }),
             ]).then((data) => ({ data })).catch((error: unknown) => ({ error }))
             : null
 
@@ -197,7 +210,7 @@ export default function ExecutorsPage() {
         } finally {
             setPrerequisitesLoading(false)
         }
-    }, [page, pageSize, search, t])
+    }, [page, pageSize, queryClient, search, t])
 
     useEffect(() => {
         void Promise.resolve().then(() => loadExecutors())
@@ -420,7 +433,7 @@ export default function ExecutorsPage() {
                 </div>
                 <div className="flex items-center gap-2 self-end sm:self-center">
                     <span className="hidden text-xs text-muted-foreground sm:inline-block">
-                        {t("executors.totalCount", { count: total, defaultValue: `共 ${total} 个执行器` })}
+                        {t("executors.totalCount", { count: total })}
                     </span>
                     <Button variant="outline" size="icon" className="h-9 w-9" disabled={loading} aria-label={t('executors.refresh')} onClick={() => { void loadExecutors(); setExecutionHistoryRefreshKey(value => value + 1) }}>
                         {loading ? <Spinner className="size-4" /> : <RefreshCw className="size-4" />}

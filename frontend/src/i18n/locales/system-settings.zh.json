@@ -6,7 +6,8 @@
   "tabs": {
     "general": "全局配置",
     "security": "安全密钥",
-    "oidc": "OIDC"
+    "oidc": "OIDC",
+    "navigator": "配置导览"
   },
   "global": {
     "backupRetention": {
@@ -31,7 +32,7 @@
       "invalid": "请检查备份配置：保留数 1–100，间隔 0–8760。"
     },
     "title": "全局设置",
-    "description": "这些配置会影响整个应用，后续新增的全局选项也会集中在这里管理。",
+    "description": "这些配置会影响整个应用。",
     "baseUrl": {
       "title": "BASE URL",
       "label": "应用公开访问地址",

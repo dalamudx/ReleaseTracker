@@ -58,7 +58,7 @@ export function TrackerList({
     return (
         <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border/60 bg-card/40 shadow-xs">
             <Table className="table-fixed lg:table-auto" containerClassName="overflow-visible">
-                <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm">
+                <TableHeader className="sticky top-0 z-10 bg-background">
                     <TableRow className="hover:bg-transparent">
                         <TableHead className="lg:min-w-[10rem]">{t("trackers.table.name")}</TableHead>
                         <TableHead className="w-16 lg:w-20">{t("trackers.table.status")}</TableHead>

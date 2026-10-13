@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
     ChevronLeft,
     ChevronRight,
@@ -80,6 +80,12 @@ export function DataPagination({
     const currentPage = Math.min(Math.max(1, page), totalPages)
     const canPrev = currentPage > 1
     const canNext = currentPage < totalPages
+
+    // Deleting the last rows of the final page leaves the caller's page past the end,
+    // so the list would query an empty range. Pull the caller back to the last real page.
+    useEffect(() => {
+        if (total > 0 && page > totalPages) onPageChange(totalPages)
+    }, [total, page, totalPages, onPageChange])
 
     const handlePageSizeChange = (value: string) => {
         const nextSize = Number(value)

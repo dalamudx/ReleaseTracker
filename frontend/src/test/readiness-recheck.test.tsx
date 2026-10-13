@@ -9,7 +9,14 @@ import i18n from "@/i18n/config"
 import { canRecheckReadiness, type HealthOutcome } from "@/lib/readiness"
 import TasksPage from "@/pages/Tasks"
 
-vi.mock("@/api/client", () => ({ api: { getTasks: vi.fn(), getTask: vi.fn(), recheckTask: vi.fn(), retryTask: vi.fn(), clearFinishedTasks: vi.fn() } }))
+vi.mock("@/api/client", () => {
+    const getTasks = vi.fn()
+    const getTaskPage = vi.fn(async (params: unknown) => {
+        const items = await getTasks(params)
+        return { items, total: items.length }
+    })
+    return { api: { getTasks, getTaskPage, getTask: vi.fn(), recheckTask: vi.fn(), retryTask: vi.fn(), clearFinishedTasks: vi.fn() } }
+})
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 const task = (): QueueTask => ({ id: 17, kind: "deploy", state: "failed", target_label: "service-a", attempts: 1, max_retries: 0, due_at: 1789705000, created_at: 1789704900, updated_at: 1789705000, error_code: null, message: null, result: { phase: "completed", health_check: { outcome: "timeout" } }, target: {} })
 function show() {

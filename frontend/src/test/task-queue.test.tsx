@@ -7,7 +7,15 @@ import i18n from "@/i18n/config"
 import TasksPage from "@/pages/Tasks"
 import type { QueueTask } from "@/api/task-types"
 
-vi.mock("@/api/client", () => ({ api: { getTasks: vi.fn(), getTask: vi.fn(), getDeploymentPlan: vi.fn(), approveDeployment: vi.fn(), cancelTask: vi.fn(), retryTask: vi.fn(), resolveTask: vi.fn(), clearFinishedTasks: vi.fn() } }))
+vi.mock("@/api/client", () => {
+    // The task page reads getTaskPage; most cases only care about the rows, so bridge it to getTasks.
+    const getTasks = vi.fn()
+    const getTaskPage = vi.fn(async (params: unknown) => {
+        const items = await getTasks(params)
+        return { items, total: items.length }
+    })
+    return { api: { getTasks, getTaskPage, getTask: vi.fn(), getDeploymentPlan: vi.fn(), approveDeployment: vi.fn(), cancelTask: vi.fn(), retryTask: vi.fn(), resolveTask: vi.fn(), clearFinishedTasks: vi.fn() } }
+})
 
 function task(state: QueueTask["state"], kind: QueueTask["kind"] = "fetch"): QueueTask {
     return { id: 17, kind, state, target_label: "nginx-test", attempts: 1, max_retries: 3, due_at: 1789705000, created_at: 1789704900, updated_at: 1789705000, error_code: null, message: null, result: {}, target: {} }
@@ -16,21 +24,30 @@ function show() {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, refetchInterval: false } } })
     return render(<QueryClientProvider client={client}><MemoryRouter><TasksPage /></MemoryRouter></QueryClientProvider>)
 }
-beforeEach(async () => { vi.clearAllMocks(); await i18n.changeLanguage("zh") })
+beforeEach(async () => {
+    vi.clearAllMocks()
+    // clearAllMocks keeps per-test implementations, so restore the row-only bridge every time.
+    vi.mocked(api.getTaskPage).mockImplementation(async params => {
+        const items = await api.getTasks(params as Parameters<typeof api.getTasks>[0])
+        return { items, total: items.length }
+    })
+    await i18n.changeLanguage("zh")
+})
 
 describe("persistent task queue", () => {
-    it("returns to the previous cursor page without clearing or changing queue entries", async () => {
+    it("pages through the server total without clearing or changing queue entries", async () => {
         const tasks = Array.from({ length: 105 }, (_, i) => ({ ...task("succeeded"), id: 105 - i, target_label: `page-${105 - i}` }))
-        vi.mocked(api.getTasks).mockImplementation(async params => tasks.filter(item => !params?.before || item.id < params.before).slice(0, params?.limit ?? 50))
+        vi.mocked(api.getTaskPage).mockImplementation(async params => ({ items: tasks.slice(params.offset, params.offset + params.limit), total: tasks.length }))
         show()
         await screen.findByText("page-105")
-        fireEvent.click(screen.getByRole("button", { name: i18n.t("pagination.nextPage") }))
-        await screen.findByText("page-55")
-        fireEvent.click(screen.getByRole("button", { name: i18n.t("pagination.nextPage") }))
+        expect(screen.getByText(i18n.t("pagination.totalItems", { count: 105 }))).toBeInTheDocument()
+        expect(screen.getByLabelText(i18n.t("pagination.pageOf", { page: 1, total: 3 }))).toBeInTheDocument()
+        fireEvent.click(screen.getByRole("button", { name: i18n.t("pagination.lastPage") }))
         await screen.findByText("page-5")
+        expect(screen.getByRole("button", { name: i18n.t("pagination.nextPage") })).toBeDisabled()
         fireEvent.click(screen.getByRole("button", { name: i18n.t("pagination.previousPage") }))
         expect(await screen.findByText("page-55")).toBeInTheDocument()
-        expect(api.getTasks).toHaveBeenLastCalledWith(expect.objectContaining({ state: undefined, before: 56 }))
+        expect(api.getTaskPage).toHaveBeenLastCalledWith(expect.objectContaining({ state: undefined, offset: 50, limit: 50 }))
         expect(api.clearFinishedTasks).not.toHaveBeenCalled()
     })
 
@@ -255,22 +272,26 @@ describe("persistent task queue", () => {
         fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.retry") }))
         await waitFor(() => expect(api.retryTask).toHaveBeenCalledWith(17))
     })
-    it("filters tasks by search input query", async () => {
+    it("searches tasks on the server and resets to the first page", async () => {
         const task1 = { ...task("succeeded"), id: 101, target_label: "frontend-app" }
         const task2 = { ...task("succeeded"), id: 102, target_label: "backend-api" }
-        vi.mocked(api.getTasks).mockResolvedValue([task1, task2])
+        vi.mocked(api.getTaskPage).mockImplementation(async params => {
+            const items = [task1, task2].filter(item => !params.search || item.target_label.includes(params.search))
+            return { items, total: items.length }
+        })
         show()
         await screen.findByText("frontend-app")
         expect(screen.getByText("backend-api")).toBeInTheDocument()
 
         const searchInput = screen.getByPlaceholderText(i18n.t("tasks.searchPlaceholder"))
-        fireEvent.change(searchInput, { target: { value: "frontend" } })
+        fireEvent.change(searchInput, { target: { value: " frontend " } })
 
+        await waitFor(() => expect(screen.queryByText("backend-api")).not.toBeInTheDocument())
         expect(screen.getByText("frontend-app")).toBeInTheDocument()
-        expect(screen.queryByText("backend-api")).not.toBeInTheDocument()
+        expect(api.getTaskPage).toHaveBeenLastCalledWith(expect.objectContaining({ search: "frontend", offset: 0 }))
 
         fireEvent.change(searchInput, { target: { value: "nonexistent" } })
-        expect(screen.getByText(i18n.t("tasks.noMatching"))).toBeInTheDocument()
+        expect(await screen.findByText(i18n.t("tasks.noMatching"))).toBeInTheDocument()
     })
     it("respects page size when rendering tasks", async () => {
         const tasks = Array.from({ length: 50 }, (_, i) => ({ ...task("succeeded"), id: 50 - i, target_label: `task-${50 - i}` }))

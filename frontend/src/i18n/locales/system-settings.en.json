@@ -6,7 +6,8 @@
   "tabs": {
     "general": "Global",
     "security": "Security keys",
-    "oidc": "OIDC"
+    "oidc": "OIDC",
+    "navigator": "Navigator"
   },
   "global": {
     "backupRetention": {
@@ -31,7 +32,7 @@
       "invalid": "Check backup settings: retention 1–100, interval 0–8760."
     },
     "title": "Global Settings",
-    "description": "These settings apply to the whole application. Future global options should be managed here as well.",
+    "description": "These settings apply to the whole application.",
     "baseUrl": {
       "title": "BASE URL",
       "label": "Public app URL",

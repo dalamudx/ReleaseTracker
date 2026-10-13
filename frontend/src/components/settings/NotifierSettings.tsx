@@ -169,7 +169,7 @@ export function NotifierSettings() {
                 </div>
                 <div className="flex items-center gap-2 self-end sm:self-center">
                     <span className="hidden text-xs text-muted-foreground sm:inline-block">
-                        {t("settings.notifications.totalCount", { count: total, defaultValue: `共 ${total} 个通知渠道` })}
+                        {t("settings.notifications.totalCount", { count: total })}
                     </span>
                     <Button
                         onClick={() => {

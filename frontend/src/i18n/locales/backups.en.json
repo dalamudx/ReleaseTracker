@@ -1,7 +1,7 @@
 {
   "directory": "Current backup directory: {{path}}",
   "title": "Instance backups",
-  "description": "Create a consistent ZIP copy of the database and encryption keys without stopping the instance (full disaster recovery archive, distinct from executor runtime snapshots).",
+  "description": "Create a consistent ZIP copy of the database and encryption keys without stopping the instance.",
   "sensitive": "Backups contain credentials, session tokens and encryption keys. The ZIP is not encrypted. Store it privately and keep an off-host copy.",
   "create": "Create backup",
   "confirmTitle": "Include sensitive credentials?",

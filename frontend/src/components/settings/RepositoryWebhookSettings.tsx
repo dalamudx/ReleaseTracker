@@ -258,7 +258,7 @@ export function RepositoryWebhookSettings() {
 
                 <div className="flex items-center gap-2 self-end sm:self-center">
                     <span className="hidden text-xs text-muted-foreground sm:inline-block">
-                        {t("webhooks.repository.totalCount", { count: filteredHooks.length, defaultValue: `共 ${filteredHooks.length} 个配置` })}
+                        {t("webhooks.repository.totalCount", { count: filteredHooks.length })}
                     </span>
                     <Button
                         variant="outline"

@@ -141,6 +141,32 @@ def test_clear_api_requires_authentication(client):
     assert client.post("/api/tasks/clear").status_code == 401
 
 
+@pytest.mark.asyncio
+async def test_task_list_reports_total_and_supports_offset_and_search(storage, authed_client):
+    created = [await enqueue(storage, "succeeded", key=f"svc-{index}") for index in range(5)]
+    failed = await enqueue(storage, "failed", key="db-primary")
+    async with storage.tasks.transaction() as db:
+        await db.execute("UPDATE tasks SET message='Registry Timeout' WHERE id=?", (failed["id"],))
+
+    plain = authed_client.get("/api/tasks", params={"limit": 2})
+    assert "X-Total-Count" not in plain.headers
+    first = authed_client.get("/api/tasks", params={"limit": 2, "include_total": True})
+    assert first.headers["X-Total-Count"] == "6"
+    assert [t["id"] for t in first.json()] == [failed["id"], created[4]["id"]]
+    last = authed_client.get("/api/tasks", params={"limit": 2, "offset": 4})
+    assert [t["id"] for t in last.json()] == [created[1]["id"], created[0]["id"]]
+
+    succeeded = authed_client.get(
+        "/api/tasks", params={"state": "succeeded", "limit": 1, "include_total": True}
+    )
+    assert succeeded.headers["X-Total-Count"] == "5" and len(succeeded.json()) == 1
+    for query in ("DB-PRIM", "registry timeout", "failed"):
+        found = authed_client.get("/api/tasks", params={"search": query, "include_total": True})
+        assert found.headers["X-Total-Count"] == "1"
+        assert [t["id"] for t in found.json()] == [failed["id"]]
+    assert authed_client.get("/api/tasks", params={"offset": -1}).status_code == 422
+
+
 def test_clear_migration_preserves_old_tasks_and_can_rollback(tmp_path):
     db = sqlite3.connect(tmp_path / "queue.db")
     try:

@@ -158,4 +158,5 @@ def configure_http_security(app):
                 "X-CSRF-Token",
                 "X-ReleaseTracker-Browser",
             ],
+            expose_headers=["X-Total-Count"],
         )
