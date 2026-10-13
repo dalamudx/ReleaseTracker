@@ -254,3 +254,105 @@ async def test_same_engine_different_connection_name_is_not_drift(runtime):
     result = await x.adapter.recover_from_snapshot(x.target, x.saved)
     assert result.updated
     assert x.saved == original
+
+
+@pytest.mark.asyncio
+async def test_podman_compat_socket_rotating_id_binds_stable_identity_and_rechecks(runtime):
+    x = runtime
+    reads = 0
+
+    def rotating_info():
+        nonlocal reads
+        reads += 1
+        return {
+            "ID": f"random-uuid-{reads}",
+            "BuildahVersion": "1.39",
+            "Rootless": False,
+            "Name": "example-podman-host",
+            "DockerRootDir": "/data/containers/storage",
+            "Driver": "overlay",
+            "OSType": "linux",
+            "Architecture": "amd64",
+        }
+
+    x.client.info = Mock(side_effect=rotating_info)
+    x.client.version = Mock(
+        return_value={"Components": [{"Name": "Podman Engine", "Version": "5.4.2"}]}
+    )
+    saved = await x.adapter.capture_snapshot(x.target, IMAGE)
+    daemon_id = saved["engine_identity"]["daemon_id"]
+    assert daemon_id.startswith("podman-compat-v1:")
+    assert reads == 2
+
+    result = await x.adapter.recover_from_snapshot(x.target, saved)
+    assert result.updated
+    assert reads >= 4
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("Name", "different-host"),
+        ("DockerRootDir", "/other/storage"),
+        ("Driver", "vfs"),
+        ("Rootless", True),
+        ("OSType", "other-os"),
+        ("Architecture", "arm64"),
+    ],
+)
+async def test_podman_compat_socket_drift_blocks_recovery(runtime, field, value):
+    x = runtime
+    info_data = {
+        "ID": "initial-random",
+        "BuildahVersion": "1.39",
+        "Rootless": False,
+        "Name": "example-podman-host",
+        "DockerRootDir": "/data/containers/storage",
+        "Driver": "overlay",
+        "OSType": "linux",
+        "Architecture": "amd64",
+    }
+    x.client.info = Mock(side_effect=lambda: dict(info_data))
+    x.client.version = Mock(
+        return_value={"Components": [{"Name": "Podman Engine", "Version": "5.4.2"}]}
+    )
+    saved = await x.adapter.capture_snapshot(x.target, IMAGE)
+
+    info_data[field] = value
+    with pytest.raises(ValueError, match="identity changed"):
+        await x.adapter.recover_from_snapshot(x.target, saved)
+    assert x.existing.remove_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change", ["missing_components", "docker_engine", "relative_store", "root_store"]
+)
+async def test_podman_compat_missing_engine_or_malformed_fields_fails_closed(runtime, change):
+    x = runtime
+    info_data = {
+        "ID": "initial-random",
+        "BuildahVersion": "1.39",
+        "Rootless": False,
+        "Name": "example-podman-host",
+        "DockerRootDir": "/data/containers/storage",
+        "Driver": "overlay",
+        "OSType": "linux",
+        "Architecture": "amd64",
+    }
+    if change == "relative_store":
+        info_data["DockerRootDir"] = "relative/storage"
+    elif change == "root_store":
+        info_data["DockerRootDir"] = "/"
+
+    version_data = {"Components": [{"Name": "Podman Engine", "Version": "5.4.2"}]}
+    if change == "missing_components":
+        version_data = {}
+    elif change == "docker_engine":
+        version_data = {"Components": [{"Name": "Docker Engine", "Version": "27.0"}]}
+
+    x.client.info = Mock(return_value=info_data)
+    x.client.version = Mock(return_value=version_data)
+    with pytest.raises(ValueError, match="identity could not be verified"):
+        await x.adapter.capture_snapshot(x.target, IMAGE)

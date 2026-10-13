@@ -486,3 +486,35 @@ async def test_reconcile_orphaned_executor_tasks(storage):
     assert current["state"] == "superseded"
     assert current["approval_pending"] == 0
     assert current["error_code"] == "executor_deleted"
+
+
+@pytest.mark.asyncio
+async def test_mark_applied_succeeds_after_checkpoint_with_mutation_started(storage):
+    store, queued, observed, plan = await staged(storage)
+    await store.approve(queued["id"], plan["id"], plan["fingerprint"], "admin")
+    claimed = await storage.tasks.claim("deploy")
+    await storage.tasks.start_attempt(claimed)
+    await storage.tasks.checkpoint(claimed, {"run_id": 42, "mutation_started": True})
+    updated_plan = await store.mark_applied(claimed, observed)
+    assert updated_plan["state"] == "applied"
+    assert updated_plan["applied_at"] is not None
+
+    db = await storage._get_connection()
+    row = await (
+        await db.execute(
+            "SELECT baseline, last_task_id FROM managed_targets WHERE executor_id=?",
+            (queued["payload"]["executor_id"],),
+        )
+    ).fetchone()
+    assert row["baseline"] == observed.evidence_hash
+    assert row["last_task_id"] == claimed["id"]
+    await storage.tasks.finish(claimed, "succeeded", result={"mutation_started": True})
+    owned = replace(
+        observed,
+        markers=(managed_markers(await store.installation_id(), plan["target_id"], claimed["id"]),),
+    )
+    await task(storage)
+    next_claimed = await storage.tasks.claim("deploy")
+    next_plan = await store.stage(next_claimed, owned)
+    assert next_plan["state"] == "approved"
+    assert next_plan["reason"] == "managed"

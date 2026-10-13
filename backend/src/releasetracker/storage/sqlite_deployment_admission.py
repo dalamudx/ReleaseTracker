@@ -60,7 +60,7 @@ class DeploymentAdmissionStore:
         return result
 
     @staticmethod
-    async def _leased_task(db, task, now):
+    async def _leased_task(db, task, now, *, allow_started=False):
         if task.get("approval_pending") and task.get("state") in ("queued", "awaiting_approval"):
             row = await (
                 await db.execute(
@@ -81,7 +81,7 @@ class DeploymentAdmissionStore:
             # Checkpoint payloads need not use sorted serialization.
             if json.loads(row["payload"]) != task["payload"]:
                 raise AdmissionConflict("task_payload_changed")
-        if (json.loads(row["result"] or "{}")).get("mutation_started"):
+        if not allow_started and (json.loads(row["result"] or "{}")).get("mutation_started"):
             raise AdmissionConflict("mutation_already_started")
         return row
 
@@ -419,7 +419,7 @@ class DeploymentAdmissionStore:
         """Commit the post-mutation evidence as the new managed baseline."""
         now = time.time() if now is None else now
         async with self.storage.tasks.transaction() as db:
-            await self._leased_task(db, task, now)
+            await self._leased_task(db, task, now, allow_started=True)
             row = await (
                 await db.execute(
                     "SELECT * FROM deployment_plans WHERE task_id=? ORDER BY id DESC LIMIT 1",

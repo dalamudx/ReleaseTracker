@@ -613,12 +613,18 @@ function TrackerDialogReleaseChannelPanel({
             </div>
 
             {isReleaseChannelExpanded ? (
-                <div className="mt-4 grid gap-4 rounded-lg bg-background/70 p-4 md:grid-cols-2 xl:grid-cols-4">
+                <div
+                    className={
+                        canFilterByReleaseType
+                            ? "mt-4 grid gap-4 rounded-lg bg-background/70 p-4 md:grid-cols-2 xl:grid-cols-[minmax(10rem,0.75fr)_minmax(10rem,0.75fr)_minmax(0,1.25fr)_minmax(0,1.25fr)]"
+                            : "mt-4 grid gap-4 rounded-lg bg-background/70 p-4 md:grid-cols-2 xl:grid-cols-[minmax(11rem,0.8fr)_minmax(0,1.6fr)_minmax(0,1.6fr)]"
+                    }
+                >
                     <FormField
                         control={form.control}
                         name={`sources.${trackerChannelIndex}.release_channels.${releaseChannelIndex}.name`}
                         render={({ field }) => (
-                            <FormItem className="w-full max-w-sm">
+                            <FormItem className={canFilterByReleaseType ? "w-full" : "w-full max-w-sm md:col-span-2 xl:col-span-1 xl:max-w-none"}>
                                 <FormLabel>{t("trackers.aggregate.releaseChannels.fields.name")}</FormLabel>
                                 <Select
                                     value={field.value}
@@ -650,7 +656,7 @@ function TrackerDialogReleaseChannelPanel({
                             control={form.control}
                             name={`sources.${trackerChannelIndex}.release_channels.${releaseChannelIndex}.type`}
                             render={({ field }) => (
-                                <FormItem className="w-full max-w-sm">
+                                <FormItem className="w-full">
                                     <FormLabel>{t("trackers.aggregate.releaseChannels.fields.type")}</FormLabel>
                                     <Select
                                         value={field.value ?? undefined}
@@ -679,7 +685,7 @@ function TrackerDialogReleaseChannelPanel({
                         control={form.control}
                         name={`sources.${trackerChannelIndex}.release_channels.${releaseChannelIndex}.include_pattern`}
                         render={({ field }) => (
-                            <FormItem className="xl:col-span-2 w-full max-w-2xl">
+                            <FormItem className="w-full">
                                 <FormLabel>{t("trackers.aggregate.releaseChannels.fields.includePattern")}</FormLabel>
                                 <FormControl>
                                     <Input
@@ -697,7 +703,7 @@ function TrackerDialogReleaseChannelPanel({
                         control={form.control}
                         name={`sources.${trackerChannelIndex}.release_channels.${releaseChannelIndex}.exclude_pattern`}
                         render={({ field }) => (
-                            <FormItem className="xl:col-span-2 w-full max-w-2xl">
+                            <FormItem className="w-full">
                                 <FormLabel>{t("trackers.aggregate.releaseChannels.fields.excludePattern")}</FormLabel>
                                 <FormControl>
                                     <Input

@@ -503,7 +503,7 @@ class DeployTasks:
             )
         if outcome.status == "health_checking":
             return TaskResult("observing", result={"run_id": run_id})
-        if outcome.status == "success":
+        if outcome.status in {"success", "skipped"}:
             await self._mark_admission_applied(task, executor)
         checkpoint = await self.storage.tasks.get(task["id"])
         failure = "needs_attention" if checkpoint["result"].get("mutation_started") else "failed"
