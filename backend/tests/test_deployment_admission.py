@@ -518,3 +518,66 @@ async def test_mark_applied_succeeds_after_checkpoint_with_mutation_started(stor
     next_plan = await store.stage(next_claimed, owned)
     assert next_plan["state"] == "approved"
     assert next_plan["reason"] == "managed"
+
+
+async def succeeded_without_baseline(storage, *, final_state="succeeded"):
+    store, queued, observed, plan = await staged(storage)
+    await store.approve(queued["id"], plan["id"], plan["fingerprint"], "admin")
+    claimed = await storage.tasks.claim("deploy")
+    await storage.tasks.start_attempt(claimed)
+    await storage.tasks.checkpoint(claimed, {"mutation_started": True})
+    # The post-write evidence read failed, so mark_applied never recorded a baseline.
+    await storage.tasks.finish(claimed, final_state, result={"mutation_started": True})
+    markers = managed_markers(await store.installation_id(), plan["target_id"], claimed["id"])
+    return store, claimed, replace(observed, markers=(markers,))
+
+
+async def managed_target(storage):
+    db = await storage._get_connection()
+    return await (
+        await db.execute("SELECT baseline,last_task_id FROM managed_targets WHERE executor_id=1")
+    ).fetchone()
+
+
+async def test_lost_baseline_is_restored_from_local_successful_write(storage):
+    store, previous, owned = await succeeded_without_baseline(storage)
+    await task(storage)
+    claimed = await storage.tasks.claim("deploy")
+    plan = await store.stage(claimed, owned)
+    assert (plan["state"], plan["reason"]) == ("approved", "managed")
+    assert tuple(await managed_target(storage)) == (owned.evidence_hash, previous["id"])
+
+    # The restored baseline is real: later out-of-band changes are drift again.
+    await storage.tasks.finish(claimed, "skipped")
+    await task(storage)
+    drifted = replace(owned, configuration=owned.configuration | {"env": ["CHANGED=1"]})
+    plan = await store.stage(await storage.tasks.claim("deploy"), drifted)
+    assert (plan["state"], plan["reason"]) == ("pending", "configuration_drift")
+
+
+@pytest.mark.parametrize("case", ["write_failed", "other_deployment", "no_deployment_id"])
+async def test_lost_baseline_needs_review_without_matching_successful_write(storage, case):
+    store, previous, owned = await succeeded_without_baseline(
+        storage, final_state="failed" if case == "write_failed" else "succeeded"
+    )
+    marker = dict(owned.markers[0])
+    if case == "other_deployment":
+        marker["releasetracker.io/deployment-id"] = str(previous["id"] + 100)
+    elif case == "no_deployment_id":
+        marker.pop("releasetracker.io/deployment-id")
+    await task(storage)
+    plan = await store.stage(await storage.tasks.claim("deploy"), replace(owned, markers=(marker,)))
+    assert (plan["state"], plan["reason"]) == ("pending", "unmanaged")
+    assert (await managed_target(storage))["baseline"] is None
+
+
+async def test_parked_refresh_with_restored_baseline_leaves_approval_queue(storage):
+    store, _, owned = await succeeded_without_baseline(storage)
+    queued = await task(storage)
+    parked = await store.stage(await storage.tasks.claim("deploy"), replace(owned, markers=({},)))
+    assert (parked["state"], parked["reason"]) == ("pending", "unmanaged")
+    refreshed = await store.stage(await storage.tasks.get(queued["id"]), owned)
+    assert refreshed["state"] == "approved"
+    ready = await storage.tasks.get(queued["id"])
+    assert ready["state"] == "queued" and not ready["approval_pending"]
+    assert (await storage.tasks.claim("deploy"))["id"] == queued["id"]

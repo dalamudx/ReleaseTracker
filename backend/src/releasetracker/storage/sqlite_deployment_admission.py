@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 
 from ..services.version_policy import version_policy_reason
-from ..services.deployment_plan import TargetEvidence, plan_fingerprint, public_summary
+from ..services.deployment_plan import (
+    PREFIX,
+    TargetEvidence,
+    plan_fingerprint,
+    public_summary,
+)
+
+logger = logging.getLogger(__name__)
 
 APPROVABLE = frozenset(
     {
@@ -129,6 +137,68 @@ class DeploymentAdmissionStore:
         # Mixed owners in one grouped target must not silently become one claim.
         return "marker_missing" if len(stale) == 1 else reason
 
+    @staticmethod
+    async def _restore_lost_baseline(db, target, evidence, now):
+        """Re-record a baseline whose post-write evidence read was lost.
+
+        Proof stays local: this executor's latest started deployment succeeded
+        under an approved plan for this exact target, and every live marker names
+        that deployment. Deleted-owner reclaims never reach here (no target row).
+        The current runtime state becomes the baseline; drift since that
+        deployment cannot be reconstructed and is not reported.
+        """
+        deployment_ids = {marker.get(PREFIX + "deployment-id") for marker in evidence.markers}
+        if len(deployment_ids) != 1 or None in deployment_ids:
+            return False
+        latest = await (
+            await db.execute(
+                """SELECT id,state FROM tasks WHERE kind='deploy'
+                   AND json_extract(payload, '$.executor_id')=?
+                   AND json_extract(result, '$.mutation_started')=1
+                   ORDER BY id DESC LIMIT 1""",
+                (target["executor_id"],),
+            )
+        ).fetchone()
+        if (
+            latest is None
+            or latest["state"] != "succeeded"
+            or str(latest["id"]) not in deployment_ids
+        ):
+            return False
+        approved = await (
+            await db.execute(
+                """SELECT 1 FROM deployment_plans WHERE task_id=? AND executor_id=?
+                   AND target_id=? AND identity_key=? AND approved_at IS NOT NULL LIMIT 1""",
+                (
+                    latest["id"],
+                    target["executor_id"],
+                    target["target_id"],
+                    evidence.identity_key,
+                ),
+            )
+        ).fetchone()
+        if approved is None:
+            return False
+        cursor = await db.execute(
+            """UPDATE managed_targets SET baseline=?,last_task_id=?,updated_at=?
+               WHERE target_id=? AND executor_id=? AND baseline IS NULL""",
+            (
+                evidence.evidence_hash,
+                latest["id"],
+                now,
+                target["target_id"],
+                target["executor_id"],
+            ),
+        )
+        if cursor.rowcount != 1:
+            return False
+        logger.info(
+            "Restored admission baseline for executor %s from deployment %s",
+            target["executor_id"],
+            latest["id"],
+        )
+        return True
+
     async def stage(self, task, evidence: TargetEvidence, *, now=None, ttl=1800):
         """Before start_attempt: atomically park and emit intent, or authorize a plan.
 
@@ -178,6 +248,13 @@ class DeploymentAdmissionStore:
             elif target and target["identity_key"] != evidence.identity_key:
                 reason = "target_identity_changed"
             elif reason not in {None, "marker_missing"}:
+                pass
+            elif (
+                target
+                and target["baseline"] is None
+                and reason is None
+                and await self._restore_lost_baseline(db, target, evidence, now)
+            ):
                 pass
             elif not target or target["baseline"] is None:
                 reason = "unmanaged"
@@ -310,6 +387,13 @@ class DeploymentAdmissionStore:
                         now,
                         now,
                     ),
+                )
+            elif live["approval_pending"]:
+                # A refreshed parked plan that no longer needs review (for example a
+                # restored baseline) leaves the approval queue instead of waiting.
+                await db.execute(
+                    "UPDATE tasks SET approval_pending=0,due_at=?,updated_at=?,error_code=NULL WHERE id=?",
+                    (now, now, task["id"]),
                 )
             row = await (
                 await db.execute("SELECT * FROM deployment_plans WHERE id=?", (plan_id,))
