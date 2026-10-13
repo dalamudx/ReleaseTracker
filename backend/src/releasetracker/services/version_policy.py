@@ -37,7 +37,7 @@ def image_pair(evidence, target, service, current):
     proof = next(
         (
             p
-            for p in evidence.version_evidence
+            for p in getattr(evidence, "version_evidence", ())
             if p.get("source_id") == target.get("source_id")
             and p.get("channel_name") == target.get("channel")
             and p.get("service") == service

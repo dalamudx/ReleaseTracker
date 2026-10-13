@@ -1,4 +1,5 @@
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -43,11 +44,13 @@ def task(policy="patch", after="1.2.4", manual=False):
         ("all", "latest", "latest", False),
     ],
 )
+@pytest.mark.parametrize("with_version_evidence", [True, False])
 @pytest.mark.parametrize("recovery", ["container_config", "helm_revision"])
-def test_limits(policy, before, after, allowed, recovery):
-    assert (
-        version_policy_reason(task(policy, after), evidence(before, recovery)) is None
-    ) == allowed
+def test_limits(policy, before, after, allowed, recovery, with_version_evidence):
+    observed = evidence(before, recovery)
+    if not with_version_evidence:
+        observed = SimpleNamespace(recovery=observed.recovery, configuration=observed.configuration)
+    assert (version_policy_reason(task(policy, after), observed) is None) == allowed
 
 
 def test_manual_and_unknown_digest():
