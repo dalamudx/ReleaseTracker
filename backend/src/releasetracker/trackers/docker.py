@@ -692,40 +692,25 @@ class DockerTracker(BaseTracker):
 
             from ..versioning import (
                 container_channel_eligible,
-                container_tag_eligible,
-                release_order_key,
+                select_version_candidate,
+                pinned_alias,
             )
 
             releases = [release for release in releases if self._should_include(release)]
-            channels = self.config.get("channels", [])
-            candidate_groups = (
-                [
-                    [
-                        release
-                        for release in releases
-                        if self.should_include_in_channel(release, channel)
-                        and container_channel_eligible(
-                            release.tag_name, self.version_format, channel
-                        )
-                    ]
-                    for channel in channels
+            channels = self.config.get("channels", []) or [{"name": "stable", "type": None}]
+            selection_priority = []
+            for channel in channels:
+                group = [
+                    release
+                    for release in releases
+                    if self.should_include_in_channel(release, channel)
+                    and container_channel_eligible(release.tag_name, self.version_format, channel)
                 ]
-                if channels
-                else [
-                    [
-                        release
-                        for release in releases
-                        if container_tag_eligible(release.tag_name, self.version_format)
-                    ]
-                ]
-            )
-            selection_priority = list(
-                dict.fromkeys(
-                    max(group, key=release_order_key).tag_name
-                    for group in candidate_groups
-                    if group
+                winner = select_version_candidate(
+                    group, channel=channel, exact_alias=pinned_alias(channel)
                 )
-            )
+                if winner is not None and winner.tag_name not in selection_priority:
+                    selection_priority.append(winner.tag_name)
             if incremental_alias_scan:
                 selection_priority.sort(
                     key=lambda tag: (

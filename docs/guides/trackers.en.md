@@ -44,6 +44,20 @@ For example, `^v?1\.2\.\d+$` selects three-part versions on the `1.2.x` line. Ru
 
 Time-based selection is no longer offered. Legacy `published_at` sorting settings remain readable but use version selection. Time never breaks ties between different artifacts of an equivalent version: a tag follows its current digest; conflicting equivalent-version aliases must be resolved first. Non-version tags such as `latest` and `nightly` require an explicit exact include rule, such as `^nightly$`, and do not compete for the highest version.
 
+
+### General tag ordering
+
+The channel rule determines membership; the retired `version_format` setting is ignored. Standard versions use version comparison, integer-only channels use numeric order, and integers never outrank dotted versions in a mixed repository. Matching numbered formats such as `build-99` / `build-100` or dates use natural ordering. Different text patterns cannot be ordered by their names.
+
+For complex tags, capture a numeric `version` and optional `revision` in the include pattern. Both `(?<version>...)` and Python `(?P<version>...)` work. For example:
+
+```regex
+^(?<version>\d+)\.v[\w_]+-(?<revision>\d+)$
+```
+
+This compares the build number, then the image revision, ignoring the hash. Equal version keys pointing to different digests still conflict. The form's ordering preview uses the same backend rules without saving or fetching. Actual targets also require digest confirmation.
+
+Unorderable tags remain visible in channel history, but do not produce an automatic target. There is no time fallback. Custom numbers do not imply major/minor/patch policy semantics; uncertain deployment direction still requires review. Each channel keeps its own retention quota using its ordering fields; deterministic audit order for unknown formats is not an upgrade direction.
 Container fetching never reads Config blobs, build times or OCI labels; legacy `published_at_mode` is ignored. Dates never rank versions. Compact dates prefer genuine push time, then registry registration, then explicitly labeled registry modification. Unknown dates never use discovery/build fallbacks. Hover/focus reveals full semantics; the column remains on mobile.
 
 | Registry | Native date and semantics |
@@ -61,7 +75,7 @@ Registry date lookups reuse the container source's pull credential; there is no 
 The upgrade preserves historical identities and queued task records but invalidates legacy approvals. Startup rebuilds current views from local history without fetching, notifying or deploying. Legacy automatic target snapshots are rejected rather than silently replaced; regenerate review under the new selection rules.
 History retention is independent for each tracking channel. Two channels with a limit of 20 retain up to 20 records each. Shared records count against each channel independently; pruning keeps the union. Records required by current targets and unsettled deployment/recovery tasks are separately protected. Cleanup runs after fetches and at startup, with scheduled maintenance as a fallback.
 
-Current tag pointers and channel decisions are independent of retained history. The version view includes the current snapshot even when history is paginated. Container channels default to dotted versions; integer versions require explicit compatibility mode. Floating tags require an exact match. An unconfirmed highest manifest, equivalent-version artifact conflict, or a locally bootstrapped inventory prevents automatic deployment rather than falling back to a lower version. Non-container sources still depend on upstream fetch coverage.
+Current tag pointers and channel decisions are independent of retained history. The version view includes the current snapshot even when history is paginated. Container channels automatically recognize comparable versions and can extract custom numeric ordering fields from their include pattern. Floating tags require an exact match. An unconfirmed highest manifest, equivalent-version artifact conflict, or a locally bootstrapped inventory prevents automatic deployment rather than falling back to a lower version. Non-container sources still depend on upstream fetch coverage.
 
 ## Custom changelog {#changelog}
 

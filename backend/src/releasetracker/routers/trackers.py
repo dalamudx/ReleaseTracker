@@ -18,6 +18,73 @@ router = APIRouter(prefix="/api/trackers", tags=["trackers"])
 logger = logging.getLogger(__name__)
 
 
+class VersionPreviewPayload(BaseModel):
+    channel: Channel
+    tags: list[Annotated[str, Field(max_length=256)]] = Field(max_length=100)
+
+
+@router.post("/version-preview")
+async def preview_version_order(
+    payload: VersionPreviewPayload,
+    _user=Depends(get_current_admin_user),
+):
+    from ..tag_ordering import history_order_key, release_tag_order, ordering_issue
+    from ..versioning import (
+        container_channel_eligible,
+        pinned_alias,
+        select_version_candidate,
+        tag_specificity,
+    )
+
+    for pattern in (payload.channel.include_pattern, payload.channel.exclude_pattern):
+        if pattern:
+            try:
+                re.compile(pattern)
+            except re.error as error:
+                raise HTTPException(422, "Invalid channel pattern") from error
+    releases = [
+        Release(
+            tracker_name="preview",
+            tracker_type="container",
+            name=tag,
+            version=tag,
+            tag_name=tag,
+            url="",
+        )
+        for tag in dict.fromkeys(payload.tags)
+    ]
+    releases = [
+        r
+        for r in releases
+        if SQLiteStorage._release_matches_channel(
+            r, payload.channel, channel_source_type="container"
+        )
+        and container_channel_eligible(r.tag_name, "", payload.channel)
+    ]
+    exact = pinned_alias(payload.channel)
+    winner = select_version_candidate(releases, channel=payload.channel, exact_alias=exact)
+    ordered = sorted(
+        sorted(releases, key=lambda r: r.tag_name),
+        key=lambda r: (history_order_key(r, payload.channel), tag_specificity(r.tag_name)),
+        reverse=True,
+    )
+    return {
+        "selected": winner.tag_name if winner else None,
+        "reason": (
+            (None if winner else ordering_issue(releases, payload.channel))
+            if releases
+            else "no_eligible_version"
+        ),
+        "groups": [
+            {
+                "tag": r.tag_name,
+                "family": key.family if (key := release_tag_order(r, payload.channel)) else None,
+            }
+            for r in ordered
+        ],
+    }
+
+
 class AggregateTrackerPayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 

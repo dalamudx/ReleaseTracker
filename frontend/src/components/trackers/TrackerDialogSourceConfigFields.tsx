@@ -223,21 +223,6 @@ export function TrackerDialogSourceConfigFields({
                     </FormItem>
                 )}
             />
-            <FormField control={form.control} name={`sources.${index}.source_config.version_format`}
-                render={({ field }) => (
-                    <FormItem className="w-full">
-                        <FormLabel>{t("tracker.fields.versionFormat")}</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value ?? "dotted"}>
-                            <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
-                            <SelectContent>
-                                <SelectItem value="dotted">{t("tracker.fields.versionFormatDotted")}</SelectItem>
-                                <SelectItem value="pep440">{t("tracker.fields.versionFormatInteger")}</SelectItem>
-                            </SelectContent>
-                        </Select>
-                        <p className="text-xs text-muted-foreground">{t("tracker.fields.versionFormatHint")}</p>
-                        <FormMessage />
-                    </FormItem>
-                )} />
 
         </>
     )

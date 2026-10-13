@@ -102,6 +102,7 @@ type ChannelSelectionNotice = { key: string; Icon: typeof Clock; warning: boolea
 // Reason codes come from the backend; only "awaiting_check" resolves on its own after a check.
 function getChannelSelectionNotice(selection: { state: string; reason: string | null }): ChannelSelectionNotice {
     if (selection.state === "conflict") return { key: "selectionConflict", Icon: TriangleAlert, warning: true, checkable: false }
+    if (selection.reason === "unorderable_version" || selection.reason === "incomparable_versions") return { key: "selectionUnorderable", Icon: TriangleAlert, warning: true, checkable: false }
     if (selection.state === "empty") return { key: "selectionEmpty", Icon: Inbox, warning: false, checkable: false }
     if (selection.reason === "manifest_unconfirmed") {
         return { key: "selectionManifestUnconfirmed", Icon: TriangleAlert, warning: true, checkable: true }

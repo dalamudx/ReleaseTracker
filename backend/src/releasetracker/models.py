@@ -174,6 +174,13 @@ class ReleaseChannel(BaseModel):
     exclude_pattern: str | None = None
     enabled: bool = True
 
+    @field_validator("include_pattern", "exclude_pattern", mode="before")
+    @classmethod
+    def normalize_pattern(cls, value):
+        from .tag_ordering import python_pattern
+
+        return python_pattern(value)
+
     @field_validator("release_channel_key")
     @classmethod
     def validate_release_channel_key(cls, value: str) -> str:
@@ -248,7 +255,7 @@ class TrackerSource(BaseModel):
             "gitea": ({"repo", "instance"}, {"repo"}),
             "helm": ({"repo", "chart"}, {"repo", "chart"}),
             "container": (
-                {"image", "registry", "version_format"},
+                {"image", "registry"},
                 {"image", "registry"},
             ),
         }
@@ -258,7 +265,7 @@ class TrackerSource(BaseModel):
             self.source_config = {
                 key: value
                 for key, value in self.source_config.items()
-                if key not in {"published_at_mode", "metadata_credential_name"}
+                if key not in {"published_at_mode", "metadata_credential_name", "version_format"}
             }
         allowed_keys, required_keys = provider_requirements[self.source_type]
         unknown_keys = sorted(set(self.source_config.keys()) - allowed_keys)
@@ -282,10 +289,6 @@ class TrackerSource(BaseModel):
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"source_config.{key} must be a non-empty string")
 
-        if self.source_type == "container" and self.source_config.get(
-            "version_format", "dotted"
-        ) not in {"dotted", "pep440"}:
-            raise ValueError("source_config.version_format must be dotted or pep440")
         if self.source_type == "github" and self.source_config.get("fetch_mode") not in {
             None,
             "graphql_first",

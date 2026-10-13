@@ -108,6 +108,34 @@ describe("persistent task queue", () => {
         expect(screen.queryByText(i18n.t("tasks.errors.other"))).not.toBeInTheDocument()
     })
 
+    it("shows a maintenance-window wait as scheduled rather than as an error", async () => {
+        const waiting = { ...task("queued", "deploy"), error_code: "maintenance_window" }
+        vi.mocked(api.getTasks).mockResolvedValue([waiting])
+        vi.mocked(api.getTask).mockResolvedValue(waiting)
+        show()
+        await screen.findByText("nginx-test")
+        expect(screen.getByTestId("task-summary-state")).toHaveTextContent(i18n.t("tasks.errors.maintenance_window"))
+        fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.details", { id: 17 }) }))
+        const reason = await screen.findByText(new RegExp(i18n.t("tasks.errors.maintenance_window") + " · "))
+        expect(reason).not.toHaveClass("text-destructive")
+    })
+
+    it("explains a blocked plan instead of offering an approval that cannot succeed", async () => {
+        const pending = { ...task("awaiting_approval", "deploy"), approval_pending: true }
+        vi.mocked(api.getTasks).mockResolvedValue([pending])
+        vi.mocked(api.getTask).mockResolvedValue(pending)
+        vi.mocked(api.getDeploymentPlan).mockResolvedValue({ id: 9, task_id: 17, fingerprint: "blocked", state: "blocked", reason: "target_already_owned", expires_at: 1789706800, summary: {} })
+        show()
+        await screen.findByText("nginx-test")
+        fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.details", { id: 17 }) }))
+        expect(await screen.findByText(i18n.t("tasks.planBlocked"))).toBeVisible()
+        expect(screen.queryByRole("button", { name: i18n.t("tasks.approvePlan") })).not.toBeInTheDocument()
+        vi.mocked(api.cancelTask).mockResolvedValue({ cancelled: true } as never)
+        const cancel = screen.getByRole("button", { name: i18n.t("common.cancel") })
+        expect(cancel).toBeEnabled()
+        fireEvent.click(cancel)
+        await waitFor(() => expect(api.cancelTask).toHaveBeenCalledWith(17))
+    })
     it.each(["zh", "en"])("explains missing images in the task and attempt history (%s)", async (language) => {
         await i18n.changeLanguage(language)
         const code = "registry_repository_not_found"

@@ -128,12 +128,13 @@ async def test_selection_without_any_audit_history_matches_executor(storage):
     assert (await target(storage, tracker, source)).deploy_alias == "0.7.19"
 
 
-async def test_explicit_integer_version_format(storage):
+async def test_retired_integer_format_does_not_override_mixed_repository_order(storage):
     tracker, source = await setup(storage, config={"version_format": "pep440"})
+    assert "version_format" not in source.source_config
     await selection.save_candidates(
         storage, source, [release("42"), release("0.7.19", 2)], commit=True
     )
-    assert [r.version for r in await selection.refresh_selections(storage, tracker)] == ["42"]
+    assert [r.version for r in await selection.refresh_selections(storage, tracker)] == ["0.7.19"]
 
 
 async def test_unresolved_higher_manifest_blocks_deployment(storage):

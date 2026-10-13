@@ -1708,6 +1708,52 @@ async def upsert_executor_desired_state(
     return True
 
 
+async def rebase_executor_desired_state(
+    storage: "SQLiteStorage",
+    executor_id: int,
+    *,
+    expected_revision: str,
+    desired_state_revision: str,
+    desired_target: dict[str, Any],
+) -> bool:
+    """Rewrite a desired state whose deployment coordinates did not move.
+
+    Pending work stays pending (its dispatcher queues the new revision) and a
+    completed revision stays completed, so no deployment is created.
+    """
+    normalized_revision = _normalize_non_empty_text(
+        desired_state_revision,
+        field="desired_state_revision",
+    )
+    payload, fingerprint = _serialize_desired_target(desired_target)
+    db = await storage._get_connection()
+    result = await db.execute(
+        """
+        UPDATE executor_desired_state
+        SET desired_state_revision = ?,
+            desired_target = ?,
+            desired_target_fingerprint = ?,
+            last_completed_revision = CASE
+                WHEN last_completed_revision = ? THEN ? ELSE last_completed_revision END,
+            updated_at = ?
+        WHERE executor_id = ?
+          AND desired_state_revision = ?
+        """,
+        (
+            normalized_revision,
+            payload,
+            fingerprint,
+            expected_revision,
+            normalized_revision,
+            datetime.now().isoformat(),
+            executor_id,
+            expected_revision,
+        ),
+    )
+    await db.commit()
+    return bool(result.rowcount)
+
+
 async def get_executor_desired_state(
     storage: "SQLiteStorage", executor_id: int
 ) -> ExecutorDesiredState | None:

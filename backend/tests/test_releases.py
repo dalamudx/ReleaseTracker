@@ -3242,7 +3242,7 @@ def test_select_best_releases_by_channel_normalizes_version_prefix_before_semver
     assert winners["stable"].version == "version/2026.2.2"
 
 
-def test_select_best_releases_by_channel_uses_published_at_before_semver_in_published_at_mode():
+def test_channel_selection_ignores_time_and_requires_explicit_floating_tag_binding():
     releases = [
         Release(
             tracker_name="sample_canary",
@@ -3277,7 +3277,11 @@ def test_select_best_releases_by_channel_uses_published_at_before_semver_in_publ
         use_immutable_identity=True,
     )
 
-    assert winners["stable"].version == "0.1.7"
+    assert winners["stable"].tag_name == "0.1.6"
+    pinned = SQLiteStorage.select_best_releases_by_channel(
+        releases, [Channel(name="stable", include_pattern="^latest$")]
+    )
+    assert pinned["stable"].tag_name == "latest"
 
 
 def test_release_order_mode_distinguishes_published_time_from_semver():

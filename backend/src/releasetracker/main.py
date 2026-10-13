@@ -27,6 +27,7 @@ from .services.system_keys import (
     recover_pending_encryption_key_rotation,
 )
 from .services.ssh_compose_snapshot import migrate_legacy_snapshots
+from . import executor_trigger
 from .storage import sqlite_selection
 from .storage.sqlite import SQLiteStorage
 from .storage.sqlite_retention import prune_fetch_runs
@@ -108,6 +109,13 @@ async def runtime_lifespan(app: FastAPI):
                 "Reconciled %s outdated tracker selections and %s candidate versions",
                 rebuilt,
                 corrected,
+            )
+        queued, retired = await executor_trigger.reconcile_desired_states(storage)
+        if queued or retired:
+            logging.getLogger(__name__).info(
+                "Requeued %s executor targets and retired %s obsolete deployments",
+                queued,
+                retired,
             )
         # Initialize configuration without AppConfig
 

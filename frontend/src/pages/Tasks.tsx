@@ -68,9 +68,14 @@ function getKindIcon(kind: QueueTask["kind"]) {
     }
 }
 
-function TaskStateBadge({ state, phase }: { state: TaskState; phase?: string }) {
+function TaskStateBadge({ state, phase, waitingFor }: { state: TaskState; phase?: string; waitingFor?: string | null }) {
     const { t } = useTranslation()
-    const label = state === "running" && phase === "health_checking" ? t("readiness.waiting") : t(`tasks.state.${state}`, { defaultValue: state })
+    const label =
+        state === "running" && phase === "health_checking"
+            ? t("readiness.waiting")
+            : state === "queued" && waitingFor === "maintenance_window"
+              ? t("tasks.errors.maintenance_window")
+              : t(`tasks.state.${state}`, { defaultValue: state })
 
     switch (state) {
         case "running":
@@ -232,7 +237,7 @@ function TaskItem({ task }: { task: QueueTask }) {
                             <span className="shrink-0 font-mono text-xs text-muted-foreground/80">#{task.id}</span>
                         </div>
                         <div data-testid="task-summary-state" className="col-start-1 row-start-2 flex items-center @[760px]:col-start-2 @[760px]:row-start-1">
-                            <TaskStateBadge state={task.state} phase={task.result?.phase} />
+                            <TaskStateBadge state={task.state} phase={task.result?.phase} waitingFor={task.error_code} />
                         </div>
                         <div className="contents text-xs text-muted-foreground">
                             <span data-testid="task-summary-attempts" className={cn(
@@ -261,7 +266,12 @@ function TaskItem({ task }: { task: QueueTask }) {
                     <CollapsibleContent>
                         <div className="mt-3 space-y-3 border-t border-border/60 pt-4">
                             {waiting && <div className="flex items-center gap-1 text-xs text-muted-foreground"><Clock className="size-3" aria-hidden="true" /><time dateTime={new Date(task.created_at * 1000).toISOString()}>{time(task.created_at)}</time></div>}
-                            {task.error_code && !task.approval_pending && <p className="break-words text-xs font-medium text-destructive">{taskErrorLabel(t, task.error_code)}</p>}
+                            {task.error_code && !task.approval_pending && (
+                                <p className={cn("break-words text-xs font-medium", task.state === "failed" || task.state === "needs_attention" ? "text-destructive" : "text-muted-foreground")}>
+                                    {taskErrorLabel(t, task.error_code)}
+                                    {waiting && ` · ${t("tasks.due", { time: time(task.due_at) })}`}
+                                </p>
+                            )}
                             {task.message && <p className="whitespace-pre-wrap break-words text-xs text-muted-foreground">{task.message}</p>}
                             {task.state === "needs_attention" && (
                                 <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
@@ -315,6 +325,7 @@ function TaskItem({ task }: { task: QueueTask }) {
                                                 <p className="text-muted-foreground">{t("tasks.approvalExpires", { time: time(plan.data.expires_at) })}</p>
                                             )}
                                             <p className="text-muted-foreground">{t("tasks.planNoData")}</p>
+                                            {plan.data.state === "blocked" && <p role="alert" className="font-medium text-destructive">{t("tasks.planBlocked")}</p>}
                                         </div>
                                     )}
                                     {plan.data?.summary.configuration_diff && (
@@ -361,10 +372,12 @@ function TaskItem({ task }: { task: QueueTask }) {
                                             <RefreshCw className={cn("size-3.5", (plan.isFetching || refreshingPlan) && "animate-spin")} aria-hidden="true" />
                                             {t("tasks.refreshPlan")}
                                         </Button>
+                                        {plan.data?.state !== "blocked" && (
                                         <Button size="sm" disabled={!plan.data || approve.isPending || refreshingPlan || plan.isFetching || plan.isError || plan.data.state !== "pending" || plan.data.summary.configuration_diff?.truncated === true} onClick={() => approve.mutate()}>
                                             {approve.isPending && <Spinner className="size-3.5" />}
                                             {t("tasks.approvePlan")}
                                         </Button>
+                                        )}
                                     </div>
                                 </div>
                             )}
@@ -453,7 +466,7 @@ function TaskItem({ task }: { task: QueueTask }) {
                                         </AlertDialogContent>
                                     </AlertDialog>
                                 )}
-                                {["queued", "retry_wait"].includes(task.state) && (
+                                {["queued", "retry_wait", "awaiting_approval"].includes(task.state) && (
                                     <Button
                                         variant="outline"
                                         size="sm"

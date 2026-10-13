@@ -156,6 +156,7 @@ async def test_legacy_selection_task_is_blocked_without_rewriting_target(storage
     queued = await task(storage)
     original = dict(queued["payload"])
     original.pop("selection_revision")
+    original["manual"] = True
     db = await storage._get_connection()
     await db.execute("UPDATE tasks SET payload=? WHERE id=?", (json.dumps(original), queued["id"]))
     await db.commit()

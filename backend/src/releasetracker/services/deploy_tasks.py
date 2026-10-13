@@ -23,6 +23,23 @@ PRE_MUTATION_RETRIES = 2
 # task is otherwise eligible to run) before an operator must look at the target.
 ADMISSION_EVIDENCE_PATIENCE = 120
 PRE_MUTATION_RETRY_SECONDS = 300
+# Executors for these modes skip a write exactly when the image/chart references
+# compared by the review diff are already in place. Single containers also
+# compare image digests, so their empty diff does not prove a same-tag rebuild
+# is current.
+_REFERENCE_COMPARED_MODES = frozenset(
+    {"docker_compose", "portainer_stack", "kubernetes_workload", "helm_release"}
+)
+
+
+def _already_current(executor, evidence) -> bool:
+    diff = evidence.configuration_diff
+    return (
+        (executor.target_ref or {}).get("mode", "container") in _REFERENCE_COMPARED_MODES
+        and diff is not None
+        and not diff.get("truncated")
+        and not diff.get("lines")
+    )
 
 
 class DeployTasks:
@@ -289,6 +306,12 @@ class DeployTasks:
             or await self.identity(executor) != payload["config_identity"]
         ):
             return TaskResult("superseded", "configuration_changed")
+        from ..versioning import SELECTION_RULES_VERSION
+
+        if payload["manual"] and payload.get("selection_revision") != SELECTION_RULES_VERSION:
+            # Manual targets were resolved under older rules; re-request instead of
+            # leaving an unapprovable plan in the queue.
+            return TaskResult("superseded", "selection_rules_changed")
         if not payload["manual"]:
             desired = await self.storage.get_executor_desired_state(executor.id)
             if not desired or desired.desired_state_revision != payload["desired_revision"]:
@@ -298,6 +321,10 @@ class DeployTasks:
             if executor.update_mode == "maintenance_window":
                 await self.scheduler._refresh_system_timezone()
                 if not self.scheduler._within_maintenance_window(executor.maintenance_window):
+                    # A read-only check settles no-op work now instead of
+                    # leaving it queued until the window opens.
+                    if await self._already_current_now(executor, task):
+                        return TaskResult("no_change", "already_current")
                     return Deferred(
                         time.time()
                         + self.scheduler._seconds_until_next_maintenance_window(
@@ -319,6 +346,9 @@ class DeployTasks:
             return TaskResult("needs_attention", "previous_run_interrupted")
         try:
             evidence = await self._collect_admission_evidence(executor, task)
+            if _already_current(executor, evidence):
+                # Nothing would be written, so there is nothing to review or adopt.
+                return TaskResult("no_change", "already_current")
             plan = await self.admission.stage(task, evidence)
         except AdmissionConflict as exc:
             return TaskResult(
@@ -353,6 +383,13 @@ class DeployTasks:
                 result={"deployment_plan_id": plan["id"], "reason": plan["reason"]},
             )
         return None
+
+    async def _already_current_now(self, executor, task) -> bool:
+        try:
+            evidence = await self._collect_admission_evidence(executor, task)
+        except Exception:
+            return False
+        return _already_current(executor, evidence)
 
     async def _verify_mutation_window(self, task, executor):
         if not task["payload"]["manual"] and executor.update_mode == "maintenance_window":
@@ -478,7 +515,14 @@ class DeployTasks:
         )
 
     async def finished(self, task):
-        if task["state"] not in {"succeeded", "skipped", "needs_attention", "failed", "cancelled"}:
+        if task["state"] not in {
+            "succeeded",
+            "skipped",
+            "no_change",
+            "needs_attention",
+            "failed",
+            "cancelled",
+        }:
             return
         revision = task["payload"].get("desired_revision")
         if revision and await self._schedule_pre_mutation_retry(task):
@@ -488,3 +532,42 @@ class DeployTasks:
                 task["payload"]["executor_id"],
                 expected_revision=revision,
             )
+        elif task["payload"].get("manual") and task["state"] in {
+            "succeeded",
+            "skipped",
+            "no_change",
+        }:
+            await self._settle_matching_desired_state(task)
+
+    async def _settle_matching_desired_state(self, task):
+        """A manual deployment of the pending desired target also fulfils it."""
+        executor_id = task["payload"]["executor_id"]
+        desired = await self.storage.get_executor_desired_state(executor_id)
+        if desired is None or not desired.pending:
+            return
+        wanted = {
+            (
+                item.get("tracker_source_id"),
+                item.get("channel_name"),
+                item.get("deploy_alias"),
+                item.get("digest"),
+                item.get("chart_version"),
+            )
+            for item in desired.desired_target.get("binding_targets") or []
+        }
+        applied = {
+            (
+                item.get("source_id"),
+                item.get("channel"),
+                *(item.get("target") or (None, None)),
+                item.get("chart_version"),
+            )
+            for item in task["payload"].get("targets") or []
+        }
+        if not wanted or wanted != applied:
+            return
+        revision = desired.desired_state_revision
+        await self.storage.complete_executor_desired_state(executor_id, expected_revision=revision)
+        await self.storage.tasks.supersede_automatic_deploys(
+            executor_id, revision, "target_applied"
+        )

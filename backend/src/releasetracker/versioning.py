@@ -30,7 +30,7 @@ class ComparableVersion:
         return hash(self.key)
 
 
-SELECTION_RULES_VERSION = 5
+SELECTION_RULES_VERSION = 6
 
 
 def normalize_version(value: str) -> str:
@@ -96,26 +96,23 @@ def parsed_version(value: str | None) -> ComparableVersion | None:
 def container_tag_eligible(
     tag: str, version_format: str = "dotted", *, exact_alias: str | None = None
 ) -> bool:
-    if exact_alias is not None:
-        return tag == exact_alias
-    if parsed_version(tag) is None:
-        return False
-    return version_format == "pep440" or bool(re.match(r"^\d+\.\d+", normalize_version(tag)))
+    # version_format is a retired compatibility argument, not a membership filter.
+    from .tag_ordering import tag_order
+
+    return tag == exact_alias if exact_alias is not None else tag_order(tag) is not None
 
 
 def container_channel_eligible(tag: str, version_format: str, channel) -> bool:
     exact = pinned_alias(channel)
-    if not container_tag_eligible(tag, version_format, exact_alias=exact):
-        return False
-    version = parsed_version(tag)
-    if version is None:
-        return exact == tag
+    if exact is not None:
+        return tag == exact
     kind = channel.get("type") if isinstance(channel, dict) else channel.type
     prerelease = bool(
         re.search(
             r"(?:^|[-._])(?:alpha|beta|rc|dev|nightly|canary|pre)(?:[0-9._-]|$)", tag, re.IGNORECASE
         )
     )
+    # Membership does not depend on whether a version can be ordered.
     return not ((kind == "release" and prerelease) or (kind == "prerelease" and not prerelease))
 
 
@@ -153,17 +150,20 @@ def tag_specificity(tag: str | None) -> int:
     return match[0].count(".") + 1 if match else 0
 
 
-def select_version_candidate(releases, *, exact_alias=None):
+def select_version_candidate(releases, *, exact_alias=None, channel=None):
+    from .tag_ordering import ranked_candidates, ordering_issue
+
     candidates = list(releases)
     if exact_alias:
-        candidates = [r for r in candidates if r.tag_name == exact_alias]
+        winners = [r for r in candidates if r.tag_name == exact_alias]
     else:
-        candidates = [r for r in candidates if release_version(r) is not None]
-    if not candidates:
+        if ordering_issue(candidates, channel):
+            return None
+        keyed = ranked_candidates(candidates, channel)
+        best_key = max(key.value for _, key in keyed)
+        winners = [r for r, key in keyed if key.value == best_key]
+    if not winners:
         return None
-    best_key = max(release_order_key(r) for r in candidates)
-    winners = [r for r in candidates if release_order_key(r) == best_key]
-    # Never resolve conflicting artifacts using a timestamp (or digest lexical order).
     by_source = {}
     for release in winners:
         by_source.setdefault(
@@ -171,8 +171,6 @@ def select_version_candidate(releases, *, exact_alias=None):
         ).add(release.artifact_digest or release.commit_sha)
     if any(len(identities) > 1 for identities in by_source.values()):
         return None
-    # Equivalent aliases of one artifact prefer the most specific tag, so 1.17.1
-    # wins over 1.17 and 1; only then fall back to a deterministic name order.
     return min(
         winners,
         key=lambda r: (

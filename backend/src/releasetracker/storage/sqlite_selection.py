@@ -76,13 +76,7 @@ def comparable(source, release, channel) -> bool:
         return container_channel_eligible(
             release.tag_name, source.source_config.get("version_format", "dotted"), channel
         )
-    return (
-        bool(pinned_alias(channel))
-        or parsed_version(
-            release.chart_version if source.source_type == "helm" else release.version
-        )
-        is not None
-    )
+    return True
 
 
 async def save_candidates(storage, source, releases, *, listed_tags=None, commit=False):
@@ -383,13 +377,18 @@ async def refresh_selections(storage, tracker, *, commit=True):
                 if source.source_type == "container" and not pinned_alias(channel)
                 else eligible
             )
-            selected = select_version_candidate(ranked, exact_alias=pinned_alias(channel))
+            selected = select_version_candidate(
+                ranked, exact_alias=pinned_alias(channel), channel=channel
+            )
             # Ranking uses the tag version. Keep that same Release in the snapshot;
             # a digest-shared floating alias may carry a different stored version.
             winner = selected
             state, reason = "empty", NO_ELIGIBLE_VERSION
             if eligible:
-                state, reason = "conflict", ARTIFACT_CONFLICT
+                from ..tag_ordering import ordering_issue
+
+                issue = None if pinned_alias(channel) else ordering_issue(ranked, channel)
+                state, reason = ("empty", issue) if issue else ("conflict", ARTIFACT_CONFLICT)
             if winner is not None:
                 state, reason = "ready", None
                 if source.source_type == "container" and (

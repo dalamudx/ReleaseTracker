@@ -25,6 +25,7 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 
+import { ChannelOrderPreview } from "./ChannelOrderPreview"
 import { TrackerDialogSourceConfigFields } from "./TrackerDialogSourceConfigFields"
 import { getCredentialTypeLabel } from "@/components/credentials/credentialTypeLabels"
 import {
@@ -709,6 +710,7 @@ function TrackerDialogReleaseChannelPanel({
                             </FormItem>
                         )}
                     />
+                    {sourceType === "container" && <ChannelOrderPreview channel={form.watch(`sources.${trackerChannelIndex}.release_channels.${releaseChannelIndex}`)} />}
                 </div>
             ) : null}
         </div>

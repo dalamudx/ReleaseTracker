@@ -558,7 +558,9 @@ def select_best_releases_by_channel(
 
         from ..versioning import pinned_alias, select_version_candidate
 
-        winner = select_version_candidate(channel_candidates, exact_alias=pinned_alias(channel))
+        winner = select_version_candidate(
+            channel_candidates, exact_alias=pinned_alias(channel), channel=channel
+        )
         if winner is None:
             continue
         winner = storage_cls._copy_release_with_channel_name(winner, channel_name)

@@ -2258,7 +2258,9 @@ class SQLiteStorage:
                 item, configured, channel_source_type=source.source_type if source else None
             )
         ]
-        return max(matches, key=cls._release_order_key) if matches else None
+        from ..tag_ordering import history_order_key
+
+        return max(matches, key=lambda r: history_order_key(r, channel)) if matches else None
 
     async def cleanup_release_history(
         self,
@@ -2342,6 +2344,8 @@ class SQLiteStorage:
             retention_groups = await self._get_tracker_release_history_retention_groups(
                 aggregate_tracker.id
             )
+            from ..tag_ordering import history_order_key
+
             if enabled_channels:
                 for channel in enabled_channels:
                     channel_candidates = [
@@ -2359,7 +2363,7 @@ class SQLiteStorage:
                     )
                     top_releases = sorted(
                         deduped_releases,
-                        key=lambda release: self._release_order_key(release, sort_mode),
+                        key=lambda release: history_order_key(release, channel),
                         reverse=True,
                     )[:retention]
                     keep_ids.update(
@@ -3563,6 +3567,22 @@ class SQLiteStorage:
             self,
             executor_id,
             claimed_by=claimed_by,
+        )
+
+    async def rebase_executor_desired_state(
+        self,
+        executor_id: int,
+        *,
+        expected_revision: str,
+        desired_state_revision: str,
+        desired_target: dict[str, Any],
+    ) -> bool:
+        return await sqlite_runtime_executors.rebase_executor_desired_state(
+            self,
+            executor_id,
+            expected_revision=expected_revision,
+            desired_state_revision=desired_state_revision,
+            desired_target=desired_target,
         )
 
     async def complete_executor_desired_state(

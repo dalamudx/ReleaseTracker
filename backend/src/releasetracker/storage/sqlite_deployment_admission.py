@@ -195,7 +195,13 @@ class DeploymentAdmissionStore:
 
             from ..versioning import SELECTION_RULES_VERSION
 
-            if task["payload"].get("selection_revision") != SELECTION_RULES_VERSION:
+            # Automatic work is bound to its desired revision, which only moves with
+            # deployment coordinates. Manual targets were resolved by the rules
+            # in force when they were requested.
+            if (
+                task["payload"].get("manual")
+                and task["payload"].get("selection_revision") != SELECTION_RULES_VERSION
+            ):
                 reason = "selection_rules_changed"
 
             old = await (

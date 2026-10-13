@@ -193,6 +193,14 @@ async def test_lifespan_starts_without_identity_drift_repair(
     monkeypatch.setattr(
         main_module.sqlite_selection, "reconcile_selection_rules", reconcile_selections
     )
+
+    async def reconcile_desired_states(active_storage):
+        active_storage.events.append("desired_states.reconcile")
+        return 0, 0
+
+    monkeypatch.setattr(
+        main_module.executor_trigger, "reconcile_desired_states", reconcile_desired_states
+    )
     async with main_module.lifespan(main_module.app):
         storage = fake_storage_holder["storage"]
         auth = fake_auth_holder["auth"]
@@ -229,6 +237,7 @@ async def test_lifespan_starts_without_identity_drift_repair(
         assert storage.events == [
             "storage.initialize",
             "selections.reconcile",
+            "desired_states.reconcile",
             "auth.ensure_admin_user",
             "storage.reconcile_source_fetch_runs",
             "storage.reconcile_snapshot_claims",

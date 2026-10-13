@@ -37,6 +37,13 @@ class Channel(BaseModel):
     # Whether this channel is enabled
     enabled: bool = True
 
+    @field_validator("include_pattern", "exclude_pattern", mode="before")
+    @classmethod
+    def normalize_pattern(cls, value):
+        from .tag_ordering import python_pattern
+
+        return python_pattern(value)
+
     # Runtime-only source identity retained when aggregate channels are flattened.
     source_type: str | None = Field(default=None, exclude=True)
     source_key: str | None = Field(default=None, exclude=True)

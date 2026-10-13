@@ -162,7 +162,6 @@ export interface TrackerChannel {
         chart?: string
         image?: string
         registry?: string
-        version_format?: "dotted" | "pep440"
         fetch_mode?: GitHubFetchMode
     }
     release_channels?: ReleaseChannelInput[]
@@ -178,7 +177,6 @@ export interface TrackerChannel {
         chart?: string
         image?: string
         registry?: string
-        version_format?: "dotted" | "pep440"
         fetch_mode?: GitHubFetchMode
     }
     source_rank?: number

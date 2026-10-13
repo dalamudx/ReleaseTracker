@@ -239,7 +239,7 @@ function matchesReleaseChannel(
 
     if (channel.include_pattern) {
         try {
-            if (!new RegExp(channel.include_pattern).test(release.tag_name)) {
+            if (!new RegExp(channel.include_pattern.replace(/\(\?P</g, "(?<")).test(release.tag_name)) {
                 return false
             }
         } catch {

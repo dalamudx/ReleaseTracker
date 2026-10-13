@@ -9,8 +9,8 @@ import pytest
 from kubernetes import client as kube
 
 from releasetracker.executors import kubernetes_artifact_evidence as evidence
-from releasetracker.executors import kubernetes_recovery
 from test_kubernetes_snapshot_safety import workload as workload
+from test_kubernetes_recovery_rollout import fast_observer as fast_observer
 from test_kubernetes_recovery_rollout import ready_model
 
 TAG = "registry.example.test/team/service-a:1.0.0"
@@ -26,7 +26,7 @@ def ref(kind, uid):
 
 
 @pytest.fixture
-def observed(workload, monkeypatch):
+def observed(workload, fast_observer):
     adapter, target, obj, reader, patch = workload
     kind = target["kind"]
     obj.metadata.generation = 3
@@ -134,8 +134,6 @@ def observed(workload, monkeypatch):
     apps.read_namespaced_controller_revision = Mock(return_value=revision)
     apps.list_namespaced_controller_revision = Mock(return_value=revisions)
     adapter._core_api = SimpleNamespace(list_namespaced_pod=Mock(return_value=pod_list))
-    monkeypatch.setattr(kubernetes_recovery, "VERIFY_INTERVAL", 0)
-    monkeypatch.setattr(kubernetes_recovery, "VERIFY_TIMEOUT", 0.1)
     return SimpleNamespace(
         adapter=adapter,
         target=target,

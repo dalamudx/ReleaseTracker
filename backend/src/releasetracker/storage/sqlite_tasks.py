@@ -167,6 +167,63 @@ class TaskStore:
         )
         return len(stale)
 
+    @staticmethod
+    async def _retire_deploys(db, coded_ids, now):
+        for task_id, code in coded_ids:
+            await db.execute(
+                """UPDATE tasks SET state='superseded',error_code=?,approval_pending=0,
+                   owner=NULL,lease_until=NULL,due_at=?,updated_at=?
+                   WHERE id=? AND state IN ('queued','retry_wait')""",
+                (code, now, now, task_id),
+            )
+            await db.execute(
+                """UPDATE deployment_plans SET state='superseded'
+                   WHERE task_id=? AND state IN ('pending','approved','blocked')""",
+                (task_id,),
+            )
+        return len(coded_ids)
+
+    async def supersede_obsolete_deploys(self, rules_version):
+        """Retire queued deployments that can no longer be applied as reviewed.
+
+        Automatic work must still match its executor's desired revision; manual
+        work must have been resolved under the current selection rules.
+        """
+        async with self.transaction() as db:
+            rows = await (
+                await db.execute(
+                    """SELECT t.id, CASE WHEN json_extract(t.payload,'$.manual')
+                              THEN 'selection_rules_changed' ELSE 'target_replaced' END
+                       FROM tasks t LEFT JOIN executor_desired_state d
+                         ON d.executor_id = json_extract(t.payload,'$.executor_id')
+                       WHERE t.kind='deploy' AND t.state IN ('queued','retry_wait')
+                         AND t.owner IS NULL
+                         AND CASE WHEN json_extract(t.payload,'$.manual')
+                             THEN json_extract(t.payload,'$.selection_revision') IS NOT ?
+                             ELSE d.desired_state_revision IS NULL
+                               OR d.desired_state_revision
+                                  IS NOT json_extract(t.payload,'$.desired_revision')
+                             END""",
+                    (rules_version,),
+                )
+            ).fetchall()
+            return await self._retire_deploys(db, [tuple(row) for row in rows], time.time())
+
+    async def supersede_automatic_deploys(self, executor_id, desired_revision, code):
+        """Retire queued automatic work that another deployment already fulfilled."""
+        async with self.transaction() as db:
+            rows = await (
+                await db.execute(
+                    """SELECT id FROM tasks WHERE kind='deploy'
+                       AND state IN ('queued','retry_wait') AND owner IS NULL
+                       AND NOT json_extract(payload,'$.manual')
+                       AND json_extract(payload,'$.executor_id')=?
+                       AND json_extract(payload,'$.desired_revision')=?""",
+                    (executor_id, desired_revision),
+                )
+            ).fetchall()
+            return await self._retire_deploys(db, [(row[0], code) for row in rows], time.time())
+
     async def get(self, task_id):
         db = await self.storage._get_connection()
         return decode(

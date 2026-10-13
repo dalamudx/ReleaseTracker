@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from typing import TYPE_CHECKING
 
 from .executor_scheduler_grouped_runtime_support import _ExecutorBindingRunContext
@@ -15,6 +16,8 @@ from .executor_scheduler_target_resolution import (
 if TYPE_CHECKING:
     from .config import ExecutorConfig
     from .storage.sqlite import SQLiteStorage
+
+logger = logging.getLogger(__name__)
 
 
 async def enqueue_executor_binding_targets(
@@ -111,39 +114,41 @@ async def enqueue_executor_binding_targets(
             str(target["channel_name"]),
         )
     )
-    revision_targets = [
-        {
-            "service": target["service"],
-            "tracker_name": target["tracker_name"],
-            "tracker_source_id": target["tracker_source_id"],
-            "channel_name": target["channel_name"],
-            "identity_key": target["identity_key"],
-            "chart_version": target["chart_version"],
-            "chart_digest": target["chart_digest"],
-            "selection_revision": target["selection_revision"],
-        }
-        for target in targets
-    ]
-    from .versioning import SELECTION_RULES_VERSION
-
-    serialized_identity = json.dumps(
-        {"selection_revision": SELECTION_RULES_VERSION, "bindings": revision_targets},
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    revision_targets = [_revision_coordinates(target) for target in targets]
+    serialized_identity = json.dumps(revision_targets, sort_keys=True, separators=(",", ":"))
     revision_identity = (
         "bindings:" + hashlib.sha256(serialized_identity.encode("utf-8")).hexdigest()
     )
     primary_target = targets[0]
     queued_tracker_name = str(primary_target["tracker_name"])
+    revision = f"{queued_tracker_name}:{revision_identity}"
     existing_state = await storage.get_executor_desired_state(executor_config.id)
-    if (
-        existing_state is not None
-        and existing_state.desired_state_revision == f"{queued_tracker_name}:{revision_identity}"
+    previous_target = existing_state.desired_target if existing_state is not None else {}
+    if existing_state is not None and (
+        existing_state.desired_state_revision == revision
+        or (
+            previous_target.get("tracker_name") == queued_tracker_name
+            and _same_coordinates(previous_target.get("binding_targets"), revision_targets)
+        )
     ):
+        # Selection rules or the revision format changed without moving any
+        # deployment coordinate: refresh the snapshot in place, never queue work.
+        from .versioning import SELECTION_RULES_VERSION
+
+        refreshed = previous_target | {
+            "selection_revision": SELECTION_RULES_VERSION,
+            "current_identity_key": revision_identity,
+            "binding_targets": targets,
+        }
+        if existing_state.desired_state_revision != revision or refreshed != previous_target:
+            await storage.rebase_executor_desired_state(
+                executor_config.id,
+                expected_revision=existing_state.desired_state_revision,
+                desired_state_revision=revision,
+                desired_target=refreshed,
+            )
         return False
 
-    previous_target = existing_state.desired_target if existing_state is not None else {}
     return await storage.enqueue_executor_projection_trigger_work(
         executor_id=executor_config.id,
         tracker_name=queued_tracker_name,
@@ -153,6 +158,67 @@ async def enqueue_executor_binding_targets(
         current_identity_key=revision_identity,
         binding_targets=targets,
     )
+
+
+async def reconcile_desired_states(storage: "SQLiteStorage") -> tuple[int, int]:
+    """Startup counterpart of selection-rule reconciliation for executor work."""
+    from .versioning import SELECTION_RULES_VERSION
+
+    queued = await republish_executor_desired_states(storage)
+    retired = await storage.tasks.supersede_obsolete_deploys(SELECTION_RULES_VERSION)
+    return queued, retired
+
+
+# Only what an executor writes defines a desired revision. Selection rule
+# versions and snapshot hashes are bookkeeping: bumping them must not queue
+# a deployment whose target is unchanged.
+_REVISION_FIELDS = (
+    "service",
+    "tracker_name",
+    "tracker_source_id",
+    "channel_name",
+    "deploy_alias",
+    "identity_key",
+    "chart_version",
+    "chart_digest",
+)
+
+
+def _revision_coordinates(target: dict) -> dict:
+    return {field: target.get(field) for field in _REVISION_FIELDS}
+
+
+def _same_coordinates(stored, coordinates: list[dict]) -> bool:
+    if not isinstance(stored, list) or not stored:
+        return False
+
+    def key(item):
+        return json.dumps(item, sort_keys=True)
+
+    return sorted(key(_revision_coordinates(item)) for item in stored) == sorted(
+        key(item) for item in coordinates
+    )
+
+
+async def republish_executor_desired_states(storage: "SQLiteStorage") -> int:
+    """Re-derive every executor's desired state from the current selections.
+
+    Runs at startup after selection rules are reconciled, so work queued under
+    older rules is retargeted instead of waiting for the next tracker check.
+    Unchanged deployment coordinates are refreshed in place.
+    """
+    queued = 0
+    for executor_config in await storage.get_all_executor_configs():
+        try:
+            if await enqueue_executor_binding_targets(storage, executor_config):
+                queued += 1
+        except Exception as exc:
+            logger.warning(
+                "Could not republish desired state for executor %s: %s",
+                executor_config.id,
+                type(exc).__name__,
+            )
+    return queued
 
 
 def _binding_contexts(executor_config: "ExecutorConfig") -> list[_ExecutorBindingRunContext]:

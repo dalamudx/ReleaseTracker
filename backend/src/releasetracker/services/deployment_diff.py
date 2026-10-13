@@ -234,7 +234,9 @@ async def native_review(storage, scheduler, executor, adapter, task, *, inspecti
         selected = next(iter(task["payload"].get("targets", [])), {})
         if selected.get("chart_version"):
             desired["chart_version"] = selected["chart_version"]
-        if selected.get("chart_digest"):
+        # Runtimes do not report the installed chart digest, so an unverifiable
+        # digest is not a reviewable difference; the chart version decides.
+        if selected.get("chart_digest") and "chart_digest" in observed:
             desired["chart_digest"] = selected["chart_digest"]
     lines, truncated = changed_lines(observed, desired)
     diff = {"scope": scope, "lines": lines, "truncated": truncated}
