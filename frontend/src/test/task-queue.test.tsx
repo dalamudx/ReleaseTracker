@@ -5,16 +5,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { api } from "@/api/client"
 import i18n from "@/i18n/config"
 import TasksPage from "@/pages/Tasks"
+import { SHARED_PAGE_SIZE_KEY } from "@/hooks/use-page-size"
 import type { QueueTask } from "@/api/task-types"
 
-vi.mock("@/api/client", () => {
-    // The task page reads getTaskPage; most cases only care about the rows, so bridge it to getTasks.
-    const getTasks = vi.fn()
-    const getTaskPage = vi.fn(async (params: unknown) => {
-        const items = await getTasks(params)
-        return { items, total: items.length }
-    })
-    return { api: { getTasks, getTaskPage, getTask: vi.fn(), getDeploymentPlan: vi.fn(), approveDeployment: vi.fn(), cancelTask: vi.fn(), retryTask: vi.fn(), resolveTask: vi.fn(), clearFinishedTasks: vi.fn() } }
+vi.mock("@/api/client", async () => {
+    const { createTaskApiMock } = await import("./api-mock")
+    return { api: createTaskApiMock() }
 })
 
 function task(state: QueueTask["state"], kind: QueueTask["kind"] = "fetch"): QueueTask {
@@ -26,6 +22,7 @@ function show() {
 }
 beforeEach(async () => {
     vi.clearAllMocks()
+    localStorage.clear()
     // clearAllMocks keeps per-test implementations, so restore the row-only bridge every time.
     vi.mocked(api.getTaskPage).mockImplementation(async params => {
         const items = await api.getTasks(params as Parameters<typeof api.getTasks>[0])
@@ -36,18 +33,20 @@ beforeEach(async () => {
 
 describe("persistent task queue", () => {
     it("pages through the server total without clearing or changing queue entries", async () => {
-        const tasks = Array.from({ length: 105 }, (_, i) => ({ ...task("succeeded"), id: 105 - i, target_label: `page-${105 - i}` }))
+        // A small page keeps the render cheap; the paging logic is the same at any size.
+        localStorage.setItem(SHARED_PAGE_SIZE_KEY, "10")
+        const tasks = Array.from({ length: 25 }, (_, i) => ({ ...task("succeeded"), id: 25 - i, target_label: `page-${25 - i}` }))
         vi.mocked(api.getTaskPage).mockImplementation(async params => ({ items: tasks.slice(params.offset, params.offset + params.limit), total: tasks.length }))
         show()
-        await screen.findByText("page-105")
-        expect(screen.getByText(i18n.t("pagination.totalItems", { count: 105 }))).toBeInTheDocument()
+        await screen.findByText("page-25")
+        expect(screen.getByText(i18n.t("pagination.totalItems", { count: 25 }))).toBeInTheDocument()
         expect(screen.getByLabelText(i18n.t("pagination.pageOf", { page: 1, total: 3 }))).toBeInTheDocument()
         fireEvent.click(screen.getByRole("button", { name: i18n.t("pagination.lastPage") }))
         await screen.findByText("page-5")
         expect(screen.getByRole("button", { name: i18n.t("pagination.nextPage") })).toBeDisabled()
         fireEvent.click(screen.getByRole("button", { name: i18n.t("pagination.previousPage") }))
-        expect(await screen.findByText("page-55")).toBeInTheDocument()
-        expect(api.getTaskPage).toHaveBeenLastCalledWith(expect.objectContaining({ state: undefined, offset: 50, limit: 50 }))
+        expect(await screen.findByText("page-15")).toBeInTheDocument()
+        expect(api.getTaskPage).toHaveBeenLastCalledWith(expect.objectContaining({ state: undefined, offset: 10, limit: 10 }))
         expect(api.clearFinishedTasks).not.toHaveBeenCalled()
     })
 

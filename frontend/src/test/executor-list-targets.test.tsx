@@ -4,15 +4,9 @@ import { describe, expect, it, vi } from "vitest"
 import type { ExecutorListItem } from "@/api/types"
 import { ExecutorList } from "@/components/executors/ExecutorList"
 
-vi.mock("react-i18next", () => ({
-  initReactI18next: {
-    type: "3rdParty",
-    init: vi.fn(),
-  },
-  useTranslation: () => ({
-    t: (key: string) => key,
-    i18n: { language: "en" },
-  }),
+vi.mock("react-i18next", async (importOriginal) => ({
+  ...await importOriginal<typeof import("react-i18next")>(),
+  ...await import("./i18n-mock"),
 }))
 
 function createExecutor(overrides: Partial<ExecutorListItem> = {}): ExecutorListItem {

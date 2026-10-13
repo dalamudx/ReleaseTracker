@@ -2,11 +2,11 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { ExecutorListItem, ExecutorRunHistory } from "@/api/types"
+import { createExecutor as makeExecutor } from "./factories"
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (key: string) => key,
-  }),
+vi.mock("react-i18next", async (importOriginal) => ({
+  ...await importOriginal<typeof import("react-i18next")>(),
+  ...await import("./i18n-mock"),
 }))
 
 const { clearExecutorHistoryMock, getExecutorHistoryMock, toastErrorMock, toastSuccessMock } = vi.hoisted(() => ({
@@ -37,26 +37,12 @@ vi.mock("@/hooks/use-date-formatter", () => ({
 import { ExecutorExecutionHistoryPanel } from "@/components/executors/ExecutorExecutionHistoryPanel"
 
 function createExecutor(overrides: Partial<ExecutorListItem> = {}): ExecutorListItem {
-  return {
-    id: overrides.id ?? 1,
-    name: overrides.name ?? "sample-base-executor",
-    runtime_type: overrides.runtime_type ?? "docker",
-    runtime_connection_id: overrides.runtime_connection_id ?? 1,
-    tracker_name: overrides.tracker_name ?? "sample-base-tracker",
-    tracker_source_id: overrides.tracker_source_id ?? 1,
-    channel_name: overrides.channel_name ?? "stable",
-    enabled: overrides.enabled ?? true,
-    update_mode: overrides.update_mode ?? "manual",
-    image_selection_mode: overrides.image_selection_mode ?? "replace_tag_on_current_image",
-    target_ref: overrides.target_ref ?? {
-      container_name: "sample_base",
-      container_id: "abc123",
-    },
-    maintenance_window: overrides.maintenance_window,
-    description: overrides.description,
-    runtime_connection_name: overrides.runtime_connection_name,
-    status: overrides.status,
-  }
+  return makeExecutor({
+    name: "sample-base-executor",
+    tracker_name: "sample-base-tracker",
+    target_ref: { container_name: "sample_base", container_id: "abc123" },
+    ...overrides,
+  })
 }
 
 function createHistoryItem(overrides: Partial<ExecutorRunHistory> = {}): ExecutorRunHistory {
@@ -370,7 +356,7 @@ describe("ExecutorExecutionHistoryPanel image rendering", () => {
 
     expect(await screen.findByText("executors.history.noResults")).toBeInTheDocument()
     expect(screen.queryByTestId("executor-history-item")).not.toBeInTheDocument()
-    expect(toastSuccessMock).toHaveBeenCalledWith("executors.history.clearSuccess")
+    expect(toastSuccessMock).toHaveBeenCalledWith("executors.history.clearSuccess:1")
   })
 
   it("keeps clear action available when current filters hide existing history", async () => {

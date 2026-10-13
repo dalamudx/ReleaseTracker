@@ -19,7 +19,7 @@ from releasetracker.services.deployment_diff import (
 from releasetracker.services.deployment_targets import resolve_deployment_targets
 from test_deployment_configuration_diff import setup
 from test_docker_engine_identity import OTHER, runtime as runtime
-from test_executor_adapters import DOCKER_ENGINE_ID
+from helpers.container_runtime import DOCKER_ENGINE_ID
 
 pytestmark = pytest.mark.asyncio
 

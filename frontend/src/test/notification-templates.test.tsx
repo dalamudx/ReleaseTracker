@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { NotificationTemplates } from '@/components/settings/NotificationTemplates'
 import { notificationTemplates } from '@/api/notification-templates'
 
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
+vi.mock("react-i18next", async (importOriginal) => ({
+  ...await importOriginal<typeof import("react-i18next")>(),
+  ...await import("./i18n-mock"),
+}))
 vi.mock('sonner', () => ({ toast: { success: vi.fn() } }))
 const builtin = { id: null, name: 'Example template', title: '{{ subject.name }}', body: '{{ labels.version }}', translations: {}, revision: 1 }
 vi.mock('@/api/notification-templates', () => ({ notificationTemplates: { list: vi.fn(), preview: vi.fn(), save: vi.fn(), remove: vi.fn() } }))

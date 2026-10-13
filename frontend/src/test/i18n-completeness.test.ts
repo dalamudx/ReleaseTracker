@@ -2,6 +2,12 @@
 import { describe, expect, it } from "vitest"
 import en from "@/i18n/locales/en.json"
 import zh from "@/i18n/locales/zh.json"
+import settingsEn from "@/i18n/locales/system-settings.en.json"
+import settingsZh from "@/i18n/locales/system-settings.zh.json"
+import securityEn from "@/i18n/locales/security-keys.en.json"
+import securityZh from "@/i18n/locales/security-keys.zh.json"
+import backupsEn from "@/i18n/locales/backups.en.json"
+import backupsZh from "@/i18n/locales/backups.zh.json"
 
 function flatten(value: unknown, prefix = ""): string[] {
     if (!value || typeof value !== "object" || Array.isArray(value)) return [prefix]
@@ -11,6 +17,9 @@ function flatten(value: unknown, prefix = ""): string[] {
 }
 
 const requiredDynamicKeys = [
+    "history.filters.allTrackers", "history.filters.allChannelTypes", "history.filters.reset",
+    "credentials.table.references", "credentials.filters.allCategories",
+    "credentials.filters.categoryTracker", "credentials.filters.categoryRuntime", "credentials.filters.categorySsh",
     ...["fetch", "deploy", "recover"].map((value) => `tasks.kind.${value}`),
     ...[
         "queued", "running", "retry_wait", "succeeded", "no_change", "skipped",
@@ -35,8 +44,13 @@ function valueAt(resource: Record<string, unknown>, path: string): unknown {
 }
 
 describe("i18n resource completeness", () => {
-    it("keeps English and Chinese resource keys in parity", () => {
-        expect(flatten(en).sort()).toEqual(flatten(zh).sort())
+    it.each([
+        ["main", en, zh],
+        ["settings", settingsEn, settingsZh],
+        ["security", securityEn, securityZh],
+        ["backups", backupsEn, backupsZh],
+    ])("keeps English and Chinese keys in parity for %s", (_name, english, chinese) => {
+        expect(flatten(english).sort()).toEqual(flatten(chinese).sort())
     })
 
     it.each(requiredDynamicKeys)("translates dynamic key %s", (key) => {

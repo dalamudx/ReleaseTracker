@@ -186,3 +186,16 @@ async def non_admin_client(client, auth_service):
 @pytest.fixture(scope="function")
 async def auth_service(storage, system_key_manager):
     return AuthService(storage, system_key_manager)
+
+
+@pytest.fixture
+def fast_recovery_polling(monkeypatch):
+    """Skip polling delays for explicitly opted-in tests using scripted runtimes.
+
+    Keep timeout checks and event-loop yields; only the delay between observations changes.
+    """
+    from releasetracker.executors import container_recovery, kubernetes_recovery, portainer
+
+    monkeypatch.setattr(container_recovery, "VERIFY_INTERVAL", 0)
+    monkeypatch.setattr(kubernetes_recovery, "VERIFY_INTERVAL", 0)
+    monkeypatch.setattr(portainer, "_PORTAINER_RECOVERY_POLL_INTERVAL_SECONDS", 0)

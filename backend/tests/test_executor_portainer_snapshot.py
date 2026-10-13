@@ -26,6 +26,8 @@ from releasetracker.executors.portainer import (
 )
 from releasetracker.services.deployment_plan import MANAGED_MARKERS
 
+pytestmark = pytest.mark.usefixtures("fast_recovery_polling")
+
 # ---- Fake HTTP client -----------------------------------------------------
 
 

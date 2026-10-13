@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { ExecutorListItem, ExecutorTargetRef, RuntimeConnection, RuntimeType, TrackerStatus } from "@/api/types"
+import { createRuntimeConnection } from "./factories"
 
 const {
   deleteExecutorMock,
@@ -151,18 +152,6 @@ function createExecutor(overrides: Partial<ExecutorListItem> = {}): ExecutorList
   }
 }
 
-function createRuntimeConnection(overrides: Partial<RuntimeConnection> = {}): RuntimeConnection {
-  return {
-    id: overrides.id ?? 1,
-    name: overrides.name ?? "docker-prod",
-    type: overrides.type ?? "docker",
-    enabled: overrides.enabled ?? true,
-    config: overrides.config ?? {},
-    secrets: overrides.secrets ?? {},
-    endpoint: overrides.endpoint ?? null,
-    description: overrides.description ?? null,
-  }
-}
 
 function createTracker(overrides: Partial<TrackerStatus> = {}): TrackerStatus {
   return {

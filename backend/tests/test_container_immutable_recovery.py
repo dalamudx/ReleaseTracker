@@ -7,7 +7,7 @@ import pytest
 
 from releasetracker.executors import container_recovery
 from test_container_recovery_boundaries import runtime as runtime, snapshot, IMAGE
-from test_executor_adapters import FakeContainer, FakeImage, RECOVERY_IMAGE_ID
+from helpers.container_runtime import FakeContainer, FakeImage, RECOVERY_IMAGE_ID
 
 OTHER_ID = "sha256:" + "b" * 64
 

@@ -11,7 +11,7 @@ from releasetracker.executors import container_recovery
 from releasetracker.executors.base import RuntimeMutationError
 from releasetracker.executors.docker import DockerRuntimeAdapter
 from test_container_recovery_boundaries import snapshot, IMAGE
-from test_executor_adapters import (
+from helpers.container_runtime import (
     FakeDockerRecreateClient,
     FakeContainer,
     FakeImage,

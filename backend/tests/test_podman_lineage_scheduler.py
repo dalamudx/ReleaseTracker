@@ -10,7 +10,7 @@ from releasetracker.executor_scheduler import ExecutorScheduler
 from releasetracker.executors.podman import PodmanRuntimeAdapter
 from releasetracker.services.deployment_plan import MANAGED_MARKERS, MARKER_KEYS
 from releasetracker.services.podman_target_lineage import ACTIVE_PODMAN_LINEAGE
-from test_executor_adapters import FakeContainer, FakeImage, FakePodmanClient
+from helpers.container_runtime import FakeContainer, FakeImage, FakePodmanClient
 from releasetracker.storage.sqlite_podman_lineage import LineageConflict
 
 pytestmark = pytest.mark.asyncio

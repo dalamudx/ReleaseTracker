@@ -2,7 +2,8 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { assertNoActWarnings } from "./assert-no-act-warnings"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import type { ExecutorConfig, RuntimeConnection, TrackerStatus } from "@/api/types"
+import type { ExecutorConfig, TrackerStatus } from "@/api/types"
+import { createRuntimeConnection } from "./factories"
 import { ExecutorSheet } from "@/components/executors/ExecutorSheet"
 
 assertNoActWarnings()
@@ -56,18 +57,6 @@ vi.mock("react-i18next", async (importOriginal) => {
   }
 })
 
-function createRuntimeConnection(overrides: Partial<RuntimeConnection> = {}): RuntimeConnection {
-  return {
-    id: overrides.id ?? 1,
-    name: overrides.name ?? "docker-prod",
-    type: overrides.type ?? "docker",
-    enabled: overrides.enabled ?? true,
-    config: overrides.config ?? {},
-    secrets: overrides.secrets ?? {},
-    endpoint: overrides.endpoint ?? null,
-    description: overrides.description ?? null,
-  }
-}
 
 function createTracker(overrides: Partial<TrackerStatus> = {}): TrackerStatus {
   return {

@@ -3,6 +3,7 @@ import { useForm } from "react-hook-form"
 import { describe, expect, it, vi } from "vitest"
 
 import type { ExecutorTargetRef, RuntimeConnection, RuntimeTargetDiscoveryItem, TrackerStatus } from "@/api/types"
+import { createRuntimeConnection } from "./factories"
 import { ExecutorSheetBindingSection, ExecutorSheetReviewSection, ExecutorSheetTargetSection } from "@/components/executors/ExecutorSheetSections"
 import { getGroupedBindingServiceOptions } from "@/components/executors/executorSheetHelpers"
 import type { ExecutorFormValues } from "@/components/executors/executorSheetHelpers"
@@ -25,18 +26,6 @@ vi.mock("react-i18next", async (importOriginal) => {
   }
 })
 
-function createRuntimeConnection(overrides: Partial<RuntimeConnection> = {}): RuntimeConnection {
-  return {
-    id: overrides.id ?? 1,
-    name: overrides.name ?? "docker-prod",
-    type: overrides.type ?? "docker",
-    enabled: overrides.enabled ?? true,
-    config: overrides.config ?? {},
-    secrets: overrides.secrets ?? {},
-    endpoint: overrides.endpoint ?? null,
-    description: overrides.description ?? null,
-  }
-}
 
 function createFormValues(overrides: Partial<ExecutorFormValues> = {}): ExecutorFormValues {
   return {

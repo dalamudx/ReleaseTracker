@@ -5,7 +5,10 @@ import { Form } from "@/components/ui/form"
 import { ExecutorSheetHealthCheckFields } from "@/components/executors/ExecutorSheetHealthCheckFields"
 import { ReadinessSummary } from "@/components/executors/ReadinessSummary"
 import { buildExecutorFormValues, buildExecutorPayload, createDefaultExecutorValues } from "@/components/executors/executorSheetHelpers"
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
+vi.mock("react-i18next", async (importOriginal) => ({
+  ...await importOriginal<typeof import("react-i18next")>(),
+  ...await import("./i18n-mock"),
+}))
 
 const target = { mode: "container" as const, container_name: "service-a" }
 function serialize(values = createDefaultExecutorValues()) {

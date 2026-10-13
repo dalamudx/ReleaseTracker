@@ -2,31 +2,12 @@ import { describe, it, expect, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import CredentialsPage from "@/pages/Credentials"
-import zhLocale from "@/i18n/locales/zh.json"
-import enLocale from "@/i18n/locales/en.json"
 import type { ApiCredential } from "@/api/types"
 
-vi.mock("react-i18next", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react-i18next")>()
-  return {
-    ...actual,
-    useTranslation: () => ({
-      t: (key: string, options?: Record<string, unknown>) => {
-        if (key === "credentials.filters.totalCount") {
-          return `共 ${options?.count ?? 0} 个凭证`
-        }
-        const parts = key.split(".")
-        let cur: unknown = zhLocale
-        for (const p of parts) {
-          if (!cur) return key
-          cur = (cur as Record<string, unknown>)[p]
-        }
-        return typeof cur === "string" ? cur : key
-      },
-      i18n: { language: "zh" },
-    }),
-  }
-})
+vi.mock("react-i18next", async (importOriginal) => ({
+  ...await importOriginal<typeof import("react-i18next")>(),
+  ...await import("./i18n-mock"),
+}))
 
 const mockCredentials: ApiCredential[] = [
   {
@@ -89,49 +70,20 @@ describe("CredentialsPage Visual & Filter Enhancements", () => {
     )
 
     // 搜索输入框
-    expect(screen.getByPlaceholderText("按名称、描述搜索...")).toBeInTheDocument()
-
-    // 用途分类下拉框
-    expect(screen.getByRole("combobox", { name: "凭证用途" })).toBeInTheDocument()
-
-    // 具体类型下拉框
-    expect(screen.getByRole("combobox", { name: "凭证类型" })).toBeInTheDocument()
-
-    // 统计总数、刷新和添加按钮
-    expect(screen.getByText("共 3 个凭证")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: /添加凭证/ })).toBeInTheDocument()
-    expect(screen.getByTitle("刷新")).toBeInTheDocument()
-
-    // 表头为“引用”，不再单列运行时连接
-    expect(screen.getByText("引用")).toBeInTheDocument()
-    expect(screen.queryByText("运行时连接")).not.toBeInTheDocument()
-
-    // 名称下方不再显示用途图标标签
+    expect(screen.getByPlaceholderText("credentials.searchPlaceholder")).toBeInTheDocument()
+    expect(screen.getByRole("combobox", { name: "credentials.filters.categoryLabel" })).toBeInTheDocument()
+    expect(screen.getByRole("combobox", { name: "credentials.filters.typeLabel" })).toBeInTheDocument()
+    expect(screen.getByText("credentials.filters.totalCount:3")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "credentials.addNew" })).toBeInTheDocument()
+    expect(screen.getByTitle("common.refresh")).toBeInTheDocument()
+    expect(screen.getByText("credentials.table.references")).toBeInTheDocument()
+    expect(screen.queryByText("credentials.references.runtimeConnections")).not.toBeInTheDocument()
     expect(screen.getByText("github-pat")).toBeInTheDocument()
-    expect(screen.queryByText("来源服务")).not.toBeInTheDocument()
-    expect(screen.queryByText("主机 SSH")).not.toBeInTheDocument()
-
-    // 引用以图标加数量展示，并提供可读名称
+    expect(screen.queryByText("credentials.filters.categoryTracker")).not.toBeInTheDocument()
+    expect(screen.queryByText("credentials.filters.categorySsh")).not.toBeInTheDocument()
     expect(screen.getByText("k8s-cluster-token")).toBeInTheDocument()
-    expect(screen.getByLabelText("运行时连接: 3")).toHaveTextContent("3")
-
+    expect(screen.getByLabelText("credentials.references.runtimeConnections: 3")).toHaveTextContent("3")
     expect(screen.getByText("bastion-ssh")).toBeInTheDocument()
   })
 
-  it("verifies i18n keys for credential filters and table in zh and en locales", () => {
-    expect(zhLocale.credentials.table.references).toBe("引用")
-    expect(enLocale.credentials.table.references).toBe("References")
-
-    expect(zhLocale.credentials.filters.allCategories).toBe("全部用途")
-    expect(enLocale.credentials.filters.allCategories).toBe("All categories")
-
-    expect(zhLocale.credentials.filters.categoryTracker).toBe("代码与仓库来源")
-    expect(enLocale.credentials.filters.categoryTracker).toBe("Source repositories")
-
-    expect(zhLocale.credentials.filters.categoryRuntime).toBe("容器与集群运行时")
-    expect(enLocale.credentials.filters.categoryRuntime).toBe("Container & cluster runtimes")
-
-    expect(zhLocale.credentials.filters.categorySsh).toBe("SSH 主机连接")
-    expect(enLocale.credentials.filters.categorySsh).toBe("SSH connections")
-  })
 })

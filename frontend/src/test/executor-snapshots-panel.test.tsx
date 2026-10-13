@@ -3,7 +3,8 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import type { ReactElement } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import type { ExecutorListItem, PaginatedSnapshots, SnapshotListItem } from "@/api/types"
+import type { PaginatedSnapshots, SnapshotListItem } from "@/api/types"
+import { createExecutor } from "./factories"
 
 const {
   deleteExecutorSnapshotMock,
@@ -12,7 +13,6 @@ const {
   unlockExecutorSnapshotMock,
   toastErrorMock,
   toastSuccessMock,
-  translateMock,
 } = vi.hoisted(() => ({
   deleteExecutorSnapshotMock: vi.fn(),
   getExecutorSnapshotsMock: vi.fn(),
@@ -20,14 +20,11 @@ const {
   unlockExecutorSnapshotMock: vi.fn(),
   toastErrorMock: vi.fn(),
   toastSuccessMock: vi.fn(),
-  translateMock: (key: string) => key,
 }))
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: translateMock,
-    i18n: { language: "en" },
-  }),
+vi.mock("react-i18next", async (importOriginal) => ({
+  ...await importOriginal<typeof import("react-i18next")>(),
+  ...await import("./i18n-mock"),
 }))
 
 vi.mock("@/api/client", () => ({
@@ -60,30 +57,6 @@ vi.mock("@/components/executors/ExecutorRollbackDialog", () => ({
 
 import { ExecutorSnapshotsPanel } from "@/components/executors/ExecutorSnapshotsPanel"
 
-function createExecutor(overrides: Partial<ExecutorListItem> = {}): ExecutorListItem {
-  return {
-    id: overrides.id ?? 1,
-    name: overrides.name ?? "sample-executor",
-    runtime_type: overrides.runtime_type ?? "docker",
-    runtime_connection_id: overrides.runtime_connection_id ?? 1,
-    tracker_name: overrides.tracker_name ?? "sample-tracker",
-    tracker_source_id: overrides.tracker_source_id ?? 1,
-    channel_name: overrides.channel_name ?? "stable",
-    enabled: overrides.enabled ?? true,
-    update_mode: overrides.update_mode ?? "manual",
-    image_selection_mode: overrides.image_selection_mode ?? "replace_tag_on_current_image",
-    image_reference_mode: overrides.image_reference_mode ?? "digest",
-    target_ref: overrides.target_ref ?? {
-      mode: "container",
-      container_id: "abc123",
-      container_name: "sample",
-    },
-    maintenance_window: overrides.maintenance_window,
-    description: overrides.description,
-    runtime_connection_name: overrides.runtime_connection_name,
-    status: overrides.status,
-  }
-}
 
 function createSnapshot(overrides: Partial<SnapshotListItem> = {}): SnapshotListItem {
   return {

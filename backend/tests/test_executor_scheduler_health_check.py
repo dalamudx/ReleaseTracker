@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
+from functools import partial
 from typing import Any
 import pytest
 
@@ -15,8 +17,35 @@ from releasetracker.config import (
 )
 from releasetracker.executor_scheduler import ExecutorScheduler
 from releasetracker.executors.base import BaseRuntimeAdapter, RuntimeUpdateResult
+from releasetracker.executors.health_check import runner as health_check_runner
+from releasetracker.executors.health_check.runner import HealthCheckRunner
 from releasetracker.executors.health_check.types import ProbeAttemptResult
 from releasetracker.models import Release
+
+
+class _VirtualClock:
+    """Advances only when the runner sleeps, so probe windows cost no wall-clock time."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    async def sleep(self, seconds):
+        self.now += seconds
+        await asyncio.sleep(0)
+
+
+@pytest.fixture(autouse=True)
+def _virtual_health_check_clock(monkeypatch):
+    clock = _VirtualClock()
+    monkeypatch.setattr(
+        # The scheduler imports the runner lazily, so patch the name where it is looked up.
+        health_check_runner,
+        "HealthCheckRunner",
+        partial(HealthCheckRunner, sleep=clock.sleep, monotonic=clock.monotonic),
+    )
 
 
 async def _create_runtime_connection(storage, *, name: str) -> int:

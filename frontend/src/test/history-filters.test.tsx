@@ -1,31 +1,12 @@
 import { describe, it, expect, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import HistoryPage from "@/pages/History"
-import zhLocale from "@/i18n/locales/zh.json"
-import enLocale from "@/i18n/locales/en.json"
 
-vi.mock("react-i18next", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react-i18next")>()
-  return {
-    ...actual,
-    useTranslation: () => ({
-      t: (key: string, options?: Record<string, unknown>) => {
-        if (key === "history.filters.totalCount") {
-          return `共 ${options?.count ?? 0} 条记录`
-        }
-        const parts = key.split(".")
-        let cur: unknown = zhLocale
-        for (const p of parts) {
-          if (!cur) return key
-          cur = (cur as Record<string, unknown>)[p]
-        }
-        return typeof cur === "string" ? cur : key
-      },
-      i18n: { language: "zh" },
-    }),
-  }
-})
+vi.mock("react-i18next", async (importOriginal) => ({
+  ...await importOriginal<typeof import("react-i18next")>(),
+  ...await import("./i18n-mock"),
+}))
 
 const mockTrackers = [
   {
@@ -98,36 +79,23 @@ describe("HistoryPage Filters and UI Interaction", () => {
     )
 
     // 搜索框
-    expect(screen.getByPlaceholderText("搜索版本号或内容...")).toBeInTheDocument()
-
-    // 追踪器筛选下拉框
-    expect(screen.getByRole("combobox", { name: "追踪器" })).toBeInTheDocument()
-
-    // 渠道类型筛选下拉框
-    expect(screen.getByRole("combobox", { name: "发布渠道" })).toBeInTheDocument()
-
-    // 版本类型筛选下拉框
-    expect(screen.getByRole("combobox", { name: "发布类型" })).toBeInTheDocument()
-
-    // 统计标签与刷新按钮
-    expect(screen.getByText("共 2 条记录")).toBeInTheDocument()
-    expect(screen.getByTitle("刷新")).toBeInTheDocument()
+    expect(screen.getByPlaceholderText("history.searchPlaceholder")).toBeInTheDocument()
+    expect(screen.getByRole("combobox", { name: "history.filters.trackerLabel" })).toBeInTheDocument()
+    expect(screen.getByRole("combobox", { name: "history.filters.channelTypeLabel" })).toBeInTheDocument()
+    expect(screen.getByRole("combobox", { name: "history.filters.typeLabel" })).toBeInTheDocument()
+    expect(screen.getByText("history.filters.totalCount:2")).toBeInTheDocument()
+    expect(screen.getByTitle("common.refresh")).toBeInTheDocument()
 
     // 渲染各版本条目
     expect(screen.getByText("nginx_frontend")).toBeInTheDocument()
     expect(screen.getByText("v3.6.0-dev")).toBeInTheDocument()
     expect(screen.getByText("backend_service")).toBeInTheDocument()
     expect(screen.getByText("1.2.0")).toBeInTheDocument()
+    const searchInput = screen.getByPlaceholderText("history.searchPlaceholder")
+    fireEvent.change(searchInput, { target: { value: "release" } })
+    expect(searchInput).toHaveValue("release")
+    fireEvent.click(screen.getByRole("button", { name: "history.filters.reset" }))
+    expect(searchInput).toHaveValue("")
   })
 
-  it("verifies i18n keys for history filters in zh and en locales", () => {
-    expect(zhLocale.history.filters.allTrackers).toBe("全部追踪器")
-    expect(enLocale.history.filters.allTrackers).toBe("All trackers")
-
-    expect(zhLocale.history.filters.allChannelTypes).toBe("全部渠道类型")
-    expect(enLocale.history.filters.allChannelTypes).toBe("All source types")
-
-    expect(zhLocale.history.filters.reset).toBe("重置筛选")
-    expect(enLocale.history.filters.reset).toBe("Reset filters")
-  })
 })

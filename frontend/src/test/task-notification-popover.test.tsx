@@ -9,12 +9,10 @@ import i18n from "@/i18n/config"
 import { TaskNotificationPopover } from "@/components/layout/TaskNotificationPopover"
 import type { QueueTask } from "@/api/task-types"
 
-vi.mock("@/api/client", () => ({
-    api: {
-        getTasks: vi.fn(),
-        clearFinishedTasks: vi.fn(),
-    },
-}))
+vi.mock("@/api/client", async () => {
+    const { createTaskApiMock } = await import("./api-mock")
+    return { api: createTaskApiMock() }
+})
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 

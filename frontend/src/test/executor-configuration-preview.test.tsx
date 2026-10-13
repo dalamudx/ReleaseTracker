@@ -5,7 +5,10 @@ import { ExecutorConfigurationPreview } from "@/components/executors/ExecutorCon
 import type { ExecutorConfigurationPreview as Preview } from "@/api/types"
 
 vi.mock("@/api/client", () => ({ api: { previewExecutorConfiguration: vi.fn() } }))
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
+vi.mock("react-i18next", async (importOriginal) => ({
+  ...await importOriginal<typeof import("react-i18next")>(),
+  ...await import("./i18n-mock"),
+}))
 const result = (image="nginx:new"): Preview => ({ mutation_performed:false,checked_at:"2026-10-03T10:00:00Z",comparison_error:null,configuration_diff:{scope:"container_configuration",truncated:false,lines:[{operation:"-",path:"/image",value:'"nginx:old"',redacted:false},{operation:"+",path:"/image",value:JSON.stringify(image),redacted:false}]}})
 
 beforeEach(()=>{vi.mocked(api.previewExecutorConfiguration).mockReset()})

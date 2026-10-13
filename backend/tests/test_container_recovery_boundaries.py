@@ -10,7 +10,7 @@ from releasetracker.config import RuntimeConnectionConfig
 from releasetracker.executors.docker import DockerRuntimeAdapter
 from releasetracker.executors.podman import PodmanRuntimeAdapter
 from releasetracker.services.deployment_plan import MANAGED_MARKERS
-from test_executor_adapters import (
+from helpers.container_runtime import (
     FakeContainer,
     RECOVERY_IMAGE_ID,
     recovery_evidence,
