@@ -282,9 +282,19 @@ async def resolve_task(
     if executor_id in scheduler._running_executor_ids:
         raise HTTPException(409, "Executor is still running")
     async with storage.tasks.transaction() as db:
+        # Non-SSH snapshots may be pinned for retention after a completed run.
+        # SSH locks require verified remote recovery even when the run finished.
         locked = await (
             await db.execute(
-                "SELECT 1 FROM executor_snapshots WHERE executor_id=? AND locked=1 LIMIT 1",
+                """SELECT 1 FROM executor_snapshots s
+                   LEFT JOIN executor_run_history r ON r.id = s.executor_run_id
+                   LEFT JOIN executors e ON e.id = s.executor_id
+                   WHERE s.executor_id = ? AND s.locked = 1
+                     AND (e.runtime_type IS NULL OR e.runtime_type = 'ssh'
+                          OR r.id IS NULL OR r.status IS NULL
+                          OR r.status NOT IN ('success', 'skipped')
+                          OR r.finished_at IS NULL)
+                   LIMIT 1""",
                 (executor_id,),
             )
         ).fetchone()

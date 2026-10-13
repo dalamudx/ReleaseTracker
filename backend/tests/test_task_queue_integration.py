@@ -464,6 +464,99 @@ async def test_manual_resolution_requires_attestation_and_cannot_bypass_snapshot
     assert done["result"]["manual_resolution"]["actor"]
 
 
+@pytest.mark.parametrize(
+    "runtime_type,run_status,finished,mutation_started,expected_status",
+    [
+        ("docker", "success", True, False, 200),
+        ("docker", "skipped", True, False, 200),
+        ("docker", "success", True, True, 200),
+        ("docker", "running", False, False, 409),
+        ("docker", "failed", True, False, 409),
+        ("docker", "success", False, False, 409),
+        ("ssh", "success", True, False, 409),
+    ],
+)
+async def test_manual_resolution_distinguishes_retention_and_execution_locks(
+    storage, authed_client, runtime_type, run_status, finished, mutation_started, expected_status
+):
+    from releasetracker.models import ExecutorRunHistory, ExecutorSnapshot
+
+    await save_docker_tracker_config(storage, name="resolve-pinned", image="nginx")
+    tracker = await storage.get_aggregate_tracker("resolve-pinned")
+    executor_id = await storage.create_executor_config(
+        ExecutorConfig(
+            name="resolve-pinned",
+            tracker_name=tracker.name,
+            tracker_source_id=tracker.sources[0].id,
+            channel_name="stable",
+            runtime_connection_id=await create_runtime_connection(storage),
+            runtime_type="docker",
+            target_ref={"mode": "container", "container_id": "app"},
+        )
+    )
+    db = await storage._get_connection()
+    await db.execute("UPDATE executors SET runtime_type=? WHERE id=?", (runtime_type, executor_id))
+    await db.commit()
+    historical_run_id = await storage.create_executor_run(
+        ExecutorRunHistory(
+            executor_id=executor_id,
+            started_at=datetime.now(),
+            finished_at=datetime.now() if finished else None,
+            status=run_status,
+        )
+    )
+    snapshot_id = await storage.create_executor_snapshot(
+        ExecutorSnapshot(
+            executor_id=executor_id,
+            executor_run_id=historical_run_id,
+            snapshot_data={},
+            locked=True,
+        )
+    )
+    stalled = await storage.tasks.enqueue(
+        kind="deploy",
+        resource_key="deployment-mutations",
+        dedupe_key="resolve-pinned",
+        target_label="resolve-pinned",
+        payload={"executor_id": executor_id},
+        trigger_mode="manual",
+    )
+    running = await storage.tasks.claim("deploy")
+    await storage.tasks.finish(
+        running,
+        "needs_attention",
+        code="admission_evidence_stalled",
+        result={"admission_evidence_failures": 120, "mutation_started": mutation_started},
+    )
+    next_task = await storage.tasks.enqueue(
+        kind="deploy",
+        resource_key="deployment-mutations",
+        dedupe_key="resolve-pinned-next",
+        target_label="resolve-pinned",
+        payload={"executor_id": executor_id},
+        trigger_mode="manual",
+    )
+    assert await storage.tasks.claim("deploy") is None
+    response = authed_client.post(
+        f"/api/tasks/{stalled['id']}/resolve",
+        json={"remote_stopped": True, "state_verified": True},
+    )
+    assert response.status_code == expected_status, response.text
+    done = await storage.tasks.get(stalled["id"])
+    snapshot = await (
+        await db.execute("SELECT locked FROM executor_snapshots WHERE id=?", (snapshot_id,))
+    ).fetchone()
+    assert snapshot[0] == 1
+    if expected_status == 200:
+        assert done["state"] == "failed"
+        assert done["error_code"] == "operator_reconciled"
+        assert done["result"]["manual_resolution"]["actor"]
+        assert (await storage.tasks.claim("deploy"))["id"] == next_task["id"]
+    else:
+        assert done["state"] == "needs_attention"
+        assert await storage.tasks.claim("deploy") is None
+
+
 async def test_migrated_exhausted_attempt_budget_finishes_without_remote_io(storage):
     task = await storage.tasks.enqueue(
         kind="fetch",
