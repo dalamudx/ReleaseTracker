@@ -407,9 +407,11 @@ def _release_matches_channel(
         if channel.type == "prerelease" and not release.prerelease:
             return False
 
+    from ..tag_ordering import compile_pattern
+
     if channel.include_pattern:
         try:
-            if not re.search(channel.include_pattern, release.tag_name):
+            if not compile_pattern(channel.include_pattern).search(release.tag_name):
                 return False
         except re.error:
             pass
@@ -417,13 +419,12 @@ def _release_matches_channel(
     if channel.exclude_pattern:
         try:
             if any(
-                re.search(channel.exclude_pattern, candidate)
+                compile_pattern(channel.exclude_pattern).search(candidate)
                 for candidate in storage_cls._channel_exclude_match_candidates(release)
             ):
                 return False
         except re.error:
             pass
-
     return True
 
 

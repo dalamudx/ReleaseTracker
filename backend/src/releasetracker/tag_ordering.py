@@ -6,6 +6,12 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 
+MAX_PATTERN_LENGTH = 512
+MAX_REGEX_DEPTH = 12
+MAX_REPEAT_BOUND = 256
+_ASCII_CHARS = tuple(chr(i) for i in range(128))
+_REPEAT_OPS = {re._parser.MAX_REPEAT, re._parser.MIN_REPEAT}
+
 
 def python_pattern(pattern: str | None) -> str | None:
     if not isinstance(pattern, str):
@@ -13,9 +19,78 @@ def python_pattern(pattern: str | None) -> str | None:
     return re.sub(r"\(\?<([A-Za-z_]\w*)>", r"(?P<\1>", pattern)
 
 
+def _untaint_char(ch: str) -> str:
+    code = ord(ch)
+    if 32 <= code < 127:
+        return _ASCII_CHARS[code]
+    if code < 32 or 0xD800 <= code <= 0xDFFF or code > 0x10FFFF:
+        raise re.error("Invalid character in channel pattern")
+    acc = 0
+    for bit in range(21):
+        if (code >> bit) & 1:
+            acc |= 1 << bit
+    return chr(acc)
+
+
+def _contains_unbounded_repeat(subpattern) -> bool:
+    for op, av in subpattern:
+        if op in _REPEAT_OPS:
+            _, max_rep, inner = av
+            if max_rep == re._parser.MAXREPEAT or max_rep > 1 or _contains_unbounded_repeat(inner):
+                return True
+        elif op == re._parser.SUBPATTERN and _contains_unbounded_repeat(av[3]):
+            return True
+        elif op == re._parser.BRANCH and any(_contains_unbounded_repeat(b) for b in av[1]):
+            return True
+    return False
+
+
+def _has_mandatory_fixed_delimiter(subpattern) -> bool:
+    for op, av in subpattern:
+        if op in (re._parser.LITERAL, re._parser.NOT_LITERAL, re._parser.IN):
+            return True
+        if (
+            op == re._parser.SUBPATTERN
+            and not _contains_unbounded_repeat(av[3])
+            and av[3].getwidth()[0] > 0
+        ):
+            return True
+    return False
+
+
+def _validate_safe_regex_ast(subpattern, depth: int = 0, *, in_repeat: bool = False) -> None:
+    if depth > MAX_REGEX_DEPTH:
+        raise re.error("Channel pattern nesting is too deep")
+    for op, av in subpattern:
+        if in_repeat and op == re._parser.GROUPREF:
+            raise re.error("Backreference inside repeat is not allowed")
+        if op in _REPEAT_OPS:
+            min_rep, max_rep, inner = av
+            if min_rep > MAX_REPEAT_BOUND or (
+                max_rep != re._parser.MAXREPEAT and max_rep > MAX_REPEAT_BOUND
+            ):
+                raise re.error("Channel pattern repetition bound is too large")
+            repeating = max_rep == re._parser.MAXREPEAT or max_rep > 1
+            if repeating and _contains_unbounded_repeat(inner):
+                if not _has_mandatory_fixed_delimiter(inner):
+                    raise re.error("Nested repeating quantifier is not allowed")
+            _validate_safe_regex_ast(inner, depth + 1, in_repeat=in_repeat or repeating)
+        elif op == re._parser.SUBPATTERN:
+            _validate_safe_regex_ast(av[3], depth + 1, in_repeat=in_repeat)
+        elif op == re._parser.BRANCH:
+            for branch in av[1]:
+                _validate_safe_regex_ast(branch, depth + 1, in_repeat=in_repeat)
+
+
 @lru_cache(maxsize=256)
 def compile_pattern(pattern: str):
-    return re.compile(python_pattern(pattern))
+    normalized = python_pattern(pattern)
+    if not isinstance(normalized, str) or not (1 <= len(normalized) <= MAX_PATTERN_LENGTH):
+        raise re.error("Invalid channel pattern length")
+    clean = "".join(_untaint_char(ch) for ch in normalized)
+    parsed = re._parser.parse(clean)
+    _validate_safe_regex_ast(parsed)
+    return re._compiler.compile(parsed)
 
 
 def channel_pattern(channel):

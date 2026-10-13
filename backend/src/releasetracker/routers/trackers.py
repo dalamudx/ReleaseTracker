@@ -28,7 +28,12 @@ async def preview_version_order(
     payload: VersionPreviewPayload,
     _user=Depends(get_current_admin_user),
 ):
-    from ..tag_ordering import history_order_key, release_tag_order, ordering_issue
+    from ..tag_ordering import (
+        compile_pattern,
+        history_order_key,
+        ordering_issue,
+        release_tag_order,
+    )
     from ..versioning import (
         container_channel_eligible,
         pinned_alias,
@@ -39,7 +44,7 @@ async def preview_version_order(
     for pattern in (payload.channel.include_pattern, payload.channel.exclude_pattern):
         if pattern:
             try:
-                re.compile(pattern)
+                compile_pattern(pattern)
             except re.error as error:
                 raise HTTPException(422, "Invalid channel pattern") from error
     releases = [

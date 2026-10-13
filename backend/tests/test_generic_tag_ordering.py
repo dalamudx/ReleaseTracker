@@ -162,3 +162,33 @@ async def test_preview_places_specific_alias_first():
         VersionPreviewPayload(channel={"name": "stable"}, tags=["1", "1.17", "1.17.0"]), _user=None
     )
     assert result["selected"] == result["groups"][0]["tag"] == "1.17.0"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "unsafe_pattern",
+    [
+        r"(a+)+$",
+        r"(\d+)+$",
+        r"(?:a+b*)+$",
+        r"(?P<version>(\d+)+)$",
+        "a" * 600,
+    ],
+)
+async def test_compile_pattern_and_preview_reject_redos_or_oversized_patterns(unsafe_pattern):
+    from fastapi import HTTPException
+    from releasetracker.routers.trackers import VersionPreviewPayload, preview_version_order
+    from releasetracker.tag_ordering import tag_order
+
+    channel = Channel(name="stable", include_pattern=unsafe_pattern)
+    assert tag_order("1.2.3", channel) is None
+
+    with pytest.raises(HTTPException) as exc_info:
+        await preview_version_order(
+            VersionPreviewPayload(
+                channel={"name": "stable", "include_pattern": unsafe_pattern},
+                tags=["1.2.3"],
+            ),
+            _user=None,
+        )
+    assert exc_info.value.status_code == 422
