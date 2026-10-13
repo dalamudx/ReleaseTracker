@@ -702,7 +702,9 @@ async def preview_executor_configuration(
         connection = await materialize_runtime_connection_credentials(storage, connection)
         with frozen_targets(task):
             if executor.runtime_type == "ssh":
-                _, target, images = await scheduler._resolve_ssh_update(executor)
+                _, target, images = await scheduler._resolve_ssh_update(
+                    executor, inspection_only=True
+                )
                 _, diff = await ssh_review(storage, executor, connection, target, images)
             else:
                 adapter = _get_runtime_adapter(connection)

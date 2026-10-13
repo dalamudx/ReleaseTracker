@@ -5,19 +5,24 @@ from .services.ssh_compose_discovery import verify_discovered_project
 from .services.ssh_compose_plan import SSHComposeTarget, SERVICE
 from .services.ssh_compose_snapshot import save_snapshot
 from .services.ssh_transport import SSHOperationError, open_ssh_session
-from .services.ssh_compose_ownership import verify_session
+from .services.ssh_compose_ownership import identify, verify_session
 from .storage.sqlite_compose_ownership import ComposeOwnershipConflict
 
 
 class ExecutorSchedulerSSH:
-    async def _resolve_ssh_update(self, executor):
+    async def _resolve_ssh_update(self, executor, *, inspection_only=False):
         connection = await self.storage.get_runtime_connection(executor.runtime_connection_id)
         if connection is None or connection.type != "ssh" or not connection.enabled:
             raise SSHOperationError("configuration", "enabled_ssh_connection_required")
         target = SSHComposeTarget.model_validate(executor.target_ref)
         await verify_discovered_project(self.storage, connection, target)
         async with open_ssh_session(self.storage, connection) as session:
-            await verify_session(self.storage, executor, session, target)
+            if inspection_only:
+                # Drafts have no owner yet and may contain unsaved binding changes.
+                # Verify the live runtime/project without enrolling or authorizing a write.
+                await identify(session, target)
+            else:
+                await verify_session(self.storage, executor, session, target)
             async with session.sftp() as sftp:
                 _, _, rendered, _, _ = await read_state(session, sftp, target)
         targets = {}
