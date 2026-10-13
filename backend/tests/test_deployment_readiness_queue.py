@@ -583,12 +583,12 @@ async def test_nonretryable_pull_does_not_extend_deadline(storage, monkeypatch):
     assert probe.await_count == 1  # No extra mutation or observation after the deadline.
 
 
-async def kube_pull_observation(storage, monkeypatch, *, timeout=30):
+async def kube_pull_observation(storage, monkeypatch, *, timeout=30, stable=0):
     import json
     from releasetracker.services.deploy_tasks import DeployTasks
 
     executor, scheduler, observer, probe, now, task, run_id = await setup(
-        storage, monkeypatch, stable=0, timeout=timeout
+        storage, monkeypatch, stable=stable, timeout=timeout
     )
     monkeypatch.setattr(
         DeployTasks, "identity", AsyncMock(return_value=task["payload"]["config_identity"])
@@ -871,3 +871,137 @@ async def test_prewrite_baseline_failure_prevents_mutation(storage, monkeypatch)
     assert result.state == "failed"
     assert not (await storage.tasks.get(receipt["task_id"]))["result"].get("mutation_started")
     mutated.assert_not_awaited()
+
+
+@pytest.mark.parametrize("recovers", [True, False])
+async def test_missing_layer_uses_native_probe_and_bounded_queue_recovery(
+    storage, monkeypatch, recovers
+):
+    import json
+    from copy import deepcopy
+    from datetime import datetime, timezone
+    from types import SimpleNamespace as NS
+    from releasetracker.services import deployment_readiness_probes as probes
+
+    _, scheduler, observer, _, now, task, run_id = await kube_pull_observation(
+        storage, monkeypatch, stable=10
+    )
+    observer.probe = probes.probe_deployment
+    scheduler._run_executor_with_overlap_guard = AsyncMock()
+    image = "registry.example.test/team/service-a:2.0.0"
+    current = {
+        "kind": "Deployment",
+        "metadata": {"uid": "isolated-workload", "generation": 4},
+        "containers": [{"name": "service-a", "image": image}],
+        "spec": {"replicas": 1, "selector": {"match_labels": {"app": "isolated"}}},
+        "status": {
+            "observedGeneration": 4,
+            "replicas": 1,
+            "updatedReplicas": 1,
+            "readyReplicas": 0,
+            "availableReplicas": 0,
+            "conditions": [
+                {"type": "Progressing", "status": "True", "reason": "NewReplicaSetAvailable"}
+            ],
+        },
+    }
+    before = deepcopy(current)
+    before["metadata"]["generation"] = 3
+    submitted = deepcopy(current)
+    db = await storage._get_connection()
+    row = await (
+        await db.execute(
+            "SELECT verification FROM deployment_observations WHERE task_id=?", (task["id"],)
+        )
+    ).fetchone()
+    verification = json.loads(row[0]) | {
+        "baseline": {"workloads": {"Deployment/app": before}},
+        "target": {"workloads": {"Deployment/app": submitted}},
+        "services": [{"service": "service-a", "to_version": image}],
+    }
+    await db.execute(
+        "UPDATE deployment_observations SET verification=? WHERE task_id=?",
+        (json.dumps(verification), task["id"]),
+    )
+    await db.commit()
+    snapshot = {"kind": "kubernetes_workload", "workloads": {"Deployment/app": current}}
+    monkeypatch.setattr(probes, "_capture", AsyncMock(return_value=snapshot))
+    adapter = MagicMock()
+    status = NS(
+        name="service-a",
+        ready=False,
+        restart_count=0,
+        state=NS(
+            waiting=NS(
+                reason="ErrImagePull",
+                message="could not fetch content descriptor sha256:abcd "
+                "(application/vnd.oci.image.layer.v1.tar+gzip) from remote: not found https://private/secret",
+            ),
+            terminated=None,
+        ),
+    )
+    pod = NS(
+        metadata=NS(
+            uid="isolated-pod",
+            deletion_timestamp=None,
+            creation_timestamp=datetime.fromtimestamp(now[0], timezone.utc),
+            owner_references=[NS(kind="ReplicaSet", uid="isolated-rs", controller=True)],
+        ),
+        spec=NS(containers=[NS(name="service-a", image=image)]),
+        status=NS(container_statuses=[status]),
+    )
+    adapter._get_core_api.return_value.list_namespaced_pod.return_value = NS(
+        items=[pod], metadata=NS(_continue=None)
+    )
+    adapter._get_apps_api.return_value.list_namespaced_replica_set.return_value = NS(
+        items=[
+            NS(
+                metadata=NS(
+                    uid="isolated-rs",
+                    owner_references=[
+                        NS(kind="Deployment", uid="isolated-workload", controller=True)
+                    ],
+                )
+            )
+        ],
+        metadata=NS(_continue=None),
+    )
+    monkeypatch.setattr(probes, "_adapter", AsyncMock(return_value=adapter))
+    attempts = (await storage.tasks.get(task["id"]))["attempts"]
+    await observe(storage, observer, task["id"])
+    observed = await storage.tasks.get(task["id"])
+    assert observed["state"] == "running"
+    assert observed["result"]["health_check"]["retryable_pull"]
+    assert "private" not in json.dumps(observed["result"])
+    now[0] += 31
+    await observe(storage, observer, task["id"])
+    record = await (
+        await db.execute(
+            "SELECT deadline,verification FROM deployment_observations WHERE task_id=?",
+            (task["id"],),
+        )
+    ).fetchone()
+    assert json.loads(record[1])["initial_deadline"] == now[0] - 1
+    assert (await storage.tasks.get(task["id"]))["state"] == "running"
+    if recovers:
+        status.state.waiting = None
+        status.ready = True
+        current["status"].update(readyReplicas=1, availableReplicas=1)
+        now[0] += 1
+        await observe(storage, observer, task["id"])
+        assert (await storage.tasks.get(task["id"]))["state"] == "running"
+        now[0] += 10
+        await observe(storage, observer, task["id"])
+        assert (await storage.tasks.get(task["id"]))["state"] == "succeeded"
+        run = await storage.get_executor_run(run_id)
+        assert run.status == "success"
+        assert run.diagnostics["health_check"]["late_recovery"]
+    else:
+        now[0] = record[0] + 1
+        await observe(storage, observer, task["id"])
+        observed = await storage.tasks.get(task["id"])
+        assert observed["state"] == "failed"
+        assert observed["error_code"] == "readiness_timeout"
+        assert (await storage.get_executor_run(run_id)).status == "failed"
+    assert (await storage.tasks.get(task["id"]))["attempts"] == attempts
+    scheduler._run_executor_with_overlap_guard.assert_not_awaited()

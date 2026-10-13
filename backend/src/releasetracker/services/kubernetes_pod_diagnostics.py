@@ -17,8 +17,20 @@ TRANSIENT_PULL = re.compile(
     re.IGNORECASE,
 )
 TERMINAL_PULL = re.compile(
-    r"unauthorized|authentication required|forbidden|denied|manifest unknown|"
-    r"not found|invalid reference|no basic auth credentials|insufficient_scope",
+    r"unauthorized|authentication required|forbidden|denied|manifest unknown|manifest_unknown|"
+    r"invalid reference|no basic auth credentials|insufficient_scope|name_unknown|"
+    r"\b(?:manifest|repository|image)\s+(?:not found|does not exist)\b|"
+    r"/manifests/[^\r\n]{0,512}\b404\b",
+    re.IGNORECASE,
+)
+MISSING_CONTENT_PULL = re.compile(
+    r"\b(?:blob unknown|unknown blob|blob_unknown)\b|"
+    r"(?:\b(?:blob|layer|content descriptor)\b|/blobs/)[^\r\n]{0,512}"
+    r"\b(?:not\s*found|404)\b",
+    re.IGNORECASE,
+)
+MISSING_REFERENCE_PULL = re.compile(
+    r"\bfailed to resolve (?:reference|image)\b[^\r\n]{0,512}\bnot found\b",
     re.IGNORECASE,
 )
 TERMINAL_WAITING = {
@@ -35,9 +47,17 @@ def waiting_diagnosis(reason: str | None, message: str | None) -> str | None:
     if reason in TERMINAL_WAITING:
         return TERMINAL_WAITING[reason]
     if reason in {"ErrImagePull", "ImagePullBackOff"}:
-        if TERMINAL_PULL.search(message or ""):
+        text = message or ""
+        if TERMINAL_PULL.search(text):
             return "invalid_image"
-        if TRANSIENT_PULL.search(message or ""):
+        # A resolved manifest can reference content that a registry mirror has
+        # not made available yet. Keep observing the same rollout, with the
+        # existing bounded pull grace; this is not evidence of an invalid tag.
+        if MISSING_CONTENT_PULL.search(text):
+            return "image_pull_retrying"
+        if MISSING_REFERENCE_PULL.search(text):
+            return "invalid_image"
+        if TRANSIENT_PULL.search(text):
             return "image_pull_retrying"
     return None
 

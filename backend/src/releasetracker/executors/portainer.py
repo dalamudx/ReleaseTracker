@@ -245,6 +245,15 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         marker_sets.extend(self._extract_stack_marker_sets(stack_file))
         return tuple(marker_sets)
 
+    async def inspect_local_image(self, target_ref: dict[str, Any], reference: str) -> dict | None:
+        from urllib.parse import quote
+
+        return await self._request_json(
+            "GET",
+            f"/api/endpoints/{target_ref['endpoint_id']}/docker/images/{quote(reference, safe='/')}/json",
+            not_found_message="local deployment image is unavailable",
+        )
+
     async def fetch_stack_service_images(self, target_ref: dict[str, Any]) -> dict[str, str | None]:
         normalized_target_ref = normalize_executor_target_ref(target_ref, runtime_type="portainer")
         endpoint_id = normalized_target_ref["endpoint_id"]

@@ -34,6 +34,7 @@ class TargetEvidence:
     markers: tuple[dict, ...]
     recovery: str
     configuration_diff: dict | None = None
+    version_evidence: tuple[dict, ...] = ()
 
     def __post_init__(self):
         if not self.runtime_identity or not self.target_identity:
@@ -92,6 +93,7 @@ def plan_fingerprint(task: dict, evidence: TargetEvidence) -> str:
             "policy_bindings": task["payload"].get("policy_bindings", []),
             "identity": evidence.identity_key,
             "evidence": evidence.evidence_hash,
+            "version_evidence": evidence.version_evidence,
             "markers": sorted(
                 (dict(m) for m in evidence.markers), key=lambda m: json.dumps(m, sort_keys=True)
             ),

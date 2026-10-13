@@ -276,8 +276,19 @@ async def test_kubernetes_post_capture_generation_is_exactly_next(monkeypatch, g
     assert result["outcome"] == outcome
 
 
+@pytest.mark.parametrize(
+    "pull_message",
+    [
+        "net/http: request timeout https://private/secret",
+        "failed to pull and unpack image: failed to copy: httpReadSeeker: "
+        "could not fetch content descriptor sha256:abcd "
+        "(application/vnd.oci.image.layer.v1.tar+gzip) from remote: not found https://private/secret",
+    ],
+)
 @pytest.mark.asyncio
-async def test_probe_uses_pod_waiting_reason_and_recovers_without_redeploying(monkeypatch):
+async def test_probe_uses_pod_waiting_reason_and_recovers_without_redeploying(
+    monkeypatch, pull_message
+):
     from datetime import datetime, timezone
     from unittest.mock import MagicMock
 
@@ -307,7 +318,7 @@ async def test_probe_uses_pod_waiting_reason_and_recovers_without_redeploying(mo
                     state=SimpleNamespace(
                         waiting=SimpleNamespace(
                             reason="ImagePullBackOff",
-                            message="net/http: request timeout https://private/secret",
+                            message=pull_message,
                         ),
                         terminated=None,
                     )

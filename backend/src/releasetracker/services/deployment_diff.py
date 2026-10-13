@@ -173,7 +173,9 @@ async def _verify_update_state(adapter, target_ref):
     return current
 
 
-async def native_review(storage, scheduler, executor, adapter, task, *, inspection_only=False):
+async def native_review(
+    storage, scheduler, executor, adapter, task, *, inspection_only=False, version_evidence=None
+):
     snapshot = await capture_current(adapter, executor.target_ref, inspection_only=inspection_only)
     if snapshot is None:
         raise ValueError("deployment target is missing")
@@ -244,6 +246,14 @@ async def native_review(storage, scheduler, executor, adapter, task, *, inspecti
         # A draft reads declarations; it must not publish evidence for a later write.
         return protected_state(storage, {"inspection": observed}), diff
     state = await observed_state(adapter, executor.target_ref, snapshot, observed)
+    if version_evidence is not None:
+        from .deployment_version_evidence import collect_version_evidence
+
+        version_evidence.extend(
+            await collect_version_evidence(
+                storage, adapter, executor, task, snapshot, images, targets
+            )
+        )
     INSPECTED_UPDATE_STATE.set(state)
     return protected_state(storage, state), diff
 

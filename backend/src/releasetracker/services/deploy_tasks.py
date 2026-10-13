@@ -142,13 +142,25 @@ class DeployTasks:
             )
         from .deployment_diff import frozen_targets, native_review
 
+        version_evidence = []
         with frozen_targets(task):
             state_hash, diff = await native_review(
-                self.storage, self.scheduler, executor, adapter, task
+                self.storage,
+                self.scheduler,
+                executor,
+                adapter,
+                task,
+                version_evidence=version_evidence,
             )
         configuration["runtime_configuration"] = state_hash
         return TargetEvidence(
-            runtime_identity, target_identity, configuration, tuple(markers), recovery, diff
+            runtime_identity,
+            target_identity,
+            configuration,
+            tuple(markers),
+            recovery,
+            diff,
+            tuple(version_evidence),
         )
 
     async def _mark_admission_applied(self, task, executor):

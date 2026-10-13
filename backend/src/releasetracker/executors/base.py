@@ -110,6 +110,10 @@ class BaseRuntimeAdapter(ABC):
         del target_ref
         return None
 
+    async def inspect_local_image(self, target_ref: dict[str, Any], reference: str) -> dict | None:
+        """Read a locally available image; never pull or resolve through a registry."""
+        return None
+
     async def get_managed_markers(self, target_ref: dict[str, Any]) -> tuple[dict[str, str], ...]:
         """Read ReleaseTracker ownership markers without changing the runtime."""
         del target_ref

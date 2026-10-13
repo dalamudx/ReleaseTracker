@@ -112,6 +112,15 @@ class _ContainerRuntimeAdapter(BaseRuntimeAdapter):
                 return value
         return None
 
+    async def inspect_local_image(self, target_ref: dict[str, Any], reference: str) -> dict | None:
+        image = self._get_client().images.get(reference)
+        attrs = getattr(image, "attrs", None) or {}
+        return {
+            "Id": attrs.get("Id") or getattr(image, "id", None),
+            "RepoTags": attrs.get("RepoTags") or getattr(image, "tags", None) or [],
+            "RepoDigests": attrs.get("RepoDigests") or [],
+        }
+
     async def get_managed_markers(self, target_ref: dict[str, Any]) -> tuple[dict[str, str], ...]:
         """Return markers from every managed container in the selected target."""
         if target_ref.get("mode") == "docker_compose":
