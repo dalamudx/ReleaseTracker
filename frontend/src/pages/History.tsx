@@ -68,7 +68,7 @@ export default function HistoryPage() {
     const dateLocale = i18n?.language === "zh" ? zhCN : enUS
 
     const [page, setPage] = useState(1)
-    const [pageSize, setPageSize] = usePageSize("settings.history.pageSize")
+    const [pageSize, setPageSize] = usePageSize()
     const [search, setSearch] = useState("")
     const [debouncedSearch, setDebouncedSearch] = useState("")
     const [selectedTracker, setSelectedTracker] = useState<string>("all")

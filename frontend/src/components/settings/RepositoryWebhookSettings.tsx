@@ -223,53 +223,60 @@ export function RepositoryWebhookSettings() {
     return (
         <div className="flex min-h-0 flex-1 flex-col gap-4">
             {/* Toolbar — Search + Stats + Actions */}
-            <div className="flex flex-none flex-wrap items-center justify-between gap-3">
-                <div className="w-full max-w-sm">
-                    <InputGroup>
-                        <InputGroupAddon align="inline-start">
-                            <InputGroupText>
-                                <Search className="size-4" />
-                            </InputGroupText>
-                        </InputGroupAddon>
-                        <InputGroupInput
-                            placeholder={t("webhooks.repository.searchPlaceholder", { defaultValue: "按追踪器、来源或协议搜索..." })}
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                        />
-                        {search && (
-                            <InputGroupAddon align="inline-end">
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="size-6"
-                                    onClick={() => setSearch("")}
-                                    title={t("common.clear")}
-                                >
-                                    <X className="size-3.5" />
-                                </Button>
+            {/* Toolbar — 搜索 + 统计与操作 */}
+            <div className="flex flex-none flex-col gap-2.5 rounded-lg border border-border/60 bg-card/60 p-3 shadow-xs sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                <div className="flex flex-1 flex-wrap items-center gap-2">
+                    {/* 搜索框 */}
+                    <div className="w-full min-w-[14rem] sm:w-64">
+                        <InputGroup>
+                            <InputGroupAddon align="inline-start">
+                                <InputGroupText>
+                                    <Search className="size-4" />
+                                </InputGroupText>
                             </InputGroupAddon>
-                        )}
-                    </InputGroup>
+                            <InputGroupInput
+                                placeholder={t("webhooks.repository.searchPlaceholder", { defaultValue: "按追踪器、来源或协议搜索..." })}
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                            />
+                            {search && (
+                                <InputGroupAddon align="inline-end">
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="size-6"
+                                        onClick={() => setSearch("")}
+                                        title={t("common.clear")}
+                                    >
+                                        <X className="size-3.5" />
+                                    </Button>
+                                </InputGroupAddon>
+                            )}
+                        </InputGroup>
+                    </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">
+                <div className="flex items-center gap-2 self-end sm:self-center">
+                    <span className="hidden text-xs text-muted-foreground sm:inline-block">
                         {t("webhooks.repository.totalCount", { count: filteredHooks.length, defaultValue: `共 ${filteredHooks.length} 个配置` })}
                     </span>
                     <Button
                         variant="outline"
                         size="icon"
+                        className="h-9 w-9"
                         onClick={() => refetch()}
                         disabled={isLoading || isFetching}
                         title={t("common.refresh")}
                     >
                         <RefreshCw className={`size-4 ${isFetching ? "animate-spin" : ""}`} />
+                        <span className="sr-only">{t("common.refresh")}</span>
                     </Button>
                     <Button
                         onClick={openCreate}
                         disabled={!repositorySources.some(({ source }) => !hooks.some((hook) => hook.tracker_source_id === source.id))}
+                        className="h-9 shadow-xs"
                     >
-                        <Plus className="mr-2 size-4" />
+                        <Plus className="mr-1.5 size-4" />
                         {t("webhooks.repository.add")}
                     </Button>
                 </div>

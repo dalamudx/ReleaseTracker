@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react"
 import { Plus, Search, X } from "lucide-react"
 import { useTranslation } from "react-i18next"
@@ -50,25 +50,48 @@ function getInitialTrackerListWidth(): number {
         : DEFAULT_TRACKER_LIST_WIDTH
 }
 
+function getInitialTrackerSearchParam(): string | null {
+    if (typeof window === "undefined") return null
+    try {
+        const params = new URLSearchParams(window.location.search)
+        return params.get("tracker") || params.get("name")
+    } catch {
+        return null
+    }
+}
+
 export default function TrackersPage() {
     const { t } = useTranslation()
     const queryClient = useQueryClient()
 
+    const initialTrackerParam = getInitialTrackerSearchParam()
     const [dialogOpen, setDialogOpen] = useState(false)
     const [editingTracker, setEditingTracker] = useState<string | null>(null)
-    const [selectedTrackerName, setSelectedTrackerName] = useState<string | null>(null)
-    const [mobileDetailOpen, setMobileDetailOpen] = useState(false)
+    const [selectedTrackerName, setSelectedTrackerName] = useState<string | null>(initialTrackerParam)
+    const [mobileDetailOpen, setMobileDetailOpen] = useState(Boolean(initialTrackerParam))
     const [detailRefreshKey, setDetailRefreshKey] = useState(0)
     const [deleteName, setDeleteName] = useState<string | null>(null)
     const [search, setSearch] = useState("")
     const [trackerListWidth, setTrackerListWidth] = useState(getInitialTrackerListWidth)
     const [resizingPanels, setResizingPanels] = useState(false)
+
+    useEffect(() => {
+        const handlePopState = () => {
+            const trackerParam = getInitialTrackerSearchParam()
+            if (trackerParam) {
+                setSelectedTrackerName(trackerParam)
+                setMobileDetailOpen(true)
+            }
+        }
+        window.addEventListener("popstate", handlePopState)
+        return () => window.removeEventListener("popstate", handlePopState)
+    }, [])
     const splitPaneRef = useRef<HTMLDivElement>(null)
     const trackerListWidthRef = useRef(trackerListWidth)
 
     // Pagination state
     const [page, setPage] = useState(1)
-    const [pageSize, setPageSize] = usePageSize("settings.trackers.pageSize")
+    const [pageSize, setPageSize] = usePageSize()
 
     const skip = (page - 1) * pageSize
 
@@ -201,50 +224,57 @@ export default function TrackersPage() {
     return (
         <div className="flex h-full min-h-0 flex-col gap-3.5">
             {/* Toolbar — search on the left, primary action on the right. */}
-            <div className="flex flex-none flex-wrap items-center justify-between gap-3">
-                <div className="w-full max-w-xs sm:max-w-sm">
-                    <InputGroup>
-                        <InputGroupAddon align="inline-start">
-                            <InputGroupText>
-                                <Search className="h-4 w-4" />
-                            </InputGroupText>
-                        </InputGroupAddon>
-                        <InputGroupInput
-                            placeholder={t("trackers.searchPlaceholder")}
-                            value={search}
-                            onChange={(event) => {
-                                setSearch(event.target.value)
-                                setPage(1)
-                                setMobileDetailOpen(false)
-                            }}
-                        />
-                        {search ? (
-                            <InputGroupAddon align="inline-end">
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6"
-                                    onClick={() => {
-                                        setSearch("")
-                                        setPage(1)
-                                        setMobileDetailOpen(false)
-                                    }}
-                                    title={t("common.clear")}
-                                >
-                                    <X className="h-3.5 w-3.5" />
-                                </Button>
+            {/* Toolbar — 搜索 + 统计与操作 */}
+            <div className="flex flex-none flex-col gap-2.5 rounded-lg border border-border/60 bg-card/60 p-3 shadow-xs sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                <div className="flex flex-1 flex-wrap items-center gap-2">
+                    {/* 搜索框 */}
+                    <div className="w-full min-w-[14rem] sm:w-64">
+                        <InputGroup>
+                            <InputGroupAddon align="inline-start">
+                                <InputGroupText>
+                                    <Search className="h-4 w-4" />
+                                </InputGroupText>
                             </InputGroupAddon>
-                        ) : null}
-                    </InputGroup>
+                            <InputGroupInput
+                                placeholder={t("trackers.searchPlaceholder")}
+                                value={search}
+                                onChange={(event) => {
+                                    setSearch(event.target.value)
+                                    setPage(1)
+                                    setMobileDetailOpen(false)
+                                }}
+                            />
+                            {search ? (
+                                <InputGroupAddon align="inline-end">
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-6 w-6"
+                                        onClick={() => {
+                                            setSearch("")
+                                            setPage(1)
+                                            setMobileDetailOpen(false)
+                                        }}
+                                        title={t("common.clear")}
+                                    >
+                                        <X className="h-3.5 w-3.5" />
+                                    </Button>
+                                </InputGroupAddon>
+                            ) : null}
+                        </InputGroup>
+                    </div>
                 </div>
-                <div className="flex min-w-0 max-w-full items-center gap-2">
+                <div className="flex items-center gap-2 self-end sm:self-center">
+                    <span className="hidden text-xs text-muted-foreground sm:inline-block">
+                        {t("trackers.totalCount", { count: total, defaultValue: `共 ${total} 个追踪器` })}
+                    </span>
                     {mobileDetailOpen && (
-                        <Button type="button" variant="outline" className="min-h-11 min-w-0 shrink whitespace-normal xl:hidden" onClick={() => setMobileDetailOpen(false)}>
+                        <Button type="button" variant="outline" className="h-9 min-w-0 shrink lg:hidden" onClick={() => setMobileDetailOpen(false)}>
                             {t("trackers.backToList")}
                         </Button>
                     )}
-                    <Button onClick={handleAdd} className="min-h-11 min-w-0 shrink whitespace-normal xl:min-h-9">
-                        <Plus className="mr-2 h-4 w-4" /> {t("trackers.addNew")}
+                    <Button onClick={handleAdd} className="h-9 shadow-xs">
+                        <Plus className="mr-1.5 h-4 w-4" /> {t("trackers.addNew")}
                     </Button>
                 </div>
             </div>
@@ -253,12 +283,12 @@ export default function TrackersPage() {
                 smaller screens retain the stacked layout. */}
             <div
                 ref={splitPaneRef}
-                className={`flex min-h-0 flex-1 flex-col gap-3.5 xl:flex-row xl:gap-0 ${resizingPanels ? "select-none" : ""}`}
+                className={`flex min-h-0 flex-1 flex-col gap-3.5 lg:flex-row lg:gap-0 ${resizingPanels ? "select-none" : ""}`}
                 style={splitPaneStyle}
             >
                 <div
                     id="tracker-list-pane"
-                    className={`${mobileDetailOpen ? "hidden" : "flex"} min-h-0 w-full flex-1 flex-col gap-3 xl:flex xl:w-[var(--tracker-list-width)] xl:min-w-0 xl:flex-none xl:pr-2`}
+                    className={`${mobileDetailOpen ? "hidden" : "flex"} min-h-0 w-full flex-1 flex-col gap-3 lg:flex lg:w-[var(--tracker-list-width)] lg:min-w-0 lg:flex-none lg:pr-2`}
                 >
                     <TrackerList
                         trackers={trackers}
@@ -289,7 +319,7 @@ export default function TrackersPage() {
                     aria-valuemax={MAX_TRACKER_LIST_WIDTH}
                     aria-valuenow={Math.round(trackerListWidth)}
                     tabIndex={0}
-                    className="group hidden w-4 shrink-0 touch-none cursor-col-resize items-stretch justify-center rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring xl:flex"
+                    className="group hidden w-4 shrink-0 touch-none cursor-col-resize items-stretch justify-center rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring lg:flex"
                     onPointerDown={(event) => {
                         event.currentTarget.setPointerCapture(event.pointerId)
                         setResizingPanels(true)
@@ -310,7 +340,7 @@ export default function TrackersPage() {
 
                 <div
                     id="tracker-detail-pane"
-                    className={`${mobileDetailOpen ? "flex" : "hidden"} min-h-0 w-full min-w-0 flex-1 flex-col gap-3 overflow-y-auto xl:flex xl:pl-2`}
+                    className={`${mobileDetailOpen ? "flex" : "hidden"} min-h-0 w-full min-w-0 flex-1 flex-col gap-3 overflow-y-auto lg:flex lg:pl-2`}
                 >
                     <TrackerDetail
                         trackerName={visibleSelectedTrackerName}
@@ -318,6 +348,7 @@ export default function TrackersPage() {
                         onEdit={handleEdit}
                         onCheck={handleCheck}
                         checking={checkTracker.isPending && checkTracker.variables === visibleSelectedTrackerName}
+                        onBackToList={() => setMobileDetailOpen(false)}
                     />
                 </div>
             </div>

@@ -22,7 +22,6 @@ import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
-    DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -369,6 +368,25 @@ export function ExecutorList({
                                                         variant="ghost"
                                                         size="icon"
                                                         className="size-7"
+                                                        disabled={isPending}
+                                                        aria-label={t("common.edit")}
+                                                        onClick={(event) => {
+                                                            stopRowClick(event)
+                                                            if (executor.id) onEdit(executor.id)
+                                                        }}
+                                                    >
+                                                        <Edit className="size-3.5" />
+                                                        <span className="sr-only">{t("common.edit")}</span>
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>{t("common.edit")}</TooltipContent>
+                                            </Tooltip>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="size-7"
                                                         aria-label={t("executors.actions.viewExecutionHistory")}
                                                         onClick={(event) => {
                                                             stopRowClick(event)
@@ -388,17 +406,6 @@ export function ExecutorList({
                                                     </Button>
                                                 </DropdownMenuTrigger>
                                                 <DropdownMenuContent align="end">
-                                                    <DropdownMenuItem
-                                                        disabled={isPending}
-                                                        onClick={(event) => {
-                                                            stopRowClick(event)
-                                                            if (executor.id) onEdit(executor.id)
-                                                        }}
-                                                    >
-                                                        <Edit className="mr-2 h-4 w-4" />
-                                                        {t("common.edit")}
-                                                    </DropdownMenuItem>
-                                                    <DropdownMenuSeparator />
                                                     <DropdownMenuItem
                                                         disabled={isPending}
                                                         className="text-destructive focus:text-destructive"

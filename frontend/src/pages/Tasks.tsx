@@ -1,6 +1,8 @@
 import { ReadinessSummary } from "@/components/executors/ReadinessSummary"
 import { QueryErrorState } from "@/components/common/QueryErrorState"
-import { useState } from "react"
+import { DataPagination } from "@/components/common/DataPagination"
+import { usePageSize } from "@/hooks/use-page-size"
+import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router"
 import { useTranslation } from "react-i18next"
@@ -18,6 +20,8 @@ import {
     ShieldAlert,
     Timer,
     ListX,
+    Search,
+    X,
 } from "lucide-react"
 import { toast } from "sonner"
 import { api } from "@/api/client"
@@ -40,6 +44,12 @@ import {
 } from "@/components/ui/alert-dialog"
 import { cn } from "@/lib/utils"
 import { canRecheckReadiness } from "@/lib/readiness"
+import {
+    InputGroup,
+    InputGroupAddon,
+    InputGroupInput,
+    InputGroupText,
+} from "@/components/ui/input-group"
 
 const states: TaskState[] = [
     "queued",
@@ -220,7 +230,16 @@ function TaskItem({ task }: { task: QueueTask }) {
     const summaryTime = waiting ? task.due_at : task.created_at
 
     return (
-        <div className="@container min-w-0 transition-colors hover:bg-muted/30">
+        <div
+            className={cn(
+                "@container min-w-0 transition-colors",
+                task.approval_pending
+                    ? "border-l-4 border-l-warning bg-warning/[0.03]"
+                    : task.state === "needs_attention"
+                      ? "border-l-4 border-l-destructive bg-destructive/[0.03]"
+                      : "hover:bg-muted/30"
+            )}
+        >
             <div className="px-4 py-3">
                 <Collapsible open={open} onOpenChange={setOpen}>
                     <div data-testid="task-summary" className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 @[760px]:grid-cols-[minmax(0,1fr)_9rem_7rem_13rem_2rem]">
@@ -500,6 +519,9 @@ function TaskItem({ task }: { task: QueueTask }) {
 export default function TasksPage() {
     const { t } = useTranslation()
     const [state, setState] = useState("all")
+    const [search, setSearch] = useState("")
+    const [page, setPage] = useState(1)
+    const [pageSize, setPageSize] = usePageSize(undefined, 50)
     const [before, setBefore] = useState<number>()
     const [previousPages, setPreviousPages] = useState<Array<number | undefined>>([])
     const [clearOpen, setClearOpen] = useState(false)
@@ -510,47 +532,147 @@ export default function TasksPage() {
             setClearOpen(false)
             setBefore(undefined)
             setPreviousPages([])
+            setPage(1)
             toast.success(t("tasks.cleared", { count: cleared }))
             await cache.invalidateQueries({ queryKey: ["tasks"] })
         },
         onError: () => toast.error(t("tasks.clearFailed")),
     })
     const tasks = useQuery({
-        queryKey: ["tasks", { state, before }],
-        queryFn: () => api.getTasks({ state: state === "all" ? undefined : state, before }),
+        queryKey: ["tasks", { state, before, limit: pageSize }],
+        queryFn: () => api.getTasks({ state: state === "all" ? undefined : state, before, limit: pageSize }),
         refetchInterval: 5000,
     })
 
     const activeCount = tasks.data?.filter((t) => ["queued", "running", "retry_wait"].includes(t.state)).length ?? 0
     const totalCount = tasks.data?.length ?? 0
 
+    const filteredTasks = useMemo(() => {
+        const list = tasks.data ?? []
+        const query = search.trim().toLowerCase()
+        if (!query) return list
+        return list.filter((task) => {
+            return (
+                task.target_label?.toLowerCase().includes(query) ||
+                String(task.id).includes(query) ||
+                task.kind?.toLowerCase().includes(query) ||
+                task.state?.toLowerCase().includes(query) ||
+                task.message?.toLowerCase().includes(query) ||
+                task.error_code?.toLowerCase().includes(query)
+            )
+        })
+    }, [tasks.data, search])
+
+    const handlePageChange = (nextPage: number) => {
+        if (nextPage === page) return
+        if (nextPage > page) {
+            if (tasks.data && tasks.data.length > 0) {
+                setPreviousPages((prev) => [...prev, before])
+                setBefore(tasks.data[tasks.data.length - 1]?.id)
+                setPage(nextPage)
+            }
+        } else {
+            const targetIndex = nextPage - 1
+            const targetBefore = targetIndex === 0 ? undefined : previousPages[targetIndex]
+            setBefore(targetBefore)
+            setPreviousPages((prev) => prev.slice(0, targetIndex))
+            setPage(nextPage)
+        }
+    }
+
+    const handlePageSizeChange = (newSize: number) => {
+        setPageSize(newSize)
+        setPage(1)
+        setBefore(undefined)
+        setPreviousPages([])
+    }
+
+    const paginatedTasks = useMemo(() => {
+        return filteredTasks.slice(0, pageSize)
+    }, [filteredTasks, pageSize])
+
+    const total = useMemo(() => {
+        if (!tasks.data || tasks.data.length === 0) return 0
+        if (search.trim()) return filteredTasks.length
+        if (tasks.data.length === pageSize) {
+            return page * pageSize + 1
+        }
+        return (page - 1) * pageSize + tasks.data.length
+    }, [tasks.data, search, filteredTasks.length, page, pageSize])
+
     return (
         <div className="flex h-full min-h-0 flex-col gap-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5">
-                    <h1 className="text-lg font-semibold">{t("tasks.title")}</h1>
-                    {tasks.data && (
-                        <div className="flex items-center gap-1.5">
-                            {activeCount > 0 ? (
-                                <Badge variant="info" className="text-xs gap-1">
-                                    <span className="relative flex h-1.5 w-1.5">
-                                        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-info-foreground" />
-                                    </span>
-                                    {t("tasks.activeTasks", { count: activeCount })}
-                                </Badge>
+
+            {/* Toolbar — 搜索 + 状态筛选与操作 */}
+            <div className="flex flex-none flex-col gap-2.5 rounded-lg border border-border/60 bg-card/60 p-3 shadow-xs sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                <div className="flex flex-1 flex-wrap items-center gap-2">
+                    {/* 搜索框 */}
+                    <div className="w-full min-w-[14rem] sm:w-64">
+                        <InputGroup>
+                            <InputGroupAddon align="inline-start">
+                                <InputGroupText>
+                                    <Search className="size-4" />
+                                </InputGroupText>
+                            </InputGroupAddon>
+                            <InputGroupInput
+                                placeholder={t("tasks.searchPlaceholder")}
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                            />
+                            {search ? (
+                                <InputGroupAddon align="inline-end">
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="size-6"
+                                        onClick={() => setSearch("")}
+                                        title={t("common.clear")}
+                                    >
+                                        <X className="size-3.5" />
+                                    </Button>
+                                </InputGroupAddon>
                             ) : null}
-                            <span className="text-xs text-muted-foreground">
-                                {t("tasks.pageCount", { count: totalCount })}
-                            </span>
-                        </div>
-                    )}
+                        </InputGroup>
+                    </div>
+
+                    <Select
+                        value={state}
+                        onValueChange={(value) => {
+                            setState(value)
+                            setBefore(undefined)
+                            setPreviousPages([])
+                        }}
+                    >
+                        <SelectTrigger className="h-9 min-w-0 w-full sm:w-40 sm:flex-none" aria-label={t("tasks.filter")}>
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">{t("tasks.all")}</SelectItem>
+                            {states.map((value) => (
+                                <SelectItem key={value} value={value} className="text-xs">
+                                    {t(`tasks.state.${value}`)}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
                 </div>
 
-                <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
+                <div className="flex items-center gap-2 self-end sm:self-center">
+                    {activeCount > 0 && (
+                        <Badge variant="info" className="text-xs gap-1">
+                            <span className="relative flex h-1.5 w-1.5">
+                                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-info-foreground" />
+                            </span>
+                            {t("tasks.activeTasks", { count: activeCount })}
+                        </Badge>
+                    )}
+                    <span className="hidden text-xs text-muted-foreground sm:inline-block">
+                        {t("tasks.pageCount", { count: totalCount })}
+                    </span>
                     <AlertDialog open={clearOpen} onOpenChange={open => { if (!clearTasks.isPending) setClearOpen(open) }}>
                         <AlertDialogTrigger asChild>
-                            <Button variant="outline" size="sm" disabled={clearTasks.isPending}>
-                                <ListX className="size-3.5" aria-hidden="true" />
+                            <Button variant="outline" size="sm" className="h-9" disabled={clearTasks.isPending}>
+                                <ListX className="size-3.5 mr-1" aria-hidden="true" />
                                 {t("tasks.clearFinished")}
                             </Button>
                         </AlertDialogTrigger>
@@ -571,30 +693,11 @@ export default function TasksPage() {
                             </AlertDialogFooter>
                         </AlertDialogContent>
                     </AlertDialog>
-                    <Select
-                        value={state}
-                        onValueChange={(value) => {
-                            setState(value)
-                            setBefore(undefined)
-                            setPreviousPages([])
-                        }}
-                    >
-                        <SelectTrigger size="sm" className="min-w-0 flex-1 sm:w-44 sm:flex-none" aria-label={t("tasks.filter")}>
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="all">{t("tasks.all")}</SelectItem>
-                            {states.map((value) => (
-                                <SelectItem key={value} value={value} className="text-xs">
-                                    {t(`tasks.state.${value}`)}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
 
                     <Button
                         variant="outline"
-                        size="icon-sm"
+                        size="icon"
+                        className="h-9 w-9"
                         disabled={tasks.isFetching}
                         onClick={() => void tasks.refetch()}
                         aria-label={t("tasks.refresh")}
@@ -604,51 +707,39 @@ export default function TasksPage() {
                 </div>
             </div>
 
-            <div className="glass-card flex min-h-0 flex-1 flex-col rounded-xl">
-                <div className="min-h-0 flex-1 divide-y divide-border/60 overflow-y-auto overscroll-contain" aria-busy={tasks.isFetching}>
-                    {tasks.isLoading && (
-                        <div className="flex flex-col items-center justify-center gap-2 py-12 text-muted-foreground">
-                            <Spinner className="size-6" />
-                            <span className="text-sm">{t("common.loading")}</span>
-                        </div>
-                    )}
-                    {tasks.isError && <QueryErrorState onRetry={() => void tasks.refetch()} />}
-                    {!tasks.isLoading && !tasks.isError && (!tasks.data || tasks.data.length === 0) && (
-                        <div className="flex flex-col items-center justify-center gap-3 p-12 text-center">
-                            <Inbox className="size-6 text-muted-foreground" aria-hidden="true" />
-                            <p className="text-sm text-muted-foreground">{t("tasks.empty")}</p>
-                        </div>
-                    )}
-                    {tasks.data?.map((task) => <TaskItem key={task.id} task={task} />)}
-                </div>
-                {(before || tasks.data?.length === 50) && (
-                    <div className="flex flex-none flex-wrap items-center justify-end gap-2 border-t border-border/60 px-4 py-3">
-                        {previousPages.length > 0 && (
-                            <Button variant="outline" size="sm" disabled={tasks.isFetching} onClick={() => {
-                                setBefore(previousPages[previousPages.length - 1])
-                                setPreviousPages(previous => previous.slice(0, -1))
-                            }}>
-                                {t("pagination.previous")}
-                            </Button>
+            <div className="flex min-h-0 flex-1 flex-col gap-3">
+                <div className="glass-card flex min-h-0 flex-1 flex-col rounded-xl overflow-hidden">
+                    <div className="min-h-0 flex-1 divide-y divide-border/60 overflow-y-auto overscroll-contain" aria-busy={tasks.isFetching}>
+                        {tasks.isLoading && (
+                            <div className="flex flex-col items-center justify-center gap-2 py-12 text-muted-foreground">
+                                <Spinner className="size-6" />
+                                <span className="text-sm">{t("common.loading")}</span>
+                            </div>
                         )}
-                        {before && (
-                            <Button variant="outline" size="sm" disabled={tasks.isFetching} onClick={() => {
-                                setBefore(undefined)
-                                setPreviousPages([])
-                            }}>
-                                {t("tasks.latest")}
-                            </Button>
+                        {tasks.isError && <QueryErrorState onRetry={() => void tasks.refetch()} />}
+                        {!tasks.isLoading && !tasks.isError && (!tasks.data || tasks.data.length === 0) && (
+                            <div className="flex flex-col items-center justify-center gap-3 p-12 text-center">
+                                <Inbox className="size-6 text-muted-foreground" aria-hidden="true" />
+                                <p className="text-sm text-muted-foreground">{t("tasks.empty")}</p>
+                            </div>
                         )}
-                        {tasks.data?.length === 50 && (
-                            <Button variant="outline" size="sm" disabled={tasks.isFetching} onClick={() => {
-                                setPreviousPages(previous => [...previous, before])
-                                setBefore(tasks.data?.[tasks.data.length - 1]?.id)
-                            }}>
-                                {t("tasks.older")}
-                            </Button>
+                        {!tasks.isLoading && !tasks.isError && tasks.data && tasks.data.length > 0 && filteredTasks.length === 0 && (
+                            <div className="flex flex-col items-center justify-center gap-3 p-12 text-center">
+                                <Inbox className="size-6 text-muted-foreground" aria-hidden="true" />
+                                <p className="text-sm text-muted-foreground">{t("tasks.noMatching")}</p>
+                            </div>
                         )}
+                        {paginatedTasks.map((task) => <TaskItem key={task.id} task={task} />)}
                     </div>
-                )}
+                </div>
+
+                <DataPagination
+                    page={page}
+                    pageSize={pageSize}
+                    total={total}
+                    onPageChange={handlePageChange}
+                    onPageSizeChange={handlePageSizeChange}
+                />
             </div>
         </div>
     )

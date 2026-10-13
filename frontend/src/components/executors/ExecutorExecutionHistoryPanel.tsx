@@ -503,66 +503,71 @@ export function ExecutorExecutionHistoryPanel({ executor, refreshKey }: Executor
             })()}
 
             {/* Filter toolbar — search, status filter, clear action. */}
-            <div className="flex flex-none flex-wrap items-center gap-2">
-                <div className="min-w-[12rem] flex-1">
-                    <InputGroup>
-                        <InputGroupAddon align="inline-start">
-                            <InputGroupText>
-                                <Search className="h-4 w-4" />
-                            </InputGroupText>
-                        </InputGroupAddon>
-                        <InputGroupInput
-                            value={search}
-                            onChange={(event) => {
-                                setSearch(event.target.value)
-                                setPage(1)
-                            }}
-                            placeholder={t("executors.history.searchPlaceholder")}
-                        />
-                        {search ? (
-                            <InputGroupAddon align="inline-end">
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6"
-                                    onClick={() => setSearch("")}
-                                    title={t("common.clear")}
-                                >
-                                    <X className="h-3.5 w-3.5" />
-                                </Button>
+            {/* Filter toolbar — search, status filter, clear action. */}
+            <div className="flex flex-none flex-col gap-2 rounded-lg border border-border/60 bg-card/60 p-2.5 shadow-xs sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-1 flex-wrap items-center gap-2">
+                    <div className="w-full min-w-[14rem] sm:w-64">
+                        <InputGroup>
+                            <InputGroupAddon align="inline-start">
+                                <InputGroupText>
+                                    <Search className="h-4 w-4" />
+                                </InputGroupText>
                             </InputGroupAddon>
-                        ) : null}
-                    </InputGroup>
+                            <InputGroupInput
+                                value={search}
+                                onChange={(event) => {
+                                    setSearch(event.target.value)
+                                    setPage(1)
+                                }}
+                                placeholder={t("executors.history.searchPlaceholder")}
+                            />
+                            {search ? (
+                                <InputGroupAddon align="inline-end">
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-6 w-6"
+                                        onClick={() => setSearch("")}
+                                        title={t("common.clear")}
+                                    >
+                                        <X className="h-3.5 w-3.5" />
+                                    </Button>
+                                </InputGroupAddon>
+                            ) : null}
+                        </InputGroup>
+                    </div>
+                    <Select
+                        value={status}
+                        onValueChange={(value: "all" | "success" | "failed" | "skipped") => {
+                            setStatus(value)
+                            setPage(1)
+                        }}
+                    >
+                        <SelectTrigger className="w-full sm:w-[10rem] gap-2 h-9" aria-label={t("executors.history.filters.all")}>
+                            <ListFilter className="h-3.5 w-3.5 text-muted-foreground" />
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">{t("executors.history.filters.all")}</SelectItem>
+                            <SelectItem value="success">{t("executors.results.success")}</SelectItem>
+                            <SelectItem value="failed">{t("executors.results.failed")}</SelectItem>
+                            <SelectItem value="skipped">{t("executors.results.skipped")}</SelectItem>
+                        </SelectContent>
+                    </Select>
                 </div>
-                <Select
-                    value={status}
-                    onValueChange={(value: "all" | "success" | "failed" | "skipped") => {
-                        setStatus(value)
-                        setPage(1)
-                    }}
-                >
-                    <SelectTrigger className="w-[10rem] gap-2" aria-label={t("executors.history.filters.all")}>
-                        <ListFilter className="h-3.5 w-3.5 text-muted-foreground" />
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">{t("executors.history.filters.all")}</SelectItem>
-                        <SelectItem value="success">{t("executors.results.success")}</SelectItem>
-                        <SelectItem value="failed">{t("executors.results.failed")}</SelectItem>
-                        <SelectItem value="skipped">{t("executors.results.skipped")}</SelectItem>
-                    </SelectContent>
-                </Select>
-                <Button
-                    variant="outline"
-                    size="icon"
-                    className="h-9 w-9 text-destructive hover:text-destructive"
-                    onClick={() => setClearDialogOpen(true)}
-                    disabled={loading || clearing}
-                    title={t("executors.history.clearRecords")}
-                    aria-label={t("executors.history.clearRecords")}
-                >
-                    <Trash2 className="h-4 w-4" />
-                </Button>
+                <div className="flex items-center gap-2 self-end sm:self-center">
+                    <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-9 w-9 text-destructive hover:text-destructive"
+                        onClick={() => setClearDialogOpen(true)}
+                        disabled={loading || clearing}
+                        title={t("executors.history.clearRecords")}
+                        aria-label={t("executors.history.clearRecords")}
+                    >
+                        <Trash2 className="h-4 w-4" />
+                    </Button>
+                </div>
             </div>
 
             {/* History list — scrolls inside the panel. */}

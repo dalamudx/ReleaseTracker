@@ -86,7 +86,7 @@ export function NotifierSettings() {
     const [pendingDeleteNotifierId, setPendingDeleteNotifierId] = useState<number | null>(null)
     const [search, setSearch] = useState("")
     const [page, setPage] = useState(1)
-    const [pageSize, setPageSize] = usePageSize("settings.notifiers.pageSize")
+    const [pageSize, setPageSize] = usePageSize()
 
     const skip = (page - 1) * pageSize
     const { data, isLoading: loading } = useNotifiers({
@@ -129,49 +129,59 @@ export function NotifierSettings() {
     return (
         <div className="flex min-h-0 flex-1 flex-col gap-4">
             {/* Toolbar — search + primary action. */}
-            <div className="flex flex-none flex-wrap items-center justify-between gap-3">
-                <div className="w-full max-w-sm">
-                    <InputGroup>
-                        <InputGroupAddon align="inline-start">
-                            <InputGroupText>
-                                <Search className="h-4 w-4" />
-                            </InputGroupText>
-                        </InputGroupAddon>
-                        <InputGroupInput
-                            placeholder={t("settings.notifications.searchPlaceholder")}
-                            value={search}
-                            onChange={(event) => {
-                                setSearch(event.target.value)
-                                setPage(1)
-                            }}
-                        />
-                        {search ? (
-                            <InputGroupAddon align="inline-end">
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6"
-                                    onClick={() => {
-                                        setSearch("")
-                                        setPage(1)
-                                    }}
-                                    title={t("common.clear")}
-                                >
-                                    <X className="h-3.5 w-3.5" />
-                                </Button>
+            {/* Toolbar — 搜索 + 统计与操作 */}
+            <div className="flex flex-none flex-col gap-2.5 rounded-lg border border-border/60 bg-card/60 p-3 shadow-xs sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                <div className="flex flex-1 flex-wrap items-center gap-2">
+                    {/* 搜索框 */}
+                    <div className="w-full min-w-[14rem] sm:w-64">
+                        <InputGroup>
+                            <InputGroupAddon align="inline-start">
+                                <InputGroupText>
+                                    <Search className="h-4 w-4" />
+                                </InputGroupText>
                             </InputGroupAddon>
-                        ) : null}
-                    </InputGroup>
+                            <InputGroupInput
+                                placeholder={t("settings.notifications.searchPlaceholder")}
+                                value={search}
+                                onChange={(event) => {
+                                    setSearch(event.target.value)
+                                    setPage(1)
+                                }}
+                            />
+                            {search ? (
+                                <InputGroupAddon align="inline-end">
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-6 w-6"
+                                        onClick={() => {
+                                            setSearch("")
+                                            setPage(1)
+                                        }}
+                                        title={t("common.clear")}
+                                    >
+                                        <X className="h-3.5 w-3.5" />
+                                    </Button>
+                                </InputGroupAddon>
+                            ) : null}
+                        </InputGroup>
+                    </div>
                 </div>
-                <Button
-                    onClick={() => {
-                        setEditingNotifier(null)
-                        setDialogOpen(true)
-                    }}
-                >
-                    <Plus className="mr-2 h-4 w-4" />
-                    {t("settings.notifications.add")}
-                </Button>
+                <div className="flex items-center gap-2 self-end sm:self-center">
+                    <span className="hidden text-xs text-muted-foreground sm:inline-block">
+                        {t("settings.notifications.totalCount", { count: total, defaultValue: `共 ${total} 个通知渠道` })}
+                    </span>
+                    <Button
+                        onClick={() => {
+                            setEditingNotifier(null)
+                            setDialogOpen(true)
+                        }}
+                        className="h-9 shadow-xs"
+                    >
+                        <Plus className="mr-1.5 h-4 w-4" />
+                        {t("settings.notifications.add")}
+                    </Button>
+                </div>
             </div>
 
             <div className="flex min-h-0 flex-1 flex-col gap-3">

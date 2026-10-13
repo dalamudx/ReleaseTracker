@@ -1548,6 +1548,8 @@
   },
   "tasks": {
     "title": "Task queue",
+    "searchPlaceholder": "Search target, ID, or kind...",
+    "noMatching": "No tasks match your search",
     "filter": "Filter tasks",
     "all": "All states",
     "refresh": "Refresh tasks",

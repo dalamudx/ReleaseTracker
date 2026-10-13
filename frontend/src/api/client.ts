@@ -244,7 +244,7 @@ function normalizeLatestCurrentReleaseSummary(item: LatestCurrentReleaseSummary)
 }
 
 export const api = {
-    getTasks: (params?: { before?: number; state?: string }) => apiClient.get<QueueTask[]>("/api/tasks", { params }).then(res => res.data),
+    getTasks: (params?: { before?: number; state?: string; limit?: number }) => apiClient.get<QueueTask[]>("/api/tasks", { params }).then(res => res.data),
     clearFinishedTasks: (readTasks?: Array<{ id: number; updated_at: number }>) => apiClient.post<{ cleared: number }>("/api/tasks/clear", readTasks === undefined ? undefined : { read_tasks: readTasks }).then(res => res.data),
     getTask: (id: number) => apiClient.get<QueueTask>(`/api/tasks/${id}`).then(res => res.data),
     getDeploymentPlan: (id: number, refresh = false) => apiClient.get<import("./task-types").DeploymentPlan>(`/api/tasks/${id}/deployment-plan`, refresh ? { params: { refresh: true } } : undefined).then(res => res.data),

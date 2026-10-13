@@ -3,6 +3,7 @@ import { BookOpen, ExternalLink } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { formatDistanceToNow } from "date-fns"
 import { enUS, zhCN } from "date-fns/locale"
+import { Link } from "react-router"
 
 import {
     Card,
@@ -111,9 +112,13 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
 
                                         {/* Left: Tracker name + Badges */}
                                         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 @min-[36rem]/recent:flex-nowrap @min-[36rem]/recent:gap-2.5">
-                                            <span className="min-w-0 max-w-full break-all text-sm font-semibold text-foreground @min-[36rem]/recent:max-w-[150px] @min-[36rem]/recent:truncate @min-[36rem]/recent:text-xs">
+                                            <Link
+                                                to={`/trackers?tracker=${encodeURIComponent(release.tracker_name)}`}
+                                                className="min-w-0 max-w-full break-all text-sm font-semibold text-foreground transition-colors hover:text-primary hover:underline @min-[36rem]/recent:max-w-[150px] @min-[36rem]/recent:truncate @min-[36rem]/recent:text-xs"
+                                                title={release.tracker_name}
+                                            >
                                                 {release.tracker_name}
-                                            </span>
+                                            </Link>
 
                                             <div className="flex shrink-0 items-center gap-1.5">
                                                 <Badge

@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
-import { BookOpen, ChevronDown, Clock, Copy, Edit, Inbox, Loader2, Play, TriangleAlert } from "lucide-react"
+import { ArrowLeft, BookOpen, ChevronDown, Clock, Copy, Edit, Inbox, Loader2, Play, TriangleAlert } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
@@ -95,6 +95,7 @@ interface TrackerDetailProps {
     onEdit?: (name: string) => void
     onCheck?: (name: string) => void
     checking?: boolean
+    onBackToList?: () => void
 }
 
 type ChannelSelectionNotice = { key: string; Icon: typeof Clock; warning: boolean; checkable: boolean }
@@ -120,6 +121,7 @@ export function TrackerDetail({
     onEdit,
     onCheck,
     checking = false,
+    onBackToList,
 }: TrackerDetailProps) {
     const { t } = useTranslation()
     const formatDate = useDateFormatter()
@@ -277,6 +279,19 @@ export function TrackerDetail({
                     <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0 space-y-0.5">
                             <div className="flex items-center gap-2">
+                                {onBackToList && (
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="size-7 -ml-1 text-muted-foreground hover:text-foreground lg:hidden"
+                                        onClick={onBackToList}
+                                        title={t("trackers.backToList")}
+                                    >
+                                        <ArrowLeft className="size-4" />
+                                        <span className="sr-only">{t("trackers.backToList")}</span>
+                                    </Button>
+                                )}
                                 <span className="text-base font-bold tracking-tight text-foreground truncate">{tracker.name}</span>
                                 <Badge variant={tracker.enabled ? "secondary" : "outline"} className="h-5 shrink-0 text-[10px]">
                                     {tracker.enabled ? t("common.enabled") : t("common.disabled")}

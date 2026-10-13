@@ -1548,6 +1548,8 @@
   },
   "tasks": {
     "title": "任务队列",
+    "searchPlaceholder": "搜索目标、ID 或类型...",
+    "noMatching": "没有匹配的任务",
     "filter": "筛选任务",
     "all": "全部状态",
     "refresh": "刷新任务",

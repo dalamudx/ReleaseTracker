@@ -1,23 +1,36 @@
-import { useCallback, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
+
+export const SHARED_PAGE_SIZE_KEY = "settings.pagination.pageSize"
+export const DEFAULT_PAGE_SIZE = 15
 
 /**
- * Persist a per-page size preference in localStorage.
+ * Shared per-page size preference persisted in a single localStorage key.
  *
- * Returns a tuple matching useState so callers can drop it in place of
- * the previous hand-rolled lazy initializer + manual localStorage.setItem
- * that several pages duplicated.
+ * All list pages (Trackers, Executors, Tasks, History, Credentials, RuntimeConnections, etc.)
+ * share this single configuration key so the user's rows-per-page choice applies globally.
  */
 export function usePageSize(
-    storageKey: string,
-    defaultSize = 15,
+    storageKey = SHARED_PAGE_SIZE_KEY,
+    defaultSize = DEFAULT_PAGE_SIZE,
 ): [number, (value: number) => void] {
     const [pageSize, setPageSizeState] = useState<number>(() => {
         try {
-            const saved = localStorage.getItem(storageKey)
-            if (saved) {
-                const parsed = Number(saved)
+            // Check global shared key first
+            const shared = localStorage.getItem(SHARED_PAGE_SIZE_KEY)
+            if (shared) {
+                const parsed = Number(shared)
                 if (Number.isFinite(parsed) && parsed > 0) {
                     return parsed
+                }
+            }
+            // Fallback to legacy page-specific key if set
+            if (storageKey && storageKey !== SHARED_PAGE_SIZE_KEY) {
+                const legacy = localStorage.getItem(storageKey)
+                if (legacy) {
+                    const parsed = Number(legacy)
+                    if (Number.isFinite(parsed) && parsed > 0) {
+                        return parsed
+                    }
                 }
             }
         } catch {
@@ -30,13 +43,42 @@ export function usePageSize(
         (value: number) => {
             setPageSizeState(value)
             try {
-                localStorage.setItem(storageKey, String(value))
+                localStorage.setItem(SHARED_PAGE_SIZE_KEY, String(value))
+                if (storageKey && storageKey !== SHARED_PAGE_SIZE_KEY) {
+                    localStorage.setItem(storageKey, String(value))
+                }
+                window.dispatchEvent(
+                    new CustomEvent("local-storage-page-size", { detail: value }),
+                )
             } catch {
                 // ignore storage errors
             }
         },
         [storageKey],
     )
+
+    useEffect(() => {
+        const handleCustom = (event: Event) => {
+            const next = (event as CustomEvent<number>).detail
+            if (Number.isFinite(next) && next > 0) {
+                setPageSizeState(next)
+            }
+        }
+        const handleStorage = (event: StorageEvent) => {
+            if (event.key === SHARED_PAGE_SIZE_KEY && event.newValue) {
+                const next = Number(event.newValue)
+                if (Number.isFinite(next) && next > 0) {
+                    setPageSizeState(next)
+                }
+            }
+        }
+        window.addEventListener("local-storage-page-size", handleCustom)
+        window.addEventListener("storage", handleStorage)
+        return () => {
+            window.removeEventListener("local-storage-page-size", handleCustom)
+            window.removeEventListener("storage", handleStorage)
+        }
+    }, [])
 
     return [pageSize, setPageSize]
 }

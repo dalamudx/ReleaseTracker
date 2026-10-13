@@ -118,7 +118,7 @@ export default function CredentialsPage() {
 
     // Pagination state
     const [page, setPage] = useState(1)
-    const [pageSize, setPageSize] = usePageSize("settings.credentials.pageSize")
+    const [pageSize, setPageSize] = usePageSize()
 
     const skip = (page - 1) * pageSize
     const { data, isLoading: loading, isFetching, isError, refetch } = useCredentials({ skip, limit: pageSize })
