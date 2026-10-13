@@ -90,10 +90,8 @@ export function TrackerList({
                                 <TableRow
                                     key={tracker.name}
                                     data-selected={isSelected || undefined}
-                                    className={cn(
-                                        "relative cursor-pointer transition-colors hover:bg-muted/40 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                                        isSelected && "bg-primary/[0.08] hover:bg-primary/[0.12] dark:bg-primary/15 dark:hover:bg-primary/20",
-                                    )}
+                                    data-state={isSelected ? "selected" : undefined}
+                                    className="relative cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                                     onClick={() => onSelect(tracker.name)}
                                     onKeyDown={(event) => {
                                         if (event.currentTarget !== event.target) return
