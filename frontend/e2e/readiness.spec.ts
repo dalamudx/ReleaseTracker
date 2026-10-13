@@ -15,7 +15,7 @@ async function fits(page: Page, region?: Locator) {
 }
 
 for (const width of [1280, 390]) {
-  test(`readiness pending tasks and service evidence at ${width}px`, async ({ page }) => {
+  test(`readiness pending tasks and service evidence at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 })
     await page.addInitScript(() => { document.cookie = "releasetracker-csrf=fixture-csrf; path=/"; localStorage.setItem("language", "en") })
     const errors: string[] = []
@@ -62,11 +62,11 @@ for (const width of [1280, 390]) {
       expect(await row.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true)
     }
     await fits(page, dialog)
-    await page.screenshot({ path: `/tmp/rt-readiness-history-${width}.png` })
+    await page.screenshot({ path: testInfo.outputPath("readiness-history.png") })
     expect(errors).toEqual([])
   })
 
-  test(`health notification defaults off and persists opt-in at ${width}px`, async ({ page }) => {
+  test(`health notification defaults off and persists opt-in at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 })
     await page.addInitScript(() => { document.cookie = "releasetracker-csrf=fixture-csrf; path=/"; localStorage.setItem("language", "en") })
     const errors: string[] = []
@@ -86,8 +86,7 @@ for (const width of [1280, 390]) {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(data) })
     })
     const openPolicy = async () => {
-      await page.getByTestId("executor-row").getByRole("button", { name: "Actions", exact: true }).click()
-      await page.getByRole("menuitem", { name: "Edit", exact: true }).click()
+      await page.getByTestId("executor-row").getByRole("button", { name: "Edit", exact: true }).click()
       const dialog = page.getByRole("dialog")
       await expect(dialog.getByRole("textbox", { name: "Executor name", exact: true })).toHaveValue("service-a executor")
       await dialog.getByRole("button", { name: "Continue", exact: true }).click()
@@ -101,7 +100,7 @@ for (const width of [1280, 390]) {
     await notification.click()
     await expect(notification).toBeChecked()
     await fits(page, dialog)
-    await page.screenshot({ path: `/tmp/rt-readiness-notification-${width}.png` })
+    await page.screenshot({ path: testInfo.outputPath("readiness-notification.png") })
     await dialog.getByRole("button", { name: "Continue", exact: true }).click()
     await dialog.getByRole("button", { name: "Save", exact: true }).click()
     await expect.poll(() => payloads.length).toBe(1)

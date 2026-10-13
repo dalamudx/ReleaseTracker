@@ -35,13 +35,13 @@ async function setup(page:Page,width:number,height:number,language="zh"){
   if(path==="/api/notifiers")return send({items:notifiers,total:8})
   if(path==="/api/settings/security-keys")return send({jwt_secret:{configured:true,fingerprint:"fixture",active_sessions:1},encryption_key:{configured:true,fingerprint:"fixture",undecryptable_count:0,inventory:{credentials_token:0,credentials_secrets:0,oauth_provider_client_secret:0,runtime_connection_secrets:0}}})
   if(path==="/api/webhooks/repositories")return send([{id:"mobile-repo-hook",tracker_name:trackerNames[0],tracker_source_id:1,source_key:"image",provider:"github",enabled:true,release_published:true,workflow_success:true,endpoint_url:"https://example.invalid/hook",secret_configured:true}])
-  if(path==="/api/settings"||path.includes("/templates")||path.includes("/oauth/providers"))return send([])
+  if(path==="/api/settings"||path.includes("/templates")||path==="/api/oidc-providers"||path==="/api/auth/oidc/providers")return send([])
   return send({items:[],total:0})
  })
 }
 
 for(const size of [{width:390,height:640},{width:320,height:568},{width:768,height:1024},{width:844,height:390},{width:1280,height:800}]){
- test(`mobile dashboard and tracker data ${size.width}`,async({page})=>{
+ test(`mobile dashboard and tracker data ${size.width}`,async({page},testInfo)=>{
   await setup(page,size.width,size.height);const errors:string[]=[];page.on("pageerror",e=>errors.push(e.message))
   await page.goto("/")
   await expect(page.locator(".recharts-surface")).toBeVisible()
@@ -53,13 +53,13 @@ for(const size of [{width:390,height:640},{width:320,height:568},{width:768,heig
   expect(trendBounds.width).toBeLessThanOrEqual(size.width)
   console.log("dashboard geometry",trendBounds,await recent.boundingBox())
   await trend.scrollIntoViewIfNeeded()
-  await page.screenshot({path:`/tmp/rt-mobile-dashboard-${size.width}.png`})
+  await page.screenshot({path:testInfo.outputPath("mobile-dashboard.png")})
   const svg=trend.locator(".recharts-surface")
   expect((await svg.boundingBox())!.height).toBeGreaterThanOrEqual(200)
   if(size.width>=1280)expect((await recent.boundingBox())!.x).toBeGreaterThanOrEqual((await trend.boundingBox())!.x+(await trend.boundingBox())!.width)
   else expect((await recent.boundingBox())!.y).toBeGreaterThanOrEqual((await trend.boundingBox())!.y+(await trend.boundingBox())!.height)
   const last=recent.getByText("mobile-release-6",{exact:true});await last.scrollIntoViewIfNeeded();await expect(last).toBeVisible()
-  await page.screenshot({path:`/tmp/rt-mobile-recent-${size.width}.png`})
+  await page.screenshot({path:testInfo.outputPath("mobile-recent.png")})
   expect(await recent.evaluate(n=>n.scrollWidth<=n.clientWidth)).toBe(true)
   const notes=recent.locator("li").last().getByRole("button")
   if((await recent.boundingBox())!.width<576){expect((await notes.boundingBox())!.width).toBeGreaterThanOrEqual(44);expect((await notes.boundingBox())!.height).toBeGreaterThanOrEqual(44)}
@@ -72,14 +72,14 @@ for(const size of [{width:390,height:640},{width:320,height:568},{width:768,heig
   const pane=page.locator("#tracker-list-pane");console.log("tracker geometry",await pane.boundingBox())
   expect(await pane.locator("table").evaluate(table=>table.scrollWidth<=table.parentElement!.clientWidth)).toBe(true)
   for(const button of await pane.locator("tbody tr").first().getByRole("button").all()){const b=(await button.boundingBox())!;expect(b.x+b.width).toBeLessThanOrEqual(size.width)}
-  await page.screenshot({path:`/tmp/rt-mobile-trackers-${size.width}.png`})
+  await page.screenshot({path:testInfo.outputPath("mobile-trackers.png")})
   expect((await pane.boundingBox())!.height).toBeGreaterThan(150)
   const item=pane.getByText("mobile-nginx-15",{exact:true});await item.scrollIntoViewIfNeeded();await expect(item).toBeVisible();await item.click()
   const detail=page.locator("#tracker-detail-pane");await expect(detail).toBeVisible()
   if(size.width<1280){
     await expect(pane).not.toBeVisible()
-    const back=page.getByRole("button",{name:"返回追踪器列表",exact:true})
     const add=page.getByRole("button",{name:"添加追踪器",exact:true})
+    const back=add.locator("..").getByRole("button",{name:"返回追踪器列表",exact:true})
     const geometry=await back.evaluate((button)=>{
       const add=Array.from(button.parentElement!.querySelectorAll("button")).find(node=>node!==button)!
       const b=button.getBoundingClientRect();const a=add.getBoundingClientRect()
@@ -98,22 +98,24 @@ for(const size of [{width:390,height:640},{width:320,height:568},{width:768,heig
  })
 }
 
-for(const language of ["zh","en"]) for(const width of [320,390]) test(`audit remaining mobile pages ${language} ${width} with nonempty data`,async({page})=>{
+for(const language of ["zh","en"]) for(const width of [320,390]) test(`audit remaining mobile pages ${language} ${width} with nonempty data`,async({page},testInfo)=>{
  await setup(page,width,640,language);const errors:string[]=[];page.on("pageerror",e=>errors.push(e.message));const reports=[]
  for(const [route,text] of [["/executors","mobile-executor-1"],["/tasks","mobile-task-1"],["/history","mobile-release-1"],["/credentials","mobile-credential-1"],["/runtime-connections","mobile-runtime-1"],["/webhooks","mobile-notifier-1"],["/settings",""]]){
   await page.goto(route)
   if(text)await expect(page.getByText(text,{exact:true}).first()).toBeVisible()
   await expect(page.locator("main")).toBeVisible()
   if(route==="/webhooks"||route==="/settings") {
-    const tabs=page.getByRole("tablist").first();const bounds=(await tabs.boundingBox())!
-    for(const tab of await tabs.getByRole("tab").all()){const b=(await tab.boundingBox())!;expect(b.y+b.height).toBeLessThanOrEqual(bounds.y+bounds.height+1)}
+    const navigation=route==="/webhooks"?page.getByRole("tablist").first():page.getByRole("main").getByRole("navigation")
+    const bounds=(await navigation.boundingBox())!
+    const controls=navigation.getByRole(route==="/webhooks"?"tab":"button")
+    for(const control of await controls.all()){const b=(await control.boundingBox())!;expect(b.y+b.height).toBeLessThanOrEqual(bounds.y+bounds.height+1)}
   }
   if(route==="/history"||route==="/webhooks"){
     const buttons=page.locator("tbody tr").first().getByRole("button")
     for(const button of await buttons.all()){const b=(await button.boundingBox())!;expect(b.x+b.width).toBeLessThanOrEqual(width)}
   }
   const report=await page.locator("main").evaluate(main=>({mainHeight:main.clientHeight,scrollHeight:main.scrollHeight,clipped:main.scrollWidth>main.clientWidth,tables:Array.from(main.querySelectorAll("table")).map(table=>({height:table.getBoundingClientRect().height,containerHeight:table.parentElement!.getBoundingClientRect().height}))}))
-  reports.push({route,...report});await page.screenshot({path:`/tmp/rt-mobile-audit-${route.slice(1)}-${language}-${width}.png`})
+  reports.push({route,...report});await page.screenshot({path:testInfo.outputPath(`mobile-audit-${route.slice(1)}.png`)})
   if(route==="/webhooks"){
     await page.getByRole("tab",{name:language==="zh" ? /仓库 Webhook/ : /Repository Webhooks/}).click()
     await expect(page.getByText(trackerNames[0],{exact:true}).first()).toBeVisible()

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test"
 for(const language of ["zh","en"])for(const width of [320,1280]){
- test(`backup deletion and safety ${language} ${width}`,async({page})=>{
+ test(`backup deletion and safety ${language} ${width}`,async({page},testInfo)=>{
   await page.setViewportSize({width,height:900});await page.addInitScript(language=>{document.cookie="releasetracker-csrf=isolated-fixture; path=/";localStorage.setItem("language",language)},language)
   const first="releasetracker-1791000000000000000-deadbeef.zip", second="releasetracker-1791000000000000001-deadbeef.zip"
   let items=[{name:first,size:1048576,created_at:1791000000},{name:second,size:1048576,created_at:1791000001}]
@@ -16,11 +16,11 @@ for(const language of ["zh","en"])for(const width of [320,1280]){
     if(fail){fail=false;return send({detail:"backup_in_use"},409)}
     items=items.filter(item=>item.name!==first);return send({deleted:first})
    }
-   if(path==="/api/settings"||path.includes("/oauth/providers")||path==="/api/tasks")return send([])
+   if(path==="/api/settings"||path==="/api/oidc-providers"||path==="/api/auth/oidc/providers"||path==="/api/tasks")return send([])
    return send({items:[],total:0})
   })
   await page.goto("/settings")
-  await page.getByRole("tab",{name:language==="zh"?"备份":"Backups",exact:true}).click()
+  await page.getByRole("main").getByRole("navigation").getByRole("button",{name:language==="zh"?"实例备份":"Instance backups",exact:true}).click()
   await expect(page.getByText(first,{exact:true})).toBeVisible()
   const deleteName=language==="zh"?"删除":"Delete"
   await page.getByRole("button",{name:`${deleteName} ${first}`,exact:true}).click()
@@ -34,6 +34,6 @@ for(const language of ["zh","en"])for(const width of [320,1280]){
   await expect(page.getByRole("button",{name:`${deleteName} ${second}`,exact:true})).toBeDisabled()
   expect(deletes).toBe(2);expect(errors).toEqual([])
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
-  await page.screenshot({path:`/tmp/rt-backup-management-${language}-${width}.png`})
+  await page.screenshot({path:testInfo.outputPath("backup-management.png")})
  })
 }

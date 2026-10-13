@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test"
 for(const language of ["zh","en"])for(const width of [320,1280]){
- test(`online restore preflight confirmation and review ${language} ${width}`,async({page})=>{
+ test(`online restore preflight confirmation and review ${language} ${width}`,async({page},testInfo)=>{
   await page.setViewportSize({width,height:900});await page.addInitScript(language=>{document.cookie="releasetracker-csrf=fixture; path=/";localStorage.setItem("language",language)},language)
   const name="releasetracker-1791000000000000000-deadbeef.zip";let submitted=0,reviewed=false,statusReads=0
   const id="a".repeat(32),token="b".repeat(43),hash="c".repeat(64)
@@ -19,26 +19,26 @@ for(const language of ["zh","en"])for(const width of [320,1280]){
     return send({id,state:"succeeded",phase:"finished",error_code:null,rolled_back:false,review_required:true})
    }
    if(path==="/api/backups/restore-review"){expect(req.postDataJSON()).toEqual({reviewed:true});reviewed=true;return send({review_required:false})}
-   if(path==="/api/settings"||path.includes("/oauth/providers")||path==="/api/tasks")return send([])
+   if(path==="/api/settings"||path==="/api/oidc-providers"||path==="/api/auth/oidc/providers"||path==="/api/tasks")return send([])
    if(path.includes("security-keys"))return send({jwt_secret:{configured:true,fingerprint:"fixture",active_sessions:1},encryption_key:{configured:true,fingerprint:"fixture",undecryptable_count:0,inventory:{}}})
    return send({items:[],total:0})
   })
-  await page.goto("/settings");await page.getByRole("tab",{name:language==="zh"?"备份":"Backups",exact:true}).click()
+  await page.goto("/settings");await page.getByRole("main").getByRole("navigation").getByRole("button",{name:language==="zh"?"实例备份":"Instance backups",exact:true}).click()
   await page.getByRole("button",{name:`${language==="zh"?"在线恢复":"Restore online"} ${name}`,exact:true}).click()
   const dialog=page.getByRole("alertdialog");const confirm=dialog.getByRole("button",{name:language==="zh"?"进入维护并恢复":"Enter maintenance and restore",exact:true})
   await expect(confirm).toBeDisabled()
   await dialog.getByLabel(language==="zh"?"输入完整备份文件名以确认":"Type the complete backup filename to confirm").fill(name)
   await expect(confirm).toBeDisabled();await dialog.getByRole("checkbox").check();await expect(confirm).toBeEnabled()
   await expect(dialog).toContainText(hash);expect(await dialog.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true)
-  await page.screenshot({path:`/tmp/rt-online-restore-review-${language}-${width}.png`});expect(submitted).toBe(0)
+  await page.screenshot({path:testInfo.outputPath("online-restore-review.png")});expect(submitted).toBe(0)
   await confirm.click();await expect(dialog).not.toBeVisible()
   await expect(page.getByRole("region",{name:language==="zh"?"在线恢复进度":"Online restore progress",exact:true}).getByRole("status")).toContainText(language==="zh"?"恢复完成":"Restored and services reloaded")
   expect(submitted).toBe(1);expect(statusReads).toBeGreaterThan(0)
-  await page.reload();await page.getByRole("tab",{name:language==="zh"?"备份":"Backups",exact:true}).click()
+  await page.reload();await page.getByRole("main").getByRole("navigation").getByRole("button",{name:language==="zh"?"实例备份":"Instance backups",exact:true}).click()
   await expect(page.getByRole("region",{name:language==="zh"?"在线恢复进度":"Online restore progress",exact:true}).getByRole("status")).toContainText(language==="zh"?"恢复完成":"Restored and services reloaded")
   await page.getByRole("button",{name:language==="zh"?"重新登录":"Sign in again",exact:true}).click()
   await expect(page).toHaveURL(/\/login$/)
-  await page.goto("/settings");await page.getByRole("tab",{name:language==="zh"?"备份":"Backups",exact:true}).click()
+  await page.goto("/settings");await page.getByRole("main").getByRole("navigation").getByRole("button",{name:language==="zh"?"实例备份":"Instance backups",exact:true}).click()
   await page.getByRole("button",{name:language==="zh"?"复核恢复状态":"Review restored state",exact:true}).click()
   expect(reviewed).toBe(false)
   await page.getByRole("alertdialog").getByRole("button",{name:language==="zh"?"已核对现场，恢复新操作":"Remote state reviewed; resume new operations",exact:true}).click()
