@@ -250,8 +250,7 @@ class TaskStore:
                 """UPDATE tasks SET cleared_at=?
                    WHERE cleared_at IS NULL AND state IN (
                        'succeeded','no_change','skipped','failed','cancelled','superseded'
-                   ) AND (? IS NULL OR updated_at<=?)"""
-                + condition,
+                   ) AND (? IS NULL OR updated_at<=?)""" + condition,
                 params,
             )
             return cursor.rowcount
