@@ -1,5 +1,6 @@
 """A floating declaration is compared using the actual running artifact."""
 
+import json
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -8,9 +9,13 @@ import pytest
 
 from releasetracker.services.deployment_plan import plan_fingerprint
 from releasetracker.services.deployment_version_evidence import (
+    collect_ssh_version_evidence,
     collect_version_evidence,
     image_reference,
 )
+from releasetracker.services.ssh_compose_deploy import inspect_image, running_image_ids
+from releasetracker.services.ssh_compose_plan import SSHComposeTarget
+from releasetracker.services.ssh_transport import SSHCommandResult
 from releasetracker.services.version_policy import version_policy_reason
 from test_version_policy import evidence, task
 
@@ -303,3 +308,101 @@ async def test_same_artifact_still_requires_first_ownership_approval():
     queued, observed, _ = await proof()
     assert version_policy_reason(queued, observed) is None
     assert observed.ownership_reason("installation", "target") == "marker_missing"
+
+
+async def ssh_proof(running_tags, *, digest=DIGEST, target_digest=DIGEST, current="latest"):
+    """Podman over SSH: one running replica, one exited leftover and the local store."""
+    store = {
+        IMAGE_ID: {
+            "Id": IMAGE_ID.removeprefix("sha256:"),
+            "RepoTags": [f"{REPO}:{t}" for t in running_tags],
+            "RepoDigests": [f"{REPO}@{digest}"],
+        }
+    }
+
+    async def run(argv, **_):
+        if argv[1] == "ps":
+            matched = "label=io.podman.compose.project=jenkins" in argv
+            return SSHCommandResult(0, "c1\nc2\n" if matched else "", "")
+        if argv[1] == "inspect":
+            image = IMAGE_ID if argv[2] == "c1" else OTHER_ID
+            container = {
+                "Image": image.removeprefix("sha256:"),
+                "State": {"Running": argv[2] == "c1"},
+            }
+            return SSHCommandResult(0, json.dumps([container]), "")
+        info = store.get(argv[3])
+        return (
+            SSHCommandResult(0, json.dumps([info]), "") if info else SSHCommandResult(125, "", "")
+        )
+
+    session = SimpleNamespace(run=run)
+    target = SSHComposeTarget(
+        working_dir="/srv/jenkins",
+        project="jenkins",
+        config_files=["compose.yml"],
+        tool="podman-compose",
+    )
+    channel = SimpleNamespace(
+        name="stable",
+        model_dump=lambda **kw: {"name": "stable", "type": None, "include_pattern": RULE},
+    )
+    storage = SimpleNamespace(
+        get_tracker_source=AsyncMock(
+            return_value=SimpleNamespace(source_type="container", release_channels=[channel])
+        )
+    )
+    queued = task("all", JENKINS, manual=True)
+    queued["payload"]["targets"][0].update(
+        source_id=1, channel="stable", target=[JENKINS, target_digest]
+    )
+    queued["payload"]["policy_bindings"] = [
+        {"service": "agent", "tracker_source_id": 1, "channel_name": "stable"}
+    ]
+    images = {"agent": f"{REPO}:{current}"}
+    result = await collect_ssh_version_evidence(
+        storage,
+        SimpleNamespace(target_ref={"mode": "ssh_compose"}),
+        queued,
+        images,
+        {"agent": f"{REPO}:{JENKINS}"},
+        await running_image_ids(session, target, ["agent"]),
+        lambda reference: inspect_image(session, target, reference),
+    )
+    observed = replace(
+        evidence(current),
+        recovery="ssh_files",
+        configuration={"current_services": images},
+        version_evidence=result,
+    )
+    return queued, observed
+
+
+@pytest.mark.asyncio
+async def test_ssh_floating_tag_on_target_artifact_survives_target_pull():
+    queued, before = await ssh_proof(["latest"])
+    _, after = await ssh_proof(["latest", JENKINS])
+    # SSH pulls before its pre-write check; the approved fingerprint must still match.
+    assert before.version_evidence == after.version_evidence
+    assert before.version_evidence[0]["same_artifact"]
+    assert before.version_evidence[0]["image_ids"] == [IMAGE_ID]
+    queued["payload"].update(manual=False, auto_update_policy="patch")
+    assert version_policy_reason(queued, before) is None
+
+
+@pytest.mark.asyncio
+async def test_ssh_republished_tag_moving_away_on_pull_keeps_the_proof():
+    queued, before = await ssh_proof([JENKINS], target_digest=OTHER_DIGEST, current=JENKINS)
+    _, after = await ssh_proof([], target_digest=OTHER_DIGEST, current=JENKINS)
+    assert before.version_evidence == after.version_evidence
+    assert not before.version_evidence[0]["same_artifact"]
+    assert version_policy_reason(queued, before) is None
+
+
+@pytest.mark.asyncio
+async def test_ssh_floating_tag_on_another_artifact_still_needs_approval():
+    queued, observed = await ssh_proof(["latest"], digest=OTHER_DIGEST)
+    assert version_policy_reason(queued, observed) == "version_unknown_requires_approval"
+    queued, observed = await ssh_proof(["latest", "3385.vabc-1"], digest=OTHER_DIGEST)
+    assert observed.version_evidence[0]["aliases"] == ["3385.vabc-1"]
+    assert version_policy_reason(queued, observed) is None

@@ -66,6 +66,34 @@ def snapshot_artifacts(snapshot):
     return {None: [(snapshot.get("recovery_evidence") or {}).get("image_id")]}
 
 
+async def bound_channels(storage, executor, task):
+    """Each container target with its single channel and the services it governs."""
+    result = []
+    for selected in task["payload"].get("targets", []):
+        source = (
+            await storage.get_tracker_source(selected.get("source_id"))
+            if selected.get("source_id")
+            else None
+        )
+        if source is None or source.source_type != "container":
+            continue
+        channels = [c for c in source.release_channels if c.name == selected.get("channel")]
+        if len(channels) != 1:
+            continue
+        services = (
+            [None]
+            if executor.target_ref.get("mode", "container") == "container"
+            else [
+                b["service"]
+                for b in task["payload"].get("policy_bindings", [])
+                if b.get("tracker_source_id") == selected.get("source_id")
+                and b.get("channel_name") == selected.get("channel")
+            ]
+        )
+        result.append((selected, channels[0].model_dump(mode="json"), services))
+    return result
+
+
 async def collect_version_evidence(storage, adapter, executor, task, snapshot, images, targets):
     if not task:
         return ()
@@ -81,28 +109,7 @@ async def collect_version_evidence(storage, adapter, executor, task, snapshot, i
                 cache[reference] = None
         return cache[reference]
 
-    for selected in task["payload"].get("targets", []):
-        source = (
-            await storage.get_tracker_source(selected.get("source_id"))
-            if selected.get("source_id")
-            else None
-        )
-        if source is None or source.source_type != "container":
-            continue
-        channels = [c for c in source.release_channels if c.name == selected.get("channel")]
-        if len(channels) != 1:
-            continue
-        channel = channels[0].model_dump(mode="json")
-        services = (
-            [None]
-            if executor.target_ref.get("mode", "container") == "container"
-            else [
-                b["service"]
-                for b in task["payload"].get("policy_bindings", [])
-                if b.get("tracker_source_id") == selected.get("source_id")
-                and b.get("channel_name") == selected.get("channel")
-            ]
-        )
+    for selected, channel, services in await bound_channels(storage, executor, task):
         for service in services:
             current_repo, _, _ = image_reference(images.get(service))
             target_repo, _, _ = image_reference(targets.get(service))
@@ -151,6 +158,68 @@ async def collect_version_evidence(storage, adapter, executor, task, snapshot, i
                     else None
                 )
                 same_artifact = bool(desired_id and all(i == desired_id for i in verified_ids))
+            proofs.append(
+                {
+                    "source_id": selected.get("source_id"),
+                    "channel_name": selected.get("channel"),
+                    "service": service,
+                    "target": desired,
+                    "channel": channel,
+                    "aliases": sorted(aliases or []),
+                    "image_ids": sorted(set(verified_ids)),
+                    "same_artifact": bool(same_artifact),
+                }
+            )
+    return tuple(proofs)
+
+
+async def collect_ssh_version_evidence(storage, executor, task, images, targets, running, inspect):
+    """Bind SSH Compose aliases to running artifacts; invariant under the target pull.
+
+    The SSH executor pulls before its pre-write admission check. That pull can add
+    the target tag or digest to a running image, or move the tag away from it, so
+    the local target reference and the target tag never contribute to this proof.
+    """
+    if not task:
+        return ()
+    proofs = []
+    for selected, channel, services in await bound_channels(storage, executor, task):
+        desired = selected.get("target") or []
+        digest = normalize_image_id(desired[1]) if len(desired) > 1 else None
+        for service in services:
+            current_repo, _, _ = image_reference(images.get(service))
+            target_repo, target_tag, _ = image_reference(targets.get(service))
+            pulled = {target_tag, desired[0] if desired else None}
+            ids = running.get(service) or []
+            aliases = None
+            same_artifact = bool(ids and digest and current_repo and current_repo == target_repo)
+            verified_ids = []
+            for identity in ids:
+                identity = normalize_image_id(identity)
+                info = await inspect(identity) if identity else None
+                if not isinstance(info, dict) or normalize_image_id(info.get("Id")) != identity:
+                    same_artifact = False
+                    aliases = set()
+                    continue
+                verified_ids.append(identity)
+                tags = {
+                    tag
+                    for ref in info.get("RepoTags") or []
+                    for repository, tag, _ in [image_reference(ref)]
+                    if repository == current_repo
+                    and tag
+                    and tag not in pulled
+                    and channel_accepts(tag, channel)
+                }
+                aliases = tags if aliases is None else aliases & tags
+                digests = {
+                    d
+                    for ref in info.get("RepoDigests") or []
+                    for repository, _, d in [image_reference(ref)]
+                    if repository == target_repo and d
+                }
+                # Content addressed: a running image recorded under the planned digest is it.
+                same_artifact &= digest in digests
             proofs.append(
                 {
                     "source_id": selected.get("source_id"),

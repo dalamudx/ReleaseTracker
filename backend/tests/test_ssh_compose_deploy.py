@@ -102,15 +102,30 @@ async def test_controlled_update_uses_real_sftp_but_no_real_container_commands(
         )
         images = {"web": "app:1" if scenario == "already_current" else "app:2"}
         if scenario in {"success", "deferred", "already_current"}:
-            result = await deploy.execute_update(
-                storage,
-                connection,
-                target,
-                images,
-                save,
-                executor=SimpleNamespace(id=1),
-                defer_verification=scenario == "deferred",
-            )
+            from releasetracker.services.ssh_compose_ownership import RUN_SNAPSHOT
+            from releasetracker.services.task_effects import MUTATION_GUARD
+
+            exempt = []
+
+            async def guard():
+                exempt.append(RUN_SNAPSHOT.get())
+
+            guard_token = MUTATION_GUARD.set(guard)
+            try:
+                result = await deploy.execute_update(
+                    storage,
+                    connection,
+                    target,
+                    images,
+                    save,
+                    executor=SimpleNamespace(id=1),
+                    defer_verification=scenario == "deferred",
+                )
+            finally:
+                MUTATION_GUARD.reset(guard_token)
+            # The pre-write check sees this run's own locked snapshot as exempt.
+            assert exempt == ([] if scenario == "already_current" else [42])
+            assert RUN_SNAPSHOT.get() is None
             assert result["status"] == ("skipped" if scenario == "already_current" else "success")
             if scenario == "deferred":
                 assert result["readiness_context"]["expected"] == {"web": "sha256:new"}

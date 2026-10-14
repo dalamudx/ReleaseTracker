@@ -4,10 +4,14 @@ import asyncio
 import hashlib
 import json
 import re
+from contextvars import ContextVar
 
 from .ssh_compose import TOOLS
 from .ssh_transport import SSHOperationError, open_ssh_session
 from ..storage import sqlite_compose_ownership as ownership
+
+# The pre-update snapshot this context's own run locked; it is not another pending recovery.
+RUN_SNAPSHOT: ContextVar[int | None] = ContextVar("ssh_compose_run_snapshot", default=None)
 
 
 def _key(parts):
@@ -56,7 +60,9 @@ async def identify(session, target):
 
 async def verify_session(storage, executor, session, target, *, recovery=False):
     proof = await identify(session, target)
-    await ownership.assert_owner(storage, executor, proof, recovery=recovery)
+    await ownership.assert_owner(
+        storage, executor, proof, recovery=recovery, own_snapshot=RUN_SNAPSHOT.get()
+    )
     return proof
 
 

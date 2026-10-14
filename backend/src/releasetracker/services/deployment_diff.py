@@ -258,13 +258,41 @@ async def native_review(
     return protected_state(storage, state), diff
 
 
-async def ssh_review(storage, executor, connection, target, targets):
-    from .ssh_compose_deploy import make_plan
+async def ssh_review(
+    storage,
+    executor,
+    connection,
+    target,
+    targets,
+    *,
+    task=None,
+    version_evidence=None,
+    current_services=None,
+):
+    from .ssh_compose_deploy import inspect_image, make_plan, running_image_ids
     from .ssh_transport import open_ssh_session
 
     async with open_ssh_session(storage, connection) as session:
         async with session.sftp() as sftp:
             plan, _ = await make_plan(session, sftp, target, targets)
+        images = {s: plan.rendered.get("services", {}).get(s, {}).get("image") for s in targets}
+        if current_services is not None:
+            current_services.update(images)
+        if version_evidence is not None and task:
+            from .deployment_version_evidence import collect_ssh_version_evidence
+
+            running = await running_image_ids(session, target, targets)
+            version_evidence.extend(
+                await collect_ssh_version_evidence(
+                    storage,
+                    executor,
+                    task,
+                    images,
+                    targets,
+                    running,
+                    lambda reference: inspect_image(session, target, reference),
+                )
+            )
     observed = _normalize({"compose": plan.rendered})
     desired = deepcopy(observed)
     for service, image in plan.targets.items():

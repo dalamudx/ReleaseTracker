@@ -115,7 +115,7 @@ async def write(storage, db, executor_id, config):
         ) from None
 
 
-async def assert_owner(storage, executor, proof, *, recovery=False):
+async def assert_owner(storage, executor, proof, *, recovery=False, own_snapshot=None):
     row = await get(storage, executor.id)
     if not row or not row["runtime_key"]:
         raise ComposeOwnershipConflict(
@@ -127,8 +127,9 @@ async def assert_owner(storage, executor, proof, *, recovery=False):
         db = await storage._get_connection()
         pending = await (
             await db.execute(
-                "SELECT 1 FROM executor_snapshots WHERE executor_id=? AND locked=1 LIMIT 1",
-                (executor.id,),
+                "SELECT 1 FROM executor_snapshots WHERE executor_id=? AND locked=1 "
+                "AND id IS NOT ? LIMIT 1",
+                (executor.id, own_snapshot),
             )
         ).fetchone()
         if pending:

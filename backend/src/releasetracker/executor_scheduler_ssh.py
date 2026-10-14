@@ -5,7 +5,7 @@ from .services.ssh_compose_discovery import verify_discovered_project
 from .services.ssh_compose_plan import SSHComposeTarget, SERVICE
 from .services.ssh_compose_snapshot import save_snapshot
 from .services.ssh_transport import SSHOperationError, open_ssh_session
-from .services.ssh_compose_ownership import identify, verify_session
+from .services.ssh_compose_ownership import RUN_SNAPSHOT, identify, verify_session
 from .storage.sqlite_compose_ownership import ComposeOwnershipConflict
 
 
@@ -178,13 +178,21 @@ class ExecutorSchedulerSSH:
                 await self.storage.set_executor_snapshot_locked(
                     executor_config.id, diagnostics["snapshot_id"], locked=False
                 )
-        return await self._finalize_run(
-            executor_config,
-            run_id,
-            status=status,
-            from_version=from_version,
-            to_version=to_version,
-            message=message,
-            last_error=message if status == "failed" else None,
-            diagnostics=diagnostics,
+        # A deferred-readiness handoff re-reads admission evidence while this run's
+        # own snapshot is still locked; only that snapshot is exempt.
+        snapshot_token = RUN_SNAPSHOT.set(
+            diagnostics.get("snapshot_id") if status == "success" else None
         )
+        try:
+            return await self._finalize_run(
+                executor_config,
+                run_id,
+                status=status,
+                from_version=from_version,
+                to_version=to_version,
+                message=message,
+                last_error=message if status == "failed" else None,
+                diagnostics=diagnostics,
+            )
+        finally:
+            RUN_SNAPSHOT.reset(snapshot_token)

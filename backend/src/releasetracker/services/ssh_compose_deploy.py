@@ -210,31 +210,67 @@ def replica_counts(rendered, targets):
     return counts
 
 
+async def _service_container_ids(session, target, service):
+    engine = TOOLS[target.tool][1]
+    ids = []
+    for project_label in (
+        "com.docker.compose.project",
+        "io.podman.compose.project",
+    ):
+        output = await _command(
+            session,
+            [
+                engine,
+                "ps",
+                "--all",
+                "--no-trunc",
+                "--filter",
+                f"label={project_label}={target.project}",
+                "--filter",
+                f"label=com.docker.compose.service={service}",
+                "--format",
+                "{{.ID}}",
+            ],
+            target,
+        )
+        ids.extend(cid for cid in output.split() if cid not in ids)
+    return ids
+
+
+async def running_image_ids(session, target, services):
+    """Read-only image IDs of running service containers; None marks an unreadable one."""
+    engine = TOOLS[target.tool][1]
+    result = {}
+    for service in services:
+        images = []
+        for cid in (await _service_container_ids(session, target, service))[:64]:
+            try:
+                obj = json.loads(await _command(session, [engine, "inspect", cid], target))[0]
+                if not obj.get("State", {}).get("Running"):
+                    continue
+                images.append(obj.get("Image"))
+            except (SSHOperationError, ValueError, IndexError, TypeError, AttributeError):
+                images.append(None)
+        result[service] = images
+    return result
+
+
+async def inspect_image(session, target, reference):
+    """Read-only local image inspect; it never pulls. A missing image returns None."""
+    try:
+        raw = await _command(
+            session, [TOOLS[target.tool][1], "image", "inspect", reference], target
+        )
+        obj = json.loads(raw)[0]
+    except (SSHOperationError, ValueError, IndexError, TypeError):
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
 async def verify_running(session, target, args, expected, counts=None, *, require_health=False):
     engine = TOOLS[target.tool][1]
     for service, image_id in expected.items():
-        ids = []
-        for project_label in (
-            "com.docker.compose.project",
-            "io.podman.compose.project",
-        ):
-            output = await _command(
-                session,
-                [
-                    engine,
-                    "ps",
-                    "--all",
-                    "--no-trunc",
-                    "--filter",
-                    f"label={project_label}={target.project}",
-                    "--filter",
-                    f"label=com.docker.compose.service={service}",
-                    "--format",
-                    "{{.ID}}",
-                ],
-                target,
-            )
-            ids.extend(cid for cid in output.split() if cid not in ids)
+        ids = await _service_container_ids(session, target, service)
         if (
             not ids
             or len(ids) != (counts or {}).get(service, 1)
@@ -313,7 +349,7 @@ async def execute_update(
     defer_verification=False,
 ):
     """save_snapshot must durably encrypt the supplied payload or raise before commit."""
-    from .ssh_compose_ownership import verify_session
+    from .ssh_compose_ownership import RUN_SNAPSHOT, verify_session
     from .task_effects import mark_deployment_mutation
 
     async with open_ssh_session(storage, connection) as session:
@@ -321,6 +357,7 @@ async def execute_update(
         async with session.sftp() as sftp:
             async with project_lock(session, sftp, target) as lock:
                 temporary = None
+                snapshot_token = None
                 try:
                     plan, env_paths = await make_plan(session, sftp, target, targets)
                     summary = plan.public_summary()
@@ -401,6 +438,9 @@ async def execute_update(
                             "managed_markers": dict(MANAGED_MARKERS.get() or {}),
                         }
                     )
+                    # The pre-write admission check must not treat this run's own
+                    # recovery point as a pending recovery of an earlier update.
+                    snapshot_token = RUN_SNAPSHOT.set(snapshot_id)
                     await _check_inputs(session, sftp, plan)
                     await mark_deployment_mutation()
                     lock["uncertain"] = True  # Includes loss of the rename acknowledgement.
@@ -460,6 +500,8 @@ async def execute_update(
                         "deploy", "preflight_failed_no_project_mutation"
                     ) from None
                 finally:
+                    if snapshot_token is not None:
+                        RUN_SNAPSHOT.reset(snapshot_token)
                     if temporary:
                         try:
                             await sftp.remove(temporary)

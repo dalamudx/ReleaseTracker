@@ -253,6 +253,11 @@ async def test_locked_snapshot_blocks_delete_update_and_generic_unlock(storage, 
     with pytest.raises(claims.ComposeOwnershipConflict, match="requires recovery"):
         await claims.assert_owner(storage, config, proof(config))
     await claims.assert_owner(storage, config, proof(config), recovery=True)
+    # Only the run that locked this snapshot may pass its own pre-write check.
+    await claims.assert_owner(storage, config, proof(config), own_snapshot=sid)
+    await save_snapshot(storage, config.id, None, {"changes": []})
+    with pytest.raises(claims.ComposeOwnershipConflict, match="requires recovery"):
+        await claims.assert_owner(storage, config, proof(config), own_snapshot=sid)
     with pytest.raises(claims.ComposeOwnershipConflict, match="requires recovery"):
         await storage.update_executor_config(config.id, config)
 

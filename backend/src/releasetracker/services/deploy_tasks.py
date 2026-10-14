@@ -103,18 +103,33 @@ class DeployTasks:
         if mode == "ssh_compose":
             from .deployment_diff import frozen_targets, ssh_review
 
+            version_evidence, current_services = [], {}
             with frozen_targets(task):
                 _, target, targets = await self.scheduler._resolve_ssh_update(executor)
                 state_hash, diff = await ssh_review(
-                    self.storage, executor, connection, target, targets
+                    self.storage,
+                    executor,
+                    connection,
+                    target,
+                    targets,
+                    task=task,
+                    version_evidence=version_evidence,
+                    current_services=current_services,
                 )
             from .ssh_compose_deploy import read_managed_markers
 
             markers = await read_managed_markers(self.storage, connection, target, services=targets)
             configuration["target"] = target.model_dump(mode="json")
+            configuration["current_services"] = dict(sorted(current_services.items()))
             configuration["runtime_configuration"] = state_hash
             return TargetEvidence(
-                runtime_identity, target_identity, configuration, tuple(markers), recovery, diff
+                runtime_identity,
+                target_identity,
+                configuration,
+                tuple(markers),
+                recovery,
+                diff,
+                tuple(version_evidence),
             )
 
         from .runtime_credentials import materialize_runtime_connection_credentials
