@@ -789,6 +789,11 @@ class DeploymentReadiness:
                 ("blocked" if blocked else "completed", now, row["task_id"]),
             )
         handler = getattr(self.scheduler, "deploy_tasks", None)
+        if handler and status == "success":
+            # The handoff baseline was read before the rollout converged.
+            await handler.refresh_admission_baseline(
+                final.get("recheck_of") or row["task_id"], executor.id
+            )
         if handler and not final.get("recheck_of"):
             await handler.finished(await self.storage.tasks.get(row["task_id"]))
 

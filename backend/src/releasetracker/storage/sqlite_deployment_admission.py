@@ -526,3 +526,48 @@ class DeploymentAdmissionStore:
                 await db.execute("SELECT * FROM deployment_plans WHERE id=?", (row["id"],))
             ).fetchone()
             return self._decode(updated)
+
+    async def refresh_applied(self, task_id, evidence: TargetEvidence, *, now=None):
+        """Replace a deferred deployment's handoff baseline once readiness converged.
+
+        The handoff read precedes the rollout, so runtime-derived evidence such as
+        Kubernetes Pod artifact digests is not yet available. Only the deployment
+        that recorded the current baseline may refresh it, and only while its
+        identity and markers still hold. Readiness has already verified the
+        submitted target; any other change since the handoff is not reported.
+        """
+        now = time.time() if now is None else now
+        async with self.storage.tasks.transaction() as db:
+            row = await (
+                await db.execute(
+                    "SELECT * FROM deployment_plans WHERE task_id=? ORDER BY id DESC LIMIT 1",
+                    (task_id,),
+                )
+            ).fetchone()
+            if (
+                row is None
+                or row["state"] != "applied"
+                or row["identity_key"] != evidence.identity_key
+            ):
+                return False
+            deployment_ids = {marker.get(PREFIX + "deployment-id") for marker in evidence.markers}
+            if deployment_ids - {None, str(task_id)}:
+                return False
+            reason = await self._ownership_reason(
+                db, evidence, await self.installation_id(), row["target_id"]
+            )
+            if reason is not None:
+                return False
+            cursor = await db.execute(
+                """UPDATE managed_targets SET baseline=?,updated_at=?
+                   WHERE target_id=? AND executor_id=? AND identity_key=? AND last_task_id=?""",
+                (
+                    evidence.evidence_hash,
+                    now,
+                    row["target_id"],
+                    row["executor_id"],
+                    evidence.identity_key,
+                    task_id,
+                ),
+            )
+            return cursor.rowcount == 1

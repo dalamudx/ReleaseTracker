@@ -197,6 +197,23 @@ class DeployTasks:
             return False
         return True
 
+    async def refresh_admission_baseline(self, task_id, executor_id):
+        """Re-record a deferred deployment's baseline after readiness converged."""
+        try:
+            executor = await self.storage.get_executor_config(executor_id)
+            if executor is None:
+                return False
+            evidence = await self._collect_admission_evidence(executor)
+            return await self.admission.refresh_applied(task_id, evidence)
+        except Exception as exc:
+            # Keeps the handoff baseline; the next deployment reports drift for review.
+            logger.warning(
+                "Deployment admission baseline not refreshed for task %s: %s",
+                task_id,
+                type(exc).__name__,
+            )
+            return False
+
     async def enqueue(self, executor_id, *, manual, desired_revision=None):
         executor = await self.storage.get_executor_config(executor_id)
         if not executor or not executor.enabled:

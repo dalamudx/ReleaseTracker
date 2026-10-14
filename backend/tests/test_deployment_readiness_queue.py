@@ -928,6 +928,57 @@ async def test_deferred_readiness_handoff_records_admission_baseline(storage, mo
     assert tuple(target) == (evidence.evidence_hash, task["id"])
 
 
+async def admission_baseline(storage, executor_id):
+    db = await storage._get_connection()
+    row = await (
+        await db.execute(
+            "SELECT baseline,last_task_id FROM managed_targets WHERE executor_id=?",
+            (executor_id,),
+        )
+    ).fetchone()
+    return tuple(row)
+
+
+@pytest.mark.parametrize("case", ["converged", "unhealthy", "other_deployment", "superseded"])
+async def test_healthy_readiness_refreshes_handoff_admission_baseline(storage, monkeypatch, case):
+    from releasetracker.services.deployment_plan import TargetEvidence, managed_markers
+
+    executor, scheduler, observer, probe, _, task, run_id = await setup(
+        storage, monkeypatch, stable=0
+    )
+    handler = scheduler.deploy_tasks
+    handoff = await admission_baseline(storage, executor.id)
+    plan = await handler.admission.latest(task["id"])
+    deployment = task["id"] + 1 if case == "other_deployment" else task["id"]
+    markers = managed_markers(
+        await handler.admission.installation_id(), plan["target_id"], deployment
+    )
+    # The handoff read precedes the rollout; converged evidence adds runtime artifacts.
+    converged = TargetEvidence(
+        "test-runtime",
+        "test-target",
+        {"kind": "container", "artifacts": "verified"},
+        (markers,),
+        "container_config",
+    )
+    monkeypatch.setattr(handler, "_collect_admission_evidence", AsyncMock(return_value=converged))
+    if case == "unhealthy":
+        probe.return_value = {"outcome": "unhealthy", "services": []}
+    if case == "superseded":
+        db = await storage._get_connection()
+        await db.execute(
+            "UPDATE managed_targets SET last_task_id=? WHERE executor_id=?",
+            (task["id"] + 1, executor.id),
+        )
+        await db.commit()
+        handoff = await admission_baseline(storage, executor.id)
+    await observe(storage, observer, task["id"])
+    healthy = case != "unhealthy"
+    assert (await storage.get_executor_run(run_id)).status == ("success" if healthy else "failed")
+    expected = (converged.evidence_hash, task["id"]) if case == "converged" else handoff
+    assert await admission_baseline(storage, executor.id) == expected
+
+
 @pytest.mark.parametrize("recovers", [True, False])
 async def test_missing_layer_uses_native_probe_and_bounded_queue_recovery(
     storage, monkeypatch, recovers
