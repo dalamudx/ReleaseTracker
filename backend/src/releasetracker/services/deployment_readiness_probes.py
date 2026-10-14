@@ -534,7 +534,15 @@ async def _probe_ssh(storage, executor, verification):
     context = verification.get("readiness_context") or {}
     if not context.get("expected") or not context.get("counts") or not context.get("targets"):
         return _result("unknown", message="SSH immutable image/replica evidence missing")
-    current = await _capture_ssh(storage, executor)
+    from .ssh_compose_ownership import RUN_SNAPSHOT
+
+    # The run's own pre-update snapshot stays locked until readiness succeeds; it
+    # is not another pending recovery. Any other locked snapshot still blocks.
+    token = RUN_SNAPSHOT.set((verification.get("diagnostics") or {}).get("snapshot_id"))
+    try:
+        current = await _capture_ssh(storage, executor)
+    finally:
+        RUN_SNAPSHOT.reset(token)
     if any(current["images"].get(name) != image for name, image in context["targets"].items()):
         return _result("superseded", message="SSH project target images changed")
     return _probe_containers(

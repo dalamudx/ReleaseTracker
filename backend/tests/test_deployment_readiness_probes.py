@@ -374,7 +374,15 @@ async def test_ssh_no_healthcheck_uses_pinned_identity_and_counts(monkeypatch):
     old = {"containers": {"service-a": [container("old")]}}
     target = {"containers": {"service-a": [container("new", None)]}}
     current = {**target, "images": {"service-a": IMAGE}}
-    monkeypatch.setattr(probes, "_capture_ssh", AsyncMock(return_value=current))
+    from releasetracker.services.ssh_compose_ownership import RUN_SNAPSHOT
+
+    exempt = []
+
+    async def capture(storage, executor):
+        exempt.append(RUN_SNAPSHOT.get())
+        return current
+
+    monkeypatch.setattr(probes, "_capture_ssh", capture)
     context = {
         "expected": {"service-a": "sha256:" + "a" * 64},
         "counts": {"service-a": 1},
@@ -384,10 +392,17 @@ async def test_ssh_no_healthcheck_uses_pinned_identity_and_counts(monkeypatch):
         None,
         None,
         SimpleNamespace(target_ref={"mode": "ssh_compose"}),
-        {"baseline": old, "target": target, "readiness_context": context},
+        {
+            "baseline": old,
+            "target": target,
+            "readiness_context": context,
+            "diagnostics": {"snapshot_id": 26},
+        },
     )
     assert result["outcome"] == "healthy"
     assert result["services"][0]["method"] == "runtime_state"
+    # Ownership verification exempts only this run's own locked snapshot.
+    assert exempt == [26] and RUN_SNAPSHOT.get() is None
     current["images"]["service-a"] = IMAGE + "-external"
     result = await probes.probe_deployment(
         None,
