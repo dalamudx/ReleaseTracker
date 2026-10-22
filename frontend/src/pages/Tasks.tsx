@@ -3,7 +3,7 @@ import { QueryErrorState } from "@/components/common/QueryErrorState"
 import { DataPagination } from "@/components/common/DataPagination"
 import { usePageSize } from "@/hooks/use-page-size"
 import { useEffect, useState } from "react"
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router"
 import { useTranslation } from "react-i18next"
 import { taskErrorLabel } from "@/lib/task-errors"
@@ -51,19 +51,7 @@ import {
     InputGroupText,
 } from "@/components/ui/input-group"
 
-const states: TaskState[] = [
-    "queued",
-    "awaiting_approval",
-    "running",
-    "retry_wait",
-    "succeeded",
-    "no_change",
-    "skipped",
-    "failed",
-    "needs_attention",
-    "cancelled",
-    "superseded",
-]
+const categories = ["processing", "completed", "failed"] as const
 
 function getKindIcon(kind: QueueTask["kind"]) {
     switch (kind) {
@@ -518,7 +506,7 @@ function TaskItem({ task }: { task: QueueTask }) {
 
 export default function TasksPage() {
     const { t } = useTranslation()
-    const [state, setState] = useState("all")
+    const [state, setState] = useState<string>("processing")
     const [search, setSearch] = useState("")
     const [debouncedSearch, setDebouncedSearch] = useState("")
     const [page, setPage] = useState(1)
@@ -545,14 +533,14 @@ export default function TasksPage() {
     const tasks = useQuery({
         queryKey: ["tasks", "page", { state, skip, limit: pageSize, search: debouncedSearch }],
         queryFn: () => api.getTaskPage({
-            state: state === "all" ? undefined : state,
+            category: state === "all" ? undefined : state,
             offset: skip,
             limit: pageSize,
             search: debouncedSearch || undefined,
         }),
         refetchInterval: 5000,
         // Keep the current rows while the next page loads instead of flashing a spinner.
-        placeholderData: keepPreviousData,
+        placeholderData: (previous, query) => (query?.queryKey[2] as { state?: string })?.state === state ? previous : undefined,
     })
 
     const pageTasks = tasks.data?.items ?? []
@@ -617,9 +605,9 @@ export default function TasksPage() {
                         </SelectTrigger>
                         <SelectContent>
                             <SelectItem value="all">{t("tasks.all")}</SelectItem>
-                            {states.map((value) => (
-                                <SelectItem key={value} value={value} className="text-xs">
-                                    {t(`tasks.state.${value}`)}
+                            {categories.map((value) => (
+                                <SelectItem key={value} value={value}>
+                                    {t(`tasks.category.${value}`)}
                                 </SelectItem>
                             ))}
                         </SelectContent>

@@ -1556,6 +1556,7 @@
     "noMatching": "没有匹配的任务",
     "filter": "筛选任务",
     "all": "全部状态",
+    "category": { "processing": "处理中", "completed": "已完成", "failed": "失败" },
     "refresh": "刷新任务",
     "empty": "暂无任务",
     "latest": "最新任务",

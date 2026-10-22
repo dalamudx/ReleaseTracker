@@ -28,6 +28,7 @@ from .system_keys import SystemKeyManager
 
 FORMAT = 1
 MAX_DATABASE_BYTES = 2 * 1024**3
+MAX_ARCHIVE_BYTES = MAX_DATABASE_BYTES + 2 * 65536 + 1024**2
 MAX_KEY_BYTES = 65536
 MEMBERS = {"manifest.json", "releases.db", "system-secrets.json"}
 ARCHIVE_NAME = re.compile(r"releasetracker-[0-9]+-[0-9a-f]{8}\.zip")
@@ -296,6 +297,34 @@ async def _finish_thread(function, *args):
     return result
 
 
+def _import_verified_archive(archive, directory):
+    with tempfile.TemporaryDirectory(prefix=".import-verify-", dir=directory) as staging:
+        try:
+            manifest = validate_archive(archive, staging)
+            stamp = float(manifest["created_at"])
+            datetime.fromtimestamp(stamp, timezone.utc)
+            if stamp <= 0:
+                raise ValueError("Invalid backup timestamp")
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            OverflowError,
+            sqlite3.DatabaseError,
+            zipfile.BadZipFile,
+            RuntimeError,
+        ):
+            raise BackupManagementError("backup_import_invalid", 400) from None
+    # Keep the original backup time: uploading an old archive is not a fresh backup.
+    name = f"releasetracker-{int(stamp * 1e9)}-{uuid.uuid4().hex[:8]}.zip"
+    result = Path(directory) / name
+    with Path(archive).open("rb") as handle:
+        os.fsync(handle.fileno())
+    os.replace(archive, result)
+    _sync_directory(directory)
+    return result
+
+
 class InstanceBackup:
     def __init__(self, storage, key_manager, directory=None):
         self.storage = storage
@@ -369,6 +398,23 @@ class InstanceBackup:
                     await self.storage.close_current_task_connection()
 
             return await wait_for_runtime_worker(asyncio.create_task(apply()))
+
+    async def import_archive(self, chunks):
+        if self.lock.locked() or self._restore_pins:
+            raise BackupManagementError("backup_busy")
+        async with self.lock:
+            self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix=".import-", dir=self.directory) as temporary:
+                archive = Path(temporary) / "upload.zip"
+                with archive.open("xb") as output:
+                    archive.chmod(0o600)
+                    size = 0
+                    async for chunk in chunks:
+                        size += len(chunk)
+                        if size > MAX_ARCHIVE_BYTES:
+                            raise BackupManagementError("backup_import_too_large", 413)
+                        await _finish_thread(output.write, chunk)
+                return await _finish_thread(_import_verified_archive, archive, self.directory)
 
     def archives(self):
         return sorted(

@@ -246,7 +246,7 @@ function normalizeLatestCurrentReleaseSummary(item: LatestCurrentReleaseSummary)
 export const api = {
     getTasks: (params?: { before?: number; state?: string; limit?: number }) => apiClient.get<QueueTask[]>("/api/tasks", { params }).then(res => res.data),
     // Same list endpoint with offset paging; the total arrives in X-Total-Count so the body stays a plain array.
-    getTaskPage: (params: { state?: string; offset: number; limit: number; search?: string }) => apiClient.get<QueueTask[]>("/api/tasks", { params: { ...params, include_total: true } }).then(res => {
+    getTaskPage: (params: { category?: string; offset: number; limit: number; search?: string }) => apiClient.get<QueueTask[]>("/api/tasks", { params: { ...params, include_total: true } }).then(res => {
         const total = Number.parseInt(String(res.headers["x-total-count"] ?? ""), 10)
         return { items: res.data, total: Number.isFinite(total) ? total : params.offset + res.data.length }
     }),

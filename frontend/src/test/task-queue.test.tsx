@@ -46,7 +46,7 @@ describe("persistent task queue", () => {
         expect(screen.getByRole("button", { name: i18n.t("pagination.nextPage") })).toBeDisabled()
         fireEvent.click(screen.getByRole("button", { name: i18n.t("pagination.previousPage") }))
         expect(await screen.findByText("page-15")).toBeInTheDocument()
-        expect(api.getTaskPage).toHaveBeenLastCalledWith(expect.objectContaining({ state: undefined, offset: 10, limit: 10 }))
+        expect(api.getTaskPage).toHaveBeenLastCalledWith(expect.objectContaining({ category: "processing", offset: 10, limit: 10 }))
         expect(api.clearFinishedTasks).not.toHaveBeenCalled()
     })
 

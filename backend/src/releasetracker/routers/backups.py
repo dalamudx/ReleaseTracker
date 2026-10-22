@@ -98,6 +98,31 @@ async def list_backups(request: Request):
     }
 
 
+@router.post("/import", status_code=201)
+async def import_backup(request: Request):
+    from ..services.instance_backup import MAX_ARCHIVE_BYTES
+    import asyncio
+
+    if request.headers.get("content-type", "").split(";", 1)[0] not in {
+        "application/zip",
+        "application/octet-stream",
+    }:
+        raise HTTPException(415, "backup_import_invalid")
+    length = request.headers.get("content-length")
+    if length and (not length.isdigit() or int(length) > MAX_ARCHIVE_BYTES):
+        raise HTTPException(413, "backup_import_too_large")
+    try:
+        async with asyncio.timeout(300):
+            path = await service(request).import_archive(request.stream())
+    except BackupManagementError as error:
+        raise HTTPException(error.status_code, error.code) from None
+    except TimeoutError:
+        raise HTTPException(408, "backup_import_timeout") from None
+    except OSError:
+        raise HTTPException(503, "backup_import_storage_error") from None
+    return JSONResponse(entry(path), status_code=201, headers={"Cache-Control": "no-store"})
+
+
 @router.post("", status_code=201)
 async def create_backup(body: CreateBackup, request: Request):
     if not body.include_secrets_confirmed:

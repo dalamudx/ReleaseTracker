@@ -1,7 +1,7 @@
-import { useState } from "react"
+import { useId, useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
-import { Database, Download, Loader2, Trash2 } from "lucide-react"
+import { Database, Download, Loader2, Trash2, Upload } from "lucide-react"
 import { toast } from "sonner"
 import i18nInstance from "@/i18n/config"
 import backupEnglish from "@/i18n/locales/backups.en.json"
@@ -12,6 +12,8 @@ import { useRestoreReceipt } from "@/hooks/restore-receipt"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card"
 import { AlertDialog, AlertDialogTrigger, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel } from "@/components/ui/alert-dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 
 // This settings module is route-split: detailed operational copy does not need
 // to inflate every page's initial translation payload.
@@ -24,9 +26,27 @@ export function BackupSettings() {
     const [confirming, setConfirming] = useState(false)
     const [restoring, setRestoring] = useState<string | null>(null)
     const receipt = useRestoreReceipt()
+    const uploadId = useId()
+    const uploadInput = useRef<HTMLInputElement>(null)
+    const [archive, setArchive] = useState<File | null>(null)
+    const [uploadPercent, setUploadPercent] = useState(0)
     const [deleting, setDeleting] = useState<string | null>(null)
     const [deleteError, setDeleteError] = useState<string | null>(null)
     const query = useQuery({ queryKey: ["instance-backups"], queryFn: backupApi.list, refetchInterval: 30000, enabled: !receipt })
+    const upload = useMutation({
+        mutationFn: (file: File) => backupApi.import(file, setUploadPercent),
+        onSuccess: () => {
+            setArchive(null)
+            if (uploadInput.current) uploadInput.current.value = ""
+            toast.success(t("imported"))
+            void client.invalidateQueries({ queryKey: ["instance-backups"] })
+        },
+        onError: () => toast.error(t("importFailed")),
+    })
+    const importCode = (upload.error as { response?: { status?: number; data?: { detail?: string } } } | null)?.response
+    const importErrorKey = importCode?.status === 413 ? "importErrors.backup_import_too_large"
+        : importCode?.data?.detail && ["backup_busy", "backup_import_invalid", "backup_import_timeout", "backup_import_storage_error"].includes(importCode.data.detail)
+            ? `importErrors.${importCode.data.detail}` : "importFailed"
     const create = useMutation({
         mutationFn: backupApi.create,
         onSuccess: () => {
@@ -114,7 +134,7 @@ export function BackupSettings() {
                     </div>
                     <AlertDialog open={confirming} onOpenChange={open => { if (!create.isPending) setConfirming(open) }}>
                         <AlertDialogTrigger asChild>
-                            <Button disabled={!!receipt || create.isPending || remove.isPending || query.isPending || query.isError || query.data?.running}>{t("create")}</Button>
+                            <Button disabled={upload.isPending || !!receipt || create.isPending || remove.isPending || query.isPending || query.isError || query.data?.running}>{t("create")}</Button>
                         </AlertDialogTrigger>
                         <AlertDialogContent>
                             <AlertDialogHeader>
@@ -131,6 +151,22 @@ export function BackupSettings() {
                         </AlertDialogContent>
                     </AlertDialog>
                 </div>
+                <form className="flex min-w-0 flex-col gap-3 border-t pt-4" onSubmit={event => {
+                    event.preventDefault()
+                    if (archive) { setUploadPercent(0); upload.mutate(archive) }
+                }}>
+                    <Label htmlFor={uploadId}>{t("importFile")}</Label>
+                    <p id={`${uploadId}-hint`} className="text-sm text-muted-foreground">{t("importDescription")}</p>
+                    <div className="flex min-w-0 flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+                        <Input ref={uploadInput} id={uploadId} type="file" accept=".zip,application/zip" className="min-w-0 flex-1" aria-describedby={`${uploadId}-hint`} disabled={upload.isPending || create.isPending || remove.isPending || query.data?.running || query.isPending || query.isError} onChange={event => { setArchive(event.target.files?.[0] ?? null); upload.reset() }} />
+                        <Button type="submit" variant="outline" disabled={!archive || upload.isPending || create.isPending || remove.isPending || query.data?.running || query.isPending || query.isError}>
+                            {upload.isPending ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Upload className="size-4" aria-hidden="true" />}
+                            {upload.isPending ? t(uploadPercent < 100 ? "importUploading" : "importValidating", { percent: uploadPercent }) : t("import")}
+                        </Button>
+                    </div>
+                    {upload.isPending && <p role="status" className="text-sm text-muted-foreground">{t(uploadPercent < 100 ? "importUploading" : "importValidating", { percent: uploadPercent })}</p>}
+                    {upload.isError && <p role="alert" className="text-sm text-destructive">{t(importErrorKey)}</p>}
+                </form>
                 {query.isPending ? <p role="status">{t("common.loading", { ns: "translation" })}</p> : query.isError ? (
                     <div className="flex flex-wrap items-center gap-3">
                         <p role="alert" className="text-sm text-destructive">{t("loadFailed")}</p>
@@ -145,14 +181,14 @@ export function BackupSettings() {
                                     <p className="text-sm text-muted-foreground tabular-nums">{new Date(item.created_at * 1000).toLocaleString(i18n.language)} · {(item.size / 1024 / 1024).toFixed(1)} MB</p>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2">
-                                <Button variant="outline" size="sm" disabled={!!receipt || download.isPending || query.data?.running || remove.isPending} aria-label={`${t("download")} ${item.name}`} onClick={() => download.mutate(item.name)}>
+                                <Button variant="outline" size="sm" disabled={upload.isPending || !!receipt || download.isPending || query.data?.running || remove.isPending} aria-label={`${t("download")} ${item.name}`} onClick={() => download.mutate(item.name)}>
                                     {download.isPending && download.variables === item.name ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Download className="size-4" aria-hidden="true" />}
                                     {t("download")}
                                 </Button>
-                                <Button variant="outline" size="sm" disabled={!!receipt || remove.isPending || create.isPending || query.data?.running || item.in_use || query.data.items.length <= (query.data.minimum_local_archives ?? 1) || (download.isPending && download.variables === item.name)} aria-label={`${t("delete")} ${item.name}`} onClick={() => { setDeleting(item.name); setDeleteError(null) }}>
+                                <Button variant="outline" size="sm" disabled={upload.isPending || !!receipt || remove.isPending || create.isPending || query.data?.running || item.in_use || query.data.items.length <= (query.data.minimum_local_archives ?? 1) || (download.isPending && download.variables === item.name)} aria-label={`${t("delete")} ${item.name}`} onClick={() => { setDeleting(item.name); setDeleteError(null) }}>
                                     <Trash2 className="size-4" aria-hidden="true" />{t("delete")}
                                 </Button>
-                                {query.data?.online_restore_available && <Button variant="outline" size="sm" disabled={!!receipt || query.data.running || create.isPending || remove.isPending || download.isPending || item.in_use} aria-label={`${t("onlineRestore")} ${item.name}`} onClick={() => setRestoring(item.name)}>{t("onlineRestore")}</Button>}
+                                {query.data?.online_restore_available && <Button variant="outline" size="sm" disabled={upload.isPending || !!receipt || query.data.running || create.isPending || remove.isPending || download.isPending || item.in_use} aria-label={`${t("onlineRestore")} ${item.name}`} onClick={() => setRestoring(item.name)}>{t("onlineRestore")}</Button>}
                                 </div>
                             </li>
                         ))}

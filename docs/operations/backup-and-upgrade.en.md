@@ -35,6 +35,12 @@ The backup page shows archive count, total size and the current retention policy
 
 Administrators can delete a specific archive (confirmed by typing its name, irreversible), but at least one archive must remain. An archive being downloaded cannot be deleted and is skipped by pruning. This coordination works within a single application instance only; do not delete files manually behind the page's back.
 
+## In-app online import {#online-import}
+
+Under **Settings → Instance backups**, select a trusted ReleaseTracker ZIP file and choose **Online import**. Archive members, sizes, checksums, database integrity, schema compatibility and decryption with the paired keys are checked before it appears in the list. Import does not replace the current database or keys and does not start a restore. To apply the backup, use **Online restore** on its list entry.
+
+Imported archives keep their original backup time, receive a new server filename without replacing existing archives, and follow the normal retention policy. The database size limit is 2 GiB; any reverse proxy must also permit the corresponding ZIP request size. Failed uploads or validation remove the staging files.
+
 ## In-app online restore {#managed-restore-assessment}
 
 Run it from **Backups → selected archive → Online restore** without stopping the instance manually. The application briefly enters maintenance; deployed workloads are neither stopped nor rolled back.

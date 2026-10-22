@@ -53,6 +53,7 @@ async def list_tasks(
     limit: int = Query(50, ge=1, le=100),
     before: int | None = None,
     state: str | None = None,
+    category: Literal["processing", "completed", "failed"] | None = None,
     offset: int = Query(0, ge=0),
     search: str | None = Query(None, max_length=200),
     include_total: bool = False,
@@ -61,12 +62,12 @@ async def list_tasks(
     # for the total, so the 5 s notification poll does not pay for a COUNT scan.
     if include_total:
         response.headers["X-Total-Count"] = str(
-            await storage.tasks.count(before=before, state=state, search=search)
+            await storage.tasks.count(before=before, state=state, search=search, category=category)
         )
     return [
         public_task(task)
         for task in await storage.tasks.list(
-            limit=limit, before=before, state=state, offset=offset, search=search
+            limit=limit, before=before, state=state, offset=offset, search=search, category=category
         )
     ]
 

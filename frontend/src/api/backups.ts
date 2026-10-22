@@ -27,6 +27,10 @@ export interface RestoreStatus { id: string; state: "running" | "succeeded" | "f
 
 export const backupApi = {
     list: () => apiClient.get<InstanceBackupList>("/api/backups").then(r => r.data),
+    import: (file: File, onProgress: (percent: number) => void) => apiClient.post<InstanceBackupEntry>("/api/backups/import", file, {
+        headers: { "Content-Type": "application/zip" },
+        onUploadProgress: event => onProgress(event.total ? Math.min(100, Math.round(event.loaded * 100 / event.total)) : 0),
+    }).then(r => r.data),
     create: () => apiClient.post<InstanceBackupEntry>("/api/backups", { include_secrets_confirmed: true }).then(r => r.data),
     delete: (name: string) => apiClient.delete<{ deleted: string }>(`/api/backups/${encodeURIComponent(name)}`, { data: { confirm_name: name } }).then(r => r.data),
     restorePlan: (name: string) => apiClient.post<RestorePlan>(`/api/backups/${encodeURIComponent(name)}/restore-plan`).then(r => r.data),

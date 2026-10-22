@@ -7,7 +7,7 @@ import { backupApi } from "@/api/backups"
 import { saveReceipt } from "@/hooks/restore-receipt"
 import i18n from "@/i18n/config"
 
-vi.mock("@/api/backups", () => ({ backupApi: { list: vi.fn(), create: vi.fn(), download: vi.fn(), delete: vi.fn(), restorePlan: vi.fn(), restore: vi.fn(), restoreStatus: vi.fn(), cancelPlan: vi.fn(), reviewRestore: vi.fn(), downloadSafety: vi.fn() } }))
+vi.mock("@/api/backups", () => ({ backupApi: { list: vi.fn(), import: vi.fn(), create: vi.fn(), download: vi.fn(), delete: vi.fn(), restorePlan: vi.fn(), restore: vi.fn(), restoreStatus: vi.fn(), cancelPlan: vi.fn(), reviewRestore: vi.fn(), downloadSafety: vi.fn() } }))
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 function view() {
@@ -23,6 +23,32 @@ beforeEach(async () => {
 })
 
 describe("instance backup controls", () => {
+    it("imports a file with progress, keeps errors visible and allows retry without restoring", async () => {
+        const name = "releasetracker-1791000000000000000-deadbeef.zip"
+        const file = new File(["isolated-backup"], "local.zip", { type: "application/zip" })
+        vi.mocked(backupApi.import).mockImplementationOnce(async (_file, progress) => {
+            progress(100)
+            throw { response: { data: { detail: "backup_import_invalid" } } }
+        }).mockImplementationOnce(async () => {
+            const entry = { name, size: 15, created_at: 1791000000 }
+            vi.mocked(backupApi.list).mockResolvedValue({ items: [entry], interval_hours: 0, retention: 7, running: false })
+            return entry
+        })
+        view()
+        await screen.findByText("自动备份未启用")
+        const submit = screen.getByRole("button", { name: "在线导入" })
+        expect(submit).toBeDisabled()
+        fireEvent.change(screen.getByLabelText("备份 ZIP 文件", { exact: true }), { target: { files: [file] } })
+        fireEvent.click(submit)
+        expect(await screen.findByRole("alert")).toHaveTextContent("归档损坏")
+        expect(submit).toBeEnabled()
+        fireEvent.click(submit)
+        expect(await screen.findByText(name)).toBeVisible()
+        expect(backupApi.import).toHaveBeenCalledTimes(2)
+        expect(backupApi.import).toHaveBeenLastCalledWith(file, expect.any(Function))
+        expect(backupApi.restore).not.toHaveBeenCalled()
+        expect(submit).toBeDisabled()
+    })
     it("shows actual retention tiers and storage usage and requires explicit deletion", async () => {
         const first={name:"releasetracker-1-deadbeef.zip",size:1048576,created_at:1}
         const second={name:"releasetracker-2-deadbeef.zip",size:1048576,created_at:2}
