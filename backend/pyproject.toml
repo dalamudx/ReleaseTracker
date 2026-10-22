@@ -29,7 +29,7 @@ dependencies = [
 ]
 
 [tool.uv]
-constraint-dependencies = ["oauthlib>=4.0.0", "urllib3>=2.8.0"]
+constraint-dependencies = ["certifi>=2026.10.19", "oauthlib>=4.0.0", "urllib3>=2.8.0"]
 
 [project.optional-dependencies]
 dev = [
