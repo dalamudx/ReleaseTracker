@@ -32,6 +32,15 @@ def evidence(**overrides):
                 },
                 "markers": ({},),
                 "recovery": "container_config",
+                "configuration_hash": "synthetic-configuration",
+                "desired_configuration_hash": "synthetic-configuration",
+                "version_evidence": (
+                    {
+                        "source_id": None,
+                        "target": ["1.1.0", "sha256:" + "a" * 64],
+                        "same_artifact": True,
+                    },
+                ),
             }
             | overrides
         )
@@ -529,7 +538,7 @@ async def succeeded_without_baseline(storage, *, final_state="succeeded"):
     # The post-write evidence read failed, so mark_applied never recorded a baseline.
     await storage.tasks.finish(claimed, final_state, result={"mutation_started": True})
     markers = managed_markers(await store.installation_id(), plan["target_id"], claimed["id"])
-    return store, claimed, replace(observed, markers=(markers,))
+    return store, claimed, replace(observed, markers=(markers,), baseline_task_id=claimed["id"])
 
 
 async def managed_target(storage):

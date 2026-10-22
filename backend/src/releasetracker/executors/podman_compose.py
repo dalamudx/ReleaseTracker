@@ -78,7 +78,9 @@ async def update_compose_services(
 
         current_image = current_images[0]
         current_images_by_service[service] = current_image
-        if current_image != target_image:
+        from ..services.deployment_version_evidence import force_image_update
+
+        if current_image != target_image or force_image_update(service):
             update_plan[service] = target_image
 
     specs = adapter._build_grouped_runtime_recreate_specs(service_containers, update_plan)

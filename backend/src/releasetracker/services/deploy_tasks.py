@@ -8,6 +8,7 @@ import json
 import logging
 import time
 from datetime import datetime, timedelta
+from dataclasses import replace
 
 from ..executor_trigger import _binding_contexts
 from ..executors.adapter_lifetime import runtime_adapter_scope
@@ -18,6 +19,7 @@ from .deployment_targets import resolve_deployment_targets
 from .task_effects import MUTATION_GUARD
 from .deployment_plan import MANAGED_MARKERS, TargetEvidence, fingerprint, managed_markers
 from ..storage.sqlite_deployment_admission import AdmissionConflict, DeploymentAdmissionStore
+from .deployment_version_evidence import FORCE_IMAGE_UPDATES, targets_verified
 
 logger = logging.getLogger(__name__)
 PRE_MUTATION_RETRIES = 2
@@ -34,14 +36,13 @@ _REFERENCE_COMPARED_MODES = frozenset(
 )
 
 
-def _already_current(executor, evidence) -> bool:
+def _already_current(executor, evidence, task=None) -> bool:
     diff = evidence.configuration_diff
-    return (
-        (executor.target_ref or {}).get("mode", "container") in _REFERENCE_COMPARED_MODES
-        and diff is not None
-        and not diff.get("truncated")
-        and not diff.get("lines")
-    )
+    if not (diff is not None and not diff.get("truncated") and not diff.get("lines")):
+        return False
+    if (executor.target_ref or {}).get("mode") == "helm_release":
+        return True
+    return task is not None and targets_verified(task, evidence)
 
 
 class DeployTasks:
@@ -72,7 +73,7 @@ class DeployTasks:
         return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
     @runtime_adapter_scope
-    async def _collect_admission_evidence(self, executor, task=None):
+    async def _collect_admission_evidence(self, executor, task=None, *, _baseline_proof=True):
         """Collect read-only runtime evidence before a deployment attempt."""
         connection = await self.storage.get_runtime_connection(executor.runtime_connection_id)
         if connection is None or not connection.enabled:
@@ -89,6 +90,7 @@ class DeployTasks:
         runtime_identity = f"{connection.type}:{fingerprint(runtime_public)}"
         target_identity = fingerprint({"mode": mode, "target": target_ref})
         configuration: dict = {"mode": mode, "target": target_ref}
+        configuration_hashes = {}
         recovery = {
             "container": "container_config",
             "docker_compose": "compose_config",
@@ -115,6 +117,7 @@ class DeployTasks:
                     task=task,
                     version_evidence=version_evidence,
                     current_services=current_services,
+                    configuration_hashes=configuration_hashes,
                 )
             from .ssh_compose_deploy import read_managed_markers
 
@@ -130,6 +133,8 @@ class DeployTasks:
                 recovery,
                 diff,
                 tuple(version_evidence),
+                configuration_hash=configuration_hashes.get("current"),
+                desired_configuration_hash=configuration_hashes.get("desired"),
             )
 
         from .runtime_credentials import materialize_runtime_connection_credentials
@@ -159,7 +164,7 @@ class DeployTasks:
             )
         from .deployment_diff import frozen_targets, native_review
 
-        version_evidence = []
+        version_evidence, pre_rollout_states = [], []
         with frozen_targets(task):
             state_hash, diff = await native_review(
                 self.storage,
@@ -168,9 +173,11 @@ class DeployTasks:
                 adapter,
                 task,
                 version_evidence=version_evidence,
+                pre_rollout_states=pre_rollout_states,
+                configuration_hashes=configuration_hashes,
             )
         configuration["runtime_configuration"] = state_hash
-        return TargetEvidence(
+        evidence = TargetEvidence(
             runtime_identity,
             target_identity,
             configuration,
@@ -178,12 +185,50 @@ class DeployTasks:
             recovery,
             diff,
             tuple(version_evidence),
+            pre_rollout_hash=(
+                fingerprint(configuration | {"runtime_configuration": pre_rollout_states[0]})
+                if pre_rollout_states
+                else None
+            ),
+            configuration_hash=configuration_hashes.get("current"),
+            desired_configuration_hash=configuration_hashes.get("desired"),
         )
+        if _baseline_proof:
+            db = await self.storage._get_connection()
+            candidate = await (
+                await db.execute(
+                    """SELECT COALESCE(last_task_id, (SELECT t.id FROM tasks t
+                   WHERE t.kind='deploy' AND json_extract(t.payload,'$.executor_id')=managed_targets.executor_id
+                   AND json_extract(t.result,'$.mutation_started')=1 ORDER BY t.id DESC LIMIT 1))
+                   FROM managed_targets WHERE executor_id=? AND identity_key=? AND (baseline IS NULL OR baseline=?)""",
+                    (executor.id, evidence.identity_key, evidence.pre_rollout_hash),
+                )
+            ).fetchone()
+            if candidate and candidate[0] and (not task or candidate[0] != task["id"]):
+                original = await self.storage.tasks.get(candidate[0])
+                if original and original["state"] == "succeeded":
+                    proof = await self._collect_admission_evidence(
+                        executor, original, _baseline_proof=False
+                    )
+                    if proof.evidence_hash == evidence.evidence_hash and targets_verified(
+                        original, proof
+                    ):
+                        evidence = replace(evidence, baseline_task_id=original["id"])
+        return evidence
 
     async def _mark_admission_applied(self, task, executor):
         """Persist post-mutation evidence without changing the runtime outcome."""
+        saved = await self.storage.tasks.get(task["id"])
+        await self.storage.tasks.checkpoint(
+            task,
+            {
+                **(saved["result"] or {}),
+                "baseline_status": "pending",
+                "baseline_next_attempt": time.time(),
+            },
+        )
         try:
-            evidence = await self._collect_admission_evidence(executor)
+            evidence = await self._collect_admission_evidence(executor, task, _baseline_proof=False)
             await self.admission.mark_applied(task, evidence)
         except Exception as exc:
             # The remote result is already authoritative; a failed read only keeps
@@ -195,24 +240,79 @@ class DeployTasks:
                 f" ({exc})" if isinstance(exc, AdmissionConflict) else "",
             )
             return False
+        await self._baseline_receipt(task["id"], True)
         return True
 
+    async def _baseline_receipt(self, task_id, verified):
+        now = time.time()
+        async with self.storage.tasks.transaction() as db:
+            row = await (
+                await db.execute("SELECT result FROM tasks WHERE id=?", (task_id,))
+            ).fetchone()
+            if row is None:
+                return
+            result = json.loads(row["result"] or "{}")
+            if not verified and result.get("baseline_status") == "verified":
+                return
+            attempts = int(result.get("baseline_attempts", 0)) + (not verified)
+            stalled = not verified and attempts >= ADMISSION_EVIDENCE_PATIENCE
+            result.update(
+                baseline_status=(
+                    "verified" if verified else "needs_attention" if stalled else "pending"
+                ),
+                baseline_attempts=attempts,
+                baseline_next_attempt=now + 30,
+            )
+            await db.execute(
+                "UPDATE tasks SET result=?,updated_at=? WHERE id=?",
+                (json.dumps(result), now, task_id),
+            )
+            if stalled:
+                await db.execute(
+                    "UPDATE tasks SET state='needs_attention',error_code='deployment_baseline_unverified',message=? WHERE id=? AND state='succeeded'",
+                    (
+                        "Deployment completed, but its managed baseline could not be verified",
+                        task_id,
+                    ),
+                )
+
     async def refresh_admission_baseline(self, task_id, executor_id):
-        """Re-record a deferred deployment's baseline after readiness converged."""
+        """Read-only, idempotent completion; failures remain durably retryable."""
+        verified = False
         try:
             executor = await self.storage.get_executor_config(executor_id)
-            if executor is None:
-                return False
-            evidence = await self._collect_admission_evidence(executor)
-            return await self.admission.refresh_applied(task_id, evidence)
+            original = await self.storage.tasks.get(task_id)
+            if (
+                executor
+                and original
+                and await self.identity(executor) == original["payload"]["config_identity"]
+            ):
+                evidence = await self._collect_admission_evidence(
+                    executor, original, _baseline_proof=False
+                )
+                verified = await self.admission.refresh_applied(task_id, evidence)
         except Exception as exc:
-            # Keeps the handoff baseline; the next deployment reports drift for review.
             logger.warning(
                 "Deployment admission baseline not refreshed for task %s: %s",
                 task_id,
                 type(exc).__name__,
             )
-            return False
+        await self._baseline_receipt(task_id, verified)
+        return verified
+
+    async def _reconcile_baselines(self):
+        db = await self.storage._get_connection()
+        rows = await (
+            await db.execute(
+                """SELECT id,json_extract(payload,'$.executor_id') executor_id FROM tasks
+               WHERE kind='deploy' AND state='succeeded'
+               AND json_extract(result,'$.baseline_status')='pending'
+               AND json_extract(result,'$.baseline_next_attempt')<=? ORDER BY updated_at LIMIT 3""",
+                (time.time(),),
+            )
+        ).fetchall()
+        for row in rows:
+            await self.refresh_admission_baseline(row["id"], row["executor_id"])
 
     async def enqueue(self, executor_id, *, manual, desired_revision=None):
         executor = await self.storage.get_executor_config(executor_id)
@@ -312,6 +412,7 @@ class DeployTasks:
         return cursor.rowcount > 0
 
     async def dispatch_pending(self):
+        await self._reconcile_baselines()
         states = await self.storage.list_pending_executor_desired_states(limit=100)
         for state in states:
             executor = await self.storage.get_executor_config(state.executor_id)
@@ -398,7 +499,7 @@ class DeployTasks:
             return TaskResult("needs_attention", "previous_run_interrupted")
         try:
             evidence = await self._collect_admission_evidence(executor, task)
-            if _already_current(executor, evidence):
+            if _already_current(executor, evidence, task):
                 # Nothing would be written, so there is nothing to review or adopt.
                 return TaskResult("no_change", "already_current")
             plan = await self.admission.stage(task, evidence)
@@ -441,7 +542,7 @@ class DeployTasks:
             evidence = await self._collect_admission_evidence(executor, task)
         except Exception:
             return False
-        return _already_current(executor, evidence)
+        return _already_current(executor, evidence, task)
 
     async def _verify_mutation_window(self, task, executor):
         if not task["payload"]["manual"] and executor.update_mode == "maintenance_window":
@@ -532,6 +633,13 @@ class DeployTasks:
         finalize_token = READINESS_FINALIZER.set(handoff if defer else None)
         mutation_token = MUTATION_GUARD.set(guard)
         token = QUEUED_TARGETS.set(task["payload"]["targets"])
+        services = (
+            {None}
+            if executor.target_ref.get("mode", "container") == "container"
+            else {b["service"] for b in task["payload"].get("policy_bindings", [])}
+        )
+        unchanged = (admission_plan or {}).get("summary", {}).get("unchanged_services", [])
+        force_token = FORCE_IMAGE_UPDATES.set(frozenset(services - set(unchanged)))
         try:
             outcome = await self.scheduler._run_executor_with_overlap_guard(
                 executor,
@@ -541,6 +649,7 @@ class DeployTasks:
             )
         finally:
             QUEUED_TARGETS.reset(token)
+            FORCE_IMAGE_UPDATES.reset(force_token)
             MUTATION_GUARD.reset(mutation_token)
             EXPECTED_UPDATE_STATE.reset(write_state_token)
             UPDATE_REFUSAL.reset(refusal_token)

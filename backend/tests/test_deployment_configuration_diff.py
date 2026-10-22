@@ -288,11 +288,18 @@ async def test_scheduler_same_tag_respects_reference_mode(storage, digest_match,
             current_image=current_image,
             current_digest=current_digest,
         )
+        from releasetracker.executors.base import RuntimeUpdateResult
+
+        async def update_image(ref, image):
+            adapter.update_calls.append((ref, image))
+            return RuntimeUpdateResult(updated=True, old_image=current_image, new_image=image)
+
+        adapter.update_image = update_image
         scheduler._adapters[executor.id] = adapter
         _mock_scheduler_target(scheduler, ("stable", "sha256:" + "a" * 64))
         with frozen_targets(task):
             outcome = await scheduler._execute_executor(executor, manual=True)
-        should_update = reference_mode == "digest" and not digest_match
+        should_update = not digest_match
         assert outcome.status == ("success" if should_update else "skipped")
         assert bool(adapter.update_calls) is should_update
         expected = (

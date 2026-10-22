@@ -37,6 +37,83 @@ def protected_state(storage, value):
     ).hexdigest()
 
 
+def _declaration(value, key=""):
+    """Ignore only our write-time markers; user labels remain reviewed configuration."""
+    from .deployment_plan import MARKER_KEYS, PREFIX
+
+    marker_keys = {*MARKER_KEYS, PREFIX + "deployment-id"}
+    if key.lower() in {"labels", "annotations"}:
+        if isinstance(value, list) and all(isinstance(v, str) and "=" in v for v in value):
+            value = dict(v.split("=", 1) for v in value)
+        if isinstance(value, dict):
+            value = {k: v for k, v in value.items() if k not in marker_keys}
+    if isinstance(value, dict):
+        result = {k: _declaration(v, k) for k, v in value.items()}
+        return {
+            k: v
+            for k, v in result.items()
+            if not (k.lower() in {"labels", "annotations", "metadata"} and not v)
+        }
+    if isinstance(value, list):
+        return [_declaration(v) for v in value]
+    return value
+
+
+def configuration_state(storage, value):
+    return protected_state(
+        storage, _declaration({k: v for k, v in value.items() if k != "revision"})
+    )
+
+
+async def _portainer_overrides(adapter, target_ref, inspected, native, service):
+    """Separate image defaults from live overrides, without trusting a mutable tag."""
+    from ..executors.container_recovery import normalize_image_id
+
+    image_id = normalize_image_id(inspected.get("Image"))
+    if not image_id:
+        raise ValueError("deployment native image identity unavailable")
+    image = await adapter.inspect_local_image(target_ref, image_id)
+    if normalize_image_id(image.get("Id") or image.get("ID")) != image_id:
+        raise ValueError("deployment native image identity changed")
+    defaults = _normalize(image.get("Config") or {})
+    result = deepcopy(native)
+    config = result["config"]
+    config.pop("Image", None)
+    if config.get("Hostname") in {inspected["Id"], inspected["Id"][:12]}:
+        config.pop("Hostname", None)
+    inherited = {
+        "Env": "environment",
+        "Cmd": "command",
+        "Entrypoint": "entrypoint",
+        "User": "user",
+        "WorkingDir": "working_dir",
+        "Healthcheck": "healthcheck",
+        "Labels": "labels",
+        "ExposedPorts": "expose",
+        "Volumes": "volumes",
+        "StopSignal": "stop_signal",
+    }
+    for key, compose_key in inherited.items():
+        actual, base = config.get(key), defaults.get(key)
+        if key in {"Env", "Labels"} and isinstance(actual, dict):
+            explicit = service.get(compose_key) or {}
+            if isinstance(explicit, list):
+                explicit = {v.split("=", 1)[0]: None for v in explicit if isinstance(v, str)}
+            config[key] = {
+                k: v
+                for k, v in actual.items()
+                if k in explicit or k not in (base or {}) or v != base[k]
+            }
+            if key == "Labels":
+                for generated in ("com.docker.compose.config-hash", "com.docker.compose.image"):
+                    config[key].pop(generated, None)
+            if not config[key]:
+                config.pop(key)
+        elif compose_key not in service and actual == base:
+            config.pop(key, None)
+    return _declaration(result)
+
+
 async def image_targets(storage, scheduler, executor, task, images):
     result = {}
     if not task:
@@ -48,6 +125,7 @@ async def image_targets(storage, scheduler, executor, task, images):
                 for v in task["payload"].get("targets", [])
                 if v.get("source_id") == binding.tracker_source_id
                 and v.get("channel") == binding.channel_name
+                and v.get("deploy_alias") == getattr(binding, "deploy_alias", None)
             ),
             None,
         )
@@ -89,7 +167,7 @@ def live_state(snapshot, observed):
     }
 
 
-async def observed_state(adapter, target_ref, snapshot, observed):
+async def observed_state(adapter, target_ref, snapshot, observed, *, configuration_projection=None):
     state = live_state(snapshot, observed)
     if "stack_file" in snapshot:
         from urllib.parse import quote
@@ -133,6 +211,18 @@ async def observed_state(adapter, target_ref, snapshot, observed):
                         },
                     }
                 )
+                if configuration_projection is not None:
+                    projected = await _portainer_overrides(
+                        adapter,
+                        target_ref,
+                        inspected,
+                        configurations[row["id"]],
+                        observed["compose"]["services"][service],
+                    )
+                    configuration_projection.setdefault(service, []).append(projected)
+        if configuration_projection is not None:
+            for members in configuration_projection.values():
+                members.sort(key=lambda member: json.dumps(member, sort_keys=True))
         state["native_configuration"] = configurations
     return state
 
@@ -174,7 +264,16 @@ async def _verify_update_state(adapter, target_ref):
 
 
 async def native_review(
-    storage, scheduler, executor, adapter, task, *, inspection_only=False, version_evidence=None
+    storage,
+    scheduler,
+    executor,
+    adapter,
+    task,
+    *,
+    inspection_only=False,
+    version_evidence=None,
+    pre_rollout_states=None,
+    configuration_hashes=None,
 ):
     snapshot = await capture_current(adapter, executor.target_ref, inspection_only=inspection_only)
     if snapshot is None:
@@ -182,6 +281,13 @@ async def native_review(
     mode = executor.target_ref.get("mode", "container")
     if mode == "container" and not isinstance(snapshot.get("create_config"), dict):
         raise ValueError("complete runtime configuration is unavailable")
+    artifact = snapshot.get("artifact_evidence") or {}
+    if (
+        mode == "kubernetes_workload"
+        and artifact.get("status") == "unavailable"
+        and artifact.get("reason") != "legacy_scope"
+    ):
+        raise ValueError("deployment_artifact_evidence_unavailable")
     observed, scope = project(snapshot, adapter=adapter)
     mode = executor.target_ref.get("mode", "container")
     images = {}
@@ -205,6 +311,14 @@ async def native_review(
         images = dict(snapshot.get("containers") or {})
     desired = deepcopy(observed)
     targets = await image_targets(storage, scheduler, executor, task, images)
+    proofs = ()
+    if version_evidence is not None:
+        from .deployment_version_evidence import collect_version_evidence
+
+        proofs = await collect_version_evidence(
+            storage, adapter, executor, task, snapshot, images, targets
+        )
+        version_evidence.extend(proofs)
     if mode == "container" and None in targets:
         key = desired.get("create_config", desired)
         key["image"] = targets[None]
@@ -230,6 +344,15 @@ async def native_review(
         for service, image in targets.items():
             if "spec" in desired:
                 containers[service]["image"] = image
+                if (
+                    image == images[service]
+                    and "@" not in image
+                    and not any(
+                        p.get("service") == service and p.get("same_artifact") for p in proofs
+                    )
+                ):
+                    # A recreated Pod must resolve a republished tag instead of reusing the node cache.
+                    containers[service]["imagePullPolicy"] = "Always"
             else:
                 containers[service] = image
     elif mode == "helm_release" and task:
@@ -245,15 +368,31 @@ async def native_review(
     if inspection_only:
         # A draft reads declarations; it must not publish evidence for a later write.
         return protected_state(storage, {"inspection": observed}), diff
-    state = await observed_state(adapter, executor.target_ref, snapshot, observed)
-    if version_evidence is not None:
-        from .deployment_version_evidence import collect_version_evidence
-
-        version_evidence.extend(
-            await collect_version_evidence(
-                storage, adapter, executor, task, snapshot, images, targets
-            )
+    native_configuration = {} if configuration_hashes is not None else None
+    state = await observed_state(
+        adapter,
+        executor.target_ref,
+        snapshot,
+        observed,
+        configuration_projection=native_configuration,
+    )
+    if configuration_hashes is not None:
+        configuration_hashes.update(
+            current=configuration_state(
+                storage, {**observed, "native_configuration": native_configuration}
+            ),
+            desired=configuration_state(
+                storage, {**desired, "native_configuration": native_configuration}
+            ),
         )
+    if (
+        pre_rollout_states is not None
+        and mode == "kubernetes_workload"
+        and (snapshot.get("artifact_evidence") or {}).get("status") == "verified"
+    ):
+        incomplete = deepcopy(state)
+        incomplete["artifacts"]["images"] = None
+        pre_rollout_states.append(protected_state(storage, incomplete))
     INSPECTED_UPDATE_STATE.set(state)
     return protected_state(storage, state), diff
 
@@ -268,6 +407,7 @@ async def ssh_review(
     task=None,
     version_evidence=None,
     current_services=None,
+    configuration_hashes=None,
 ):
     from .ssh_compose_deploy import inspect_image, make_plan, running_image_ids
     from .ssh_transport import open_ssh_session
@@ -297,6 +437,12 @@ async def ssh_review(
     desired = deepcopy(observed)
     for service, image in plan.targets.items():
         desired["compose"]["services"][service]["image"] = image
+    if configuration_hashes is not None:
+        # Revision and runtime identities are verified separately; only planned config changes belong here.
+        configuration_hashes.update(
+            current=configuration_state(storage, observed),
+            desired=configuration_state(storage, desired),
+        )
     lines, truncated = changed_lines(observed, desired)
     return protected_state(
         storage,

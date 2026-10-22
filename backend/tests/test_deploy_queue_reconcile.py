@@ -172,15 +172,15 @@ async def test_manual_success_fulfils_matching_desired_target(storage, monkeypat
 @pytest.mark.parametrize(
     "mode,lines,expected",
     [
-        ("kubernetes_workload", [], True),
+        ("kubernetes_workload", [], False),
         ("helm_release", [], True),
-        ("portainer_stack", [], True),
+        ("portainer_stack", [], False),
         ("kubernetes_workload", [{"operation": "+", "path": "/x", "value": "1"}], False),
         # A same-tag rebuild of a single container is not visible in its diff.
         ("container", [], False),
     ],
 )
-async def test_only_reference_compared_targets_skip_empty_reviews(mode, lines, expected):
+async def test_empty_review_without_frozen_artifact_proof_does_not_skip(mode, lines, expected):
     executor = SimpleNamespace(target_ref={"mode": mode})
     from test_deployment_admission import evidence
 
@@ -224,7 +224,7 @@ async def test_no_op_work_settles_before_waiting_for_the_window(
         }
     }
     monkeypatch.setattr(deploy, "_collect_admission_evidence", AsyncMock(return_value=object()))
-    monkeypatch.setattr(deploy_tasks_module, "_already_current", lambda _e, _ev: current)
+    monkeypatch.setattr(deploy_tasks_module, "_already_current", lambda _e, _ev, _task: current)
 
     outcome = await deploy.prepare(task)
     if expected == "no_change":

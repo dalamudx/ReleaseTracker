@@ -658,6 +658,17 @@ class DeploymentReadiness:
                 await self.scheduler._prune_snapshot_history(executor.id)
         if final.get("recheck_of"):
             async with self.storage.tasks.transaction() as db:
+                # A recheck of a recheck still reconciles the original deployment.
+                original = await (
+                    await db.execute(
+                        """SELECT o.task_id FROM deployment_observations o JOIN tasks t ON t.id=o.task_id
+                       WHERE o.run_id=? AND o.executor_id=? AND t.kind='deploy'
+                       ORDER BY o.task_id LIMIT 1""",
+                        (row["run_id"], executor.id),
+                    )
+                ).fetchone()
+                if original:
+                    final["recheck_of"] = original[0]
                 run = await (
                     await db.execute(
                         "SELECT diagnostics FROM executor_run_history WHERE id=?", (row["run_id"],)
@@ -783,6 +794,11 @@ class DeploymentReadiness:
                     WHERE id IN (SELECT task_id FROM deployment_observations WHERE run_id=?)
                     AND state='needs_attention'""",
                     (now, row["run_id"]),
+                )
+            if status == "success":
+                await db.execute(
+                    "UPDATE tasks SET result=json_set(result,'$.baseline_status','pending','$.baseline_next_attempt',?) WHERE id=?",
+                    (now, final.get("recheck_of") or row["task_id"]),
                 )
             await db.execute(
                 "UPDATE deployment_observations SET state=?,finished_at=? WHERE task_id=?",

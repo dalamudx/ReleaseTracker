@@ -387,7 +387,19 @@ class ExecutorScheduler(
 
             # Artifact equality cannot bypass a tag <-> digest policy change.
             reference_mode_matches = ("@" in current_image) == ("@" in target_image)
-            if current_image == target_image or (runtime_digest_matches and reference_mode_matches):
+            from .services.deployment_version_evidence import force_image_update
+
+            if not force_image_update(None) and (
+                (
+                    current_image == target_image
+                    and (
+                        target_digest is None
+                        or "@sha256:" in target_image
+                        or runtime_digest_matches
+                    )
+                )
+                or (runtime_digest_matches and reference_mode_matches)
+            ):
                 run_id = (
                     _run_id
                     if _run_id is not None
@@ -447,10 +459,14 @@ class ExecutorScheduler(
                         members=podman_lineage["members"],
                     )
                 lineage_write_token = ACTIVE_PODMAN_LINEAGE.set(podman_lineage)
+                from .services.deployment_version_evidence import FORCE_IMAGE_UPDATES
+
+                force_token = FORCE_IMAGE_UPDATES.set(FORCE_IMAGE_UPDATES.get() | {None})
                 try:
                     result = await adapter.update_image(executor_config.target_ref, target_image)
                 finally:
                     ACTIVE_PODMAN_LINEAGE.reset(lineage_write_token)
+                    FORCE_IMAGE_UPDATES.reset(force_token)
                 if not result.updated:
                     return await self._finalize_run(
                         executor_config,

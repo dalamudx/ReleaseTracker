@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 
+from .deployment_plan import MARKER_KEYS, PREFIX, managed_markers
 from ..executors.adapter_lifetime import (
     retained_native_read,
     retain_runtime_adapter,
@@ -145,12 +146,19 @@ async def _portainer_containers(adapter, ref):
     for item in payload:
         attrs = await adapter._request_payload("GET", f"{prefix}/containers/{item['Id']}/json")
         labels = (attrs.get("Config") or {}).get("Labels") or {}
+        if attrs.get("Id") != item["Id"] or labels.get("com.docker.compose.project") != project:
+            raise ValueError("container project identity mismatch")
         name = labels.get("com.docker.compose.service")
         if name and labels.get("com.docker.compose.oneoff", "false").lower() != "true":
             groups.setdefault(name, []).append(
                 {
                     "id": attrs.get("Id"),
                     "image_id": attrs.get("Image"),
+                    "markers": {
+                        key: labels[key]
+                        for key in (*MARKER_KEYS, PREFIX + "deployment-id")
+                        if key in labels
+                    },
                     "image": (attrs.get("Config") or {}).get("Image"),
                     "state": _safe_state(attrs.get("State") or {}),
                     "restart_count": attrs.get("RestartCount"),
@@ -466,7 +474,62 @@ async def _capture_ssh(storage, executor):
     return {"kind": "ssh_compose", "containers": groups, "counts": counts, "images": images}
 
 
-def _probe_containers(current, verification, expected, *, immutable_images=None):
+async def _portainer_deployment_markers(storage, executor, run_id):
+    """Read the original submission, including for rechecks made by older versions."""
+    from ..storage.sqlite_deployment_admission import DeploymentAdmissionStore
+
+    db = await storage._get_connection()
+    row = await (
+        await db.execute(
+            """SELECT p.target_id,p.task_id FROM deployment_plans p
+           JOIN deployment_observations o ON o.task_id=p.task_id
+           JOIN tasks t ON t.id=p.task_id
+           WHERE o.run_id=? AND o.executor_id=? AND p.executor_id=?
+           AND p.state IN ('approved','applied') AND p.approved_at IS NOT NULL
+           AND json_extract(t.result, '$.mutation_started')=1
+           ORDER BY p.id DESC LIMIT 1""",
+            (run_id, executor.id, executor.id),
+        )
+    ).fetchone()
+    if row is None:
+        return None
+    installation = await DeploymentAdmissionStore(storage).installation_id()
+    return managed_markers(installation, row["target_id"], row["task_id"])
+
+
+@runtime_adapter_scope
+async def _portainer_images(storage, scheduler, executor, current, expected, markers):
+    from .deployment_version_evidence import collect_version_evidence
+    from .deployment_diff import image_targets
+
+    original = await storage.tasks.get(int(markers[PREFIX + "deployment-id"]))
+    if original is None:
+        return {}
+    adapter = await _adapter(storage, scheduler, executor)
+    groups = current.get("containers") or {}
+    images = {name: rows[0].get("image") for name, rows in groups.items() if rows}
+    targets = await image_targets(storage, scheduler, executor, original, images)
+    snapshot = {
+        "mode": "docker_compose",
+        "snapshots": [
+            {"compose_service": name, "recovery_evidence": {"image_id": row.get("image_id")}}
+            for name, rows in groups.items()
+            for row in rows
+        ],
+    }
+    proofs = await collect_version_evidence(
+        storage, adapter, executor, original, snapshot, images, targets
+    )
+    return {
+        p["service"]: p["image_ids"][0]
+        for p in proofs
+        if p["service"] in expected and p["same_artifact"] and len(p["image_ids"]) == 1
+    }
+
+
+def _probe_containers(
+    current, verification, expected, *, immutable_images=None, deployment_markers=None
+):
     target = verification.get("target") or {}
     baseline = verification.get("baseline") or {}
     rows = []
@@ -487,6 +550,60 @@ def _probe_containers(current, verification, expected, *, immutable_images=None)
             for s in verification.get("services", [])
         )
         old_ids = {c.get("id") for c in before}
+        if current.get("kind") == "portainer_stack":
+            if not deployment_markers:
+                rows.append(_service(name, "unknown", "submitted deployment markers unavailable"))
+                continue
+            if any(
+                c.get("id") not in old_ids
+                and any((c.get("markers") or {}).get(k) != v for k, v in deployment_markers.items())
+                for c in now
+            ):
+                rows.append(
+                    _service(name, "superseded", "replacement is not from the submitted deployment")
+                )
+                continue
+            if not immutable_images or name not in immutable_images:
+                rows.append(_service(name, "unknown", "submitted immutable image unverified"))
+                continue
+        if (
+            skipped
+            and deployment_markers
+            and before
+            and submitted
+            and {c.get("id") for c in submitted} == old_ids
+        ):
+            # A stack-wide label patch may replace an unchanged service asynchronously.
+            if len(now) != count or any(not c.get("id") or c.get("id") in old_ids for c in now):
+                rows.append(
+                    _service(name, "pending", "waiting for all replacement container identities")
+                )
+                continue
+            image_ids = {c.get("image_id") for c in before}
+            if (
+                len(image_ids) != 1
+                or not next(iter(image_ids))
+                or any(
+                    c.get("image_id") not in image_ids
+                    or c.get("image") != image
+                    or any(
+                        (c.get("markers") or {}).get(k) != v for k, v in deployment_markers.items()
+                    )
+                    for c in now
+                )
+            ):
+                rows.append(
+                    _service(name, "superseded", "replacement is not from the submitted deployment")
+                )
+                continue
+            enrolled[name] = now
+            changed = True
+            rows.append(
+                _service(
+                    name, "pending", "target identities enrolled; awaiting durable verification"
+                )
+            )
+            continue
         awaiting_identity = not submitted or (
             not skipped and any(c.get("id") in old_ids for c in submitted)
         )
@@ -704,7 +821,23 @@ async def _probe_deployment(storage, scheduler, executor, verification: dict) ->
                         pod_stability[name] = fingerprint
                 rows.append(_service(name, status, message, "kubernetes_rollout"))
         else:
-            return _probe_containers(current, verification, expected)
+            markers = None
+            if executor.target_ref.get("mode") == "portainer_stack" and verification.get("run_id"):
+                markers = await _portainer_deployment_markers(
+                    storage, executor, verification["run_id"]
+                )
+            immutable_images = None
+            if current.get("kind") == "portainer_stack" and markers:
+                immutable_images = await _portainer_images(
+                    storage, scheduler, executor, current, expected, markers
+                )
+            return _probe_containers(
+                current,
+                verification,
+                expected,
+                deployment_markers=markers,
+                immutable_images=immutable_images,
+            )
         result = _aggregate(rows)
         if pod_stability:
             result["pod_stability"] = pod_stability

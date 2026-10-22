@@ -35,6 +35,11 @@ class TargetEvidence:
     recovery: str
     configuration_diff: dict | None = None
     version_evidence: tuple[dict, ...] = ()
+    # Compatibility proof for a baseline captured before Kubernetes supplied Pod digests.
+    pre_rollout_hash: str | None = None
+    configuration_hash: str | None = None
+    desired_configuration_hash: str | None = None
+    baseline_task_id: int | None = None
 
     def __post_init__(self):
         if not self.runtime_identity or not self.target_identity:
@@ -84,7 +89,7 @@ def managed_markers(installation_id: str, target_id: str, task_id: int) -> dict[
 def plan_fingerprint(task: dict, evidence: TargetEvidence) -> str:
     return fingerprint(
         {
-            "schema": 2,
+            "schema": 3,
             "task_id": task["id"],
             "config_identity": task["payload"]["config_identity"],
             "targets": task["payload"].get("targets", []),
@@ -93,6 +98,7 @@ def plan_fingerprint(task: dict, evidence: TargetEvidence) -> str:
             "policy_bindings": task["payload"].get("policy_bindings", []),
             "identity": evidence.identity_key,
             "evidence": evidence.evidence_hash,
+            "desired_configuration": evidence.desired_configuration_hash,
             "version_evidence": evidence.version_evidence,
             "markers": sorted(
                 (dict(m) for m in evidence.markers), key=lambda m: json.dumps(m, sort_keys=True)
@@ -116,6 +122,10 @@ def public_summary(task: dict, evidence: TargetEvidence) -> dict:
         "includes_application_data": False,
         "automatic_rollback": False,
         "source_count": len(task["payload"].get("targets", [])),
+        "desired_configuration_hash": evidence.desired_configuration_hash,
+        "unchanged_services": [
+            p.get("service") for p in evidence.version_evidence if p.get("same_artifact") is True
+        ],
         **(
             {"configuration_diff": evidence.configuration_diff}
             if evidence.configuration_diff is not None

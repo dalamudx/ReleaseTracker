@@ -1,10 +1,56 @@
 """Bind version aliases to the running artifact, never to a mutable tag lookup."""
 
 import re
+from contextvars import ContextVar
 
 from ..executors.container_recovery import normalize_image_id
 from ..tag_ordering import compile_pattern
 from ..versioning import container_channel_eligible
+
+FORCE_IMAGE_UPDATES = ContextVar("force_image_updates", default=frozenset())
+
+
+def force_image_update(service):
+    return service in FORCE_IMAGE_UPDATES.get()
+
+
+def targets_verified(task, evidence):
+    """Every frozen target must be proven against its running artifact."""
+    targets = task["payload"].get("targets") or []
+    if evidence.recovery == "helm_revision":
+        return bool(targets) and all(
+            item.get("chart_version") == evidence.configuration.get("current_chart_version")
+            for item in targets
+        )
+    bindings = task["payload"].get("policy_bindings") or []
+    for item in targets:
+        desired = item.get("target") or []
+        if len(desired) != 2 or not normalize_image_id(desired[1]):
+            return False
+        services = (
+            [None]
+            if evidence.recovery == "container_config"
+            else [
+                b["service"]
+                for b in bindings
+                if b.get("tracker_source_id") == item.get("source_id")
+                and b.get("channel_name") == item.get("channel")
+                and b.get("deploy_alias") == item.get("deploy_alias")
+            ]
+        )
+        if not services or any(
+            not any(
+                p.get("source_id") == item.get("source_id")
+                and p.get("channel_name") == item.get("channel")
+                and p.get("service") == service
+                and p.get("target") == desired
+                and p.get("same_artifact") is True
+                for p in evidence.version_evidence
+            )
+            for service in services
+        ):
+            return False
+    return bool(targets)
 
 
 def image_reference(value):
@@ -60,6 +106,8 @@ def snapshot_artifacts(snapshot):
         }
     if mode == "kubernetes_workload":
         proof = snapshot.get("artifact_evidence") or {}
+        if proof.get("status") == "not_required":
+            return {k: [v] for k, v in (snapshot.get("containers") or {}).items()}
         if proof.get("status") == "verified":
             return {k: [v] for k, v in proof.get("images", {}).get("containers", {}).items()}
         return {}
@@ -88,6 +136,7 @@ async def bound_channels(storage, executor, task):
                 for b in task["payload"].get("policy_bindings", [])
                 if b.get("tracker_source_id") == selected.get("source_id")
                 and b.get("channel_name") == selected.get("channel")
+                and b.get("deploy_alias") == selected.get("deploy_alias")
             ]
         )
         result.append((selected, channels[0].model_dump(mode="json"), services))
@@ -123,7 +172,20 @@ async def collect_version_evidence(storage, adapter, executor, task, snapshot, i
                 # Kubernetes evidence is already verified across live pods/platforms.
                 repo, _, pinned = image_reference(identity)
                 if pinned and repo == current_repo:
-                    same_artifact &= pinned == digest
+                    if pinned == digest:
+                        matches = True
+                    elif digest:
+                        from .manifest_verification import verify_running_manifest
+
+                        matches = (
+                            await verify_running_manifest(
+                                storage, executor, f"{target_repo}@{digest}", pinned
+                            )
+                            == "confirmed"
+                        )
+                    else:
+                        matches = False
+                    same_artifact &= matches
                     aliases = set()
                     verified_ids.append(identity)
                     continue

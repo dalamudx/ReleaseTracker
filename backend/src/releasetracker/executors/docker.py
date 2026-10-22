@@ -75,7 +75,9 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
                 raise ValueError(f"Docker Compose service container missing: {service}")
             current_image = self._preflight_compose_service_containers(service, containers)
             current_images[service] = current_image
-            if current_image != normalized_target_image:
+            from ..services.deployment_version_evidence import force_image_update
+
+            if current_image != normalized_target_image or force_image_update(service):
                 update_plan[service] = normalized_target_image
 
         if not update_plan:
@@ -173,7 +175,9 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
 
         container = self._get_container(target_ref)
         old_image = self._extract_image(container)
-        if old_image == new_image:
+        from ..services.deployment_version_evidence import force_image_update
+
+        if old_image == new_image and not force_image_update(None):
             return RuntimeUpdateResult(updated=False, old_image=old_image, new_image=new_image)
 
         client = self._get_client()

@@ -613,7 +613,10 @@ async def test_portainer_reads_actual_container_health_not_stack_status():
                     "Image": "sha256:" + "a" * 64,
                     "Config": {
                         "Image": IMAGE,
-                        "Labels": {"com.docker.compose.service": "service-a"},
+                        "Labels": {
+                            "com.docker.compose.service": "service-a",
+                            "com.docker.compose.project": "project-a",
+                        },
                     },
                     "State": {
                         "Running": True,

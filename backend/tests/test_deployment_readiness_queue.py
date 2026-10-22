@@ -18,6 +18,30 @@ from helpers.executor_runtime import (
 pytestmark = pytest.mark.asyncio
 
 
+def verified_evidence(task, **overrides):
+    from releasetracker.services.deployment_plan import TargetEvidence
+
+    fields = dict(
+        runtime_identity="test-runtime",
+        target_identity="test-target",
+        configuration={"kind": "container"},
+        markers=(),
+        recovery="container_config",
+        configuration_hash="declared-config",
+        desired_configuration_hash="declared-config",
+        version_evidence=tuple(
+            {
+                "source_id": t.get("source_id"),
+                "channel_name": t.get("channel"),
+                "target": t["target"],
+                "same_artifact": True,
+            }
+            for t in task["payload"]["targets"]
+        ),
+    )
+    return TargetEvidence(**(fields | overrides))
+
+
 async def setup(storage, monkeypatch, *, stable=10, timeout=30):
     await save_docker_tracker_config(storage, name="readiness-example", image="example/service-a")
     await seed_docker_release(storage, tracker_name="readiness-example", version="2.0.0")
@@ -60,11 +84,7 @@ async def setup(storage, monkeypatch, *, stable=10, timeout=30):
     )
     receipt = await handler.enqueue(executor.id, manual=True)
     task = await storage.tasks.claim("deploy")
-    from releasetracker.services.deployment_plan import TargetEvidence
-
-    evidence = TargetEvidence(
-        "test-runtime", "test-target", {"kind": "container"}, (), "container_config"
-    )
+    evidence = verified_evidence(task)
     monkeypatch.setattr(handler, "_collect_admission_evidence", AsyncMock(return_value=evidence))
     plan = await handler.admission.stage(task, evidence)
     await handler.admission.approve(task["id"], plan["id"], plan["fingerprint"], "test-admin")
@@ -941,7 +961,7 @@ async def admission_baseline(storage, executor_id):
 
 @pytest.mark.parametrize("case", ["converged", "unhealthy", "other_deployment", "superseded"])
 async def test_healthy_readiness_refreshes_handoff_admission_baseline(storage, monkeypatch, case):
-    from releasetracker.services.deployment_plan import TargetEvidence, managed_markers
+    from releasetracker.services.deployment_plan import managed_markers
 
     executor, scheduler, observer, probe, _, task, run_id = await setup(
         storage, monkeypatch, stable=0
@@ -954,12 +974,8 @@ async def test_healthy_readiness_refreshes_handoff_admission_baseline(storage, m
         await handler.admission.installation_id(), plan["target_id"], deployment
     )
     # The handoff read precedes the rollout; converged evidence adds runtime artifacts.
-    converged = TargetEvidence(
-        "test-runtime",
-        "test-target",
-        {"kind": "container", "artifacts": "verified"},
-        (markers,),
-        "container_config",
+    converged = verified_evidence(
+        task, configuration={"kind": "container", "artifacts": "verified"}, markers=(markers,)
     )
     monkeypatch.setattr(handler, "_collect_admission_evidence", AsyncMock(return_value=converged))
     if case == "unhealthy":

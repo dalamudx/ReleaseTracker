@@ -300,6 +300,11 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
             service_target_images,
         )
 
+        from ..services.deployment_version_evidence import force_image_update
+
+        updated_services = set(updated_services) | {
+            service for service in service_target_images if force_image_update(service)
+        }
         if not updated_services:
             return PortainerStackServiceUpdateResult(
                 updated_services=[],

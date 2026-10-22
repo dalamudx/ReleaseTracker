@@ -217,7 +217,9 @@ class ExecutorSchedulerComposeRuntime:
                 )
                 continue
 
-            if current_image == target_image:
+            from .services.deployment_version_evidence import force_image_update
+
+            if current_image == target_image and not force_image_update(service_name):
                 binding_results.append(
                     _ExecutorBindingRunResult(
                         service=service_name,

@@ -227,9 +227,23 @@ async def approve_deployment(
         }:
             raise HTTPException(409, "deployment_plan_changed")
         body = body.model_copy(update={"plan_id": refreshed["id"]})
+    not_before = None
+    if (
+        executor is not None
+        and not payload.get("manual")
+        and executor.update_mode == "maintenance_window"
+    ):
+        await scheduler._refresh_system_timezone()
+        if not scheduler._within_maintenance_window(executor.maintenance_window):
+            # The approval covers the next execution opportunity, not the wait before it.
+            not_before = (
+                time.time()
+                + scheduler._seconds_until_next_maintenance_window(executor.maintenance_window)
+                + 1
+            )
     try:
         plan = await admission_store.approve(
-            task_id, body.plan_id, body.fingerprint, actor.username
+            task_id, body.plan_id, body.fingerprint, actor.username, not_before=not_before
         )
     except AdmissionConflict as exc:
         if str(exc) == "approval_stale_or_blocked" and executor is not None:
@@ -250,7 +264,11 @@ async def approve_deployment(
                         and refreshed["state"] == "pending"
                     ):
                         plan = await admission_store.approve(
-                            task_id, refreshed["id"], refreshed["fingerprint"], actor.username
+                            task_id,
+                            refreshed["id"],
+                            refreshed["fingerprint"],
+                            actor.username,
+                            not_before=not_before,
                         )
                         return JSONResponse(
                             status_code=202,

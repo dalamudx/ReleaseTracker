@@ -146,7 +146,9 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
                 "Pod-member updates are not supported in phase 1."
             )
 
-        if old_image == new_image:
+        from ..services.deployment_version_evidence import force_image_update
+
+        if old_image == new_image and not force_image_update(None):
             return RuntimeUpdateResult(updated=False, old_image=old_image, new_image=new_image)
 
         client = self._get_client()

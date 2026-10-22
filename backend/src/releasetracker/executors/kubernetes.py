@@ -277,8 +277,20 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
                 + ", ".join(missing_services)
             )
 
+        from ..services.deployment_version_evidence import force_image_update
+
         containers_patch = [
-            {"name": service, "image": image}
+            {
+                "name": service,
+                "image": image,
+                **(
+                    {"imagePullPolicy": "Always"}
+                    if image == current_images[service]
+                    and "@" not in image
+                    and force_image_update(service)
+                    else {}
+                ),
+            }
             for service, image in sorted(service_target_images.items())
         ]
         template_patch = {"spec": {"containers": containers_patch}}

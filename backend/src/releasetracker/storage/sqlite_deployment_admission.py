@@ -8,6 +8,7 @@ import time
 import uuid
 
 from ..services.version_policy import version_policy_reason
+from ..services.deployment_version_evidence import targets_verified
 from ..services.deployment_plan import (
     PREFIX,
     TargetEvidence,
@@ -139,14 +140,15 @@ class DeploymentAdmissionStore:
 
     @staticmethod
     async def _restore_lost_baseline(db, target, evidence, now):
-        """Re-record a baseline whose post-write evidence read was lost.
+        """Restore a lost baseline or complete one missing only Kubernetes Pod digests.
 
-        Proof stays local: this executor's latest started deployment succeeded
-        under an approved plan for this exact target, and every live marker names
-        that deployment. Deleted-owner reclaims never reach here (no target row).
-        The current runtime state becomes the baseline; drift since that
-        deployment cannot be reconstructed and is not reported.
+        The latest started deployment must have succeeded under an approved plan
+        for this target, with all live markers naming it. An existing baseline
+        must match every configuration field except the previously absent digests;
+        once completed, changes to those digests are drift again.
         """
+        if target["baseline"] is not None and target["baseline"] != evidence.pre_rollout_hash:
+            return False
         deployment_ids = {marker.get(PREFIX + "deployment-id") for marker in evidence.markers}
         if len(deployment_ids) != 1 or None in deployment_ids:
             return False
@@ -162,13 +164,14 @@ class DeploymentAdmissionStore:
         if (
             latest is None
             or latest["state"] != "succeeded"
+            or evidence.baseline_task_id != latest["id"]
             or str(latest["id"]) not in deployment_ids
         ):
             return False
         approved = await (
             await db.execute(
-                """SELECT 1 FROM deployment_plans WHERE task_id=? AND executor_id=?
-                   AND target_id=? AND identity_key=? AND approved_at IS NOT NULL LIMIT 1""",
+                """SELECT state,summary FROM deployment_plans WHERE task_id=? AND executor_id=?
+                   AND target_id=? AND identity_key=? AND approved_at IS NOT NULL ORDER BY id DESC LIMIT 1""",
                 (
                     latest["id"],
                     target["executor_id"],
@@ -179,15 +182,26 @@ class DeploymentAdmissionStore:
         ).fetchone()
         if approved is None:
             return False
+        if target["baseline"] is None and (
+            not evidence.configuration_hash
+            or json.loads(approved["summary"]).get("desired_configuration_hash")
+            != evidence.configuration_hash
+        ):
+            return False
+        if target["baseline"] is not None and (
+            target["last_task_id"] != latest["id"] or approved["state"] != "applied"
+        ):
+            return False
         cursor = await db.execute(
             """UPDATE managed_targets SET baseline=?,last_task_id=?,updated_at=?
-               WHERE target_id=? AND executor_id=? AND baseline IS NULL""",
+               WHERE target_id=? AND executor_id=? AND baseline IS ?""",
             (
                 evidence.evidence_hash,
                 latest["id"],
                 now,
                 target["target_id"],
                 target["executor_id"],
+                target["baseline"],
             ),
         )
         if cursor.rowcount != 1:
@@ -251,7 +265,7 @@ class DeploymentAdmissionStore:
                 pass
             elif (
                 target
-                and target["baseline"] is None
+                and target["baseline"] != evidence.evidence_hash
                 and reason is None
                 and await self._restore_lost_baseline(db, target, evidence, now)
             ):
@@ -400,9 +414,13 @@ class DeploymentAdmissionStore:
             ).fetchone()
         return self._decode(row)
 
-    async def approve(self, task_id, plan_id, expected_fingerprint, actor, *, now=None):
+    async def approve(
+        self, task_id, plan_id, expected_fingerprint, actor, *, now=None, not_before=None
+    ):
         """Authenticated explicit approval, CAS-bound to the exact unexpired plan."""
         now = time.time() if now is None else now
+        if not_before is not None and not now <= not_before <= now + 8 * 86400:
+            raise AdmissionConflict("invalid_approval_window")
         if not actor:
             raise AdmissionConflict("approval_actor_required")
         async with self.storage.tasks.transaction() as db:
@@ -417,7 +435,6 @@ class DeploymentAdmissionStore:
                 or task is None
                 or row["fingerprint"] != expected_fingerprint
                 or row["expires_at"] <= now
-                or row["reason"] not in APPROVABLE
             ):
                 raise AdmissionConflict("approval_stale_or_blocked")
             latest = await (
@@ -427,6 +444,8 @@ class DeploymentAdmissionStore:
                 raise AdmissionConflict("approval_stale_or_blocked")
             if row["state"] == "approved" and task["state"] in {"queued", "running"}:
                 return self._decode(row)
+            if row["reason"] not in APPROVABLE:
+                raise AdmissionConflict("approval_stale_or_blocked")
 
             if (
                 row["state"] != "pending"
@@ -449,12 +468,17 @@ class DeploymentAdmissionStore:
                 (row["target_id"], row["executor_id"], row["identity_key"], now, now),
             )
             await db.execute(
-                "UPDATE deployment_plans SET state='approved',approved_at=?,approved_by=? WHERE id=?",
-                (now, actor, plan_id),
+                "UPDATE deployment_plans SET state='approved',approved_at=?,approved_by=?,expires_at=? WHERE id=?",
+                (
+                    now,
+                    actor,
+                    max(row["expires_at"], not_before + 1800) if not_before else row["expires_at"],
+                    plan_id,
+                ),
             )
             await db.execute(
                 "UPDATE tasks SET approval_pending=0,due_at=?,updated_at=?,error_code=NULL WHERE id=?",
-                (now, now, task_id),
+                (max(now, not_before or now), now, task_id),
             )
             return self._decode(
                 await (
@@ -514,6 +538,13 @@ class DeploymentAdmissionStore:
                 raise AdmissionConflict("deployment_plan_not_approvable")
             if row["identity_key"] != evidence.identity_key:
                 raise AdmissionConflict("managed_target_changed")
+            expected = json.loads(row["summary"]).get("desired_configuration_hash")
+            if (
+                not expected
+                or expected != evidence.configuration_hash
+                or not targets_verified(task, evidence)
+            ):
+                raise AdmissionConflict("deployment_result_unverified")
             await db.execute(
                 "UPDATE deployment_plans SET state='applied',applied_at=? WHERE id=?",
                 (now, row["id"]),
@@ -528,14 +559,7 @@ class DeploymentAdmissionStore:
             return self._decode(updated)
 
     async def refresh_applied(self, task_id, evidence: TargetEvidence, *, now=None):
-        """Replace a deferred deployment's handoff baseline once readiness converged.
-
-        The handoff read precedes the rollout, so runtime-derived evidence such as
-        Kubernetes Pod artifact digests is not yet available. Only the deployment
-        that recorded the current baseline may refresh it, and only while its
-        identity and markers still hold. Readiness has already verified the
-        submitted target; any other change since the handoff is not reported.
-        """
+        """Commit only the approved configuration and frozen target artifacts."""
         now = time.time() if now is None else now
         async with self.storage.tasks.transaction() as db:
             row = await (
@@ -546,10 +570,37 @@ class DeploymentAdmissionStore:
             ).fetchone()
             if (
                 row is None
-                or row["state"] != "applied"
+                or row["state"] not in {"approved", "applied"}
                 or row["identity_key"] != evidence.identity_key
             ):
                 return False
+            original = await (
+                await db.execute("SELECT payload,state FROM tasks WHERE id=?", (task_id,))
+            ).fetchone()
+            if original is None or original["state"] != "succeeded":
+                return False
+            task = {"payload": json.loads(original["payload"])}
+            if not targets_verified(task, evidence):
+                return False
+            expected = json.loads(row["summary"]).get("desired_configuration_hash")
+            if expected:
+                if evidence.configuration_hash != expected:
+                    return False
+            else:
+                # Legacy Kubernetes baselines can be repaired only by the exact missing-digest projection.
+                legacy = await (
+                    await db.execute(
+                        "SELECT baseline,last_task_id FROM managed_targets WHERE target_id=? AND executor_id=?",
+                        (row["target_id"], row["executor_id"]),
+                    )
+                ).fetchone()
+                if not (
+                    legacy
+                    and evidence.pre_rollout_hash
+                    and legacy["baseline"] == evidence.pre_rollout_hash
+                    and legacy["last_task_id"] == task_id
+                ):
+                    return False
             deployment_ids = {marker.get(PREFIX + "deployment-id") for marker in evidence.markers}
             if deployment_ids - {None, str(task_id)}:
                 return False
@@ -558,6 +609,46 @@ class DeploymentAdmissionStore:
             )
             if reason is not None:
                 return False
+            if row["state"] == "approved":
+                # A failed handoff read left the plan approved; a successful recheck
+                # can finish it only if no later deployment has started.
+                latest = await (
+                    await db.execute(
+                        """SELECT id,state FROM tasks WHERE kind='deploy'
+                       AND json_extract(payload, '$.executor_id')=?
+                       AND json_extract(result, '$.mutation_started')=1 ORDER BY id DESC LIMIT 1""",
+                        (row["executor_id"],),
+                    )
+                ).fetchone()
+                if (
+                    latest is None
+                    or latest["id"] != task_id
+                    or latest["state"] != "succeeded"
+                    or deployment_ids != {str(task_id)}
+                    or row["approved_at"] is None
+                ):
+                    return False
+                cursor = await db.execute(
+                    """UPDATE managed_targets SET baseline=?,last_task_id=?,updated_at=?
+                       WHERE target_id=? AND executor_id=? AND identity_key=?
+                       AND (last_task_id IS NULL OR last_task_id<=?)""",
+                    (
+                        evidence.evidence_hash,
+                        task_id,
+                        now,
+                        row["target_id"],
+                        row["executor_id"],
+                        evidence.identity_key,
+                        task_id,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    return False
+                await db.execute(
+                    "UPDATE deployment_plans SET state='applied',applied_at=? WHERE id=?",
+                    (now, row["id"]),
+                )
+                return True
             cursor = await db.execute(
                 """UPDATE managed_targets SET baseline=?,updated_at=?
                    WHERE target_id=? AND executor_id=? AND identity_key=? AND last_task_id=?""",
