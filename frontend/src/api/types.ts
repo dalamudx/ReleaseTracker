@@ -119,6 +119,27 @@ export interface TrackerCurrentViewTracker {
     sources: TrackerCurrentMatrixColumn[]
 }
 
+export interface SelectionDiagnosticItem {
+    tag: string
+    reason: string
+    family: string | null
+    fields: Record<string, string | null>
+}
+
+export interface SelectionDiagnostics {
+    source_label: string
+    channel_name: string
+    include_pattern: string | null
+    exclude_pattern: string | null
+    candidate_count: number
+    affected_count: number
+    reason: string | null
+    ordering_basis: string | null
+    conflicting_families: Array<{ family: string; count: number; examples: string[] }>
+    items: SelectionDiagnosticItem[]
+    total: number
+}
+
 export interface TrackerCurrentView {
     tracker: TrackerCurrentViewTracker
     status: {

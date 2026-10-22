@@ -49,6 +49,8 @@ Time-based selection is no longer offered. Legacy `published_at` sorting setting
 
 The channel rule determines membership; the retired `version_format` setting is ignored. Standard versions use version comparison, integer-only channels use numeric order, and integers never outrank dotted versions in a mixed repository. Matching numbered formats such as `build-99` / `build-100` or dates use natural ordering. Different text patterns cannot be ordered by their names.
 
+For container tags, compact hexadecimal strings of 7–64 characters containing a letter (such as `361952a`) are ambiguous commit identifiers and do not enter default version ordering. This prevents PEP 440 from mistaking a hash for a very large version. They remain in inventory; explicit numeric fields or an exact pinned tag still work. GitHub and Helm version parsing is unchanged.
+
 For complex tags, capture a numeric `version` and optional `revision` in the include pattern. Both `(?<version>...)` and Python `(?P<version>...)` work. For example:
 
 ```regex
@@ -56,6 +58,8 @@ For complex tags, capture a numeric `version` and optional `revision` in the inc
 ```
 
 This compares the build number, then the image revision, ignoring the hash. Equal version keys pointing to different digests still conflict. The form's ordering preview uses the same backend rules without saving or fetching. Actual targets also require digest confirmation.
+
+Click “Show problem tags” to open the diagnostics dialog. Search and pagination stay visible while tags scroll independently; channel rules start collapsed. The ordering basis is determined automatically from channel rules and displayed read-only, including ordinary versions and explicit numeric fields. There is no reference selector. Include/exclude rules are applied before reporting tags that actually cause the failure; unrelated hashes, floating tags and ignored integer aliases are omitted. When no common basis exists, show family counts and at most three sample tags per family without guessing which family is wrong. Diagnostics never change rules, choose a target or bypass selection blocks.
 
 Unorderable tags remain visible in channel history, but do not produce an automatic target. There is no time fallback. Custom numbers do not imply major/minor/patch policy semantics; uncertain deployment direction still requires review. Each channel keeps its own retention quota using its ordering fields; deterministic audit order for unknown formats is not an upgrade direction.
 Container fetching never reads Config blobs, build times or OCI labels; legacy `published_at_mode` is ignored. Dates never rank versions. Compact dates prefer genuine push time, then registry registration, then explicitly labeled registry modification. Unknown dates never use discovery/build fallbacks. Hover/focus reveals full semantics; the column remains on mobile.

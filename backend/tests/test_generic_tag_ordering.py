@@ -192,3 +192,49 @@ async def test_compile_pattern_and_preview_reject_redos_or_oversized_patterns(un
             _user=None,
         )
     assert exc_info.value.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "tag",
+    [
+        "06a4638",
+        "257077a",
+        "2b43909",
+        "310355b",
+        "35400b0",
+        "361952a",
+        "41719a0",
+        "67b0922",
+        "712b484",
+        "853c489",
+        "8827c46",
+        "8b76693",
+        "94c0076",
+    ],
+)
+def test_compact_container_hashes_never_outrank_versions(tag):
+    assert tag_order(tag) is None
+    assert select_version_candidate([release(tag), release("0.7.19")]).tag_name == "0.7.19"
+    assert select_version_candidate([release(tag)]) is None
+
+
+def test_explicit_hash_version_fields_and_fixed_tags_remain_supported():
+    tag = "361952a"
+    channel = Channel(name="stable", include_pattern=r"^(?P<version>\d+)a$")
+    assert tag_order(tag, channel).family == "extracted"
+    assert select_version_candidate([release(tag)], channel=channel).tag_name == tag
+    assert select_version_candidate([release(tag)], exact_alias=tag).tag_name == tag
+    assert tag_order("1.2a1") is not None
+    assert tag_order(tag, image_variants=False) is not None
+
+
+def test_aether_failure_points_to_five_fix_tags_not_hashes():
+    from releasetracker.tag_ordering import ordering_diagnostics
+
+    fix_tags = ["0.5.4-fix1", "0.5.4-fix2", "0.5.4-fix3", "0.5.6-fix1", "0.5.6-fix2"]
+    ordinary = [release("0.7.18"), release("0.7.19")]
+    unrelated = [release("361952a"), release("0154e2f"), release("latest"), release("7048583")]
+    candidates = ordinary + unrelated + [release(tag) for tag in fix_tags]
+    assert select_version_candidate(candidates) is None
+    assert [row["tag"] for row in ordering_diagnostics(candidates)] == fix_tags
+    assert select_version_candidate(ordinary + unrelated).tag_name == "0.7.19"

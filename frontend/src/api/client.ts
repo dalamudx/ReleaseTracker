@@ -4,6 +4,7 @@ import { appPath } from "@/lib/base-path"
 import { getCsrfToken, withSessionLock } from "@/lib/browser-session"
 import type {
     AggregateTracker,
+    SelectionDiagnostics,
     ReleaseStats,
     ApiCredential,
     CredentialReferencesResponse,
@@ -284,6 +285,8 @@ export const api = {
     checkTracker: (name: string) => apiClient.post<TrackerStatus | TaskReceipt>(`/api/trackers/${name}/check`).then(res => res.data),
     getTracker: (name: string) => apiClient.get<AggregateTracker>(`/api/trackers/${name}`).then(res => res.data),
     getTrackerConfig: (name: string) => apiClient.get<AggregateTracker>(`/api/trackers/${name}/config`).then(res => res.data),
+    getSelectionDiagnostics: (trackerName: string, params: { tracker_source_id: number; channel_key: string; offset: number; limit: number; search?: string }, signal?: AbortSignal) =>
+        apiClient.get<SelectionDiagnostics>(`/api/trackers/${encodeURIComponent(trackerName)}/selection-diagnostics`, { params, signal }).then(res => res.data),
     getTrackerCurrentView: (trackerName: string) =>
         apiClient.get<TrackerCurrentView>(`/api/trackers/${trackerName}/current`).then(res => res.data),
     getTrackerReleaseHistory: (

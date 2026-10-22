@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 
 import aiosqlite
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..config import Channel, TrackerConfig
@@ -87,6 +87,66 @@ async def preview_version_order(
             }
             for r in ordered
         ],
+    }
+
+
+@router.get("/{tracker_name}/selection-diagnostics", dependencies=[Depends(get_current_admin_user)])
+async def selection_diagnostics(
+    tracker_name: str,
+    storage: Annotated[SQLiteStorage, Depends(get_storage)],
+    tracker_source_id: int = Query(gt=0),
+    channel_key: str = Query(min_length=1, max_length=256),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    search: str = Query("", max_length=200),
+):
+    from ..tag_ordering import (
+        ordering_basis,
+        ordering_diagnostics,
+        ordering_family_conflicts,
+        ordering_issue,
+    )
+    from ..versioning import pinned_alias
+
+    tracker = await storage.get_aggregate_tracker(tracker_name)
+    if tracker is None:
+        raise HTTPException(404, "Tracker not found")
+    source = next((s for s in tracker.sources if s.id == tracker_source_id and s.enabled), None)
+    if source is None:
+        raise HTTPException(404, "Tracker source not found")
+    channel = next(
+        (
+            c
+            for rank, c in enumerate(sqlite_selection.selection_channels(source))
+            if c.enabled
+            and (c.release_channel_key or storage._channel_selection_key(c, rank)) == channel_key
+        ),
+        None,
+    )
+    if channel is None:
+        raise HTTPException(404, "Release channel not found")
+    # Read the complete current inventory, independent of pruned release history.
+    candidates = sqlite_selection.channel_candidates(
+        storage, source, channel, await sqlite_selection.source_candidates(storage, source)
+    )
+    reason = None if pinned_alias(channel) else ordering_issue(candidates, channel)
+    families = ordering_family_conflicts(candidates, channel)
+    basis = ordering_basis(candidates, channel)
+    rows = ordering_diagnostics(candidates, channel)
+    query = search.strip().casefold()
+    matching = [r for r in rows if query in r["tag"].casefold()]
+    return {
+        "source_label": source.source_key,
+        "channel_name": channel.name,
+        "include_pattern": channel.include_pattern,
+        "exclude_pattern": channel.exclude_pattern,
+        "candidate_count": len(candidates),
+        "affected_count": len(rows),
+        "reason": reason,
+        "ordering_basis": basis,
+        "conflicting_families": families,
+        "items": matching[offset : offset + limit],
+        "total": len(matching),
     }
 
 

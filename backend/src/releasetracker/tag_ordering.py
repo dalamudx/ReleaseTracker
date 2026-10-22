@@ -107,6 +107,10 @@ class TagOrder:
     value: tuple
 
 
+def _is_compact_hash(value: str) -> bool:
+    return bool(re.fullmatch(r"[0-9a-f]{7,64}", value, re.I)) and not value.isdecimal()
+
+
 def tag_order(tag: str, channel=None, *, image_variants: bool = True) -> TagOrder | None:
     from .versioning import normalize_version, parsed_version
 
@@ -130,6 +134,9 @@ def tag_order(tag: str, channel=None, *, image_variants: bool = True) -> TagOrde
                 parts.pop()
             return TagOrder("extracted", (tuple(parts), int(revision)))
     normalized = normalize_version(tag)
+    # A compact commit ID can accidentally parse as a PEP-440 alpha/beta version.
+    if image_variants and _is_compact_hash(normalized):
+        return None
     parsed = parsed_version(tag)
     if parsed is not None:
         family = "integer" if re.fullmatch(r"\d+", normalized) else "version"
@@ -187,6 +194,101 @@ def ordering_issue(releases, channel=None):
     if len({k.family for _, k in keyed}) > 1:
         return "incomparable_versions"
     return None
+
+
+def ordering_basis(releases, channel=None):
+    """Describe the channel's ordering semantics, never a user-selected reference."""
+    from .versioning import pinned_alias
+
+    if channel is not None and pinned_alias(channel):
+        return "pinned"
+    pattern = channel_pattern(channel)
+    if pattern:
+        try:
+            if "version" in compile_pattern(pattern).groupindex:
+                return "extracted"
+        except re.error:
+            return None
+    families = {key.family for _, key in ranked_candidates(releases, channel)}
+    return (
+        "version" if "version" in families else next(iter(families)) if len(families) == 1 else None
+    )
+
+
+def ordering_family_conflicts(releases, channel=None):
+    """Show family counts and bounded examples when no common order exists."""
+    groups = {}
+    for release, key in sorted(
+        ranked_candidates(releases, channel), key=lambda pair: pair[0].tag_name
+    ):
+        group = groups.setdefault(key.family, {"family": key.family, "count": 0, "examples": []})
+        group["count"] += 1
+        if len(group["examples"]) < 3:
+            group["examples"].append(release.tag_name)
+    return [groups[family] for family in sorted(groups)] if len(groups) > 1 else []
+
+
+def ordering_diagnostics(releases, channel=None):
+    """Report the tags relevant to the actual failure, without changing selection."""
+    from .versioning import pinned_alias
+
+    issue = ordering_issue(releases, channel)
+    if (channel is not None and pinned_alias(channel)) or issue is None:
+        return []
+    if issue == "incomparable_versions":
+        ranked = ranked_candidates(releases, channel)
+        reference_family = ordering_basis(releases, channel)
+        if reference_family is None:
+            return []
+        return [
+            {
+                "tag": release.tag_name,
+                "reason": "incomparable_family",
+                "family": key.family,
+                "fields": {},
+            }
+            for release, key in sorted(ranked, key=lambda pair: pair[0].tag_name)
+            if key.family != reference_family
+        ]
+    rows = []
+    pattern = channel_pattern(channel)
+    for release in sorted(releases, key=lambda r: r.tag_name):
+        fields = {}
+        reason = (
+            "ambiguous_hash"
+            if release.tracker_type == "container" and _is_compact_hash(release.tag_name)
+            else "no_ordering_key"
+        )
+        if pattern:
+            try:
+                regex = compile_pattern(pattern)
+                if "version" in regex.groupindex:
+                    match = regex.fullmatch(release.tag_name)
+                    if not match:
+                        reason = "pattern_not_full_match"
+                    else:
+                        fields = {
+                            name: match.groupdict().get(name)
+                            for name in ("version", "revision")
+                            if name in regex.groupindex
+                        }
+                        version = fields.get("version") or ""
+                        revision = fields.get("revision") or "0"
+                        if not re.fullmatch(r"\d+(?:\.\d+)*", version):
+                            reason = "invalid_numeric_version"
+                        elif not re.fullmatch(r"\d+", revision):
+                            reason = "invalid_numeric_revision"
+            except re.error:
+                reason = "invalid_pattern"
+        rows.append(
+            {
+                "tag": release.tag_name,
+                "reason": reason,
+                "family": None,
+                "fields": fields,
+            }
+        )
+    return rows
 
 
 def history_order_key(release, channel=None):

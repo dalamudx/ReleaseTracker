@@ -79,6 +79,25 @@ def comparable(source, release, channel) -> bool:
     return True
 
 
+def selection_channels(source):
+    return source.release_channels or [
+        ReleaseChannel(
+            release_channel_key="default",
+            name="stable",
+            type=None if source.source_type == "container" else "release",
+        )
+    ]
+
+
+def channel_candidates(storage, source, channel, candidates):
+    return [
+        r
+        for r in candidates
+        if storage._release_matches_channel(r, channel, channel_source_type=source.source_type)
+        and comparable(source, r, channel)
+    ]
+
+
 async def save_candidates(storage, source, releases, *, listed_tags=None, commit=False):
     db = await storage._get_connection()
     now = datetime.now().isoformat()
@@ -353,25 +372,12 @@ async def refresh_selections(storage, tracker, *, commit=True):
                 "SELECT * FROM source_inventory_scans WHERE tracker_source_id=?", (source.id,)
             )
         ).fetchone()
-        channels = source.release_channels or [
-            ReleaseChannel(
-                release_channel_key="default",
-                name="stable",
-                type=None if source.source_type == "container" else "release",
-            )
-        ]
+        channels = selection_channels(source)
         for rank, channel in enumerate(channels):
             if not channel.enabled:
                 continue
             key = channel.release_channel_key or storage._channel_selection_key(channel, rank)
-            eligible = [
-                r
-                for r in candidates
-                if storage._release_matches_channel(
-                    r, channel, channel_source_type=source.source_type
-                )
-                and comparable(source, r, channel)
-            ]
+            eligible = channel_candidates(storage, source, channel, candidates)
             ranked = (
                 [r.model_copy(update={"version": r.tag_name}) for r in eligible]
                 if source.source_type == "container" and not pinned_alias(channel)

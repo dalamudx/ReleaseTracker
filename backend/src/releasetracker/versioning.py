@@ -30,7 +30,7 @@ class ComparableVersion:
         return hash(self.key)
 
 
-SELECTION_RULES_VERSION = 6
+SELECTION_RULES_VERSION = 7
 
 
 def normalize_version(value: str) -> str:
