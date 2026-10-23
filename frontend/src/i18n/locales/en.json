@@ -1671,6 +1671,25 @@
     "timeline": "Attempts",
     "sourceRun": "{{source}} · fetch run #{{run}}",
     "deployRun": "Executor run #{{run}}",
+    "blockedBy": "Waiting for {{name}}, task #{{id}}: {{reason}}",
+    "blocker": { "readiness": "readiness observation is unfinished", "mutation": "execution in progress or remote state needs verification" },
+    "baseline": {
+      "pending": "Baseline verification pending", "verified": "Baseline verified", "review_required": "Baseline needs review", "superseded": "Baseline replaced by a later deployment",
+      "recheck": "Recheck baseline",
+      "pendingHelp": "The deployment result is recorded. Baseline verification is read-only and does not repeat the update.",
+      "reviewHelp": "The deployment result is unchanged. The baseline is unverified, so the next actual update requires configuration review. Rechecking does not approve configuration or deploy.",
+      "reasons": {
+        "legacy_plan_missing_proof": "The old plan lacks approved configuration evidence. Rechecking cannot reconstruct historical approval.",
+        "configuration_changed": "Current configuration differs from the approved result.",
+        "target_identity_changed": "The target identity has changed.",
+        "artifact_unverified": "Runtime evidence has not yet verified the target artifact.",
+        "evidence_unavailable": "Runtime evidence is temporarily unavailable.",
+        "evidence_exhausted": "Evidence retries are exhausted. Check the runtime connection before rechecking.",
+        "legacy_baseline_unverified": "Only baseline verification failed; the successful deployment result has been preserved.",
+        "deployment_marker_changed": "Runtime resources carry another deployment's marker.",
+        "unknown": "Configuration or ownership evidence is missing. Inspect the current target."
+      }
+    },
     "resolve": "Resolve after verification",
     "resolveDescription": "Confirm the remote command has stopped and the runtime state was verified. This records a failed, manually reconciled result and does not perform any remote mutation.",
     "resolveConfirm": "Confirm verified",

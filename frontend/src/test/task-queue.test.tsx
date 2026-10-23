@@ -299,4 +299,27 @@ describe("persistent task queue", () => {
         await screen.findByText("task-50")
         expect(screen.getAllByTestId("task-summary")).toHaveLength(50)
     })
+    it("keeps deployment success visible and rechecks only the baseline", async () => {
+        const saved = { ...task("succeeded", "deploy"), result: { baseline_status: "review_required" as const, baseline_reason: "legacy_plan_missing_proof" } }
+        vi.mocked(api.getTasks).mockResolvedValue([saved])
+        vi.mocked(api.getTask).mockResolvedValue(saved)
+        vi.mocked(api.recheckBaseline).mockResolvedValue({ status: "pending" })
+        show()
+        expect(await screen.findByText(i18n.t("tasks.baseline.review_required"))).toBeVisible()
+        fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.details", { id: 17 }) }))
+        expect(await screen.findByText(i18n.t("tasks.baseline.reasons.legacy_plan_missing_proof"))).toBeVisible()
+        fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.baseline.recheck") }))
+        await waitFor(() => expect(api.recheckBaseline).toHaveBeenCalledWith(17))
+        expect(api.recheckTask).not.toHaveBeenCalled()
+        expect(api.resolveTask).not.toHaveBeenCalled()
+    })
+    it("identifies the actual blocking task separately from the old queue reason", async () => {
+        const saved = { ...task("queued", "deploy"), error_code: "maintenance_window", blockers: [{ task_id: 1928, target_label: "OpenBao", reason: "readiness" as const }] }
+        vi.mocked(api.getTasks).mockResolvedValue([saved])
+        vi.mocked(api.getTask).mockResolvedValue(saved)
+        show()
+        await screen.findByText("nginx-test")
+        fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.details", { id: 17 }) }))
+        expect(await screen.findByText(/OpenBao.*#1928/)).toBeVisible()
+    })
 })

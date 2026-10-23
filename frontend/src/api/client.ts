@@ -258,6 +258,7 @@ export const api = {
     cancelTask: (id: number) => apiClient.post(`/api/tasks/${id}/cancel`).then(res => res.data),
     retryTask: (id: number) => apiClient.post<TaskReceipt>(`/api/tasks/${id}/retry`).then(res => res.data),
     recheckTask: (id: number) => apiClient.post<TaskReceipt>(`/api/tasks/${id}/recheck`).then(res => res.data),
+    recheckBaseline: (id: number) => apiClient.post(`/api/tasks/${id}/baseline/recheck`).then(res => res.data),
     resolveTask: (id: number) => apiClient.post(`/api/tasks/${id}/resolve`, { remote_stopped: true, state_verified: true }).then(res => res.data),
     getStats: () => apiClient.get<ReleaseStats>('/api/stats').then(res => res.data),
     getTrackers: (params?: { skip?: number, limit?: number, search?: string }) =>

@@ -1671,6 +1671,25 @@
     "timeline": "执行历程",
     "sourceRun": "{{source}} · 抓取运行 #{{run}}",
     "deployRun": "执行器运行 #{{run}}",
+    "blockedBy": "等待 {{name}} 的任务 #{{id}}：{{reason}}",
+    "blocker": { "readiness": "就绪检查尚未结束", "mutation": "执行占用或远端状态待核实" },
+    "baseline": {
+      "pending": "基线核验中", "verified": "基线已核验", "review_required": "基线待审核", "superseded": "基线已由后续部署接管",
+      "recheck": "重新核验基线",
+      "pendingHelp": "部署结果已记录，系统正在只读核验纳管基线，不会重新执行更新。",
+      "reviewHelp": "部署结果保持不变。当前基线尚未确认，后续实际更新需要重新审核配置；重新核验不会批准配置或执行部署。",
+      "reasons": {
+        "legacy_plan_missing_proof": "旧计划缺少批准后的配置证明，重复核验无法补齐历史批准。",
+        "configuration_changed": "当前配置与批准结果不一致。",
+        "target_identity_changed": "目标身份发生变化。",
+        "artifact_unverified": "尚未取得与目标制品一致的运行证据。",
+        "evidence_unavailable": "暂时无法读取运行证据。",
+        "evidence_exhausted": "证据读取重试已耗尽，请检查运行时连接后重新核验。",
+        "legacy_baseline_unverified": "旧任务仅基线核验失败，已保留成功部署结果。",
+        "deployment_marker_changed": "运行资源已带有其他部署的标记。",
+        "unknown": "缺少可验证的配置或归属证据，需要检查当前目标。"
+      }
+    },
     "resolve": "核验后解除阻塞",
     "resolveDescription": "确认远端已处理并核验。此操作仅记录人工核验状态，不执行远端变更。",
     "resolveConfirm": "确认已核验",

@@ -27,6 +27,8 @@ class RuntimeUpdateResult:
     new_image: str | None
     message: str | None = None
     new_container_id: str | None = None
+    artifact_digest: str | None = None
+    artifact_revision: int | None = None
 
 
 class RuntimeMutationError(RuntimeError):

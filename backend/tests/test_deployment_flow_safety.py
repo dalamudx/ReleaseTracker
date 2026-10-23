@@ -286,11 +286,9 @@ async def test_unverifiable_baseline_has_bounded_retries(storage, monkeypatch):
         await db.commit()
         await scheduler.deploy_tasks._baseline_receipt(task["id"], False)
         saved = await storage.tasks.get(task["id"])
-        assert (saved["state"], saved["error_code"]) == (
-            "needs_attention",
-            "deployment_baseline_unverified",
-        )
-        assert saved["result"]["baseline_status"] == "needs_attention"
+        assert (saved["state"], saved["error_code"]) == ("succeeded", None)
+        assert saved["result"]["baseline_status"] == "review_required"
+        assert saved["result"]["baseline_reason"] == "evidence_exhausted"
         probe = AsyncMock()
         monkeypatch.setattr(scheduler.deploy_tasks, "refresh_admission_baseline", probe)
         await scheduler.deploy_tasks._reconcile_baselines()

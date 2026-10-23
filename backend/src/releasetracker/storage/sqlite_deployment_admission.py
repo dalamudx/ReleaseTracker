@@ -23,6 +23,7 @@ APPROVABLE = frozenset(
         "unmanaged",
         "marker_missing",
         "configuration_drift",
+        "baseline_review_required",
         "version_policy_requires_approval",
         "version_downgrade_requires_approval",
         "version_unknown_requires_approval",
@@ -275,6 +276,22 @@ class DeploymentAdmissionStore:
             elif reason is None and target["baseline"] != evidence.evidence_hash:
                 reason = "configuration_drift"
 
+            if reason is None:
+                previous = await (
+                    await db.execute(
+                        """SELECT result FROM tasks WHERE kind='deploy' AND id<?
+                       AND json_extract(payload,'$.executor_id')=?
+                       AND json_extract(result,'$.mutation_started')=1 ORDER BY id DESC LIMIT 1""",
+                        (task["id"], executor_id),
+                    )
+                ).fetchone()
+                if previous and json.loads(previous["result"] or "{}").get("baseline_status") in {
+                    "pending",
+                    "review_required",
+                    "needs_attention",
+                }:
+                    reason = "baseline_review_required"
+
             policy_reason = version_policy_reason(task, evidence)
             if policy_reason and reason in {None, "unmanaged", "configuration_drift"}:
                 reason = policy_reason
@@ -321,7 +338,10 @@ class DeploymentAdmissionStore:
                 and old["state"] == "approved"
                 and old["expires_at"] > now
                 and not blocked
-                and (not policy_reason or old["approved_by"] != "managed_baseline")
+                and (
+                    not (policy_reason or reason == "baseline_review_required")
+                    or old["approved_by"] != "managed_baseline"
+                )
             )
             authorized = reason is None or approved
             state = "approved" if authorized else ("blocked" if blocked else "pending")
@@ -559,7 +579,9 @@ class DeploymentAdmissionStore:
             return self._decode(updated)
 
     async def refresh_applied(self, task_id, evidence: TargetEvidence, *, now=None):
-        """Commit only the approved configuration and frozen target artifacts."""
+        """Commit approved evidence, preserving why completion cannot proceed."""
+        from ..services.deployment_baseline import BaselineResult
+
         now = time.time() if now is None else now
         async with self.storage.tasks.transaction() as db:
             row = await (
@@ -568,66 +590,68 @@ class DeploymentAdmissionStore:
                     (task_id,),
                 )
             ).fetchone()
-            if (
-                row is None
-                or row["state"] not in {"approved", "applied"}
-                or row["identity_key"] != evidence.identity_key
-            ):
-                return False
+            if row is None:
+                return BaselineResult("review_required", "plan_missing")
             original = await (
                 await db.execute("SELECT payload,state FROM tasks WHERE id=?", (task_id,))
             ).fetchone()
-            if original is None or original["state"] != "succeeded":
-                return False
+            latest = await (
+                await db.execute(
+                    """SELECT id,state FROM tasks WHERE kind='deploy'
+                   AND json_extract(payload,'$.executor_id')=?
+                   AND json_extract(result,'$.mutation_started')=1 ORDER BY id DESC LIMIT 1""",
+                    (row["executor_id"],),
+                )
+            ).fetchone()
+            managed = await (
+                await db.execute(
+                    "SELECT * FROM managed_targets WHERE target_id=? AND executor_id=?",
+                    (row["target_id"], row["executor_id"]),
+                )
+            ).fetchone()
+            if (
+                (latest and latest["id"] > task_id)
+                or (managed and (managed["last_task_id"] or 0) > task_id)
+                or row["state"] in {"superseded", "cancelled"}
+            ):
+                return BaselineResult("superseded", "newer_deployment")
+            if original is None or original["state"] not in {"succeeded", "skipped"}:
+                return BaselineResult("review_required", "deployment_not_successful")
+            if row["state"] not in {"approved", "applied"}:
+                return BaselineResult("review_required", "plan_not_approved")
+            if row["identity_key"] != evidence.identity_key:
+                return BaselineResult("review_required", "target_identity_changed")
             task = {"payload": json.loads(original["payload"])}
-            if not targets_verified(task, evidence):
-                return False
             expected = json.loads(row["summary"]).get("desired_configuration_hash")
             if expected:
                 if evidence.configuration_hash != expected:
-                    return False
-            else:
-                # Legacy Kubernetes baselines can be repaired only by the exact missing-digest projection.
-                legacy = await (
-                    await db.execute(
-                        "SELECT baseline,last_task_id FROM managed_targets WHERE target_id=? AND executor_id=?",
-                        (row["target_id"], row["executor_id"]),
-                    )
-                ).fetchone()
-                if not (
-                    legacy
-                    and evidence.pre_rollout_hash
-                    and legacy["baseline"] == evidence.pre_rollout_hash
-                    and legacy["last_task_id"] == task_id
-                ):
-                    return False
+                    return BaselineResult("review_required", "configuration_changed")
+            elif not (
+                managed
+                and evidence.pre_rollout_hash
+                and managed["baseline"] == evidence.pre_rollout_hash
+                and managed["last_task_id"] == task_id
+            ):
+                return BaselineResult("review_required", "legacy_plan_missing_proof")
+            if not targets_verified(task, evidence):
+                return BaselineResult("pending", "artifact_unverified")
             deployment_ids = {marker.get(PREFIX + "deployment-id") for marker in evidence.markers}
             if deployment_ids - {None, str(task_id)}:
-                return False
+                return BaselineResult("review_required", "deployment_marker_changed")
             reason = await self._ownership_reason(
                 db, evidence, await self.installation_id(), row["target_id"]
             )
             if reason is not None:
-                return False
+                return BaselineResult("review_required", reason)
             if row["state"] == "approved":
-                # A failed handoff read left the plan approved; a successful recheck
-                # can finish it only if no later deployment has started.
-                latest = await (
-                    await db.execute(
-                        """SELECT id,state FROM tasks WHERE kind='deploy'
-                       AND json_extract(payload, '$.executor_id')=?
-                       AND json_extract(result, '$.mutation_started')=1 ORDER BY id DESC LIMIT 1""",
-                        (row["executor_id"],),
-                    )
-                ).fetchone()
                 if (
                     latest is None
                     or latest["id"] != task_id
-                    or latest["state"] != "succeeded"
+                    or latest["state"] not in {"succeeded", "skipped"}
                     or deployment_ids != {str(task_id)}
                     or row["approved_at"] is None
                 ):
-                    return False
+                    return BaselineResult("review_required", "deployment_receipt_missing")
                 cursor = await db.execute(
                     """UPDATE managed_targets SET baseline=?,last_task_id=?,updated_at=?
                        WHERE target_id=? AND executor_id=? AND identity_key=?
@@ -643,12 +667,12 @@ class DeploymentAdmissionStore:
                     ),
                 )
                 if cursor.rowcount != 1:
-                    return False
+                    return BaselineResult("review_required", "target_identity_changed")
                 await db.execute(
                     "UPDATE deployment_plans SET state='applied',applied_at=? WHERE id=?",
                     (now, row["id"]),
                 )
-                return True
+                return BaselineResult("verified")
             cursor = await db.execute(
                 """UPDATE managed_targets SET baseline=?,updated_at=?
                    WHERE target_id=? AND executor_id=? AND identity_key=? AND last_task_id=?""",
@@ -661,4 +685,8 @@ class DeploymentAdmissionStore:
                     task_id,
                 ),
             )
-            return cursor.rowcount == 1
+            return (
+                BaselineResult("verified")
+                if cursor.rowcount == 1
+                else BaselineResult("review_required", "baseline_owner_changed")
+            )

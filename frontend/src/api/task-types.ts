@@ -24,7 +24,8 @@ export interface QueueTask {
     updated_at: number
     error_code: string | null
     message: string | null
-    result: { phase?: string; readiness_recheck?: boolean; health_check?: ReadinessResult; health_recheck?: ReadinessResult; health_rechecks?: ReadinessResult[]; run_id?: number; source_fetch_run_ids?: Record<string, number> } | null
+    result: { phase?: string; baseline_status?: "pending" | "verified" | "review_required" | "needs_attention" | "superseded"; baseline_reason?: string; baseline_next_attempt?: number | null; readiness_recheck?: boolean; health_check?: ReadinessResult; health_recheck?: ReadinessResult; health_rechecks?: ReadinessResult[]; run_id?: number; source_fetch_run_ids?: Record<string, number> } | null
+    blockers?: Array<{ task_id: number; target_label: string; reason: "readiness" | "mutation" }>
     target: { tracker_name?: string; executor_id?: number }
     attempt_history?: Array<{ id: number; attempt: number; state: string; error_code: string | null; started_at: number; finished_at: number | null }>
     triggers?: Array<{ trigger_mode: string; created_at: number }>

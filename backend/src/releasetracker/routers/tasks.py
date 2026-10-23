@@ -99,12 +99,42 @@ async def clear_finished_tasks(
     }
 
 
+@router.post("/{task_id}/baseline/recheck")
+async def recheck_baseline(task_id: int, storage: Annotated[SQLiteStorage, Depends(get_storage)]):
+    async with storage.tasks.transaction() as db:
+        row = await (
+            await db.execute("SELECT kind,state,result FROM tasks WHERE id=?", (task_id,))
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, "Task not found")
+        result = json.loads(row["result"] or "{}")
+        if (
+            row["kind"] != "deploy"
+            or row["state"] not in {"succeeded", "skipped"}
+            or result.get("baseline_status")
+            not in {"pending", "review_required", "needs_attention"}
+        ):
+            raise HTTPException(
+                409, "Only completed deployments with an unverified baseline can be rechecked"
+            )
+        result.update(
+            baseline_status="pending", baseline_next_attempt=time.time(), baseline_attempts=0
+        )
+        await db.execute(
+            "UPDATE tasks SET result=?,updated_at=? WHERE id=?",
+            (json.dumps(result), time.time(), task_id),
+        )
+    return {"status": "pending"}
+
+
 @router.get("/{task_id}")
 async def task_detail(task_id: int, storage: Annotated[SQLiteStorage, Depends(get_storage)]):
     task = await storage.tasks.detail(task_id)
     if task is None:
         raise HTTPException(404, "Task not found")
-    return public_task(task)
+    result = public_task(task)
+    result["blockers"] = await storage.tasks.blockers(task)
+    return result
 
 
 @router.post("/{task_id}/cancel")

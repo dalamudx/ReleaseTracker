@@ -169,6 +169,14 @@ class ExecutorScheduler(
             seconds=_DESIRED_STATE_CONSUMER_INTERVAL_SECONDS,
         )
         self._track_background_task(self.reconcile_pending_desired_states())
+        if self.deploy_tasks is not None:
+            self.scheduler_host.add_interval_job(
+                self._job_namespace,
+                "deployment-baselines",
+                self.deploy_tasks.dispatch_baseline_checks,
+                seconds=30,
+            )
+            await self.deploy_tasks.dispatch_baseline_checks()
 
     async def refresh_executor(self, executor_id: int) -> None:
         # Configuration and credential materialization are part of adapter identity.

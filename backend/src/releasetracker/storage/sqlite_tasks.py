@@ -372,6 +372,46 @@ class TaskStore:
             task["resource_key"] = resource_key
             return True
 
+    async def blockers(self, task):
+        if task["kind"] not in {"deploy", "recover"} or task["state"] not in {
+            "queued",
+            "retry_wait",
+            "awaiting_approval",
+        }:
+            return []
+        key = task["resource_key"]
+        scope = key.removeprefix("deployment-mutations:") if key != "deployment-mutations" else "*"
+        db = await self.storage._get_connection()
+        rows = await (
+            await db.execute(
+                """SELECT DISTINCT t.id,t.target_label,
+                 CASE WHEN o.state IN ('waiting','finalizing','blocked') THEN 'readiness' ELSE 'mutation' END reason
+               FROM tasks t LEFT JOIN deployment_observations o ON o.task_id=t.id
+               WHERE t.id!=? AND t.kind IN ('deploy','recover') AND (
+                 ((t.state='running' AND t.owner IS NOT NULL OR t.state='needs_attention' AND ?='deploy') AND
+                   (t.resource_key=? OR t.resource_key='deployment-mutations' OR ?='deployment-mutations'
+                    OR json_extract(t.payload,'$.executor_id')=?)) OR
+                 ((o.state IN ('waiting','finalizing') OR o.state='blocked' AND t.state='needs_attention' AND ?='deploy') AND
+                   (o.executor_id=? OR o.resource_scope='*' OR ?='*' OR o.resource_scope=?)))
+               ORDER BY t.id LIMIT 20""",
+                (
+                    task["id"],
+                    task["kind"],
+                    key,
+                    key,
+                    task["payload"].get("executor_id"),
+                    task["kind"],
+                    task["payload"].get("executor_id"),
+                    scope,
+                    scope,
+                ),
+            )
+        ).fetchall()
+        return [
+            {"task_id": r["id"], "target_label": r["target_label"], "reason": r["reason"]}
+            for r in rows
+        ]
+
     async def claim(self, kind, *, lease_seconds=60, now=None, mutation_capacity=1):
         if not 1 <= mutation_capacity <= 3:
             raise ValueError("Mutation capacity must be between 1 and 3")

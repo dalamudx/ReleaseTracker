@@ -18,6 +18,7 @@ export function createTaskApiMock() {
     retryTask: vi.fn<typeof api.retryTask>(),
     resolveTask: vi.fn<typeof api.resolveTask>(),
     recheckTask: vi.fn<typeof api.recheckTask>(),
+    recheckBaseline: vi.fn<typeof api.recheckBaseline>(),
     clearFinishedTasks: vi.fn<typeof api.clearFinishedTasks>(),
   }
 }

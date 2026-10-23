@@ -280,6 +280,11 @@ class FakeHelmReleaseAdapter(KubernetesRuntimeAdapter):
     async def get_helm_release_version(self, target_ref):
         return self.current_chart_version
 
+    async def get_helm_release_digest(self, target_ref):
+        from releasetracker.services.deployment_baseline import chart_digest
+
+        return chart_digest(target_ref.get("chart_digest"))
+
     async def capture_snapshot(self, target_ref, current_image):
         return {
             "mode": "helm_release",
@@ -294,7 +299,9 @@ class FakeHelmReleaseAdapter(KubernetesRuntimeAdapter):
         if snapshot.get("mode") != "helm_release":
             raise ValueError("invalid fake Helm snapshot")
 
-    async def upgrade_helm_release(self, target_ref, *, chart_ref, chart_version, repo_url):
+    async def upgrade_helm_release(
+        self, target_ref, *, chart_ref, chart_version, repo_url, expected_digest=None
+    ):
         self.update_calls.append((target_ref, chart_ref, chart_version, repo_url))
         if self.fail_update:
             raise RuntimeMutationError(self.fail_update, destructive_started=True)
@@ -304,6 +311,8 @@ class FakeHelmReleaseAdapter(KubernetesRuntimeAdapter):
             old_image=None,
             new_image=chart_version,
             message="fake helm upgraded",
+            artifact_digest=expected_digest,
+            artifact_revision=2,
         )
 
 

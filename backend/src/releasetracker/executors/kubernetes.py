@@ -354,6 +354,20 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
         _, chart_version = self._parse_helm_release_chart(release)
         return chart_version or self._optional_target_field(target_ref, "chart_version")
 
+    async def get_helm_release_digest(self, target_ref: dict[str, Any]) -> str | None:
+        from ..services.deployment_baseline import chart_digest
+
+        release = self._get_helm_release(target_ref)
+        _, version = self._parse_helm_release_chart(release)
+        revision = self._parse_helm_release_revision(release)
+        if (
+            revision
+            and revision == target_ref.get("chart_revision")
+            and version == target_ref.get("chart_version")
+        ):
+            return chart_digest(target_ref.get("chart_digest"))
+        return None
+
     async def capture_helm_release_snapshot(self, target_ref: dict[str, Any]) -> dict[str, Any]:
         release = self._get_helm_release(target_ref)
         namespace = self._require_target_field(target_ref, "namespace")
@@ -475,7 +489,13 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
         chart_ref: str,
         chart_version: str,
         repo_url: str | None,
+        expected_digest: str | None = None,
     ) -> RuntimeUpdateResult:
+        from pathlib import Path
+        from ..services.deployment_baseline import chart_digest
+        from ..services.deployment_diff import verify_update_state
+        from ..services.task_effects import mark_deployment_mutation
+
         namespace = self._require_target_field(target_ref, "namespace")
         release_name = self._require_target_field(target_ref, "release_name")
         self._authorize_namespace(namespace)
@@ -483,44 +503,85 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
             raise ValueError("chart_ref must be a non-empty string")
         if not isinstance(chart_version, str) or not chart_version.strip():
             raise ValueError("chart_version must be a non-empty string")
-
+        expected = chart_digest(expected_digest)
+        if expected_digest and expected is None:
+            raise ValueError("Invalid expected chart SHA256 digest")
+        if expected and chart_ref.startswith("oci://"):
+            raise ValueError("OCI manifest digests cannot verify a chart archive")
         current_version = await self.get_helm_release_version(target_ref)
-        if current_version == chart_version:
+        if current_version == chart_version and (
+            not expected or await self.get_helm_release_digest(target_ref) == expected
+        ):
             return RuntimeUpdateResult(
-                updated=False,
-                old_image=current_version,
-                new_image=chart_version,
-                message="Helm release already at target chart version",
+                False,
+                current_version,
+                chart_version,
+                "Helm release already at target chart artifact",
             )
 
-        self._ensure_helm_marker_target(target_ref)
-        command = [
-            "upgrade",
-            release_name,
-            chart_ref.strip(),
-            "--namespace",
-            namespace,
-            "--version",
-            chart_version.strip(),
-            "--install",
-            "--reuse-values",
-        ]
-        if isinstance(repo_url, str) and repo_url.strip():
-            command.extend(["--repo", repo_url.strip()])
-        from ..services.deployment_diff import verify_update_state
-
-        await verify_update_state(self, target_ref)
-        try:
-            self._run_helm_command(command)
-            self._apply_helm_managed_markers(target_ref)
-        except Exception as exc:
-            raise RuntimeMutationError(str(exc), destructive_started=True) from exc
-
+        # Upgrade the exact downloaded archive, so index changes cannot replace an approved artifact.
+        with tempfile.TemporaryDirectory(prefix="releasetracker-chart-") as directory:
+            pull = [
+                "pull",
+                chart_ref.strip(),
+                "--version",
+                chart_version.strip(),
+                "--destination",
+                directory,
+            ]
+            if isinstance(repo_url, str) and repo_url.strip():
+                pull.extend(["--repo", repo_url.strip()])
+            self._run_helm_command(pull)
+            archives = list(Path(directory).glob("*.tgz"))
+            if len(archives) != 1 or archives[0].is_symlink():
+                raise ValueError("Helm pull did not produce one chart archive")
+            with archives[0].open("rb") as archive:
+                actual_digest = "sha256:" + hashlib.file_digest(archive, "sha256").hexdigest()
+            if expected and actual_digest != expected:
+                raise ValueError("Downloaded chart digest does not match approved target")
+            self._ensure_helm_marker_target(target_ref)
+            await verify_update_state(self, target_ref)
+            await mark_deployment_mutation()
+            try:
+                receipt = json.loads(
+                    self._run_helm_command(
+                        [
+                            "upgrade",
+                            release_name,
+                            str(archives[0]),
+                            "--namespace",
+                            namespace,
+                            "--install",
+                            "--reuse-values",
+                            "--output",
+                            "json",
+                        ]
+                    )
+                )
+                revision = self._parse_helm_release_revision(receipt)
+                if (
+                    not revision
+                    or receipt.get("name") != release_name
+                    or receipt.get("namespace") != namespace
+                ):
+                    raise ValueError("Helm upgrade receipt does not match target")
+                release = self._get_helm_release(target_ref)
+                _, installed_version = self._parse_helm_release_chart(release)
+                if (
+                    installed_version != chart_version
+                    or self._parse_helm_release_revision(release) != revision
+                ):
+                    raise ValueError("Helm installed release does not match upgrade receipt")
+                self._apply_helm_managed_markers(target_ref)
+            except Exception as exc:
+                raise RuntimeMutationError(str(exc), destructive_started=True) from exc
         return RuntimeUpdateResult(
-            updated=True,
-            old_image=current_version,
-            new_image=chart_version,
-            message=f"Helm release upgraded to chart version {chart_version}",
+            True,
+            current_version,
+            chart_version,
+            f"Helm release upgraded to chart version {chart_version}",
+            artifact_digest=actual_digest,
+            artifact_revision=revision,
         )
 
     async def recover_helm_release_from_snapshot(

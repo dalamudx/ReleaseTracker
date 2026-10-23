@@ -61,7 +61,8 @@ def _declaration(value, key=""):
 
 def configuration_state(storage, value):
     return protected_state(
-        storage, _declaration({k: v for k, v in value.items() if k != "revision"})
+        storage,
+        _declaration({k: v for k, v in value.items() if k not in {"revision", "chart_digest"}}),
     )
 
 
@@ -309,6 +310,8 @@ async def native_review(
         }
     elif mode == "kubernetes_workload":
         images = dict(snapshot.get("containers") or {})
+    if mode == "helm_release":
+        observed["chart_digest"] = await adapter.get_helm_release_digest(executor.target_ref)
     desired = deepcopy(observed)
     targets = await image_targets(storage, scheduler, executor, task, images)
     proofs = ()
@@ -359,10 +362,10 @@ async def native_review(
         selected = next(iter(task["payload"].get("targets", [])), {})
         if selected.get("chart_version"):
             desired["chart_version"] = selected["chart_version"]
-        # Runtimes do not report the installed chart digest, so an unverifiable
-        # digest is not a reviewable difference; the chart version decides.
-        if selected.get("chart_digest") and "chart_digest" in observed:
-            desired["chart_digest"] = selected["chart_digest"]
+        if selected.get("chart_digest"):
+            from .deployment_baseline import chart_digest
+
+            desired["chart_digest"] = chart_digest(selected["chart_digest"])
     lines, truncated = changed_lines(observed, desired)
     diff = {"scope": scope, "lines": lines, "truncated": truncated}
     if inspection_only:

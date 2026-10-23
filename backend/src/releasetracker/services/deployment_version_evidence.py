@@ -18,8 +18,18 @@ def targets_verified(task, evidence):
     """Every frozen target must be proven against its running artifact."""
     targets = task["payload"].get("targets") or []
     if evidence.recovery == "helm_revision":
+        from .deployment_baseline import chart_digest
+
         return bool(targets) and all(
             item.get("chart_version") == evidence.configuration.get("current_chart_version")
+            and (
+                not item.get("chart_digest")
+                or (
+                    chart_digest(item["chart_digest"]) is not None
+                    and chart_digest(item["chart_digest"])
+                    == evidence.configuration.get("current_chart_digest")
+                )
+            )
             for item in targets
         )
     bindings = task["payload"].get("policy_bindings") or []

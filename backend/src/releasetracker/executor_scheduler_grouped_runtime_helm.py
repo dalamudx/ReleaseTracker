@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from .services.task_effects import mark_deployment_mutation
 
 from .config import ExecutorConfig
 from .executors.adapter_lifetime import runtime_adapter_scope
@@ -159,9 +158,15 @@ class ExecutorSchedulerHelmRuntime:
             if isinstance(target_chart_digest, str) and target_chart_digest.strip()
             else None
         )
-        recorded_chart_digest = executor_config.target_ref.get("chart_digest")
+        recorded_chart_digest = await adapter.get_helm_release_digest(executor_config.target_ref)
+        from .services.deployment_baseline import chart_digest
+
         same_chart_artifact = current_chart_version == target_chart_version and (
-            target_chart_digest is None or recorded_chart_digest == target_chart_digest
+            target_chart_digest is None
+            or (
+                chart_digest(target_chart_digest) is not None
+                and recorded_chart_digest == chart_digest(target_chart_digest)
+            )
         )
         if same_chart_artifact:
             return await self._record_skipped(
@@ -191,12 +196,12 @@ class ExecutorSchedulerHelmRuntime:
                     run_id=run_id,
                     current_image=current_chart_version,
                 )
-            await mark_deployment_mutation()
             result = await adapter.upgrade_helm_release(
                 executor_config.target_ref,
                 chart_ref=chart_ref,
                 chart_version=target_chart_version,
                 repo_url=repo_url if isinstance(repo_url, str) else None,
+                expected_digest=target_chart_digest,
             )
             if not result.updated:
                 return await self._finalize_run(
@@ -211,9 +216,9 @@ class ExecutorSchedulerHelmRuntime:
             if executor_config.id is not None:
                 refreshed_ref = {
                     **executor_config.target_ref,
-                    "chart_name": chart_ref,
                     "chart_version": result.new_image or target_chart_version,
-                    "chart_digest": target_chart_digest,
+                    "chart_digest": result.artifact_digest,
+                    "chart_revision": result.artifact_revision,
                 }
                 await self.storage.update_executor_target_ref(executor_config.id, refreshed_ref)
                 executor_config = executor_config.model_copy(update={"target_ref": refreshed_ref})

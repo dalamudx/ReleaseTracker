@@ -59,12 +59,9 @@ class DeployTasks:
         ]
         executor_payload = executor.model_dump(mode="json", exclude={"health_check"})
         target_ref = executor_payload.get("target_ref")
-        # An updated container ID points to the replacement created by this deployment;
-        # the stable container name defines the operator-configured target identity.
-        if isinstance(target_ref, dict) and target_ref.get("container_name"):
-            target_ref = dict(target_ref)
-            target_ref.pop("container_id", None)
-            executor_payload["target_ref"] = target_ref
+        from .deployment_baseline import configured_target
+
+        executor_payload["target_ref"] = configured_target(target_ref)
         value = {
             "executor": executor_payload,
             "connection": connection.model_dump(mode="json") if connection else None,
@@ -78,10 +75,10 @@ class DeployTasks:
         connection = await self.storage.get_runtime_connection(executor.runtime_connection_id)
         if connection is None or not connection.enabled:
             raise ValueError("runtime_connection_unavailable")
-        target_ref = dict(executor.target_ref or {})
+        from .deployment_baseline import configured_target
+
+        target_ref = configured_target(executor.target_ref)
         mode = target_ref.get("mode", "container")
-        if mode == "container" and target_ref.get("container_name"):
-            target_ref.pop("container_id", None)
         runtime_public = {
             "type": connection.type,
             "config": dict(connection.config or {}),
@@ -160,6 +157,9 @@ class DeployTasks:
             )
         elif mode == "helm_release":
             configuration["current_chart_version"] = await adapter.get_helm_release_version(
+                target_ref
+            )
+            configuration["current_chart_digest"] = await adapter.get_helm_release_digest(
                 target_ref
             )
         from .deployment_diff import frozen_targets, native_review
@@ -243,7 +243,13 @@ class DeployTasks:
         await self._baseline_receipt(task["id"], True)
         return True
 
-    async def _baseline_receipt(self, task_id, verified):
+    async def _baseline_receipt(self, task_id, outcome):
+        from .deployment_baseline import BaselineResult
+
+        if isinstance(outcome, bool):
+            outcome = BaselineResult(
+                "verified" if outcome else "pending", None if outcome else "evidence_unavailable"
+            )
         now = time.time()
         async with self.storage.tasks.transaction() as db:
             row = await (
@@ -252,60 +258,90 @@ class DeployTasks:
             if row is None:
                 return
             result = json.loads(row["result"] or "{}")
-            if not verified and result.get("baseline_status") == "verified":
+            if not outcome and result.get("baseline_status") in {"verified", "superseded"}:
                 return
-            attempts = int(result.get("baseline_attempts", 0)) + (not verified)
-            stalled = not verified and attempts >= ADMISSION_EVIDENCE_PATIENCE
+            attempts = int(result.get("baseline_attempts", 0)) + (outcome.status == "pending")
+            status, reason = outcome.status, outcome.reason
+            if status == "pending" and attempts >= ADMISSION_EVIDENCE_PATIENCE:
+                status, reason = "review_required", "evidence_exhausted"
             result.update(
-                baseline_status=(
-                    "verified" if verified else "needs_attention" if stalled else "pending"
-                ),
+                baseline_status=status,
+                baseline_reason=reason,
                 baseline_attempts=attempts,
-                baseline_next_attempt=now + 30,
+                baseline_next_attempt=(
+                    now + min(300, 30 * 2 ** min(attempts // 5, 3)) if status == "pending" else None
+                ),
             )
             await db.execute(
                 "UPDATE tasks SET result=?,updated_at=? WHERE id=?",
                 (json.dumps(result), now, task_id),
             )
-            if stalled:
-                await db.execute(
-                    "UPDATE tasks SET state='needs_attention',error_code='deployment_baseline_unverified',message=? WHERE id=? AND state='succeeded'",
-                    (
-                        "Deployment completed, but its managed baseline could not be verified",
-                        task_id,
-                    ),
-                )
 
     async def refresh_admission_baseline(self, task_id, executor_id):
-        """Read-only, idempotent completion; failures remain durably retryable."""
-        verified = False
+        """Read-only completion; configuration review never rewrites deployment success."""
+        from .deployment_baseline import BaselineResult
+
+        outcome = BaselineResult("pending", "evidence_unavailable")
         try:
             executor = await self.storage.get_executor_config(executor_id)
             original = await self.storage.tasks.get(task_id)
-            if (
-                executor
-                and original
-                and await self.identity(executor) == original["payload"]["config_identity"]
-            ):
-                evidence = await self._collect_admission_evidence(
-                    executor, original, _baseline_proof=False
+            db = await self.storage._get_connection()
+            newer = await (
+                await db.execute(
+                    """SELECT 1 FROM tasks WHERE kind='deploy' AND id>?
+                   AND json_extract(payload,'$.executor_id')=?
+                   AND json_extract(result,'$.mutation_started')=1 LIMIT 1""",
+                    (task_id, executor_id),
                 )
-                verified = await self.admission.refresh_applied(task_id, evidence)
+            ).fetchone()
+            if newer:
+                outcome = BaselineResult("superseded", "newer_deployment")
+            elif not executor or not original:
+                outcome = BaselineResult("review_required", "target_unavailable")
+            elif await self.identity(executor) != original["payload"]["config_identity"]:
+                outcome = BaselineResult("review_required", "configuration_changed")
+            else:
+                evidence = await asyncio.wait_for(
+                    self._collect_admission_evidence(executor, original, _baseline_proof=False),
+                    timeout=30,
+                )
+                outcome = await self.admission.refresh_applied(task_id, evidence)
         except Exception as exc:
             logger.warning(
-                "Deployment admission baseline not refreshed for task %s: %s",
-                task_id,
-                type(exc).__name__,
+                "Deployment baseline inspection failed for task %s: %s", task_id, type(exc).__name__
             )
-        await self._baseline_receipt(task_id, verified)
-        return verified
+        await self._baseline_receipt(task_id, outcome)
+        return bool(outcome)
+
+    async def dispatch_baseline_checks(self):
+        if getattr(self.scheduler, "_shutdown_task", None) is not None:
+            return
+        worker = getattr(self, "_baseline_worker", None)
+        if worker is None or worker.done():
+            self._baseline_worker = self.scheduler._track_background_task(
+                self._reconcile_baselines()
+            )
 
     async def _reconcile_baselines(self):
+        # Repair only the old baseline-only failure with a recorded healthy result.
+        # Interrupted writes and unhealthy/unknown observations keep their fences.
+        async with self.storage.tasks.transaction() as connection:
+            await connection.execute(
+                """UPDATE tasks SET state='succeeded',error_code=NULL,message=NULL,
+                     result=json_set(result,'$.baseline_status','review_required',
+                        '$.baseline_reason','legacy_baseline_unverified','$.baseline_next_attempt',NULL),updated_at=?
+                   WHERE kind='deploy' AND state='needs_attention'
+                     AND error_code='deployment_baseline_unverified'
+                     AND COALESCE(json_extract(result,'$.health_recheck.outcome'),json_extract(result,'$.health_check.outcome'))='healthy'
+                     AND NOT EXISTS (SELECT 1 FROM deployment_observations o WHERE o.task_id=tasks.id AND o.state IN ('waiting','finalizing'))
+                     AND EXISTS (SELECT 1 FROM executor_run_history r WHERE r.id=json_extract(tasks.result,'$.run_id') AND r.status='success')""",
+                (time.time(),),
+            )
         db = await self.storage._get_connection()
         rows = await (
             await db.execute(
                 """SELECT id,json_extract(payload,'$.executor_id') executor_id FROM tasks
-               WHERE kind='deploy' AND state='succeeded'
+               WHERE kind='deploy' AND state IN ('succeeded','skipped')
                AND json_extract(result,'$.baseline_status')='pending'
                AND json_extract(result,'$.baseline_next_attempt')<=? ORDER BY updated_at LIMIT 3""",
                 (time.time(),),
@@ -412,7 +448,6 @@ class DeployTasks:
         return cursor.rowcount > 0
 
     async def dispatch_pending(self):
-        await self._reconcile_baselines()
         states = await self.storage.list_pending_executor_desired_states(limit=100)
         for state in states:
             executor = await self.storage.get_executor_config(state.executor_id)
@@ -437,18 +472,17 @@ class DeployTasks:
         # Rotate admitted/disabled entries out of the bounded scan. CAS prevents a
         # concurrent completion or newer desired revision from being overwritten.
         now = datetime.now()
-        db = await self.storage._get_connection()
-        await db.execute(
-            "UPDATE executor_desired_state SET next_eligible_at=?,updated_at=? "
-            "WHERE executor_id=? AND desired_state_revision=? AND pending=1",
-            (
-                (now + timedelta(seconds=seconds)).isoformat(),
-                now.isoformat(),
-                state.executor_id,
-                state.desired_state_revision,
-            ),
-        )
-        await db.commit()
+        async with self.storage.tasks.transaction() as db:
+            await db.execute(
+                "UPDATE executor_desired_state SET next_eligible_at=?,updated_at=? "
+                "WHERE executor_id=? AND desired_state_revision=? AND pending=1",
+                (
+                    (now + timedelta(seconds=seconds)).isoformat(),
+                    now.isoformat(),
+                    state.executor_id,
+                    state.desired_state_revision,
+                ),
+            )
 
     async def prepare(self, task):
         payload = task["payload"]

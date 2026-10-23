@@ -63,6 +63,12 @@ Before deploying, ReleaseTracker reads the target state and builds a deployment 
 - the target version is outside the [version limit](#version-policy);
 - the update is manual and its configuration diff needs review.
 
+Deployment results, readiness and managed baselines are recorded separately. Missing runtime evidence is retried with backoff by an independent worker. Missing historical approval proof or conflicting configuration/ownership produces **Baseline needs review**, without changing deployment success to failure or blocking unrelated instances solely for baseline review. The next actual update still requires configuration review. Automatic reconciliation accepts only evidence proven to match the original target and approved configuration.
+
+Task details identify blocking tasks and provide **Recheck baseline**. This is a read-only operation: it neither redeploys nor approves configuration, and cannot reconstruct missing historical approval. Baseline checks stop when a newer deployment supersedes them. Interrupted writes and unknown runtime outcomes retain their safety gates until reconciled.
+
+Helm downloads the Chart archive first and, when the target includes a SHA256 digest, verifies it before upgrading from that exact file. The same version with a different digest is not skipped. The receipt is bound to the Helm release revision, so external upgrades invalidate the old artifact proof. Repositories without digests retain version-based selection without an approval-time content guarantee. OCI manifest digests cannot verify Chart archive bytes.
+
 In the task details, review the target, runtime identity, configuration fingerprint, recovery scope and configuration diff (sensitive values hidden), then click **Approve and continue**. Approvals expire and are bound to the current evidence; if the configuration changes before execution, **Refresh plan** and approve again. A plan whose diff is not fully displayed cannot be approved.
 
 If the target is owned by another instance or executor, its markers conflict, or the marker version is unsupported, the deployment is **blocked**; approval cannot override it and ownership must be resolved first.

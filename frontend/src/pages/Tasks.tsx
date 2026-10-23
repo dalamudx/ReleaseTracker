@@ -147,6 +147,7 @@ function formatApprovalReason(t: (key: string, options?: Record<string, unknown>
         schema_unsupported: t("tasks.reasonSchemaUnsupported", { defaultValue: "纳管版本不支持" }),
         manual_update_review: t("tasks.reasonManualUpdate"),
         configuration_drift: t("tasks.reasonConfigurationDrift"),
+        baseline_review_required: t("tasks.baseline.reviewHelp"),
         configuration_diff_incomplete: t("tasks.diffIncomplete"),
     }
     return reasonMap[reason] ?? reason
@@ -211,6 +212,14 @@ function TaskItem({ task }: { task: QueueTask }) {
         onError: () => toast.error(t("readiness.recheckFailed")),
     })
 
+    const baselineRecheck = useMutation({
+        mutationFn: () => api.recheckBaseline(task.id),
+        onSuccess: () => { void cache.invalidateQueries({ queryKey: ["tasks"] }) },
+        onError: () => toast.error(t("readiness.recheckFailed")),
+    })
+    const baseline = task.result?.baseline_status
+    const baselineNeedsReview = baseline === "review_required" || baseline === "needs_attention"
+
     const time = (seconds: number) => new Date(seconds * 1000).toLocaleString(i18n.language)
 
 
@@ -270,8 +279,31 @@ function TaskItem({ task }: { task: QueueTask }) {
                             <ReadinessSummary result={task.result?.health_recheck} recheck />
                         </div>
                     )}
+                    {baseline && (
+                        <p className={cn("mt-2 text-xs", baselineNeedsReview ? "text-warning" : "text-muted-foreground")}>
+                            {t(`tasks.baseline.${baseline === "needs_attention" ? "review_required" : baseline}`)}
+                        </p>
+                    )}
                     <CollapsibleContent>
                         <div className="mt-3 space-y-3 border-t border-border/60 pt-4">
+                            {detail.data?.blockers?.map(blocker => (
+                                <p key={blocker.task_id} className="break-words text-xs text-warning">
+                                    {t("tasks.blockedBy", { id: blocker.task_id, name: blocker.target_label, reason: t(`tasks.blocker.${blocker.reason}`) })}
+                                </p>
+                            ))}
+                            {baseline && baseline !== "verified" && baseline !== "superseded" && (
+                                <div className="flex flex-col items-start gap-2 text-xs">
+                                    <p className="text-muted-foreground">{t(baselineNeedsReview ? "tasks.baseline.reviewHelp" : "tasks.baseline.pendingHelp")}</p>
+                                    {task.result?.baseline_reason && <p className="text-muted-foreground">{t(`tasks.baseline.reasons.${task.result.baseline_reason}`, { defaultValue: t("tasks.baseline.reasons.unknown") })}</p>}
+                                    {task.result?.baseline_next_attempt && <p>{t("tasks.due", { time: time(task.result.baseline_next_attempt) })}</p>}
+                                    {["succeeded", "skipped"].includes(task.state) && (
+                                        <Button variant="outline" size="sm" disabled={baselineRecheck.isPending} onClick={() => baselineRecheck.mutate()}>
+                                            {baselineRecheck.isPending ? <Spinner /> : <RefreshCw aria-hidden="true" />}
+                                            {t("tasks.baseline.recheck")}
+                                        </Button>
+                                    )}
+                                </div>
+                            )}
                             {waiting && <div className="flex items-center gap-1 text-xs text-muted-foreground"><Clock className="size-3" aria-hidden="true" /><time dateTime={new Date(task.created_at * 1000).toISOString()}>{time(task.created_at)}</time></div>}
                             {task.error_code && !task.approval_pending && (
                                 <p className={cn("break-words text-xs font-medium", task.state === "failed" || task.state === "needs_attention" ? "text-destructive" : "text-muted-foreground")}>
