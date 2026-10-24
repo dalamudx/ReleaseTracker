@@ -7,12 +7,12 @@ import logging
 import time
 import uuid
 
+from ..services.helm_identity_review import legacy_helm_review, review_fingerprint
 from ..services.version_policy import version_policy_reason
 from ..services.deployment_version_evidence import targets_verified
 from ..services.deployment_plan import (
     PREFIX,
     TargetEvidence,
-    plan_fingerprint,
     public_summary,
 )
 
@@ -24,6 +24,7 @@ APPROVABLE = frozenset(
         "marker_missing",
         "configuration_drift",
         "baseline_review_required",
+        "helm_identity_review_required",
         "version_policy_requires_approval",
         "version_downgrade_requires_approval",
         "version_unknown_requires_approval",
@@ -225,7 +226,6 @@ class DeploymentAdmissionStore:
             raise ValueError("invalid_approval_lifetime")
         installation_id = await self.installation_id()
         executor_id = task["payload"]["executor_id"]
-        plan_hash = plan_fingerprint(task, evidence)
         async with self.storage.tasks.transaction() as db:
             live = await self._leased_task(db, task, now)
             if live["attempts"]:
@@ -235,6 +235,29 @@ class DeploymentAdmissionStore:
                     "SELECT * FROM managed_targets WHERE executor_id=?", (executor_id,)
                 )
             ).fetchone()
+            old = await (
+                await db.execute(
+                    "SELECT * FROM deployment_plans WHERE task_id=? ORDER BY id DESC LIMIT 1",
+                    (task["id"],),
+                )
+            ).fetchone()
+            identity_review = None
+            if target and target["identity_key"] != evidence.identity_key:
+                identity_review = await legacy_helm_review(db, target, evidence, installation_id)
+            elif (
+                target
+                and old
+                and old["state"] == "approved"
+                and old["identity_key"] == evidence.identity_key
+            ):
+                previous_review = json.loads(old["summary"]).get("helm_identity_review")
+                if (
+                    previous_review
+                    and target["last_task_id"] == previous_review["task_id"]
+                    and target["baseline"] == previous_review["baseline"]
+                ):
+                    identity_review = previous_review
+            plan_hash = review_fingerprint(task, evidence, identity_review)
             occupied = await (
                 await db.execute(
                     "SELECT * FROM managed_targets WHERE identity_key=?", (evidence.identity_key,)
@@ -261,7 +284,11 @@ class DeploymentAdmissionStore:
             if occupied and occupied["executor_id"] != executor_id:
                 reason = "target_already_owned"
             elif target and target["identity_key"] != evidence.identity_key:
-                reason = "target_identity_changed"
+                reason = (
+                    "helm_identity_review_required"
+                    if identity_review
+                    else "target_identity_changed"
+                )
             elif reason not in {None, "marker_missing"}:
                 pass
             elif (
@@ -312,12 +339,6 @@ class DeploymentAdmissionStore:
             ):
                 reason = "selection_rules_changed"
 
-            old = await (
-                await db.execute(
-                    "SELECT * FROM deployment_plans WHERE task_id=? ORDER BY id DESC LIMIT 1",
-                    (task["id"],),
-                )
-            ).fetchone()
             if old and (
                 old["fingerprint"] != plan_hash
                 or old["state"] in {"superseded", "cancelled"}
@@ -339,7 +360,10 @@ class DeploymentAdmissionStore:
                 and old["expires_at"] > now
                 and not blocked
                 and (
-                    not (policy_reason or reason == "baseline_review_required")
+                    not (
+                        policy_reason
+                        or reason in {"baseline_review_required", "helm_identity_review_required"}
+                    )
                     or old["approved_by"] != "managed_baseline"
                 )
             )
@@ -352,6 +376,8 @@ class DeploymentAdmissionStore:
                 (task["id"], old["id"] if old else -1),
             )
             summary = public_summary(task, evidence)
+            if identity_review:
+                summary["helm_identity_review"] = identity_review
             if old:
                 plan_id = old["id"]
                 expires_at = old["expires_at"] if approved else now + ttl
@@ -399,7 +425,13 @@ class DeploymentAdmissionStore:
                     (
                         now,
                         reason,
-                        json.dumps({"mutation_started": False, "deployment_plan_id": plan_id}),
+                        json.dumps(
+                            {
+                                "mutation_started": False,
+                                "deployment_plan_id": plan_id,
+                                "deployment_plan_state": state,
+                            }
+                        ),
                         task["id"],
                     ),
                 )
@@ -487,6 +519,30 @@ class DeploymentAdmissionStore:
                 "INSERT OR IGNORE INTO managed_targets(target_id,executor_id,identity_key,created_at,updated_at) VALUES (?,?,?,?,?)",
                 (row["target_id"], row["executor_id"], row["identity_key"], now, now),
             )
+            identity_review = json.loads(row["summary"]).get("helm_identity_review")
+            if identity_review:
+                cursor = await db.execute(
+                    """UPDATE managed_targets SET identity_key=?,updated_at=?
+                       WHERE target_id=? AND executor_id=? AND identity_key IN (?,?)
+                         AND last_task_id=? AND baseline IS ?
+                         AND NOT EXISTS (SELECT 1 FROM tasks WHERE kind='deploy'
+                           AND json_extract(payload,'$.executor_id')=? AND id>?
+                           AND json_extract(result,'$.mutation_started')=1)""",
+                    (
+                        row["identity_key"],
+                        now,
+                        row["target_id"],
+                        row["executor_id"],
+                        identity_review["previous_identity_key"],
+                        row["identity_key"],
+                        identity_review["task_id"],
+                        identity_review["baseline"],
+                        row["executor_id"],
+                        identity_review["task_id"],
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise AdmissionConflict("managed_target_changed")
             await db.execute(
                 "UPDATE deployment_plans SET state='approved',approved_at=?,approved_by=?,expires_at=? WHERE id=?",
                 (
@@ -525,7 +581,10 @@ class DeploymentAdmissionStore:
                 row is None
                 or row["state"] != "approved"
                 or row["expires_at"] <= now
-                or row["fingerprint"] != plan_fingerprint(task, evidence)
+                or row["fingerprint"]
+                != review_fingerprint(
+                    task, evidence, json.loads(row["summary"]).get("helm_identity_review")
+                )
             ):
                 raise AdmissionConflict("deployment_plan_changed")
             target = await (

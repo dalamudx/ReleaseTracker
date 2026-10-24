@@ -66,8 +66,9 @@ function getKindIcon(kind: QueueTask["kind"]) {
     }
 }
 
-function TaskStateBadge({ state, phase, waitingFor }: { state: TaskState; phase?: string; waitingFor?: string | null }) {
+function TaskStateBadge({ state, phase, waitingFor, review }: { state: TaskState; phase?: string; waitingFor?: string | null; review?: "blocked" | "pending" }) {
     const { t } = useTranslation()
+    if (review) return <Badge variant={review === "blocked" ? "destructive" : "warning"}>{t(review === "blocked" ? "tasks.planBlockedTitle" : "tasks.reviewPending")}</Badge>
     const label =
         state === "running" && phase === "health_checking"
             ? t("readiness.waiting")
@@ -148,6 +149,8 @@ function formatApprovalReason(t: (key: string, options?: Record<string, unknown>
         manual_update_review: t("tasks.reasonManualUpdate"),
         configuration_drift: t("tasks.reasonConfigurationDrift"),
         baseline_review_required: t("tasks.baseline.reviewHelp"),
+        helm_identity_review_required: t("tasks.reasonHelmIdentityReview"),
+        target_identity_changed: t("tasks.reasonTargetIdentityChanged"),
         configuration_diff_incomplete: t("tasks.diffIncomplete"),
     }
     return reasonMap[reason] ?? reason
@@ -219,11 +222,12 @@ function TaskItem({ task }: { task: QueueTask }) {
     })
     const baseline = task.result?.baseline_status
     const baselineNeedsReview = baseline === "review_required" || baseline === "needs_attention"
+    const planBlocked = (plan.data?.state ?? task.result?.deployment_plan_state) === "blocked" || (!plan.data && task.error_code === "target_identity_changed")
 
     const time = (seconds: number) => new Date(seconds * 1000).toLocaleString(i18n.language)
 
 
-    const waiting = task.state === "queued" || task.state === "retry_wait"
+    const waiting = (task.state === "queued" || task.state === "retry_wait") && !task.approval_pending
     const summaryTime = waiting ? task.due_at : task.created_at
 
     return (
@@ -253,7 +257,7 @@ function TaskItem({ task }: { task: QueueTask }) {
                             <span className="shrink-0 font-mono text-xs text-muted-foreground/80">#{task.id}</span>
                         </div>
                         <div data-testid="task-summary-state" className="col-start-1 row-start-2 flex items-center @[760px]:col-start-2 @[760px]:row-start-1">
-                            <TaskStateBadge state={task.state} phase={task.result?.phase} waitingFor={task.error_code} />
+                            <TaskStateBadge state={task.state} phase={task.result?.phase} waitingFor={task.error_code} review={task.approval_pending ? (planBlocked ? "blocked" : "pending") : undefined} />
                         </div>
                         <div className="contents text-xs text-muted-foreground">
                             <span data-testid="task-summary-attempts" className={cn(
@@ -332,8 +336,8 @@ function TaskItem({ task }: { task: QueueTask }) {
                                     <div className="flex items-start gap-2">
                                         <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
                                         <div className="min-w-0 space-y-1">
-                                            <p className="text-sm font-semibold text-foreground">{t("tasks.approvalRequired")}</p>
-                                            <p className="text-xs leading-relaxed text-muted-foreground">{t("tasks.planReviewRequired")}</p>
+                                            <p className="text-sm font-semibold text-foreground">{t(planBlocked ? "tasks.planBlockedTitle" : "tasks.approvalRequired")}</p>
+                                            <p className="text-xs leading-relaxed text-muted-foreground">{t(planBlocked ? "tasks.planBlockedHelp" : "tasks.planReviewRequired")}</p>
                                         </div>
                                     </div>
                                     {plan.isLoading && <p className="text-xs text-muted-foreground">{t("common.loading", { defaultValue: "Loading..." })}</p>}

@@ -322,4 +322,17 @@ describe("persistent task queue", () => {
         fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.details", { id: 17 }) }))
         expect(await screen.findByText(/OpenBao.*#1928/)).toBeVisible()
     })
+    it("distinguishes identity protection from ordinary approval and queue waiting", async () => {
+        const saved = { ...task("queued", "deploy"), approval_pending: true, error_code: "target_identity_changed" }
+        vi.mocked(api.getTasks).mockResolvedValue([saved])
+        vi.mocked(api.getTask).mockResolvedValue(saved)
+        vi.mocked(api.getDeploymentPlan).mockResolvedValue({ id: 111, task_id: 17, fingerprint: "blocked", state: "blocked", reason: "target_identity_changed", expires_at: 1789706800, summary: {} })
+        show()
+        expect((await screen.findAllByText(i18n.t("tasks.planBlockedTitle")))[0]).toBeVisible()
+        fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.details", { id: 17 }) }))
+        expect(await screen.findByText(i18n.t("tasks.reasonTargetIdentityChanged"), { exact: false })).toBeVisible()
+        expect(screen.getByText(i18n.t("tasks.planBlockedHelp"))).toBeVisible()
+        expect(screen.queryByText(i18n.t("tasks.approvalRequired"))).not.toBeInTheDocument()
+        expect(screen.queryByRole("button", { name: i18n.t("tasks.approvePlan") })).not.toBeInTheDocument()
+    })
 })
