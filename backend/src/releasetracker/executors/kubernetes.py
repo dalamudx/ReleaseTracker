@@ -350,16 +350,13 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
         )
 
     async def get_helm_release_version(self, target_ref: dict[str, Any]) -> str | None:
-        release = self._get_helm_release(target_ref)
-        _, chart_version = self._parse_helm_release_chart(release)
+        chart_version, _ = self._helm_release_chart(target_ref)
         return chart_version or self._optional_target_field(target_ref, "chart_version")
 
     async def get_helm_release_digest(self, target_ref: dict[str, Any]) -> str | None:
         from ..services.deployment_baseline import chart_digest
 
-        release = self._get_helm_release(target_ref)
-        _, version = self._parse_helm_release_chart(release)
-        revision = self._parse_helm_release_revision(release)
+        version, revision = self._helm_release_chart(target_ref)
         if (
             revision
             and revision == target_ref.get("chart_revision")
@@ -367,6 +364,41 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
         ):
             return chart_digest(target_ref.get("chart_digest"))
         return None
+
+    def _helm_release_chart(self, target_ref: dict[str, Any]) -> tuple[str | None, int | None]:
+        """Read the deployed chart version and revision from one release record."""
+        release = self._get_helm_release(target_ref)
+        _, chart_version = self._parse_helm_release_chart(release)
+        if chart_version:
+            return chart_version, self._parse_helm_release_revision(release)
+        # `helm status` omits the chart; metadata carries version and revision together.
+        output = self._run_helm_command(
+            [
+                "get",
+                "metadata",
+                self._require_target_field(target_ref, "release_name"),
+                "--namespace",
+                self._require_target_field(target_ref, "namespace"),
+                "--output",
+                "json",
+            ]
+        )
+        try:
+            metadata = json.loads(output) if output.strip() else {}
+        except json.JSONDecodeError as exc:
+            raise ValueError("Helm release metadata is not valid JSON") from exc
+        if not isinstance(metadata, dict):
+            raise ValueError("Helm release metadata must be an object")
+        version = metadata.get("version")
+        revision = metadata.get("revision")
+        return (
+            version.strip() if isinstance(version, str) and version.strip() else None,
+            (
+                revision
+                if isinstance(revision, int) and not isinstance(revision, bool) and revision > 0
+                else None
+            ),
+        )
 
     async def capture_helm_release_snapshot(self, target_ref: dict[str, Any]) -> dict[str, Any]:
         release = self._get_helm_release(target_ref)

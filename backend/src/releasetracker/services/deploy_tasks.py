@@ -156,11 +156,12 @@ class DeployTasks:
                 sorted((await adapter.fetch_workload_service_images(target_ref)).items())
             )
         elif mode == "helm_release":
+            # Runtime reads need the persisted receipts; identity uses configured_target.
             configuration["current_chart_version"] = await adapter.get_helm_release_version(
-                target_ref
+                executor.target_ref
             )
             configuration["current_chart_digest"] = await adapter.get_helm_release_digest(
-                target_ref
+                executor.target_ref
             )
         from .deployment_diff import frozen_targets, native_review
 

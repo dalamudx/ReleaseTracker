@@ -335,4 +335,13 @@ describe("persistent task queue", () => {
         expect(screen.queryByText(i18n.t("tasks.approvalRequired"))).not.toBeInTheDocument()
         expect(screen.queryByRole("button", { name: i18n.t("tasks.approvePlan") })).not.toBeInTheDocument()
     })
+    it("warns when a legacy Helm release was upgraded outside ReleaseTracker", async () => {
+        const saved = { ...task("queued", "deploy"), approval_pending: true, error_code: "helm_identity_review_required" }
+        vi.mocked(api.getTasks).mockResolvedValue([saved])
+        vi.mocked(api.getTask).mockResolvedValue(saved)
+        vi.mocked(api.getDeploymentPlan).mockResolvedValue({ id: 118, task_id: 17, fingerprint: "review", state: "pending", reason: "helm_identity_review_required", expires_at: 1789706800, summary: { helm_identity_review: { external_chart_version: { approved: "2026.8.4", current: "2026.8.5" } } } })
+        show()
+        fireEvent.click(await screen.findByRole("button", { name: i18n.t("tasks.details", { id: 17 }) }))
+        expect(await screen.findByText(i18n.t("tasks.helmExternalChartVersion", { approved: "2026.8.4", current: "2026.8.5" }))).toBeVisible()
+    })
 })

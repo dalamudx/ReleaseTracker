@@ -263,6 +263,31 @@ async def test_helm_digest_receipt_is_bound_to_live_revision(monkeypatch):
         ref, chart_ref="demo", chart_version="1.0.0", repo_url=None, expected_digest="a" * 64
     )
     assert not result.updated and not calls
+
+
+async def test_helm_chart_version_falls_back_to_release_metadata(monkeypatch):
+    adapter, calls = helm(monkeypatch)
+    monkeypatch.setattr(adapter, "_get_helm_release", lambda _: {"name": "demo", "version": 4})
+    monkeypatch.setattr(
+        adapter,
+        "_run_helm_command",
+        lambda args: calls.append(args) or json.dumps({"version": "2.0.0", "revision": 5}),
+    )
+    ref = {
+        "mode": "helm_release",
+        "namespace": "apps",
+        "release_name": "demo",
+        "chart_version": "1.0.0",
+        "chart_digest": "a" * 64,
+        "chart_revision": 5,
+    }
+    assert await adapter.get_helm_release_version(ref) == "2.0.0"
+    assert calls[0][:3] == ["get", "metadata", "demo"]
+    # The receipt binds to the metadata record, so an outside upgrade drops the old digest.
+    assert await adapter.get_helm_release_digest(ref) is None
+    assert await adapter.get_helm_release_digest(ref | {"chart_version": "2.0.0"}) == (
+        "sha256:" + "a" * 64
+    )
     assert await adapter.get_helm_release_digest(ref | {"chart_revision": 2}) is None
 
 

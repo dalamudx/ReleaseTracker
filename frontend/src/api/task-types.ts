@@ -9,7 +9,7 @@ export interface DeploymentPlan {
     state: string
     reason: string
     expires_at: number
-    summary: { version_policy_reason?: string | null; target_label?: string; identity_key?: string; configuration_fingerprint?: string; recovery_scope?: string; includes_application_data?: boolean; automatic_rollback?: boolean; source_count?: number; configuration_diff?: { scope: string; lines: { operation: "-" | "+"; path: string; value: string; redacted: boolean }[]; truncated: boolean } }
+    summary: { version_policy_reason?: string | null; helm_identity_review?: { external_chart_version?: { approved: string; current: string } }; target_label?: string; identity_key?: string; configuration_fingerprint?: string; recovery_scope?: string; includes_application_data?: boolean; automatic_rollback?: boolean; source_count?: number; configuration_diff?: { scope: string; lines: { operation: "-" | "+"; path: string; value: string; redacted: boolean }[]; truncated: boolean } }
 }
 export interface QueueTask {
     id: number

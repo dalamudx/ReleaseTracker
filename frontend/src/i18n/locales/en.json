@@ -1638,6 +1638,7 @@
     "planBlockedTitle": "Deployment blocked",
     "planBlockedHelp": "This task will not run automatically and cannot be approved. Address the blocking reason, then refresh the plan.",
     "reasonHelmIdentityReview": "The Helm target is unchanged; its old identity included version or digest receipts. Review the current configuration and target version. Approval converts the managed identity but does not verify the baseline.",
+    "helmExternalChartVersion": "This release was upgraded outside ReleaseTracker from {{approved}} to {{current}}. Confirm the change was intended before approving.",
     "reasonTargetIdentityChanged": "The current target differs from its managed identity. Check the runtime connection, namespace, and release. Ownership is not transferred automatically.",
     "approvalRequired": "Deployment plan requires approval",
     "approvalReason": "Reason: {{reason}}",

@@ -133,7 +133,7 @@ async def test_legacy_transition_requires_approval_and_preserves_baseline(storag
         "unfinished",
         "unapproved",
         "newer_write",
-        "version",
+        "version_unavailable",
         "old_identity",
     ],
 )
@@ -170,9 +170,9 @@ async def test_incomplete_or_changed_ownership_stays_blocked(storage, change):
                 "UPDATE tasks SET result=? WHERE id=?",
                 (json.dumps({"mutation_started": True}), claimed["id"]),
             )
-        elif change == "version":
+        elif change == "version_unavailable":
             current = replace(
-                current, configuration=current.configuration | {"current_chart_version": "9.9.9"}
+                current, configuration=current.configuration | {"current_chart_version": None}
             )
         else:
             await db.execute(
@@ -227,3 +227,62 @@ async def test_missing_observation_or_runtime_routing_change_remains_blocked(sto
         await db.execute("DELETE FROM deployment_observations WHERE task_id=?", (original["id"],))
     plan = await store.stage(claimed, current)
     assert plan["state"] == "blocked"
+
+
+async def test_outside_chart_upgrade_needs_review_with_visible_drift(storage):
+    store, _, _, claimed, current = await legacy(storage)
+    upgraded = replace(
+        current, configuration=current.configuration | {"current_chart_version": "1.2.0"}
+    )
+    plan = await store.stage(claimed, upgraded)
+    assert (plan["state"], plan["reason"]) == ("pending", "helm_identity_review_required")
+    assert plan["summary"]["helm_identity_review"]["external_chart_version"] == {
+        "approved": "1.1.0",
+        "current": "1.2.0",
+    }
+
+
+async def test_helm_admission_reads_runtime_with_receipts(storage, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from helpers.executor_runtime import create_runtime_connection
+    from releasetracker.config import ExecutorConfig
+    from releasetracker.executor_scheduler import ExecutorScheduler
+    from releasetracker.services import deployment_diff
+    from releasetracker.services.deploy_tasks import DeployTasks
+
+    connection = await create_runtime_connection(storage)
+    ref = {
+        "mode": "helm_release",
+        "namespace": "apps",
+        "release_name": "demo",
+        "chart_name": "demo",
+        "chart_version": "1.0.0",
+        "chart_digest": "a" * 64,
+        "chart_revision": 3,
+    }
+    executor = ExecutorConfig(
+        name="isolated",
+        runtime_type="docker",
+        runtime_connection_id=connection,
+        tracker_name="test",
+        target_ref={"mode": "container", "container_name": "isolated"},
+    ).model_copy(update={"id": 123, "target_ref": ref})
+    adapter = SimpleNamespace(
+        validate_target_ref=AsyncMock(),
+        get_managed_markers=AsyncMock(return_value=({},)),
+        get_helm_release_version=AsyncMock(return_value="1.0.0"),
+        get_helm_release_digest=AsyncMock(return_value="sha256:" + "a" * 64),
+    )
+    monkeypatch.setattr(deployment_diff, "native_review", AsyncMock(return_value=("state", None)))
+    scheduler = ExecutorScheduler(storage)
+    scheduler._adapters[123] = adapter
+    try:
+        evidence = await DeployTasks(storage, scheduler)._collect_admission_evidence(executor)
+    finally:
+        await scheduler.shutdown()
+    assert adapter.get_helm_release_version.await_args.args[0] == ref
+    assert adapter.get_helm_release_digest.await_args.args[0] == ref
+    assert "chart_version" not in evidence.configuration["target"]
+    assert evidence.configuration["current_chart_digest"] == "sha256:" + "a" * 64

@@ -68,14 +68,15 @@ async def legacy_helm_review(db, target, evidence, installation_id):
     if {m.get(PREFIX + "deployment-id") for m in evidence.markers} != {str(target["last_task_id"])}:
         return None
     versions = {t.get("chart_version") for t in json.loads(row["payload"]).get("targets", [])}
-    if (
-        not versions
-        or versions != {evidence.configuration.get("current_chart_version")}
-        or None in versions
-    ):
+    current_version = evidence.configuration.get("current_chart_version")
+    if len(versions) != 1 or None in versions or not current_version:
         return None
-    return {
+    review = {
         "previous_identity_key": target["identity_key"],
         "task_id": target["last_task_id"],
         "baseline": target["baseline"],
     }
+    if versions != {current_version}:
+        # Coordinates and markers prove the release; an outside upgrade is drift for human review.
+        review["external_chart_version"] = {"approved": versions.pop(), "current": current_version}
+    return review

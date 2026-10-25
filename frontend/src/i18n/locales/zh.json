@@ -1638,6 +1638,7 @@
     "planBlockedTitle": "部署已阻断",
     "planBlockedHelp": "此任务不会自动执行，也不能直接批准。请检查阻断原因，处理后刷新计划。",
     "reasonHelmIdentityReview": "已核对为同一 Helm 目标，旧身份包含升级回写的版本或摘要。请审核当前配置与目标版本；批准后仅转换纳管身份，不直接确认基线。",
+    "helmExternalChartVersion": "该 Release 已在 ReleaseTracker 之外由 {{approved}} 升级到 {{current}}。请确认这是预期变更后再批准。",
     "reasonTargetIdentityChanged": "当前目标与纳管身份不一致。请核对运行时连接、命名空间及 release；保留身份保护，不自动转移纳管归属。",
     "approvalRequired": "需要确认部署计划",
     "approvalReason": "原因：{{reason}}",

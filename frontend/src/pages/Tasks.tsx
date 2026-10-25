@@ -355,6 +355,11 @@ function TaskItem({ task }: { task: QueueTask }) {
                                                     {formatApprovalReason(t, plan.data.summary.version_policy_reason)}
                                                 </p>
                                             )}
+                                            {plan.data.summary.helm_identity_review?.external_chart_version && (
+                                                <p role="alert" className="font-medium text-warning">
+                                                    {t("tasks.helmExternalChartVersion", plan.data.summary.helm_identity_review.external_chart_version)}
+                                                </p>
+                                            )}
                                             <p>{t("tasks.planTarget", { target: plan.data.summary.target_label ?? task.target_label })}</p>
                                             <p className="break-all">{t("tasks.planIdentity", { identity: plan.data.summary.identity_key ?? "—" })}</p>
                                             {plan.data.fingerprint && (
