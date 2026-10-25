@@ -286,3 +286,204 @@ async def test_helm_admission_reads_runtime_with_receipts(storage, monkeypatch):
     assert adapter.get_helm_release_digest.await_args.args[0] == ref
     assert "chart_version" not in evidence.configuration["target"]
     assert evidence.configuration["current_chart_digest"] == "sha256:" + "a" * 64
+
+
+@pytest.mark.parametrize("changed_runtime", [False, True])
+async def test_completed_helm_app_version_metadata_can_be_reviewed(storage, changed_runtime):
+    store, original, _, claimed, current = await legacy(storage)
+    old = current.configuration["target"] | {"app_version": "1.0.0"}
+    previous = fingerprint(
+        [current.runtime_identity, fingerprint({"mode": "helm_release", "target": old})]
+    )
+    async with storage.tasks.transaction() as db:
+        await db.execute(
+            "UPDATE deployment_observations SET executor_config=? WHERE task_id=?",
+            (json.dumps({"target_ref": old | {"chart_version": "1.0.0"}}), original["id"]),
+        )
+        await db.execute(
+            "UPDATE deployment_plans SET identity_key=? WHERE task_id=?", (previous, original["id"])
+        )
+        await db.execute(
+            "UPDATE managed_targets SET identity_key=? WHERE executor_id=1", (previous,)
+        )
+    if changed_runtime:
+        current = replace(current, runtime_identity="other-cluster")
+    plan = await store.stage(claimed, current)
+    if changed_runtime:
+        assert plan["state"] == "blocked"
+    else:
+        assert (plan["state"], plan["reason"]) == ("pending", "helm_identity_review_required")
+
+
+async def reconciled_legacy(storage):
+    store, original, _, claimed, current = await legacy(storage)
+    plan = await store.stage(claimed, current)
+    await store.approve(claimed["id"], plan["id"], plan["fingerprint"], "admin")
+    async with storage.tasks.transaction() as db:
+        await db.execute(
+            "UPDATE tasks SET state='failed',owner=NULL,error_code='operator_reconciled',result=? WHERE id=?",
+            (
+                json.dumps(
+                    {"mutation_started": True, "manual_resolution": {"actor": "admin", "at": 1000}}
+                ),
+                claimed["id"],
+            ),
+        )
+        # Earlier identities retained app_version after removing chart receipts.
+        row = await (
+            await db.execute(
+                "SELECT executor_config FROM deployment_observations WHERE task_id=?",
+                (original["id"],),
+            )
+        ).fetchone()
+        saved = json.loads(row["executor_config"])
+        saved["target_ref"]["app_version"] = "1.0.0"
+        full = fingerprint(
+            [
+                current.runtime_identity,
+                fingerprint({"mode": "helm_release", "target": saved["target_ref"]}),
+            ]
+        )
+        previous_target = dict(saved["target_ref"])
+        previous_target.pop("chart_version")
+        previous = fingerprint(
+            [
+                current.runtime_identity,
+                fingerprint({"mode": "helm_release", "target": previous_target}),
+            ]
+        )
+        await db.execute(
+            "UPDATE deployment_observations SET executor_config=? WHERE task_id=?",
+            (json.dumps(saved), original["id"]),
+        )
+        await db.execute(
+            "UPDATE deployment_plans SET identity_key=? WHERE task_id=?", (full, original["id"])
+        )
+        await db.execute(
+            "UPDATE deployment_plans SET identity_key=?,summary=json_set(summary,'$.helm_identity_review.previous_identity_key',?) WHERE task_id=?",
+            (previous, full, claimed["id"]),
+        )
+        await db.execute(
+            "UPDATE managed_targets SET identity_key=? WHERE executor_id=1", (previous,)
+        )
+    await task(storage)
+    next_task = await storage.tasks.claim("deploy")
+    return store, original, claimed, current, next_task
+
+
+async def test_settled_helm_write_renews_review_without_erasing_baseline(storage):
+    store, original, failed, current, next_task = await reconciled_legacy(storage)
+    plan = await store.stage(next_task, current)
+    assert (plan["state"], plan["reason"]) == ("pending", "helm_identity_review_required")
+    assert plan["summary"]["helm_identity_review"]["reconciled_task_id"] == failed["id"]
+    await store.approve(next_task["id"], plan["id"], plan["fingerprint"], "admin")
+    db = await storage._get_connection()
+    target = await (
+        await db.execute("SELECT * FROM managed_targets WHERE executor_id=1")
+    ).fetchone()
+    assert target["identity_key"] == current.identity_key
+    assert target["last_task_id"] == original["id"]
+    assert target["baseline"] == plan["summary"]["helm_identity_review"]["baseline"]
+    resumed = await storage.tasks.claim("deploy")
+    await store.stage(resumed, current)
+    await store.verify_before_write(resumed, current)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "unsettled",
+        "missing_actor",
+        "namespace",
+        "runtime",
+        "marker",
+        "baseline",
+        "unapproved",
+        "missing_observation",
+        "new_write",
+    ],
+)
+async def test_settled_helm_review_retains_protections(storage, change):
+    store, original, failed, current, next_task = await reconciled_legacy(storage)
+    async with storage.tasks.transaction() as db:
+        if change == "unsettled":
+            await db.execute(
+                "UPDATE tasks SET error_code='runtime_interrupted' WHERE id=?", (failed["id"],)
+            )
+        elif change == "missing_actor":
+            await db.execute(
+                "UPDATE tasks SET result=json_remove(result,'$.manual_resolution') WHERE id=?",
+                (failed["id"],),
+            )
+        elif change == "namespace":
+            updated = current.configuration["target"] | {"namespace": "elsewhere"}
+            current = replace(
+                current,
+                configuration=current.configuration | {"target": updated},
+                target_identity=fingerprint({"mode": "helm_release", "target": updated}),
+            )
+        elif change == "runtime":
+            current = replace(current, runtime_identity="different-cluster")
+        elif change == "marker":
+            current = replace(current, markers=({},))
+        elif change == "baseline":
+            await db.execute("UPDATE managed_targets SET baseline='new' WHERE executor_id=1")
+        elif change == "unapproved":
+            await db.execute(
+                "UPDATE deployment_plans SET approved_at=NULL WHERE task_id=?", (failed["id"],)
+            )
+        elif change == "missing_observation":
+            await db.execute(
+                "DELETE FROM deployment_observations WHERE task_id=?", (original["id"],)
+            )
+        elif change == "new_write":
+            await db.execute(
+                "UPDATE tasks SET result=? WHERE id=?",
+                (json.dumps({"mutation_started": True}), next_task["id"]),
+            )
+    if change == "new_write":
+        async with storage.tasks.transaction() as db:
+            await db.execute(
+                "UPDATE tasks SET state='failed',owner=NULL WHERE id=?", (next_task["id"],)
+            )
+        await task(storage)
+        next_task = await storage.tasks.claim("deploy")
+    plan = await store.stage(next_task, current)
+    assert plan["state"] == "blocked"
+
+
+async def test_new_write_invalidates_renewed_helm_approval(storage):
+    store, _, _, current, next_task = await reconciled_legacy(storage)
+    plan = await store.stage(next_task, current)
+    async with storage.tasks.transaction() as db:
+        await db.execute(
+            "UPDATE tasks SET result=? WHERE id=?",
+            (json.dumps({"mutation_started": True}), next_task["id"]),
+        )
+    with pytest.raises(AdmissionConflict, match="managed_target_changed"):
+        await store.approve(next_task["id"], plan["id"], plan["fingerprint"], "admin")
+
+
+async def test_reconciled_helm_repeated_attempt_keeps_review_available(storage):
+    store, _, _, current, next_task = await reconciled_legacy(storage)
+    plan = await store.stage(next_task, current)
+    await store.approve(next_task["id"], plan["id"], plan["fingerprint"], "admin")
+    async with storage.tasks.transaction() as db:
+        await db.execute(
+            "UPDATE tasks SET state='failed',owner=NULL,error_code='operator_reconciled',result=? WHERE id=?",
+            (
+                json.dumps(
+                    {"mutation_started": True, "manual_resolution": {"actor": "admin", "at": 2000}}
+                ),
+                next_task["id"],
+            ),
+        )
+    await task(storage)
+    retry = await storage.tasks.claim("deploy")
+    renewed = await store.stage(retry, current)
+    assert renewed["state"] == "pending"
+    assert renewed["reason"] != "target_identity_changed"
+    await store.approve(retry["id"], renewed["id"], renewed["fingerprint"], "admin")
+    resumed = await storage.tasks.claim("deploy")
+    await store.stage(resumed, current)
+    await store.verify_before_write(resumed, current)

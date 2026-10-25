@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import asyncio
 import json
 import logging
+import re
 from types import SimpleNamespace
 import threading
 import time
@@ -19,6 +20,7 @@ from releasetracker.executors.compose_runtime_update import GroupedRuntimeRecrea
 from releasetracker.executors.podman import PodmanRuntimeAdapter
 from releasetracker.services.deployment_plan import MANAGED_MARKERS
 from helpers.container_wire import high_level_view
+import helm_outputs
 
 from helpers.container_runtime import (
     RECOVERY_IMAGE_ID,
@@ -1113,14 +1115,15 @@ async def test_kubernetes_adapter_discovery_uses_helm_status_app_version_when_wo
     )
     adapter = KubernetesRuntimeAdapter(runtime, apps_api=FakeAppsApi([helm_deployment], [], []))
 
+    state = {
+        "chart": "sample-ci",
+        "chart_version": "5.8.13",
+        "revision": 1,
+        "app_version": "2.528.1",
+    }
+
     def fake_run_helm_command(args):
-        return json.dumps(
-            {
-                "name": "sample-ci",
-                "app_version": "2.528.1",
-                "chart": "sample-ci-5.8.13",
-            }
-        )
+        return helm_outputs.respond(args, state, name="sample-ci")
 
     monkeypatch.setattr(adapter, "_run_helm_command", fake_run_helm_command)
 
@@ -1165,21 +1168,19 @@ async def test_kubernetes_adapter_discovery_uses_helm_list_app_version_when_stat
     adapter = KubernetesRuntimeAdapter(runtime, apps_api=FakeAppsApi([], [helm_statefulset], []))
     command_calls = []
 
+    state = {
+        "chart": "sample-ci",
+        "chart_version": "5.9.17",
+        "revision": 1,
+        "app_version": "2.528.1",
+    }
+
     def fake_run_helm_command(args):
         command_calls.append(args)
-        if args[0] == "status":
-            return json.dumps({"name": "sample-ci-5-1772603248", "chart": "sample-ci-5.9.17"})
-        if args[0] == "list":
-            return json.dumps(
-                [
-                    {
-                        "name": "sample-ci-5-1772603248",
-                        "chart": "sample-ci-5.9.17",
-                        "app_version": "2.528.1",
-                    }
-                ]
-            )
-        raise AssertionError(f"unexpected helm command: {args}")
+        # This Helm build has no usable `get metadata`, so `list` supplies app_version.
+        return helm_outputs.respond(
+            args, state, name="sample-ci-5-1772603248", namespace="sample-ci", metadata=False
+        )
 
     monkeypatch.setattr(adapter, "_run_helm_command", fake_run_helm_command)
 
@@ -1188,11 +1189,21 @@ async def test_kubernetes_adapter_discovery_uses_helm_list_app_version_when_stat
     assert command_calls == [
         ["status", "sample-ci-5-1772603248", "--namespace", "sample-ci", "--output", "json"],
         [
+            "get",
+            "metadata",
+            "sample-ci-5-1772603248",
+            "--namespace",
+            "sample-ci",
+            "--output",
+            "json",
+        ],
+        [
             "list",
+            "--all",
             "--namespace",
             "sample-ci",
             "--filter",
-            "^sample-ci-5-1772603248$",
+            "^" + re.escape("sample-ci-5-1772603248") + "$",
             "--output",
             "json",
         ],
@@ -1270,7 +1281,7 @@ async def test_kubernetes_adapter_validates_helm_release_with_status_json(monkey
 
     def fake_run_helm_command(args):
         command_calls.append(args)
-        return json.dumps({"chart": {"metadata": {"name": "certd", "version": "0.8.0"}}})
+        return json.dumps(helm_outputs.status_document(1, name="certd"))
 
     monkeypatch.setattr(adapter, "_run_helm_command", fake_run_helm_command)
 
@@ -1286,7 +1297,7 @@ async def test_kubernetes_adapter_validates_helm_release_with_status_json(monkey
 
 
 @pytest.mark.asyncio
-async def test_kubernetes_adapter_uses_target_ref_chart_version_when_status_lacks_metadata(
+async def test_kubernetes_adapter_missing_live_chart_does_not_reuse_saved_version(
     monkeypatch,
 ):
     runtime = RuntimeConnectionConfig(
@@ -1297,8 +1308,10 @@ async def test_kubernetes_adapter_uses_target_ref_chart_version_when_status_lack
     )
     adapter = KubernetesRuntimeAdapter(runtime, apps_api=FakeAppsApi([], [], []))
 
+    state = {"chart": "certd", "chart_version": "0.8.0", "revision": 1, "app_version": None}
+
     def fake_run_helm_command(args):
-        return json.dumps({"name": "certd", "info": {"status": "deployed"}})
+        return helm_outputs.respond(args, state, name="certd", metadata=False, listing=False)
 
     monkeypatch.setattr(adapter, "_run_helm_command", fake_run_helm_command)
     target_ref = {
@@ -1310,13 +1323,10 @@ async def test_kubernetes_adapter_uses_target_ref_chart_version_when_status_lack
         "app_version": "2.0.0",
     }
 
-    assert await adapter.get_helm_release_version(target_ref) == "0.8.0"
-    snapshot = await adapter.capture_helm_release_snapshot(target_ref)
-    await adapter.validate_helm_release_snapshot(target_ref, snapshot)
-
-    assert snapshot["chart_name"] == "certd"
-    assert snapshot["chart_version"] == "0.8.0"
-    assert snapshot["app_version"] == "2.0.0"
+    assert await adapter.get_helm_release_version(target_ref) is None
+    assert await adapter.get_helm_release_digest(target_ref) is None
+    with pytest.raises(ValueError, match="cannot capture a snapshot"):
+        await adapter.capture_helm_release_snapshot(target_ref)
 
 
 @pytest.mark.asyncio
@@ -1342,17 +1352,13 @@ async def test_helm_snapshot_recovery_prefers_native_revision_rollback(monkeypat
     adapter = KubernetesRuntimeAdapter(runtime, apps_api=apps_api)
     calls = []
 
+    state = {"chart": "sample-ci", "chart_version": "5.8.13", "revision": 4, "app_version": None}
+
     def fake_run_helm_command(args):
         calls.append(args)
-        if args[0] == "status":
-            return json.dumps(
-                {
-                    "name": "sample-ci",
-                    "version": 4,
-                    "chart": {"metadata": {"name": "sample-ci", "version": "5.8.13"}},
-                }
-            )
-        return "{}"
+        if args[0] == "rollback":
+            return "{}"
+        return helm_outputs.respond(args, state, name="sample-ci")
 
     monkeypatch.setattr(adapter, "_run_helm_command", fake_run_helm_command)
     target_ref = {
@@ -1375,7 +1381,7 @@ async def test_helm_snapshot_recovery_prefers_native_revision_rollback(monkeypat
         await adapter.recover_from_snapshot(target_ref, snapshot)
     finally:
         MANAGED_MARKERS.reset(marker_token)
-    assert calls == [
+    assert [c for c in calls if c[0] in {"status", "rollback"}] == [
         ["status", "sample-ci", "--namespace", "apps", "--output", "json"],
         ["rollback", "sample-ci", "4", "--namespace", "apps"],
     ]

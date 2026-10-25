@@ -14,6 +14,7 @@ from releasetracker.executors.kubernetes import KubernetesRuntimeAdapter
 from releasetracker.services.deploy_tasks import DeployTasks
 from releasetracker.services.deployment_baseline import BaselineResult
 from releasetracker.routers.tasks import recheck_baseline
+import helm_outputs
 from test_deployment_admission import task, staged
 from test_deployment_readiness_queue import setup, observe
 
@@ -44,12 +45,67 @@ async def test_helm_receipts_do_not_change_identity_but_release_coordinates_do(s
                 "chart_version": "1.1.0",
                 "chart_digest": "a" * 64,
                 "chart_revision": 2,
+                "app_version": "2.0.0",
             }
         }
     )
     assert await handler.identity(updated) == identity
     changed = updated.model_copy(update={"target_ref": updated.target_ref | {"namespace": "other"}})
     assert await handler.identity(changed) != identity
+
+
+@pytest.mark.parametrize("outside_change", [None, "revision", "version"])
+async def test_metadata_only_status_through_snapshot_and_upgrade(monkeypatch, outside_change):
+    from releasetracker.executors.base import RuntimeMutationError
+
+    adapter, calls = helm(monkeypatch)
+    run = adapter._run_helm_command
+    state = {"version": "1.0.0", "revision": 1}
+    monkeypatch.setattr(
+        adapter, "_get_helm_release", lambda _: {"name": "demo", "version": state["revision"]}
+    )
+
+    def command(args):
+        if args[:2] == ["get", "metadata"]:
+            calls.append(args)
+            return json.dumps(
+                helm_outputs.metadata_document("demo", state["version"], state["revision"])
+            )
+        result = run(args)
+        if args[0] == "upgrade":
+            state.update(version="1.1.0", revision=2)
+            if outside_change == "revision":
+                state["revision"] = 3
+            elif outside_change == "version":
+                state["version"] = "9.9.9"
+        return result
+
+    monkeypatch.setattr(adapter, "_run_helm_command", command)
+    ref = {
+        "mode": "helm_release",
+        "namespace": "apps",
+        "release_name": "demo",
+        "chart_version": "0.1.0",
+    }
+    snapshot = await adapter.capture_helm_release_snapshot(ref)
+    assert snapshot["chart_version"] == "1.0.0" and snapshot["revision"] == 1
+    digest = "sha256:" + hashlib.sha256(b"isolated chart bytes").hexdigest()
+    if outside_change:
+        with pytest.raises(
+            RuntimeMutationError, match="does not match upgrade receipt|metadata changed"
+        ):
+            await adapter.upgrade_helm_release(
+                ref, chart_ref="demo", chart_version="1.1.0", repo_url=None, expected_digest=digest
+            )
+        adapter._apply_helm_managed_markers.assert_not_called()
+    else:
+        result = await adapter.upgrade_helm_release(
+            ref, chart_ref="demo", chart_version="1.1.0", repo_url=None, expected_digest=digest
+        )
+        assert result.updated and result.artifact_revision == 2 and result.artifact_digest == digest
+        adapter._apply_helm_managed_markers.assert_called_once()
+        receipt = ref | {"chart_version": "1.1.0", "chart_digest": digest, "chart_revision": 2}
+        assert await adapter.get_helm_release_digest(receipt) == digest
 
 
 async def test_superseded_baseline_does_not_downgrade_success(storage, monkeypatch):
@@ -201,7 +257,7 @@ def helm(monkeypatch, *, current="1.0.0", installed="1.0.0"):
         )
     )
     calls = []
-    release = {"chart": {"metadata": {"version": current}}, "version": 1}
+    state = {"chart": "demo", "chart_version": current, "revision": 1, "app_version": None}
 
     def command(args):
         calls.append(args)
@@ -209,14 +265,19 @@ def helm(monkeypatch, *, current="1.0.0", installed="1.0.0"):
             (Path(args[args.index("--destination") + 1]) / "demo.tgz").write_bytes(
                 b"isolated chart bytes"
             )
+            return ""
         if args[0] == "upgrade":
             assert Path(args[2]).read_bytes() == b"isolated chart bytes"
-            release.update(chart={"metadata": {"version": installed}}, version=2)
-            return json.dumps(release | {"name": "demo", "namespace": "apps"})
-        return ""
+            state.update(chart_version=installed, revision=2)
+            return json.dumps(helm_outputs.status_document(2, name="demo", namespace="apps"))
+        return helm_outputs.respond(args, state, name="demo", namespace="apps")
 
     monkeypatch.setattr(adapter, "_run_helm_command", command)
-    monkeypatch.setattr(adapter, "_get_helm_release", lambda _: release)
+    monkeypatch.setattr(
+        adapter,
+        "_get_helm_release",
+        lambda _: helm_outputs.status_document(state["revision"], name="demo", namespace="apps"),
+    )
     monkeypatch.setattr(adapter, "_ensure_helm_marker_target", Mock())
     monkeypatch.setattr(adapter, "_apply_helm_managed_markers", Mock())
     return adapter, calls
@@ -238,14 +299,15 @@ async def test_same_version_helm_verifies_archive_before_any_write(monkeypatch, 
     if matches:
         result = await adapter.upgrade_helm_release(ref, **args)
         assert result.updated and result.artifact_digest == actual and result.artifact_revision == 2
-        assert [c[0] for c in calls] == ["pull", "upgrade"]
+        assert [c[0] for c in calls if c[0] in {"pull", "upgrade"}] == ["pull", "upgrade"]
         guard.assert_awaited_once()
     else:
         with pytest.raises(ValueError, match="digest does not match"):
             await adapter.upgrade_helm_release(ref, **args)
-        assert [c[0] for c in calls] == ["pull"]
+        assert [c[0] for c in calls if c[0] in {"pull", "upgrade"}] == ["pull"]
         guard.assert_not_awaited()
-    assert not Path(calls[0][calls[0].index("--destination") + 1]).exists()
+    pull = next(c for c in calls if c[0] == "pull")
+    assert not Path(pull[pull.index("--destination") + 1]).exists()
 
 
 async def test_helm_digest_receipt_is_bound_to_live_revision(monkeypatch):
@@ -262,12 +324,13 @@ async def test_helm_digest_receipt_is_bound_to_live_revision(monkeypatch):
     result = await adapter.upgrade_helm_release(
         ref, chart_ref="demo", chart_version="1.0.0", repo_url=None, expected_digest="a" * 64
     )
-    assert not result.updated and not calls
+    assert not result.updated
+    assert not [c for c in calls if c[0] in {"pull", "upgrade"}]
 
 
 async def test_helm_chart_version_falls_back_to_release_metadata(monkeypatch):
     adapter, calls = helm(monkeypatch)
-    monkeypatch.setattr(adapter, "_get_helm_release", lambda _: {"name": "demo", "version": 4})
+    monkeypatch.setattr(adapter, "_get_helm_release", lambda _: {"name": "demo", "version": 5})
     monkeypatch.setattr(
         adapter,
         "_run_helm_command",
@@ -373,19 +436,24 @@ async def test_external_helm_upgrade_cannot_inherit_this_archive_digest(monkeypa
     adapter, calls = helm(monkeypatch)
     command = adapter._run_helm_command
 
+    upgraded = {"done": False}
+
     def raced(args):
         output = command(args)
         if args[0] == "upgrade":
-            monkeypatch.setattr(
-                adapter,
-                "_get_helm_release",
-                lambda _: {"chart": {"metadata": {"version": "1.0.0"}}, "version": 3},
+            upgraded["done"] = True
+        if upgraded["done"] and args[:2] == ["get", "metadata"]:
+            # Another operator upgraded the release before this run read it back.
+            return json.dumps(
+                helm_outputs.metadata_document("demo", "1.0.0", 3, name="demo", namespace="apps")
             )
         return output
 
     monkeypatch.setattr(adapter, "_run_helm_command", raced)
     digest = "sha256:" + hashlib.sha256(b"isolated chart bytes").hexdigest()
-    with pytest.raises(RuntimeMutationError, match="does not match upgrade receipt"):
+    with pytest.raises(
+        RuntimeMutationError, match="does not match upgrade receipt|metadata changed"
+    ):
         await adapter.upgrade_helm_release(
             {"mode": "helm_release", "namespace": "apps", "release_name": "demo"},
             chart_ref="demo",
@@ -394,7 +462,7 @@ async def test_external_helm_upgrade_cannot_inherit_this_archive_digest(monkeypa
             expected_digest=digest,
         )
     adapter._apply_helm_managed_markers.assert_not_called()
-    assert [call[0] for call in calls] == ["pull", "upgrade"]
+    assert [call[0] for call in calls if call[0] in {"pull", "upgrade"}] == ["pull", "upgrade"]
 
 
 async def test_recovery_diagnostics_do_not_treat_blocked_deployment_as_a_fence(

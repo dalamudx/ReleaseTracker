@@ -182,10 +182,10 @@ async def _capture(storage, scheduler, executor):
             refs = [ref]
             release = None
             if mode == "helm_release":
-                raw_release = adapter._get_helm_release(ref)
+                facts = adapter._helm_release_facts(ref, lenient=True)
                 release = {
-                    "version": raw_release.get("version"),
-                    "info": {"status": (raw_release.get("info") or {}).get("status")},
+                    "version": facts.revision,
+                    "info": {"status": facts.status},
                 }
                 refs = [
                     w

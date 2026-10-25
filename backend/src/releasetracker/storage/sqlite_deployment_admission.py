@@ -7,7 +7,11 @@ import logging
 import time
 import uuid
 
-from ..services.helm_identity_review import legacy_helm_review, review_fingerprint
+from ..services.helm_identity_review import (
+    legacy_helm_review,
+    reconciled_helm_review,
+    review_fingerprint,
+)
 from ..services.version_policy import version_policy_reason
 from ..services.deployment_version_evidence import targets_verified
 from ..services.deployment_plan import (
@@ -244,6 +248,10 @@ class DeploymentAdmissionStore:
             identity_review = None
             if target and target["identity_key"] != evidence.identity_key:
                 identity_review = await legacy_helm_review(db, target, evidence, installation_id)
+                if identity_review is None:
+                    identity_review = await reconciled_helm_review(
+                        db, target, evidence, installation_id
+                    )
             elif (
                 target
                 and old
@@ -525,9 +533,9 @@ class DeploymentAdmissionStore:
                     """UPDATE managed_targets SET identity_key=?,updated_at=?
                        WHERE target_id=? AND executor_id=? AND identity_key IN (?,?)
                          AND last_task_id=? AND baseline IS ?
-                         AND NOT EXISTS (SELECT 1 FROM tasks WHERE kind='deploy'
-                           AND json_extract(payload,'$.executor_id')=? AND id>?
-                           AND json_extract(result,'$.mutation_started')=1)""",
+                         AND COALESCE((SELECT MAX(id) FROM tasks WHERE kind='deploy'
+                           AND json_extract(payload,'$.executor_id')=?
+                           AND json_extract(result,'$.mutation_started')=1),0)=?""",
                     (
                         row["identity_key"],
                         now,
@@ -538,7 +546,7 @@ class DeploymentAdmissionStore:
                         identity_review["task_id"],
                         identity_review["baseline"],
                         row["executor_id"],
-                        identity_review["task_id"],
+                        identity_review.get("last_write_task_id", identity_review["task_id"]),
                     ),
                 )
                 if cursor.rowcount != 1:

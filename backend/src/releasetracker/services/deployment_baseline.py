@@ -19,7 +19,7 @@ def configured_target(target):
     if target.get("container_name"):
         target.pop("container_id", None)
     if target.get("mode") == "helm_release":
-        for key in ("chart_version", "chart_digest", "chart_revision"):
+        for key in ("chart_version", "chart_digest", "chart_revision", "app_version"):
             target.pop(key, None)
     return target
 

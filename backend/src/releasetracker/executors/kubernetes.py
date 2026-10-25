@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 import hashlib
@@ -8,6 +9,7 @@ import importlib
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 
@@ -23,6 +25,51 @@ from .base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class HelmReleaseFacts:
+    """Deployed Helm facts, read from the command that actually reports each one."""
+
+    chart_name: str | None = None
+    chart_version: str | None = None
+    app_version: str | None = None
+    revision: int | None = None
+    status: str | None = None
+
+
+def _text(value: Any) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _json_object(output: str, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(output) if output.strip() else {}
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} is not valid JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be an object")
+    return value
+
+
+def _split_chart_reference(
+    value: str | None, expected_name: str | None = None
+) -> tuple[str | None, str | None]:
+    """Accept one unambiguous chart-name/SemVer split, including prerelease suffixes."""
+    if not value:
+        return None, None
+    number = r"(?:0|[1-9][0-9]*)"
+    identifier = rf"(?:{number}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+    version = rf"v?{number}\.{number}\.{number}(?:-{identifier}(?:\.{identifier})*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+    matches = [
+        (value[:index], value[index + 1 :])
+        for index, char in enumerate(value)
+        if char == "-"
+        and re.fullmatch(r"[a-z0-9][a-z0-9._-]*", value[:index])
+        and (expected_name is None or value[:index] == expected_name)
+        and re.fullmatch(version, value[index + 1 :])
+    ]
+    return matches[0] if len(matches) == 1 else (None, None)
 
 
 @offload_blocking_runtime_adapter_methods
@@ -350,75 +397,159 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
         )
 
     async def get_helm_release_version(self, target_ref: dict[str, Any]) -> str | None:
-        chart_version, _ = self._helm_release_chart(target_ref)
-        return chart_version or self._optional_target_field(target_ref, "chart_version")
+        facts = self._helm_release_facts(target_ref)
+        return facts.chart_version
 
     async def get_helm_release_digest(self, target_ref: dict[str, Any]) -> str | None:
         from ..services.deployment_baseline import chart_digest
 
-        version, revision = self._helm_release_chart(target_ref)
+        facts = self._helm_release_facts(target_ref)
         if (
-            revision
-            and revision == target_ref.get("chart_revision")
-            and version == target_ref.get("chart_version")
+            facts.revision
+            and facts.revision == target_ref.get("chart_revision")
+            and facts.chart_version == target_ref.get("chart_version")
         ):
             return chart_digest(target_ref.get("chart_digest"))
         return None
 
-    def _helm_release_chart(self, target_ref: dict[str, Any]) -> tuple[str | None, int | None]:
-        """Read the deployed chart version and revision from one release record."""
-        release = self._get_helm_release(target_ref)
-        _, chart_version = self._parse_helm_release_chart(release)
-        if chart_version:
-            return chart_version, self._parse_helm_release_revision(release)
-        # `helm status` omits the chart; metadata carries version and revision together.
+    def _helm_release_facts(
+        self,
+        target_ref: dict[str, Any],
+        *,
+        release: dict[str, Any] | None = None,
+        lenient: bool = False,
+    ) -> HelmReleaseFacts:
+        """Read every Helm fact here; each command reports a different shape.
+
+        Helm 3.17 `status -o json` has no chart block, `get metadata` reports the chart
+        name, chart version, appVersion and revision, and `list` reports `chart` as
+        `name-version`. One reader keeps discovery, snapshots, upgrades and readiness
+        consistent instead of letting each call site parse its own shape.
+        """
+        if release is None:
+            release = self._optional_helm_command(
+                target_ref, lambda: self._get_helm_release(target_ref), "status", lenient
+            )
+        revision = self._parse_helm_release_revision(release)
+        status = (release.get("info") or {}).get("status")
+        metadata = self._optional_helm_command(
+            target_ref, lambda: self._helm_release_metadata(target_ref), "metadata", lenient
+        )
+        if metadata:
+            chart_name = _text(metadata.get("chart"))
+            chart_version = _text(metadata.get("version"))
+            app_version = _text(metadata.get("appVersion"))
+            record = metadata
+        else:
+            record = self._optional_helm_command(
+                target_ref, lambda: self._helm_release_list_entry(target_ref), "list", lenient
+            )
+            chart_name, chart_version = _split_chart_reference(
+                _text(record.get("chart")), _text(target_ref.get("chart_name"))
+            )
+            app_version = _text(record.get("app_version"))
+        if not record:
+            return HelmReleaseFacts(revision=revision, status=status)
+        # Metadata's version is a chart version; only its revision identifies a release write.
+        record_revision = self._parse_helm_release_revision({"revision": record.get("revision")})
+        record_status = _text(record.get("status"))
+        if (
+            record_revision is None
+            or (revision is not None and revision != record_revision)
+            or (record.get("name") is not None and record["name"] != target_ref.get("release_name"))
+            or (
+                record.get("namespace") is not None
+                and record["namespace"] != target_ref.get("namespace")
+            )
+            or (status and record_status and status != record_status)
+            or (target_ref.get("chart_name") and chart_name != target_ref["chart_name"])
+        ):
+            if lenient:
+                return HelmReleaseFacts()
+            raise ValueError(
+                "Helm release metadata changed or does not match target; retry the read"
+            )
+        return HelmReleaseFacts(
+            chart_name=chart_name,
+            chart_version=chart_version,
+            app_version=app_version,
+            revision=record_revision,
+            status=record_status or status,
+        )
+
+    def _optional_helm_command(self, target_ref, read, command, lenient):
+        try:
+            return read()
+        except Exception as exc:
+            if not lenient:
+                raise
+            self._log_optional_helm_metadata_failure(
+                command,
+                str(target_ref.get("namespace")),
+                str(target_ref.get("release_name")),
+                exc,
+            )
+            return {}
+
+    def _helm_release_metadata(self, target_ref: dict[str, Any]) -> dict[str, Any]:
+        self._require_helm_release_target_mode(target_ref)
+        namespace = self._require_target_field(target_ref, "namespace")
+        self._authorize_namespace(namespace)
+        release_name = self._require_target_field(target_ref, "release_name")
+        return _json_object(
+            self._run_helm_command(
+                ["get", "metadata", release_name, "--namespace", namespace, "--output", "json"]
+            ),
+            "Helm release metadata",
+        )
+
+    def _helm_release_list_entry(self, target_ref: dict[str, Any]) -> dict[str, Any]:
+        self._require_helm_release_target_mode(target_ref)
+        namespace = self._require_target_field(target_ref, "namespace")
+        self._authorize_namespace(namespace)
+        release_name = self._require_target_field(target_ref, "release_name")
         output = self._run_helm_command(
             [
-                "get",
-                "metadata",
-                self._require_target_field(target_ref, "release_name"),
+                "list",
+                "--all",
                 "--namespace",
-                self._require_target_field(target_ref, "namespace"),
+                namespace,
+                "--filter",
+                f"^{re.escape(release_name)}$",
                 "--output",
                 "json",
             ]
         )
         try:
-            metadata = json.loads(output) if output.strip() else {}
+            releases = json.loads(output) if output.strip() else []
         except json.JSONDecodeError as exc:
-            raise ValueError("Helm release metadata is not valid JSON") from exc
-        if not isinstance(metadata, dict):
-            raise ValueError("Helm release metadata must be an object")
-        version = metadata.get("version")
-        revision = metadata.get("revision")
-        return (
-            version.strip() if isinstance(version, str) and version.strip() else None,
-            (
-                revision
-                if isinstance(revision, int) and not isinstance(revision, bool) and revision > 0
-                else None
-            ),
-        )
+            raise ValueError("Helm release list is not valid JSON") from exc
+        if not isinstance(releases, list):
+            raise ValueError("Helm release list must be a list")
+        for item in releases:
+            if isinstance(item, dict) and item.get("name") == release_name:
+                return item
+        return {}
 
     async def capture_helm_release_snapshot(self, target_ref: dict[str, Any]) -> dict[str, Any]:
         release = self._get_helm_release(target_ref)
+        facts = self._helm_release_facts(target_ref, release=release)
+        if not facts.chart_name or not facts.chart_version or facts.revision is None:
+            raise ValueError("Live Helm chart metadata is unavailable; cannot capture a snapshot")
         namespace = self._require_target_field(target_ref, "namespace")
         release_name = self._require_target_field(target_ref, "release_name")
-        chart_name, chart_version = self._parse_helm_release_chart(release)
-        app_version = self._parse_helm_release_app_version(release)
-        revision = self._parse_helm_release_revision(release)
         snapshot = {
             "mode": "helm_release",
             "namespace": namespace,
             "release_name": release_name,
-            "chart_name": chart_name or self._optional_target_field(target_ref, "chart_name"),
-            "chart_version": chart_version
-            or self._optional_target_field(target_ref, "chart_version"),
-            "app_version": app_version or self._optional_target_field(target_ref, "app_version"),
+            "chart_name": facts.chart_name or self._optional_target_field(target_ref, "chart_name"),
+            "chart_version": facts.chart_version,
+            "app_version": facts.app_version
+            or self._optional_target_field(target_ref, "app_version"),
             "release": release,
         }
-        if revision is not None:
-            snapshot["revision"] = revision
+        if facts.revision is not None:
+            snapshot["revision"] = facts.revision
         return snapshot
 
     async def validate_helm_release_snapshot(
@@ -597,12 +728,8 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
                     or receipt.get("namespace") != namespace
                 ):
                     raise ValueError("Helm upgrade receipt does not match target")
-                release = self._get_helm_release(target_ref)
-                _, installed_version = self._parse_helm_release_chart(release)
-                if (
-                    installed_version != chart_version
-                    or self._parse_helm_release_revision(release) != revision
-                ):
+                installed = self._helm_release_facts(target_ref)
+                if installed.chart_version != chart_version or installed.revision != revision:
                     raise ValueError("Helm installed release does not match upgrade receipt")
                 self._apply_helm_managed_markers(target_ref)
             except Exception as exc:
@@ -1116,62 +1243,13 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
         return completed.stdout
 
     @staticmethod
-    def _parse_helm_release_chart(release: dict[str, Any]) -> tuple[str | None, str | None]:
-        chart = release.get("chart")
-        if isinstance(chart, dict):
-            metadata = chart.get("metadata")
-            if isinstance(metadata, dict):
-                chart_name = metadata.get("name")
-                chart_version = metadata.get("version")
-                return (
-                    (
-                        chart_name.strip()
-                        if isinstance(chart_name, str) and chart_name.strip()
-                        else None
-                    ),
-                    (
-                        chart_version.strip()
-                        if isinstance(chart_version, str) and chart_version.strip()
-                        else None
-                    ),
-                )
-        chart_value = release.get("chart")
-        if isinstance(chart_value, str) and chart_value.strip() and "-" in chart_value:
-            chart_name, _, chart_version = chart_value.strip().rpartition("-")
-            if chart_name and chart_version:
-                return chart_name, chart_version
-        return None, None
-
-    @staticmethod
     def _parse_helm_release_revision(release: dict[str, Any]) -> int | None:
-        for key in ("version", "revision"):
+        for key in (("revision",) if "revision" in release else ("version",)):
             value = release.get(key)
             if isinstance(value, int) and not isinstance(value, bool) and value > 0:
                 return value
             if isinstance(value, str) and value.strip().isdigit() and int(value.strip()) > 0:
                 return int(value.strip())
-        return None
-
-    @staticmethod
-    def _parse_helm_release_app_version(release: dict[str, Any]) -> str | None:
-        for key in ("appVersion", "app_version"):
-            value = release.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-
-        chart = release.get("chart")
-        if isinstance(chart, dict):
-            for key in ("appVersion", "app_version"):
-                value = chart.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
-
-            metadata = chart.get("metadata")
-            if isinstance(metadata, dict):
-                for key in ("appVersion", "app_version"):
-                    app_version = metadata.get(key)
-                    if isinstance(app_version, str) and app_version.strip():
-                        return app_version.strip()
         return None
 
     @contextmanager
@@ -1307,18 +1385,18 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
         release_name = self._get_helm_release_name(first_workload) or "-"
         release_namespace = self._get_helm_release_namespace(first_workload) or discovery_namespace
         release_metadata = self._get_helm_release_chart_metadata(release_namespace, release_name)
-        chart_name = self._get_helm_chart_name(first_workload) or release_metadata.get("chart_name")
-        chart_version = self._get_helm_chart_version(first_workload) or release_metadata.get(
-            "chart_version"
+        chart_name = release_metadata.get("chart_name") or self._get_helm_chart_name(first_workload)
+        chart_version = release_metadata.get("chart_version") or self._get_helm_chart_version(
+            first_workload
         )
-        app_version = next(
+        app_version = release_metadata.get("app_version") or next(
             (
                 value
                 for workload in workloads
                 if (value := self._get_label(workload, "app.kubernetes.io/version"))
             ),
             None,
-        ) or release_metadata.get("app_version")
+        )
         workload_refs = [
             {"kind": workload["kind"], "name": workload["name"]}
             for workload in sorted(workloads, key=lambda item: (item["kind"], item["name"]))
@@ -1344,88 +1422,19 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
         )
 
     def _get_helm_release_chart_metadata(self, namespace: str, release_name: str) -> dict[str, str]:
-        metadata: dict[str, str] = {}
-        try:
-            release = self._get_helm_release(
-                {
-                    "mode": "helm_release",
-                    "namespace": namespace,
-                    "release_name": release_name,
-                }
-            )
-        except Exception as exc:
-            self._log_optional_helm_metadata_failure("status", namespace, release_name, exc)
-            release = None
-
-        if release:
-            chart_name, chart_version = self._parse_helm_release_chart(release)
-            app_version = self._parse_helm_release_app_version(release)
-            if chart_name:
-                metadata["chart_name"] = chart_name
-            if chart_version:
-                metadata["chart_version"] = chart_version
-            if app_version:
-                metadata["app_version"] = app_version
-
-        if "app_version" not in metadata:
-            metadata.update(
-                {
-                    key: value
-                    for key, value in self._get_helm_release_list_metadata(
-                        namespace, release_name
-                    ).items()
-                    if key not in metadata
-                }
-            )
-        return metadata
-
-    def _get_helm_release_list_metadata(self, namespace: str, release_name: str) -> dict[str, str]:
-        try:
-            output = self._run_helm_command(
-                [
-                    "list",
-                    "--namespace",
-                    namespace,
-                    "--filter",
-                    f"^{release_name}$",
-                    "--output",
-                    "json",
-                ]
-            )
-            releases = json.loads(output)
-        except Exception as exc:
-            self._log_optional_helm_metadata_failure("list", namespace, release_name, exc)
-            return {}
-        if not isinstance(releases, list):
-            logger.debug(
-                "Optional Helm list metadata for release %s in namespace %s returned %s instead of list",
-                release_name,
-                namespace,
-                type(releases).__name__,
-            )
-            return {}
-
-        release = next(
-            (
-                item
-                for item in releases
-                if isinstance(item, dict) and item.get("name") == release_name
-            ),
-            None,
+        facts = self._helm_release_facts(
+            {"mode": "helm_release", "namespace": namespace, "release_name": release_name},
+            lenient=True,
         )
-        if not release:
-            return {}
-
-        chart_name, chart_version = self._parse_helm_release_chart(release)
-        app_version = self._parse_helm_release_app_version(release)
-        metadata: dict[str, str] = {}
-        if chart_name:
-            metadata["chart_name"] = chart_name
-        if chart_version:
-            metadata["chart_version"] = chart_version
-        if app_version:
-            metadata["app_version"] = app_version
-        return metadata
+        return {
+            key: value
+            for key, value in (
+                ("chart_name", facts.chart_name),
+                ("chart_version", facts.chart_version),
+                ("app_version", facts.app_version),
+            )
+            if value
+        }
 
     @staticmethod
     def _log_optional_helm_metadata_failure(
@@ -1466,19 +1475,12 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
 
     def _get_helm_chart_name(self, workload: dict[str, Any]) -> str | None:
         chart = self._get_label(workload, "helm.sh/chart")
-        if not chart:
-            return None
-        if "-" not in chart:
-            return chart
-        chart_name, _, chart_version = chart.rpartition("-")
-        return chart_name if chart_name and chart_version else chart
+        name, _ = _split_chart_reference(chart)
+        return name or (chart if chart and "-" not in chart else None)
 
     def _get_helm_chart_version(self, workload: dict[str, Any]) -> str | None:
-        chart = self._get_label(workload, "helm.sh/chart")
-        if not chart or "-" not in chart:
-            return None
-        chart_name, _, chart_version = chart.rpartition("-")
-        return chart_version if chart_name and chart_version else None
+        _, version = _split_chart_reference(self._get_label(workload, "helm.sh/chart"))
+        return version
 
     def _workload_containers(self, workload: dict[str, Any]) -> list[dict[str, str]]:
         containers = workload.get("containers") or []
