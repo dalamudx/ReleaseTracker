@@ -219,12 +219,14 @@ async def test_scheduler_persists_snapshot_before_mutation_and_patch(
         return response
 
     monkeypatch.setattr(storage, "create_executor_snapshot", capture)
-    monkeypatch.setattr(
-        "releasetracker.executor_scheduler_grouped_runtime_kubernetes.mark_deployment_mutation",
-        mark,
-    )
+    from releasetracker.services.task_effects import MUTATION_GUARD
+
+    guard_token = MUTATION_GUARD.set(mark)
     patch.side_effect = apply
-    outcome = await scheduler.run_executor_now(executor_id)
+    try:
+        outcome = await scheduler.run_executor_now(executor_id)
+    finally:
+        MUTATION_GUARD.reset(guard_token)
     if capture_fails:
         assert outcome.status == "failed"
         assert "snapshot storage unavailable" in outcome.message

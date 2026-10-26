@@ -544,28 +544,38 @@ async def test_target_capture_prefers_mutation_response_identity(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_resource_scope_uses_uid_not_connection_alias(monkeypatch):
-    evidence = {"workloads": {"Deployment/service-a": workload()}}
-    monkeypatch.setattr(probes, "capture_deployment_baseline", AsyncMock(return_value=evidence))
-    first = SimpleNamespace(runtime_connection_id=1, target_ref={"mode": "kubernetes_workload"})
-    alias = SimpleNamespace(runtime_connection_id=2, target_ref={"mode": "kubernetes_workload"})
+    from unittest.mock import Mock
+    from releasetracker.services.ssh_compose_ownership import _key
+
+    namespace = {"metadata": {"uid": "11111111-1111-4111-8111-111111111111"}}
+    adapter = SimpleNamespace(
+        _get_core_api=lambda: SimpleNamespace(read_namespace=Mock(side_effect=lambda _: namespace))
+    )
+    monkeypatch.setattr(probes, "_adapter", AsyncMock(return_value=adapter))
+
+    async def native_read(adapter, name, function, *args):
+        return function(*args)
+
+    monkeypatch.setattr(probes, "_bounded_thread", native_read)
+    first = SimpleNamespace(
+        runtime_type="kubernetes",
+        runtime_connection_id=1,
+        target_ref={"mode": "kubernetes_workload"},
+    )
+    alias = SimpleNamespace(
+        runtime_type="kubernetes", runtime_connection_id=2, target_ref={"mode": "helm_release"}
+    )
     assert (
         await probes.resolve_deployment_resource_scope(None, None, first)
         == await probes.resolve_deployment_resource_scope(None, None, alias)
-        == "kubernetes:uid:fictional-uid"
+        == "cluster:" + _key(["kubernetes", namespace["metadata"]["uid"]])
     )
-    evidence["workloads"]["Deployment/service-a"]["metadata"]["uid"] = "other-uid"
-    assert (
-        await probes.resolve_deployment_resource_scope(None, None, first)
-        == "kubernetes:uid:other-uid"
+    namespace["metadata"]["uid"] = "22222222-2222-4222-8222-222222222222"
+    assert await probes.resolve_deployment_resource_scope(None, None, first) == "cluster:" + _key(
+        ["kubernetes", namespace["metadata"]["uid"]]
     )
-    evidence.clear()
+    namespace["metadata"].clear()
     assert await probes.resolve_deployment_resource_scope(None, None, first) == "*"
-    assert (
-        await probes.resolve_deployment_resource_scope(
-            None, None, SimpleNamespace(target_ref={"mode": "helm_release"})
-        )
-        == "*"
-    )
 
 
 @pytest.mark.asyncio

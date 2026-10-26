@@ -359,6 +359,9 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
             }
 
         apps_api = self._get_apps_api()
+        from ..services.task_effects import mark_deployment_mutation
+
+        await mark_deployment_mutation()
         if kind == "Deployment":
             submitted = apps_api.patch_namespaced_deployment(name, namespace, patch_body)
         elif kind == "StatefulSet":
@@ -538,6 +541,49 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
             raise ValueError("Live Helm chart metadata is unavailable; cannot capture a snapshot")
         namespace = self._require_target_field(target_ref, "namespace")
         release_name = self._require_target_field(target_ref, "release_name")
+        # Pin both documents to one revision; reject a concurrent release change.
+        values_output = self._run_helm_command(
+            [
+                "get",
+                "values",
+                release_name,
+                "--namespace",
+                namespace,
+                "--revision",
+                str(facts.revision),
+                "--output",
+                "json",
+            ]
+        )
+        try:
+            values = json.loads(values_output)
+        except (ValueError, TypeError):
+            raise ValueError("Helm user values are not valid JSON") from None
+        if values is None:
+            values = {}
+        manifest = self._run_helm_command(
+            [
+                "get",
+                "manifest",
+                release_name,
+                "--namespace",
+                namespace,
+                "--revision",
+                str(facts.revision),
+            ]
+        )
+        configuration = {"schema": 1, "values": values, "manifest": manifest}
+        from ..services.helm_configuration import projection
+
+        projection({"helm_configuration": configuration}, required=True)
+        current = self._helm_release_facts(target_ref)
+        if (current.chart_name, current.chart_version, current.revision, current.status) != (
+            facts.chart_name,
+            facts.chart_version,
+            facts.revision,
+            facts.status,
+        ):
+            raise ValueError("Helm release changed while collecting configuration")
         snapshot = {
             "mode": "helm_release",
             "namespace": namespace,
@@ -547,6 +593,7 @@ class KubernetesRuntimeAdapter(BaseRuntimeAdapter):
             "app_version": facts.app_version
             or self._optional_target_field(target_ref, "app_version"),
             "release": release,
+            "helm_configuration": configuration,
         }
         if facts.revision is not None:
             snapshot["revision"] = facts.revision

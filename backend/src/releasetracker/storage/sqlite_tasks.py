@@ -8,6 +8,8 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 
+from ..services.mutation_resource_domains import scope_conflict_sql
+
 FETCH_RETRY_SETTING = "system.fetch_retry_count"
 DEFAULT_FETCH_RETRIES = 3
 TERMINAL_STATES = frozenset(
@@ -348,17 +350,16 @@ class TaskStore:
                 raise RuntimeError("Task lease lost")
             row = await (
                 await db.execute(
-                    """SELECT 1 FROM tasks WHERE (
+                    f"""SELECT 1 FROM tasks WHERE (
                          (state='running' AND owner IS NOT NULL) OR
                          (state='needs_attention' AND ?='deploy'))
                        AND kind IN ('deploy','recover') AND id!=? AND (
-                         resource_key=? OR resource_key='deployment-mutations' OR
-                         ?='deployment-mutations' OR json_extract(payload,'$.executor_id')=?
+                         {scope_conflict_sql('resource_key', '?', mutation_keys=True)} OR
+                         json_extract(payload,'$.executor_id')=?
                        ) LIMIT 1""",
                     (
                         task["kind"],
                         task["id"],
-                        resource_key,
                         resource_key,
                         task["payload"]["executor_id"],
                     ),
@@ -384,25 +385,23 @@ class TaskStore:
         db = await self.storage._get_connection()
         rows = await (
             await db.execute(
-                """SELECT DISTINCT t.id,t.target_label,
+                f"""SELECT DISTINCT t.id,t.target_label,
                  CASE WHEN o.state IN ('waiting','finalizing','blocked') THEN 'readiness' ELSE 'mutation' END reason
                FROM tasks t LEFT JOIN deployment_observations o ON o.task_id=t.id
                WHERE t.id!=? AND t.kind IN ('deploy','recover') AND (
                  ((t.state='running' AND t.owner IS NOT NULL OR t.state='needs_attention' AND ?='deploy') AND
-                   (t.resource_key=? OR t.resource_key='deployment-mutations' OR ?='deployment-mutations'
+                   ({scope_conflict_sql('t.resource_key', '?', mutation_keys=True)}
                     OR json_extract(t.payload,'$.executor_id')=?)) OR
                  ((o.state IN ('waiting','finalizing') OR o.state='blocked' AND t.state='needs_attention' AND ?='deploy') AND
-                   (o.executor_id=? OR o.resource_scope='*' OR ?='*' OR o.resource_scope=?)))
+                   (o.executor_id=? OR {scope_conflict_sql('o.resource_scope', '?')})))
                ORDER BY t.id LIMIT 20""",
                 (
                     task["id"],
                     task["kind"],
                     key,
-                    key,
                     task["payload"].get("executor_id"),
                     task["kind"],
                     task["payload"].get("executor_id"),
-                    scope,
                     scope,
                 ),
             )
@@ -427,7 +426,7 @@ class TaskStore:
                 return None
             row = await (
                 await db.execute(
-                    """SELECT t.* FROM tasks t WHERE kind=? AND state IN ('queued','retry_wait')
+                    f"""SELECT t.* FROM tasks t WHERE kind=? AND state IN ('queued','retry_wait')
                    AND approval_pending=0 AND due_at<=?
                    AND (t.kind='fetch' OR (SELECT COUNT(*) FROM tasks
                         WHERE kind IN ('deploy','recover') AND state='running'
@@ -436,14 +435,11 @@ class TaskStore:
                      (active.state='running' AND active.owner IS NOT NULL AND (
                        active.resource_key=t.resource_key OR
                        (active.kind IN ('deploy','recover') AND t.kind IN ('deploy','recover')
-                        AND (?=1 OR active.resource_key='deployment-mutations' OR
-                             t.resource_key='deployment-mutations' OR
+                        AND (?=1 OR {scope_conflict_sql('active.resource_key', 't.resource_key', mutation_keys=True)} OR
                              json_extract(active.payload,'$.executor_id')=json_extract(t.payload,'$.executor_id')))))
                      OR (active.state='needs_attention' AND t.kind='deploy'
                        AND active.kind IN ('deploy','recover') AND (
-                         active.resource_key=t.resource_key OR
-                         active.resource_key='deployment-mutations' OR
-                         t.resource_key='deployment-mutations' OR
+                         {scope_conflict_sql('active.resource_key', 't.resource_key', mutation_keys=True)} OR
                          json_extract(active.payload,'$.executor_id')=json_extract(t.payload,'$.executor_id')
                        )))
                    ORDER BY due_at,id LIMIT 1""",

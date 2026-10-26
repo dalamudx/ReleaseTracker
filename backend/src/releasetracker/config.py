@@ -429,6 +429,7 @@ class HelmReleaseExecutorTargetRef(BaseModel):
     chart_name: str | None = None
     chart_version: str | None = None
     chart_digest: str | None = None
+    chart_revision: int | None = Field(default=None, ge=1, strict=True)
     app_version: str | None = None
     workloads: list[dict[str, Any]] = Field(default_factory=list)
     service_count: int | None = None

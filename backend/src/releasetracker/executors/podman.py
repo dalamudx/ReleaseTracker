@@ -172,6 +172,9 @@ class PodmanRuntimeAdapter(PodmanPodRecovery, PodmanPayloadRenderer, _ContainerR
 
         verify_image_defaults(client, create_kwargs)
         await verify_update_state(self, target_ref)
+        from ..services.task_effects import mark_deployment_mutation
+
+        await mark_deployment_mutation()
         try:
             container.stop()
             container.remove()

@@ -23,23 +23,42 @@ async def block(storage, executor, scope):
 
 
 async def test_known_unrelated_target_can_progress(storage):
-    await block(storage, 1, "deployment-mutations:kubernetes:uid:a")
-    await enqueue(storage, 2, "deployment-mutations:kubernetes:uid:a")
-    other = await enqueue(storage, 3, "deployment-mutations:kubernetes:uid:b")
+    await block(
+        storage,
+        1,
+        "deployment-mutations:cluster:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    await enqueue(
+        storage,
+        2,
+        "deployment-mutations:cluster:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    other = await enqueue(
+        storage,
+        3,
+        "deployment-mutations:cluster:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    )
     claimed = await storage.tasks.claim("deploy")
     assert claimed["id"] == other["id"]
     assert await storage.tasks.bind_mutation_scope(claimed, claimed["resource_key"])
     # Changing scope after queueing cannot escape the existing fence.
     assert not await storage.tasks.bind_mutation_scope(
-        claimed, "deployment-mutations:kubernetes:uid:a"
+        claimed,
+        "deployment-mutations:cluster:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
 
 
 @pytest.mark.parametrize(
     "blocked_scope,new_scope",
     [
-        ("deployment-mutations", "deployment-mutations:kubernetes:uid:b"),
-        ("deployment-mutations:kubernetes:uid:a", "deployment-mutations"),
+        (
+            "deployment-mutations",
+            "deployment-mutations:cluster:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ),
+        (
+            "deployment-mutations:cluster:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "deployment-mutations",
+        ),
     ],
 )
 async def test_unknown_or_legacy_domain_remains_conservative(storage, blocked_scope, new_scope):
@@ -51,12 +70,29 @@ async def test_unknown_or_legacy_domain_remains_conservative(storage, blocked_sc
 
 
 async def test_same_executor_cannot_escape_fence_and_writes_stay_serial(storage):
-    await block(storage, 1, "deployment-mutations:kubernetes:uid:a")
-    await enqueue(storage, 1, "deployment-mutations:kubernetes:uid:b")
+    await block(
+        storage,
+        1,
+        "deployment-mutations:cluster:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    await enqueue(
+        storage,
+        1,
+        "deployment-mutations:cluster:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    )
     assert await storage.tasks.claim("deploy") is None
-    await enqueue(storage, 2, "deployment-mutations:kubernetes:uid:b")
+    await enqueue(
+        storage,
+        2,
+        "deployment-mutations:cluster:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    )
     assert await storage.tasks.claim("deploy")
-    await enqueue(storage, 3, "deployment-mutations:kubernetes:uid:c", "recover")
+    await enqueue(
+        storage,
+        3,
+        "deployment-mutations:cluster:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "recover",
+    )
     assert await storage.tasks.claim("recover") is None
 
 
@@ -67,7 +103,7 @@ async def test_parallel_claims_share_mutation_budget(storage):
         await enqueue(
             storage,
             executor,
-            f"deployment-mutations:kubernetes:uid:{executor}",
+            f"deployment-mutations:cluster:{executor:064x}",
             "recover" if executor == 4 else "deploy",
         )
     claims = await asyncio.gather(
@@ -81,8 +117,17 @@ async def test_parallel_claims_share_mutation_budget(storage):
 
 
 async def test_parallel_scope_revalidation_blocks_target_change(storage):
-    await enqueue(storage, 1, "deployment-mutations:kubernetes:uid:a")
-    await enqueue(storage, 2, "deployment-mutations:kubernetes:uid:b", "recover")
+    await enqueue(
+        storage,
+        1,
+        "deployment-mutations:cluster:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    await enqueue(
+        storage,
+        2,
+        "deployment-mutations:cluster:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "recover",
+    )
     first = await storage.tasks.claim("deploy", mutation_capacity=2)
     second = await storage.tasks.claim("recover", mutation_capacity=2)
     assert await storage.tasks.bind_mutation_scope(first, first["resource_key"])
@@ -90,18 +135,38 @@ async def test_parallel_scope_revalidation_blocks_target_change(storage):
     assert not await storage.tasks.bind_mutation_scope(first, "deployment-mutations")
 
 
-@pytest.mark.parametrize("scope", ["deployment-mutations", "deployment-mutations:kubernetes:uid:a"])
+@pytest.mark.parametrize(
+    "scope",
+    [
+        "deployment-mutations",
+        "deployment-mutations:cluster:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ],
+)
 async def test_parallel_keeps_global_and_same_target_fences(storage, scope):
     await enqueue(storage, 1, scope)
     assert await storage.tasks.claim("deploy", mutation_capacity=3)
-    await enqueue(storage, 2, "deployment-mutations:kubernetes:uid:a", "recover")
+    await enqueue(
+        storage,
+        2,
+        "deployment-mutations:cluster:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "recover",
+    )
     assert await storage.tasks.claim("recover", mutation_capacity=3) is None
 
 
 async def test_parallel_same_executor_cannot_change_domains(storage):
-    await enqueue(storage, 1, "deployment-mutations:kubernetes:uid:a")
+    await enqueue(
+        storage,
+        1,
+        "deployment-mutations:cluster:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
     assert await storage.tasks.claim("deploy", mutation_capacity=2)
-    await enqueue(storage, 1, "deployment-mutations:kubernetes:uid:b", "recover")
+    await enqueue(
+        storage,
+        1,
+        "deployment-mutations:cluster:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "recover",
+    )
     assert await storage.tasks.claim("recover", mutation_capacity=2) is None
 
 
@@ -126,9 +191,22 @@ async def test_dispatch_really_runs_independent_mutations_in_parallel(storage, m
     queue = TaskQueue(storage.tasks, MagicMock())
     queue.register("deploy", handler)
     queue.register("recover", handler)
-    await enqueue(storage, 1, "deployment-mutations:kubernetes:uid:a")
-    await enqueue(storage, 2, "deployment-mutations:kubernetes:uid:b", "recover")
-    await enqueue(storage, 3, "deployment-mutations:kubernetes:uid:c")
+    await enqueue(
+        storage,
+        1,
+        "deployment-mutations:cluster:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    await enqueue(
+        storage,
+        2,
+        "deployment-mutations:cluster:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "recover",
+    )
+    await enqueue(
+        storage,
+        3,
+        "deployment-mutations:cluster:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    )
     try:
         await queue.tick()
         await asyncio.wait_for(both.wait(), timeout=2)
@@ -146,7 +224,14 @@ async def test_invalid_mutation_capacity_is_rejected(storage):
 
 
 async def test_scope_update_is_lease_fenced(storage):
-    await enqueue(storage, 1, "deployment-mutations:kubernetes:uid:a")
+    await enqueue(
+        storage,
+        1,
+        "deployment-mutations:cluster:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
     task = await storage.tasks.claim("deploy", lease_seconds=-1)
     with pytest.raises(RuntimeError, match="lease lost"):
-        await storage.tasks.bind_mutation_scope(task, "deployment-mutations:kubernetes:uid:b")
+        await storage.tasks.bind_mutation_scope(
+            task,
+            "deployment-mutations:cluster:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )

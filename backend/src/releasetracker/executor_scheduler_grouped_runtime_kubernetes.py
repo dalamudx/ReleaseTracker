@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .services.task_effects import mark_deployment_mutation
+from .services.task_effects import prepare_deployment_mutation
 
 from .config import ExecutorConfig
 from .executors.adapter_lifetime import runtime_adapter_scope
@@ -264,7 +264,7 @@ class ExecutorSchedulerKubernetesRuntime:
                         run_id=run_id,
                         current_image=current_image_summary,
                     )
-                await mark_deployment_mutation()
+                await prepare_deployment_mutation()
                 update_result = await adapter.update_workload_services(
                     executor_config.target_ref,
                     service_target_images,

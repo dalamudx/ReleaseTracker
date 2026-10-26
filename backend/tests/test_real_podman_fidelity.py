@@ -63,8 +63,11 @@ async def test_private_podman_socket_update_and_restore_preserve_effective_confi
         adapter = PodmanRuntimeAdapter(runtime)
         client = adapter._get_client()
         assert await asyncio.to_thread(client.ping)
-        old = "docker.m.daocloud.io/library/nginx:1.27-alpine"
-        new = "docker.m.daocloud.io/library/nginx:1.28-alpine"
+        registry = os.environ.get("RT_PODMAN_ACCEPTANCE_REGISTRY", "docker.m.daocloud.io").rstrip(
+            "/"
+        )
+        old = f"{registry}/library/nginx:1.27-alpine"
+        new = f"{registry}/library/nginx:1.28-alpine"
         for image in (old, new):
             await asyncio.to_thread(cli, "pull", image)
         image = json.loads((await asyncio.to_thread(cli, "image", "inspect", new)).stdout)[0]

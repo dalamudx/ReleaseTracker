@@ -314,6 +314,9 @@ class PortainerRuntimeAdapter(BaseRuntimeAdapter):
         from ..services.deployment_diff import verify_update_state
 
         await verify_update_state(self, target_ref)
+        from ..services.task_effects import mark_deployment_mutation
+
+        await mark_deployment_mutation()
         await self._update_stack(
             endpoint_id=endpoint_id,
             stack_id=stack_id,

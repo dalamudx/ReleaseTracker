@@ -333,8 +333,6 @@ class DeploymentAdmissionStore:
             if evidence.configuration_diff is not None:
                 if evidence.configuration_diff.get("truncated"):
                     reason = "configuration_diff_incomplete"
-                elif task["payload"].get("manual") and reason is None:
-                    reason = "manual_update_review"
 
             from ..versioning import SELECTION_RULES_VERSION
 
@@ -701,7 +699,9 @@ class DeploymentAdmissionStore:
             ):
                 return BaselineResult("review_required", "legacy_plan_missing_proof")
             if not targets_verified(task, evidence):
-                return BaselineResult("pending", "artifact_unverified")
+                from ..services.deployment_baseline_diagnostics import artifact_reason
+
+                return BaselineResult("pending", artifact_reason(task, evidence))
             deployment_ids = {marker.get(PREFIX + "deployment-id") for marker in evidence.markers}
             if deployment_ids - {None, str(task_id)}:
                 return BaselineResult("review_required", "deployment_marker_changed")

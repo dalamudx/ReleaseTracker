@@ -73,6 +73,9 @@ class MutableFakeRuntimeAdapter(BaseRuntimeAdapter):
             snapshot = await self.storage.get_executor_snapshot(self.executor_id)
             self.snapshot_seen_before_update = snapshot
 
+        from releasetracker.services.task_effects import mark_deployment_mutation
+
+        await mark_deployment_mutation()
         self.update_calls.append(new_image)
         if self.fail_after_destructive_update:
             self.current_image = "broken:partial"

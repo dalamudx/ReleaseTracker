@@ -77,6 +77,13 @@ def list_document(
 
 def respond(args, state, *, name="demo", namespace="apps", metadata=True, listing=True):
     """Answer a Helm command from one release state, in each command's real shape."""
+    if args[:2] == ["get", "values"]:
+        return json.dumps(state.get("values", {}))
+    if args[:2] == ["get", "manifest"]:
+        return state.get(
+            "manifest",
+            "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: " + name + "\ndata: {}\n",
+        )
     if args[0] == "status":
         return json.dumps(
             status_document(

@@ -60,6 +60,10 @@ def _declaration(value, key=""):
 
 
 def configuration_state(storage, value):
+    if "helm_configuration" in value:
+        from .helm_configuration import upgrade_configuration
+
+        return protected_state(storage, upgrade_configuration(value))
     return protected_state(
         storage,
         _declaration({k: v for k, v in value.items() if k not in {"revision", "chart_digest"}}),
@@ -251,6 +255,11 @@ async def _verify_update_state(adapter, target_ref):
     if current is None:
         raise ValueError("deployment_configuration_changed")
     observed, _ = project(current, adapter=adapter)
+    if target_ref.get("mode") == "helm_release":
+        from .helm_configuration import projection
+
+        observed, _ = projection(current, required=True)
+        observed["chart_digest"] = await adapter.get_helm_release_digest(target_ref)
     mode = target_ref.get("mode", "container")
     if mode == "container" and "create_config" in observed:
         observed["create_config"]["image"] = current.get("image")
@@ -290,6 +299,10 @@ async def native_review(
     ):
         raise ValueError("deployment_artifact_evidence_unavailable")
     observed, scope = project(snapshot, adapter=adapter)
+    if mode == "helm_release":
+        from .helm_configuration import projection
+
+        observed, scope = projection(snapshot, required=True)
     mode = executor.target_ref.get("mode", "container")
     images = {}
     if mode == "container":
@@ -366,7 +379,12 @@ async def native_review(
             from .deployment_baseline import chart_digest
 
             desired["chart_digest"] = chart_digest(selected["chart_digest"])
-    lines, truncated = changed_lines(observed, desired)
+    if mode == "helm_release":
+        from .helm_configuration import changed_configuration
+
+        lines, truncated = changed_configuration(observed, desired, changed_lines)
+    else:
+        lines, truncated = changed_lines(observed, desired)
     diff = {"scope": scope, "lines": lines, "truncated": truncated}
     if inspection_only:
         # A draft reads declarations; it must not publish evidence for a later write.

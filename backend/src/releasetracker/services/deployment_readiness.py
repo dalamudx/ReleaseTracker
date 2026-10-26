@@ -59,27 +59,9 @@ async def snapshot_readiness_profile(storage, executor):
 
 
 async def resource_scope(storage, executor, scheduler=None):
-    # Only verified runtime identities may narrow the conservative global domain.
-    # A connection ID is NOT a runtime identity (aliases/proxies may hit one engine).
-    if executor.target_ref.get("mode") == "ssh_compose":
-        db = await storage._get_connection()
-        row = await (
-            await db.execute(
-                "SELECT runtime_key FROM ssh_compose_ownership WHERE executor_id=?", (executor.id,)
-            )
-        ).fetchone()
-        if row and row[0]:
-            return f"engine:{row[0]}"
-    if scheduler is not None:
-        from .deployment_readiness_probes import resolve_deployment_resource_scope
+    from .mutation_resource_domains import resource_scope as resolve
 
-        try:
-            return await asyncio.wait_for(
-                resolve_deployment_resource_scope(storage, scheduler, executor), timeout=10
-            )
-        except Exception:
-            pass
-    return "*"
+    return await resolve(storage, executor, scheduler)
 
 
 class DeploymentReadiness:
@@ -97,15 +79,17 @@ class DeploymentReadiness:
         self.scheduler_host.add_interval_job("readiness", "observe", self.tick, seconds=2)
 
     async def conflicts(self, executor, *, include_blocked=True):
+        from .mutation_resource_domains import scope_conflict_sql
+
         scope = await resource_scope(self.storage, executor, self.scheduler)
         db = await self.storage._get_connection()
         row = await (
             await db.execute(
-                """SELECT 1 FROM deployment_observations o JOIN tasks t ON t.id=o.task_id
+                f"""SELECT 1 FROM deployment_observations o JOIN tasks t ON t.id=o.task_id
                WHERE (o.state IN ('waiting','finalizing') OR
                       (o.state='blocked' AND t.state='needs_attention' AND ?))
-               AND (o.executor_id=? OR o.resource_scope='*' OR ?='*' OR o.resource_scope=?) LIMIT 1""",
-                (include_blocked, executor.id, scope, scope),
+               AND (o.executor_id=? OR {scope_conflict_sql('o.resource_scope', '?')}) LIMIT 1""",
+                (include_blocked, executor.id, scope),
             )
         ).fetchone()
         return bool(row)

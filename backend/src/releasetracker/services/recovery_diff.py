@@ -88,10 +88,9 @@ def project(snapshot, *, desired=False, live=None, adapter=None):
     """Only configuration consumed by recovery; never arbitrary inspect JSON."""
     mode = snapshot.get("mode")
     if mode == "helm_release":
-        # Helm snapshots currently record chart/revision, NOT all values/manifests.
-        return {
-            k: snapshot.get(k) for k in ("chart_name", "chart_version", "revision")
-        }, "helm_revision"
+        from .helm_configuration import projection
+
+        return projection(snapshot)
     if mode == "kubernetes_workload":
         prepared = kubernetes_artifact_evidence.prepare(snapshot) if desired else snapshot
         if snapshot.get("recovery_scope") == "workload_spec":
@@ -303,7 +302,12 @@ async def build_review(storage, executor, adapter, snapshot):
         # Docker restores captured containers; other, newly added services stay untouched.
         for name, config in observed.get("containers", {}).items():
             desired["containers"].setdefault(name, config)
-    lines, truncated = changed_lines(observed, desired)
+    if snapshot.snapshot_data.get("mode") == "helm_release":
+        from .helm_configuration import changed_configuration
+
+        lines, truncated = changed_configuration(observed, desired, changed_lines)
+    else:
+        lines, truncated = changed_lines(observed, desired)
     connection = await storage.get_runtime_connection(executor.runtime_connection_id)
     binding = {
         "executor": executor.model_dump(mode="json"),

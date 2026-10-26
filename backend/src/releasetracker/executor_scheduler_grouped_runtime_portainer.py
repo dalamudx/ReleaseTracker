@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .services.task_effects import mark_deployment_mutation
+from .services.task_effects import prepare_deployment_mutation
 
 from .config import ExecutorConfig
 from .executors.adapter_lifetime import runtime_adapter_scope
@@ -252,6 +252,19 @@ class ExecutorSchedulerPortainerRuntime:
 
                 pending_updates[service_name] = (current_image, target_image)
 
+            if any(result.status == "failed" for result in binding_results) and pending_updates:
+                for service_name in sorted(pending_updates):
+                    current_image, target_image = pending_updates[service_name]
+                    binding_results.append(
+                        _ExecutorBindingRunResult(
+                            service=service_name,
+                            status="failed",
+                            from_version=current_image,
+                            to_version=target_image,
+                            message="group update cancelled because a service binding failed",
+                        )
+                    )
+                pending_updates.clear()
             group_update_message: str | None = None
             snapshot_created = False
             if pending_updates:
@@ -272,7 +285,7 @@ class ExecutorSchedulerPortainerRuntime:
                             run_id=run_id,
                             current_image=current_image_summary,
                         )
-                    await mark_deployment_mutation()
+                    await prepare_deployment_mutation()
                     update_result = await adapter.update_stack_services(
                         executor_config.target_ref,
                         service_target_images,

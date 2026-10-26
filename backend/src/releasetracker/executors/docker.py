@@ -105,10 +105,15 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         for spec in ordered_specs:
             verify_image_defaults(client, spec.create_config)
         await verify_update_state(self, target_ref)
+        from ..services.task_effects import mark_deployment_mutation
+
+        first_container = self._resolve_compose_container(ordered_specs[-1])
+        await mark_deployment_mutation()
         created_containers = []
         try:
-            for spec in reversed(ordered_specs):
-                self._resolve_compose_container(spec).stop()
+            for index, spec in enumerate(reversed(ordered_specs)):
+                container = first_container if index == 0 else self._resolve_compose_container(spec)
+                container.stop()
             for spec in reversed(ordered_specs):
                 self._resolve_compose_container(spec).remove()
 
@@ -185,6 +190,9 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
             from ..services.deployment_diff import verify_update_state
 
             await verify_update_state(self, target_ref)
+            from ..services.task_effects import mark_deployment_mutation
+
+            await mark_deployment_mutation()
             client.update_container_image(container.id, new_image)
             return RuntimeUpdateResult(updated=True, old_image=old_image, new_image=new_image)
 
@@ -204,6 +212,9 @@ class DockerRuntimeAdapter(_ContainerRuntimeAdapter):
         verify_existing_volumes(client, recreate_spec.create_config)
         verify_image_defaults(client, recreate_spec.create_config)
         await verify_update_state(self, target_ref)
+        from ..services.task_effects import mark_deployment_mutation
+
+        await mark_deployment_mutation()
         new_container = None
         try:
             container.stop()

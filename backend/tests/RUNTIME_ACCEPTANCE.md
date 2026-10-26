@@ -153,3 +153,28 @@ Portainer now has a repository-contained acceptance fixture; this is not the
 production Portainer browser-to-backend workflow. Kubernetes production writes
 and original business Docker endpoint checks remain outside this workflow; no
 production endpoint is silently enrolled.
+
+
+## Owned Helm configuration and receipt check
+
+Run explicitly against a configured Kubernetes test integration:
+
+```sh
+RT_RUN_REAL_HELM_TESTS=1 .venv/bin/python -m pytest -q \
+  tests/test_real_helm_configuration_acceptance.py
+```
+
+The test creates one unique `rt-owned-helm-*` namespace and a loopback Chart
+repository under pytest's task temporary directory. It verifies real Helm
+snapshot values/manifests, SHA256 rejection before write, archive upgrade,
+revision-bound receipts and invalidation after an external values update.
+It deletes and verifies absence of its namespace in `finally`. Workload replicas
+are zero: this does not test application health or image registry access.
+No existing release is selected or upgraded. Supply TMPDIR/TMP/TEMP and an owned
+`--basetemp` under `/data/temp`; set HELM_CACHE_HOME, HELM_CONFIG_HOME and
+HELM_DATA_HOME there as well. This opt-in test is not added to ordinary CI.
+
+For private Podman fidelity, `RT_PODMAN_ACCEPTANCE_REGISTRY=docker.io` selects
+the public upstream instead of the default mirror while preserving both NGINX
+version tags and all runtime/recovery assertions. It affects only this opt-in
+fixture, not product image selection or runtime credentials.

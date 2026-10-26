@@ -44,7 +44,7 @@ The window constrains only the first remote write of an automatic deployment; mu
 | Digest reference | Pin a specific build when the source supplies a usable digest |
 | Tag reference | Reference a version label; upstream can republish the same tag |
 
-Tag mode always uses `image:tag`; neither queueing nor an unchanged tag adds a digest. An unchanged image reference is skipped. Choose Digest mode to pin and apply a specific artifact when the same tag is republished. Switching between Tag and Digest applies the new reference form even when the artifact digest matches.
+Tag mode keeps `image:tag`; queueing and unchanged tags never append a digest. An update is skipped only when immutable image evidence proves the artifact is unchanged. A republished tag with a new digest is pulled and rebuilt while retaining the tag reference. Digest mode pins the running reference to a specific build. Switching between Tag and Digest applies the new reference form even when the artifact digest matches.
 
 Helm releases do not use these fields; they select chart versions. A matching Git tag does not guarantee an image tag exists; check the repository and build publication rules.
 
@@ -60,14 +60,20 @@ Before deploying, ReleaseTracker reads the target state and builds a deployment 
 
 - the target is onboarded for the first time, or lacks ReleaseTracker ownership markers;
 - the running configuration differs from the last managed baseline (configuration drift);
-- the target version is outside the [version limit](#version-policy);
-- the update is manual and its configuration diff needs review.
+- an automatic update is outside the [version limit](#version-policy), or any update is a downgrade, has unknown direction or carries other review requirements;
+- historical approval or baseline evidence is missing, or a legacy identity needs review.
+
+A managed target with no configuration drift can run a forward manual update under the same safety checks as an automatic update, without an extra review solely because it was triggered manually. Manual updates bypass upgrade-range limits; risk, downgrade, unknown direction, unmanaged targets, drift and legacy-evidence requirements still require review. Existing parked plans retain their historical reason. Refresh reevaluates current evidence; changed rules do not authorize reusing an old approval.
 
 Deployment results, readiness and managed baselines are recorded separately. Missing runtime evidence is retried with backoff by an independent worker. Missing historical approval proof or conflicting configuration/ownership produces **Baseline needs review**, without changing deployment success to failure or blocking unrelated instances solely for baseline review. The next actual update still requires configuration review. Automatic reconciliation accepts only evidence proven to match the original target and approved configuration.
 
-Task details identify blocking tasks and provide **Recheck baseline**. This is a read-only operation: it neither redeploys nor approves configuration, and cannot reconstruct missing historical approval. Baseline checks stop when a newer deployment supersedes them. Interrupted writes and unknown runtime outcomes retain their safety gates until reconciled.
+Task details link to blocking tasks and provide **Recheck baseline**. When evidence retries are exhausted, they retain the last specific cause and the stage (target validation, runtime inspection or baseline verification), without exposing raw exceptions. Causes distinguish unavailable or mismatched Chart versions, missing Chart receipts, mismatched Chart digests, unverified artifacts, and inspection timeouts or failures. This is a read-only operation: it neither redeploys nor approves configuration, and cannot reconstruct missing historical approval. Baseline checks stop when a newer deployment supersedes them. After a successful deployment applies the same configuration and target, older parked tasks can be marked **Superseded** with reason **Target applied** and a link to the task that fulfilled them; they do not repeat the update. Interrupted writes and unknown runtime outcomes retain their safety gates until reconciled.
 
 Helm downloads the Chart archive first and, when the target includes a SHA256 digest, verifies it before upgrading from that exact file. The same version with a different digest is not skipped. The receipt is bound to the Helm release revision, so external upgrades invalidate the old artifact proof. Repositories without digests retain version-based selection without an approval-time content guarantee. OCI manifest digests cannot verify Chart archive bytes.
+
+Helm admission and the write guard bind user values and declared manifests from one revision. Post-upgrade checks verify the target Chart and exact user values while allowing expected template/default changes. Declarations participate in subsequent drift checks; this is not a complete audit of live workloads. Public deployment/recovery diffs and snapshot details mask the documents completely, including potentially secret mapping keys. Older approvals without the expanded proof require configuration review rather than silently accepting current settings.
+
+Mutation gates narrow to an engine or cluster only with verified runtime identity. SDK, Portainer and SSH routes to one Docker engine share a domain; Helm and workload executors in one Kubernetes cluster still conflict. Missing proof, native Podman and legacy domains retain conservative gates.
 
 Helm 3 `status -o json` carries no chart block. A shared reader obtains the chart version and revision from `helm get metadata`, using `helm list --all` only when metadata is absent. It checks release coordinates, status and revision; concurrent upgrades cannot combine conflicting evidence, and permission or command errors are not silently ignored. Missing live versions never fall back to a saved version or create an unreliable recovery snapshot. List parsing preserves complete SemVer prerelease and build suffixes and leaves ambiguous names unknown. Discovery prefers live metadata to workload labels.
 

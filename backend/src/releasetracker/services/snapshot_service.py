@@ -90,6 +90,12 @@ class SnapshotRedactor:
 
         needs_marker = False
 
+        if isinstance(snapshot_data, dict) and snapshot_data.get("mode") == "helm_release":
+            snapshot_data = copy.deepcopy(snapshot_data)
+            if "helm_configuration" in snapshot_data:
+                snapshot_data["helm_configuration"] = REDACTED_MARKER
+            if "release" in snapshot_data:
+                snapshot_data["release"] = REDACTED_MARKER
         if runtime_type == "portainer":
             snapshot_data = self._redact_portainer(snapshot_data)
         elif runtime_type == "kubernetes":
@@ -165,6 +171,9 @@ class SnapshotRedactor:
             return snapshot_data
         result = copy.deepcopy(snapshot_data)
 
+        # Arbitrary Helm keys and embedded YAML may contain credentials.
+        if "helm_configuration" in result:
+            result["helm_configuration"] = {"values": REDACTED_MARKER, "manifest": REDACTED_MARKER}
         resources = result.get("resources")
         if isinstance(resources, list):
             for resource in resources:

@@ -4,7 +4,7 @@ import { DataPagination } from "@/components/common/DataPagination"
 import { usePageSize } from "@/hooks/use-page-size"
 import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Link } from "react-router"
+import { Link, useSearchParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import { taskErrorLabel } from "@/lib/task-errors"
 import "@/i18n/version-policy"
@@ -156,9 +156,9 @@ function formatApprovalReason(t: (key: string, options?: Record<string, unknown>
     return reasonMap[reason] ?? reason
 }
 
-function TaskItem({ task }: { task: QueueTask }) {
+function TaskItem({ task, initiallyOpen = false }: { task: QueueTask; initiallyOpen?: boolean }) {
     const { t, i18n } = useTranslation()
-    const [open, setOpen] = useState(false)
+    const [open, setOpen] = useState(initiallyOpen)
     const [approvalError, setApprovalError] = useState<string | null>(null)
     const [refreshingPlan, setRefreshingPlan] = useState(false)
     const cache = useQueryClient()
@@ -220,7 +220,11 @@ function TaskItem({ task }: { task: QueueTask }) {
         onSuccess: () => { void cache.invalidateQueries({ queryKey: ["tasks"] }) },
         onError: () => toast.error(t("readiness.recheckFailed")),
     })
-    const baseline = task.result?.baseline_status
+    const result = detail.data?.result ?? task.result
+    const baseline = result?.baseline_status
+    const baselineReason = (reason: string) => t(`tasks.baseline.reasons.${reason}`, { defaultValue: t("tasks.baseline.reasons.unknown") })
+    const baselineStage = result?.baseline_stage
+    const fulfilledBy = result?.fulfilled_by_task_id
     const baselineNeedsReview = baseline === "review_required" || baseline === "needs_attention"
     const planBlocked = (plan.data?.state ?? task.result?.deployment_plan_state) === "blocked" || (!plan.data && task.error_code === "target_identity_changed")
 
@@ -244,12 +248,12 @@ function TaskItem({ task }: { task: QueueTask }) {
             <div className="px-4 py-3">
                 <Collapsible open={open} onOpenChange={setOpen}>
                     <div data-testid="task-summary" className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 @[760px]:grid-cols-[minmax(0,1fr)_9rem_7rem_13rem_2rem]">
-                        <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-2">
+                        <div className="col-start-1 row-start-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 @[760px]:flex-nowrap">
                             <Badge variant="outline" className="shrink-0 gap-1 px-2 py-0.5 text-xs font-medium">
                                 {getKindIcon(task.kind)}
                                 <span>{t(`tasks.kind.${task.kind}`)}</span>
                             </Badge>
-                            <Button asChild variant="link" className="h-auto min-w-0 shrink justify-start overflow-hidden p-0 text-sm font-semibold text-foreground">
+                            <Button asChild variant="link" className="order-1 h-auto min-w-0 basis-full shrink justify-start @[760px]:order-none @[760px]:basis-auto overflow-hidden p-0 text-sm font-semibold text-foreground">
                                 <Link className="truncate transition-colors hover:text-primary" title={task.target_label} to={task.kind === "fetch" ? "/trackers" : "/executors"}>
                                     <span className="truncate">{task.target_label}</span>
                                 </Link>
@@ -292,13 +296,26 @@ function TaskItem({ task }: { task: QueueTask }) {
                         <div className="mt-3 space-y-3 border-t border-border/60 pt-4">
                             {detail.data?.blockers?.map(blocker => (
                                 <p key={blocker.task_id} className="break-words text-xs text-warning">
-                                    {t("tasks.blockedBy", { id: blocker.task_id, name: blocker.target_label, reason: t(`tasks.blocker.${blocker.reason}`) })}
+                                    <Link className="underline underline-offset-4" to={`/tasks?task=${blocker.task_id}`}>
+                                        {t("tasks.blockedBy", { id: blocker.task_id, name: blocker.target_label, reason: t(`tasks.blocker.${blocker.reason}`) })}
+                                    </Link>
                                 </p>
                             ))}
+                            {task.state === "superseded" && task.error_code === "target_applied" && fulfilledBy && (
+                                <p className="break-words text-xs text-muted-foreground">
+                                    <Link className="underline underline-offset-4" to={`/tasks?task=${fulfilledBy}`}>{t("tasks.fulfilledBy", { id: fulfilledBy })}</Link>
+                                </p>
+                            )}
                             {baseline && baseline !== "verified" && baseline !== "superseded" && (
                                 <div className="flex flex-col items-start gap-2 text-xs">
                                     <p className="text-muted-foreground">{t(baselineNeedsReview ? "tasks.baseline.reviewHelp" : "tasks.baseline.pendingHelp")}</p>
-                                    {task.result?.baseline_reason && <p className="text-muted-foreground">{t(`tasks.baseline.reasons.${task.result.baseline_reason}`, { defaultValue: t("tasks.baseline.reasons.unknown") })}</p>}
+                                    {result?.baseline_reason && <p className="break-words text-muted-foreground">{baselineReason(result.baseline_reason)}</p>}
+                                    {result?.baseline_reason === "evidence_exhausted" && result.baseline_last_reason && (
+                                        <p className="break-words text-muted-foreground">{t("tasks.baseline.lastCause", { reason: baselineReason(result.baseline_last_reason) })}</p>
+                                    )}
+                                    {baselineStage && ["target", "inspection", "verification"].includes(baselineStage) && (
+                                        <p className="text-muted-foreground">{t("tasks.baseline.stage", { stage: t(`tasks.baseline.stages.${baselineStage}`) })}</p>
+                                    )}
                                     {task.result?.baseline_next_attempt && <p>{t("tasks.due", { time: time(task.result.baseline_next_attempt) })}</p>}
                                     {["succeeded", "skipped"].includes(task.state) && (
                                         <Button variant="outline" size="sm" disabled={baselineRecheck.isPending} onClick={() => baselineRecheck.mutate()}>
@@ -311,11 +328,11 @@ function TaskItem({ task }: { task: QueueTask }) {
                             {waiting && <div className="flex items-center gap-1 text-xs text-muted-foreground"><Clock className="size-3" aria-hidden="true" /><time dateTime={new Date(task.created_at * 1000).toISOString()}>{time(task.created_at)}</time></div>}
                             {task.error_code && !task.approval_pending && (
                                 <p className={cn("break-words text-xs font-medium", task.state === "failed" || task.state === "needs_attention" ? "text-destructive" : "text-muted-foreground")}>
-                                    {taskErrorLabel(t, task.error_code)}
+                                    {task.error_code === "target_applied" ? t("tasks.targetApplied") : taskErrorLabel(t, task.error_code)}
                                     {waiting && ` · ${t("tasks.due", { time: time(task.due_at) })}`}
                                 </p>
                             )}
-                            {task.message && <p className="whitespace-pre-wrap break-words text-xs text-muted-foreground">{task.message}</p>}
+                            {task.message && task.error_code !== "target_applied" && <p className="whitespace-pre-wrap break-words text-xs text-muted-foreground">{task.message}</p>}
                             {task.state === "needs_attention" && (
                                 <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
                                     <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
@@ -547,6 +564,15 @@ function TaskItem({ task }: { task: QueueTask }) {
 
 export default function TasksPage() {
     const { t } = useTranslation()
+    const [params] = useSearchParams()
+    const taskParam = params.get("task") ?? ""
+    const linkedTaskId = /^[1-9]\d*$/.test(taskParam) && Number.isSafeInteger(Number(taskParam)) ? Number(taskParam) : null
+    const linkedTask = useQuery({
+        queryKey: ["tasks", linkedTaskId],
+        queryFn: () => api.getTask(linkedTaskId!),
+        enabled: linkedTaskId !== null,
+        refetchInterval: 5000,
+    })
     const [state, setState] = useState<string>("processing")
     const [search, setSearch] = useState("")
     const [debouncedSearch, setDebouncedSearch] = useState("")
@@ -708,6 +734,14 @@ export default function TasksPage() {
             <div className="flex min-h-0 flex-1 flex-col gap-3">
                 <div className="glass-card flex min-h-0 flex-1 flex-col rounded-xl overflow-hidden">
                     <div className="min-h-0 flex-1 divide-y divide-border/60 overflow-y-auto overscroll-contain" aria-busy={tasks.isFetching}>
+                        {linkedTaskId !== null && (
+                            <div>
+                                <Button asChild variant="link" size="sm"><Link to="/tasks">{t("common.close")}</Link></Button>
+                                {linkedTask.isLoading && <Spinner />}
+                                {linkedTask.isError && <QueryErrorState onRetry={() => void linkedTask.refetch()} />}
+                                {linkedTask.data && <TaskItem key={linkedTaskId} task={linkedTask.data} initiallyOpen />}
+                            </div>
+                        )}
                         {tasks.isLoading && (
                             <div className="flex flex-col items-center justify-center gap-2 py-12 text-muted-foreground">
                                 <Spinner className="size-6" />
@@ -721,7 +755,7 @@ export default function TasksPage() {
                                 <p className="text-sm text-muted-foreground">{t(debouncedSearch ? "tasks.noMatching" : "tasks.empty")}</p>
                             </div>
                         )}
-                        {pageTasks.map((task) => <TaskItem key={task.id} task={task} />)}
+                        {pageTasks.filter(task => task.id !== linkedTaskId).map((task) => <TaskItem key={task.id} task={task} />)}
                     </div>
                 </div>
 

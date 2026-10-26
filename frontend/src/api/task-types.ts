@@ -1,6 +1,7 @@
 import type { ReadinessResult } from "@/lib/readiness"
 
 export type TaskState = "queued" | "awaiting_approval" | "running" | "retry_wait" | "succeeded" | "no_change" | "skipped" | "failed" | "cancelled" | "superseded" | "needs_attention"
+export type BaselineReason = "legacy_plan_missing_proof" | "configuration_changed" | "target_identity_changed" | "artifact_unverified" | "evidence_unavailable" | "evidence_exhausted" | "legacy_baseline_unverified" | "deployment_marker_changed" | "chart_version_unavailable" | "chart_version_mismatch" | "chart_receipt_unavailable" | "chart_digest_mismatch" | "inspection_timeout" | "inspection_failed"
 export interface TaskReceipt { task_id: number; status: TaskState }
 export interface DeploymentPlan {
     id: number
@@ -24,7 +25,7 @@ export interface QueueTask {
     updated_at: number
     error_code: string | null
     message: string | null
-    result: { phase?: string; deployment_plan_state?: "blocked" | "pending" | "approved"; baseline_status?: "pending" | "verified" | "review_required" | "needs_attention" | "superseded"; baseline_reason?: string; baseline_next_attempt?: number | null; readiness_recheck?: boolean; health_check?: ReadinessResult; health_recheck?: ReadinessResult; health_rechecks?: ReadinessResult[]; run_id?: number; source_fetch_run_ids?: Record<string, number> } | null
+    result: { phase?: string; deployment_plan_state?: "blocked" | "pending" | "approved"; baseline_status?: "pending" | "verified" | "review_required" | "needs_attention" | "superseded"; baseline_reason?: string; baseline_last_reason?: BaselineReason | null; baseline_stage?: "target" | "inspection" | "verification" | null; fulfilled_by_task_id?: number | null; baseline_next_attempt?: number | null; readiness_recheck?: boolean; health_check?: ReadinessResult; health_recheck?: ReadinessResult; health_rechecks?: ReadinessResult[]; run_id?: number; source_fetch_run_ids?: Record<string, number> } | null
     blockers?: Array<{ task_id: number; target_label: string; reason: "readiness" | "mutation" }>
     target: { tracker_name?: string; executor_id?: number }
     attempt_history?: Array<{ id: number; attempt: number; state: string; error_code: string | null; started_at: number; finished_at: number | null }>

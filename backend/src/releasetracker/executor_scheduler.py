@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .services.task_effects import mark_deployment_mutation
+from .services.task_effects import prepare_deployment_mutation
 
 import asyncio
 import logging
@@ -457,7 +457,7 @@ class ExecutorScheduler(
                         )
                 finally:
                     ACTIVE_PODMAN_LINEAGE.reset(lineage_token)
-                await mark_deployment_mutation()
+                await prepare_deployment_mutation()
                 if podman_lineage is not None and podman_lineage.get("pending"):
                     podman_lineage = await self.storage.podman_lineage.establish(
                         executor_id=executor_config.id,

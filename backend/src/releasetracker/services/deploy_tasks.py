@@ -244,7 +244,7 @@ class DeployTasks:
         await self._baseline_receipt(task["id"], True)
         return True
 
-    async def _baseline_receipt(self, task_id, outcome):
+    async def _baseline_receipt(self, task_id, outcome, *, stage=None):
         from .deployment_baseline import BaselineResult
 
         if isinstance(outcome, bool):
@@ -261,7 +261,11 @@ class DeployTasks:
             result = json.loads(row["result"] or "{}")
             if not outcome and result.get("baseline_status") in {"verified", "superseded"}:
                 return
+            if stage is not None:
+                result["baseline_stage"] = stage
             attempts = int(result.get("baseline_attempts", 0)) + (outcome.status == "pending")
+            if outcome.reason:
+                result["baseline_last_reason"] = outcome.reason
             status, reason = outcome.status, outcome.reason
             if status == "pending" and attempts >= ADMISSION_EVIDENCE_PATIENCE:
                 status, reason = "review_required", "evidence_exhausted"
@@ -283,6 +287,7 @@ class DeployTasks:
         from .deployment_baseline import BaselineResult
 
         outcome = BaselineResult("pending", "evidence_unavailable")
+        stage = "target"
         try:
             executor = await self.storage.get_executor_config(executor_id)
             original = await self.storage.tasks.get(task_id)
@@ -302,16 +307,21 @@ class DeployTasks:
             elif await self.identity(executor) != original["payload"]["config_identity"]:
                 outcome = BaselineResult("review_required", "configuration_changed")
             else:
+                stage = "inspection"
                 evidence = await asyncio.wait_for(
                     self._collect_admission_evidence(executor, original, _baseline_proof=False),
                     timeout=30,
                 )
+                stage = "verification"
                 outcome = await self.admission.refresh_applied(task_id, evidence)
         except Exception as exc:
+            from .deployment_baseline_diagnostics import inspection_reason
+
+            outcome = BaselineResult("pending", inspection_reason(exc))
             logger.warning(
                 "Deployment baseline inspection failed for task %s: %s", task_id, type(exc).__name__
             )
-        await self._baseline_receipt(task_id, outcome)
+        await self._baseline_receipt(task_id, outcome, stage=stage)
         return bool(outcome)
 
     async def dispatch_baseline_checks(self):
@@ -324,6 +334,9 @@ class DeployTasks:
             )
 
     async def _reconcile_baselines(self):
+        from .deployment_task_settlement import reconcile_fulfilled_requests
+
+        await reconcile_fulfilled_requests(self.storage)
         # Repair only the old baseline-only failure with a recorded healthy result.
         # Interrupted writes and unhealthy/unknown observations keep their fences.
         async with self.storage.tasks.transaction() as connection:
@@ -628,37 +641,46 @@ class DeployTasks:
         refusal_token = UPDATE_REFUSAL.set(refusal)
         baseline = {}
 
-        async def guard():
-            nonlocal baseline
-            current = await self.storage.get_executor_config(executor.id)
-            if (
-                current is None
-                or await self.identity(current) != task["payload"]["config_identity"]
-            ):
-                raise asyncio.CancelledError("Deployment configuration changed")
-            if not await self.storage.tasks.bind_mutation_scope(
-                task, await mutation_resource_key(self.storage, self.scheduler, executor)
-            ):
-                raise asyncio.CancelledError("Target requires operator verification")
-            # Re-read runtime evidence immediately before the first mutation.
-            # The plan fingerprint binds approval to this exact read-only state.
-            live_evidence = await self._collect_admission_evidence(executor, task)
-            await self.admission.verify_before_write(task, live_evidence)
-            EXPECTED_UPDATE_STATE.set(INSPECTED_UPDATE_STATE.get())
-            if defer and not baseline:
-                baseline = await asyncio.wait_for(
-                    capture_deployment_baseline(self.storage, self.scheduler, executor),
-                    timeout=executor.health_check.readiness_attempt_timeout_seconds,
-                )
-                if baseline.get("error"):
-                    raise ValueError("readiness_baseline_unavailable")
-            await self._verify_mutation_window(task, current)
-            if not await self.storage.tasks.checkpoint(
-                task,
-                {"run_id": run_id, "mutation_started": True},
-                private_payload={"readiness_baseline": baseline} if defer else None,
-            ):
-                raise asyncio.CancelledError("Deployment lease lost")
+        mutation_recorded = False
+        boundary_lock = asyncio.Lock()
+
+        async def guard(*, record=True):
+            nonlocal baseline, mutation_recorded
+            async with boundary_lock:
+                if mutation_recorded:
+                    return
+                current = await self.storage.get_executor_config(executor.id)
+                if (
+                    current is None
+                    or await self.identity(current) != task["payload"]["config_identity"]
+                ):
+                    raise asyncio.CancelledError("Deployment configuration changed")
+                if not await self.storage.tasks.bind_mutation_scope(
+                    task, await mutation_resource_key(self.storage, self.scheduler, executor)
+                ):
+                    raise asyncio.CancelledError("Target requires operator verification")
+                live_evidence = await self._collect_admission_evidence(executor, task)
+                await self.admission.verify_before_write(task, live_evidence)
+                EXPECTED_UPDATE_STATE.set(INSPECTED_UPDATE_STATE.get())
+                if defer and not baseline:
+                    baseline = await asyncio.wait_for(
+                        capture_deployment_baseline(self.storage, self.scheduler, executor),
+                        timeout=executor.health_check.readiness_attempt_timeout_seconds,
+                    )
+                    if baseline.get("error"):
+                        raise ValueError("readiness_baseline_unavailable")
+                await self._verify_mutation_window(task, current)
+                if record:
+                    if not await self.storage.tasks.checkpoint(
+                        task,
+                        {"run_id": run_id, "mutation_started": True},
+                        private_payload={"readiness_baseline": baseline} if defer else None,
+                    ):
+                        raise asyncio.CancelledError("Deployment lease lost")
+                    mutation_recorded = True
+
+        async def preflight():
+            await guard(record=False)
 
         async def handoff(config, active_run, **finalization):
             await self._mark_admission_applied(task, executor)
@@ -667,6 +689,9 @@ class DeployTasks:
         defer_token = DEFER_READINESS.set(defer)
         finalize_token = READINESS_FINALIZER.set(handoff if defer else None)
         mutation_token = MUTATION_GUARD.set(guard)
+        from .task_effects import PREPARATION_GUARD
+
+        preparation_token = PREPARATION_GUARD.set(preflight)
         token = QUEUED_TARGETS.set(task["payload"]["targets"])
         services = (
             {None}
@@ -686,6 +711,7 @@ class DeployTasks:
             QUEUED_TARGETS.reset(token)
             FORCE_IMAGE_UPDATES.reset(force_token)
             MUTATION_GUARD.reset(mutation_token)
+            PREPARATION_GUARD.reset(preparation_token)
             EXPECTED_UPDATE_STATE.reset(write_state_token)
             UPDATE_REFUSAL.reset(refusal_token)
             DEFER_READINESS.reset(defer_token)
@@ -720,6 +746,10 @@ class DeployTasks:
             "cancelled",
         }:
             return
+        if task.get("id") and task["state"] == "succeeded":
+            from .deployment_task_settlement import settle_fulfilled_requests
+
+            await settle_fulfilled_requests(self.storage, task)
         revision = task["payload"].get("desired_revision")
         if revision and await self._schedule_pre_mutation_retry(task):
             return

@@ -109,12 +109,16 @@ async def update_compose_services(
             client, adapter._podman_grouped_create_config_for_spec(spec, client=client)
         )
     await verify_update_state(adapter, target_ref)
+    from ..services.task_effects import mark_deployment_mutation
+
+    removal_order = list(reversed(specs))
+    first_container = client.containers.get(removal_order[0].container_id)
+    await mark_deployment_mutation()
     new_container_ids: list[str] = []
     backup_names_by_spec_key: dict[str, str] = {}
-    removal_order = list(reversed(specs))
     try:
-        for spec in removal_order:
-            container = client.containers.get(spec.container_id)
+        for index, spec in enumerate(removal_order):
+            container = first_container if index == 0 else client.containers.get(spec.container_id)
             adapter._stop_grouped_container_with_sdk_decode_tolerance(client, container)
 
         for spec in removal_order:

@@ -864,17 +864,6 @@ async def probe_deployment(storage, scheduler, executor, verification: dict) -> 
 
 
 async def resolve_deployment_resource_scope(storage, scheduler, executor) -> str:
-    """Only proven immutable workload identity permits independent mutation scopes.
+    from .mutation_resource_domains import resolve_deployment_resource_scope as resolve
 
-    Helm may own overlapping workloads; Docker/SSH/Portainer cross-entry daemon
-    equivalence is not established here. Their caller must use its proven ownership
-    identity or conservatively retain the wildcard scope.
-    """
-    if executor.target_ref.get("mode") != "kubernetes_workload":
-        return "*"
-    evidence = await capture_deployment_baseline(storage, scheduler, executor)
-    workloads = evidence.get("workloads") or {}
-    if len(workloads) != 1:
-        return "*"
-    uid = (next(iter(workloads.values())).get("metadata") or {}).get("uid")
-    return f"kubernetes:uid:{uid}" if isinstance(uid, str) and uid.strip() else "*"
+    return await resolve(storage, scheduler, executor)

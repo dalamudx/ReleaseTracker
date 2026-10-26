@@ -1383,6 +1383,7 @@ async def test_helm_snapshot_recovery_prefers_native_revision_rollback(monkeypat
         MANAGED_MARKERS.reset(marker_token)
     assert [c for c in calls if c[0] in {"status", "rollback"}] == [
         ["status", "sample-ci", "--namespace", "apps", "--output", "json"],
+        ["status", "sample-ci", "--namespace", "apps", "--output", "json"],
         ["rollback", "sample-ci", "4", "--namespace", "apps"],
     ]
     assert apps_api.patch_calls == [

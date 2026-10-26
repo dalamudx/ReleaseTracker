@@ -60,6 +60,7 @@ describe("persistent task queue", () => {
         await screen.findByText("nginx-test")
         fireEvent.click(screen.getByRole("button",{name:i18n.t("tasks.details",{id:17})}))
         expect(await screen.findByTestId("deployment-configuration-diff")).toHaveTextContent("nginx:stable@sha256:123")
+        expect(screen.getByText(i18n.t("tasks.approvalReason", { reason: i18n.t("tasks.reasonManualUpdate") }))).toBeVisible()
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
         fireEvent.click(screen.getByRole("button",{name:i18n.t("tasks.refreshPlan")}))
         await waitFor(()=>expect(api.getDeploymentPlan).toHaveBeenCalledWith(17,true))
@@ -313,6 +314,65 @@ describe("persistent task queue", () => {
         expect(api.recheckTask).not.toHaveBeenCalled()
         expect(api.resolveTask).not.toHaveBeenCalled()
     })
+    it.each(["zh", "en"])("shows exhausted evidence causes and stages safely in %s", async language => {
+        await i18n.changeLanguage(language)
+        const causes = ["chart_version_unavailable", "chart_version_mismatch", "chart_receipt_unavailable", "chart_digest_mismatch", "artifact_unverified", "inspection_timeout", "inspection_failed"] as const
+        const stages = ["target", "inspection", "verification"] as const
+        const saved: QueueTask[] = causes.map((cause, index) => ({
+            ...task("succeeded", "deploy"), id: index + 1,
+            result: { baseline_status: "needs_attention", baseline_reason: "evidence_exhausted", baseline_last_reason: cause, baseline_stage: stages[index % stages.length] },
+        }))
+        vi.mocked(api.getTasks).mockResolvedValue(saved)
+        vi.mocked(api.getTask).mockImplementation(async id => saved.find(item => item.id === id)!)
+        show()
+        await screen.findAllByText("nginx-test")
+        for (const item of saved) fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.details", { id: item.id }) }))
+        for (const cause of causes) {
+            expect(await screen.findByText(i18n.t("tasks.baseline.lastCause", { reason: i18n.t(`tasks.baseline.reasons.${cause}`) }))).toBeVisible()
+        }
+        for (const stage of stages) expect(screen.getAllByText(i18n.t("tasks.baseline.stage", { stage: i18n.t(`tasks.baseline.stages.${stage}`) }))[0]).toBeVisible()
+        expect(screen.getAllByText(i18n.t("tasks.state.succeeded"))).toHaveLength(causes.length)
+        expect(api.recheckBaseline).not.toHaveBeenCalled()
+    })
+    it("falls back for unknown diagnostics without showing raw exceptions", async () => {
+        const saved = { ...task("succeeded", "deploy"), result: { baseline_status: "review_required", baseline_reason: "evidence_exhausted", baseline_last_reason: "Error: private registry token=secret", baseline_stage: "Error: private host" } } as unknown as QueueTask
+        vi.mocked(api.getTasks).mockResolvedValue([saved])
+        vi.mocked(api.getTask).mockResolvedValue(saved)
+        show()
+        await screen.findByText("nginx-test")
+        fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.details", { id: 17 }) }))
+        expect(await screen.findByText(i18n.t("tasks.baseline.lastCause", { reason: i18n.t("tasks.baseline.reasons.unknown") }))).toBeVisible()
+        expect(screen.queryByText(/private|token=secret/)).not.toBeInTheDocument()
+    })
+    it("links a superseded target to its fulfilling task outside the current page", async () => {
+        const saved: QueueTask = { ...task("superseded", "deploy"), error_code: "target_applied", message: "Target fulfilled by a later completed deployment", result: { fulfilled_by_task_id: 1929 } }
+        const fulfilled = { ...task("succeeded", "deploy"), id: 1929, target_label: "fulfilled-target" }
+        vi.mocked(api.getTasks).mockResolvedValue([saved])
+        vi.mocked(api.getTask).mockImplementation(async id => id === 1929 ? fulfilled : saved)
+        show()
+        await screen.findByText("nginx-test")
+        fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.details", { id: 17 }) }))
+        const link = await screen.findByRole("link", { name: i18n.t("tasks.fulfilledBy", { id: 1929 }) })
+        expect(link).toHaveAttribute("href", "/tasks?task=1929")
+        expect(screen.getByText(i18n.t("tasks.targetApplied"))).toBeVisible()
+        expect(screen.queryByText(saved.message!)).not.toBeInTheDocument()
+        fireEvent.click(link)
+        expect(await screen.findByText("fulfilled-target")).toBeVisible()
+        expect(screen.getByRole("button", { name: i18n.t("tasks.details", { id: 1929 }) })).toHaveAttribute("data-state", "open")
+        expect(api.getTask).toHaveBeenCalledWith(1929)
+        expect(api.retryTask).not.toHaveBeenCalled()
+        expect(api.resolveTask).not.toHaveBeenCalled()
+    })
+    it("does not add review for a clean manual forward task", async () => {
+        const saved = { ...task("queued", "deploy"), triggers: [{ trigger_mode: "manual", created_at: 1789704900 }] }
+        vi.mocked(api.getTasks).mockResolvedValue([saved])
+        vi.mocked(api.getTask).mockResolvedValue(saved)
+        show()
+        await screen.findByText("nginx-test")
+        fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.details", { id: 17 }) }))
+        expect(screen.queryByRole("button", { name: i18n.t("tasks.approvePlan") })).not.toBeInTheDocument()
+        expect(api.getDeploymentPlan).not.toHaveBeenCalled()
+    })
     it("identifies the actual blocking task separately from the old queue reason", async () => {
         const saved = { ...task("queued", "deploy"), error_code: "maintenance_window", blockers: [{ task_id: 1928, target_label: "OpenBao", reason: "readiness" as const }] }
         vi.mocked(api.getTasks).mockResolvedValue([saved])
@@ -320,7 +380,7 @@ describe("persistent task queue", () => {
         show()
         await screen.findByText("nginx-test")
         fireEvent.click(screen.getByRole("button", { name: i18n.t("tasks.details", { id: 17 }) }))
-        expect(await screen.findByText(/OpenBao.*#1928/)).toBeVisible()
+        expect(await screen.findByRole("link", { name: /OpenBao.*#1928/ })).toHaveAttribute("href", "/tasks?task=1928")
     })
     it("distinguishes identity protection from ordinary approval and queue waiting", async () => {
         const saved = { ...task("queued", "deploy"), approval_pending: true, error_code: "target_identity_changed" }
