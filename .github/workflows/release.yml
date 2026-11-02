@@ -88,7 +88,7 @@ jobs:
           node-version: '20'
 
       - name: Audit frontend dependencies
-        run: npm --prefix frontend audit --audit-level=high
+        run: npm --prefix frontend audit --package-lock-only --audit-level=high
 
       - name: Generate frontend SBOM
         run: |
