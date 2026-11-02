@@ -135,7 +135,7 @@ export function RecentReleases({ releases, loading }: RecentReleasesProps) {
                                                 </Badge>
                                             </div>
 
-                                            <span className="min-w-0 max-w-full basis-full break-all rounded border border-border/60 bg-muted/40 px-2 py-1 font-mono text-xs font-medium leading-4 text-foreground/90 @min-[36rem]/recent:max-w-[220px] @min-[36rem]/recent:basis-auto @min-[36rem]/recent:truncate @min-[36rem]/recent:text-[11px]">
+                                            <span className="min-w-0 max-w-full truncate rounded border border-border/60 bg-muted/40 px-1.5 py-0.5 font-mono text-xs font-medium text-foreground/90 @min-[36rem]/recent:max-w-[220px] @min-[36rem]/recent:text-[11px]" title={versionLabel}>
                                                 {versionLabel}
                                             </span>
                                         </div>
