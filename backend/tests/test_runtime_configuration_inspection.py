@@ -235,3 +235,92 @@ async def test_portainer_preview_still_rejects_auth_and_target_mismatch(
             assert "private-preview-value" not in str(result)
     finally:
         await scheduler.shutdown()
+
+
+@pytest.mark.parametrize(
+    "current_tag,current_digest,reference_mode,expect_pull_policy",
+    [
+        ("stable", "a", "tag", False),
+        ("stable", "b", "tag", True),
+        ("1.25", "b", "tag", False),
+        ("stable", "b", "digest", False),
+    ],
+)
+async def test_kubernetes_preview_only_changes_pull_policy_for_same_tag_update(
+    storage, monkeypatch, current_tag, current_digest, reference_mode, expect_pull_policy
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    executor, scheduler, _, _, _, _ = await setup(storage, reference_mode=reference_mode)
+    try:
+        connection = RuntimeConnectionConfig(
+            name="preview-kubernetes",
+            type="kubernetes",
+            config={"in_cluster": True, "namespace": "apps"},
+        )
+        connection.id = await storage.create_runtime_connection(connection)
+        draft = executor.model_dump(mode="json")
+        draft.update(
+            runtime_type="kubernetes",
+            runtime_connection_id=connection.id,
+            target_ref={
+                "mode": "kubernetes_workload",
+                "namespace": "apps",
+                "kind": "Deployment",
+                "name": "isolated-nginx",
+            },
+            service_bindings=[
+                {
+                    "service": "nginx",
+                    "tracker_source_id": executor.tracker_source_id,
+                    "channel_name": "stable",
+                }
+            ],
+            tracker_name=None,
+            tracker_source_id=None,
+            channel_name=None,
+        )
+        image = f"docker.io/library/nginx:{current_tag}"
+        snapshot = {
+            "mode": "kubernetes_workload",
+            "recovery_scope": "workload_spec",
+            "containers": {"nginx": image},
+            "artifact_evidence": {
+                "status": "verified",
+                "images": {
+                    "containers": {"nginx": "docker.io/library/nginx@sha256:" + current_digest * 64}
+                },
+            },
+            "workload": {
+                "kind": "Deployment",
+                "metadata": {"uid": "isolated-nginx"},
+                "api_spec": {
+                    "template": {
+                        "spec": {
+                            "containers": [
+                                {"name": "nginx", "image": image, "imagePullPolicy": "IfNotPresent"}
+                            ]
+                        }
+                    }
+                },
+            },
+        }
+        adapter = SimpleNamespace(
+            validate_target_ref=AsyncMock(),
+            capture_snapshot=AsyncMock(return_value=snapshot),
+            close=AsyncMock(),
+        )
+        monkeypatch.setattr(routes, "_get_runtime_adapter", lambda _: adapter)
+        result = await preview(storage, scheduler, executor, draft)
+        assert result["comparison_error"] is None
+        assert result["mutation_performed"] is False
+        lines = result["configuration_diff"]["lines"]
+        policy_lines = [row for row in lines if row["path"].endswith("/imagePullPolicy")]
+        assert bool(policy_lines) is expect_pull_policy
+        if expect_pull_policy:
+            assert [row["value"] for row in policy_lines] == ['"IfNotPresent"', '"Always"']
+        elif current_tag == "stable" and current_digest == "a":
+            assert lines == []
+    finally:
+        await scheduler.shutdown()

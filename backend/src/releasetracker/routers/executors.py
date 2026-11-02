@@ -697,7 +697,14 @@ async def preview_executor_configuration(
                 "configuration_diff": None,
                 "comparison_error": "no_deployable_version",
             }
-        task = {"payload": {"targets": targets}}
+        task = {
+            "payload": {
+                "targets": targets,
+                "policy_bindings": [
+                    binding.model_dump(mode="json") for binding in executor.service_bindings
+                ],
+            }
+        }
         connection = await storage.get_runtime_connection(executor.runtime_connection_id)
         connection = await materialize_runtime_connection_credentials(storage, connection)
         with frozen_targets(task):

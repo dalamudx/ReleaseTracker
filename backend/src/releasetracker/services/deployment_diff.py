@@ -328,13 +328,14 @@ async def native_review(
     desired = deepcopy(observed)
     targets = await image_targets(storage, scheduler, executor, task, images)
     proofs = ()
-    if version_evidence is not None:
+    if version_evidence is not None or (inspection_only and mode == "kubernetes_workload"):
         from .deployment_version_evidence import collect_version_evidence
 
         proofs = await collect_version_evidence(
             storage, adapter, executor, task, snapshot, images, targets
         )
-        version_evidence.extend(proofs)
+        if version_evidence is not None:
+            version_evidence.extend(proofs)
     if mode == "container" and None in targets:
         key = desired.get("create_config", desired)
         key["image"] = targets[None]
@@ -363,8 +364,9 @@ async def native_review(
                 if (
                     image == images[service]
                     and "@" not in image
-                    and not any(
-                        p.get("service") == service and p.get("same_artifact") for p in proofs
+                    and any(
+                        p.get("service") == service and p.get("same_artifact") is False
+                        for p in proofs
                     )
                 ):
                     # A recreated Pod must resolve a republished tag instead of reusing the node cache.
