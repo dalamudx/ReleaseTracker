@@ -76,9 +76,15 @@ def _make_migrate(db_path, tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "damage", ["clean", "known", "set_null", "unknown_fk", "task_relation", "invalid_json"]
+    "driver,damage",
+    # Repair/refusal logic lives in the SQL migration and is covered per damage via dbmate;
+    # the make path only needs to prove backup, success, damaged success and failure exit wiring.
+    [
+        ("dbmate", damage)
+        for damage in ("clean", "known", "set_null", "unknown_fk", "task_relation", "invalid_json")
+    ]
+    + [("make", damage) for damage in ("clean", "known", "unknown_fk")],
 )
-@pytest.mark.parametrize("driver", ["dbmate", "make"])
 @pytest.mark.asyncio
 async def test_populated_time_migration_preserves_identities_and_audit(
     storage,

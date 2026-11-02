@@ -42,7 +42,7 @@ lint: ## Check code (backend ruff/black, frontend eslint)
 test: test-backend test-frontend ## Run backend and frontend unit tests
 
 test-backend: ## Run backend unit tests with locked dependencies
-	cd backend && $(UV) run --locked --extra dev pytest -q
+	cd backend && $(UV) run --locked --extra dev pytest -q -n 4 --dist loadfile
 
 test-frontend: ## Run frontend unit tests
 	cd frontend && $(NPM) run test

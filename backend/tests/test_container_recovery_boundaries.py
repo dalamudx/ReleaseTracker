@@ -23,6 +23,8 @@ from helpers.container_runtime import (
 
 IMAGE = "registry.example.test/team/service-a:1.0.0"
 MARKERS = {"releasetracker.io/managed-by": "new-installation"}
+# Scripted runtimes: the 1s real polling interval only adds wall time here.
+pytestmark = pytest.mark.usefixtures("fast_recovery_polling")
 
 
 @pytest.fixture(params=["docker", "podman"])

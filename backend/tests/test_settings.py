@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import logging
 import pytest
 
 from helpers.executor_runtime import (
@@ -280,13 +281,20 @@ async def test_timezone_setting_rejects_invalid_timezone(authed_client):
 
 @pytest.mark.asyncio
 async def test_log_level_setting_accepts_and_normalizes_valid_level(authed_client):
-    response = authed_client.post(
-        "/api/settings",
-        json={"key": SYSTEM_LOG_LEVEL_SETTING_KEY, "value": "debug"},
-    )
+    root = logging.getLogger()
+    previous = root.level
+    try:
+        response = authed_client.post(
+            "/api/settings",
+            json={"key": SYSTEM_LOG_LEVEL_SETTING_KEY, "value": "debug"},
+        )
 
-    assert response.status_code == 200, response.text
-    assert response.json()["value"] == "DEBUG"
+        assert response.status_code == 200, response.text
+        assert response.json()["value"] == "DEBUG"
+        assert root.level == logging.DEBUG
+    finally:
+        # The endpoint changes the process-wide root logger; later tests must not inherit DEBUG.
+        root.setLevel(previous)
 
 
 @pytest.mark.asyncio
