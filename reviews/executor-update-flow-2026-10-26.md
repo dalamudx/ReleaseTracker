@@ -53,7 +53,7 @@ flowchart TD
 
 容器标签使用真实 tag 参与排序，短哈希不能借 PEP 440 默认解析变成大版本。自定义 version / revision 提取和固定标签仍保留。版本时间元数据不用于排名。执行器仅绑定 container / helm 来源；GitHub 等发布信息可以用于展示或关联，但不能直接当成一个已存在的镜像。
 
-主要代码：[选版快照](../../backend/src/releasetracker/storage/sqlite_selection.py#L349)、[desired target 向量](../../backend/src/releasetracker/executor_trigger.py#L25)、[目标解析](../../backend/src/releasetracker/executor_scheduler_target_resolution.py)、[部署入队](../../backend/src/releasetracker/services/deploy_tasks.py#L354)。
+主要代码：[选版快照](../backend/src/releasetracker/storage/sqlite_selection.py#L349)、[desired target 向量](../backend/src/releasetracker/executor_trigger.py#L25)、[目标解析](../backend/src/releasetracker/executor_scheduler_target_resolution.py)、[部署入队](../backend/src/releasetracker/services/deploy_tasks.py#L354)。
 
 **2. 公共调度、无需更新与审批**
 
@@ -98,7 +98,7 @@ flowchart TD
 
 真实目标变化与可复核的 Helm 历史身份变化不同：后者要证明原批准链、runtime、release 坐标、部署标记及旧基线一致，批准才转换身份；刷新计划不修改基线。
 
-主要代码：[任务领取](../../backend/src/releasetracker/storage/sqlite_tasks.py#L414)、[prepare](../../backend/src/releasetracker/services/deploy_tasks.py#L488)、[准入原因](../../backend/src/releasetracker/storage/sqlite_deployment_admission.py#L285)、[手动额外确认](../../backend/src/releasetracker/storage/sqlite_deployment_admission.py#L333)、[版本方向与范围](../../backend/src/releasetracker/services/version_policy.py#L73)。
+主要代码：[任务领取](../backend/src/releasetracker/storage/sqlite_tasks.py#L414)、[prepare](../backend/src/releasetracker/services/deploy_tasks.py#L488)、[准入原因](../backend/src/releasetracker/storage/sqlite_deployment_admission.py#L285)、[手动额外确认](../backend/src/releasetracker/storage/sqlite_deployment_admission.py#L333)、[版本方向与范围](../backend/src/releasetracker/services/version_policy.py#L73)。
 
 **3. 手动与自动任务的完成关系：当前不对称**
 
@@ -119,7 +119,7 @@ flowchart LR
 
 线上实例：outline `2313` 手动任务等待 `manual_update_review`，而自动任务 `2314` 已在 14:08 更新到同一 `1.12.0` 并核验基线。此时继续呈现“需要部署”会误导。旧计划不会因此直接获得新授权，执行前仍需核对实时状态。
 
-主要代码：[入队的触发模式与 supersede 选项](../../backend/src/releasetracker/services/deploy_tasks.py#L354)、[完成处理](../../backend/src/releasetracker/services/deploy_tasks.py#L713)、[同模式挂起任务替换](../../backend/src/releasetracker/storage/sqlite_tasks.py#L59)。
+主要代码：[入队的触发模式与 supersede 选项](../backend/src/releasetracker/services/deploy_tasks.py#L354)、[完成处理](../backend/src/releasetracker/services/deploy_tasks.py#L713)、[同模式挂起任务替换](../backend/src/releasetracker/storage/sqlite_tasks.py#L59)。
 
 **4. Docker 单容器**
 
@@ -146,7 +146,7 @@ flowchart TD
 
 这里的主要路径是 SDK 重建，不是简单修改 image 字段。网络、挂载、命令、环境变量和镜像默认配置都属于重建核对范围。代码还保留兼容客户端的直接 update API 分支，实际客户端支持时在写前校验后调用。
 
-主要代码：[单目标调度与快照](../../backend/src/releasetracker/executor_scheduler.py#L442)、[Docker 重建](../../backend/src/releasetracker/executors/docker.py#L172)。
+主要代码：[单目标调度与快照](../backend/src/releasetracker/executor_scheduler.py#L442)、[Docker 重建](../backend/src/releasetracker/executors/docker.py#L172)。
 
 **5. Podman 单容器**
 
@@ -172,7 +172,7 @@ flowchart TD
 
 lineage 用来证明目前容器确实沿着此前批准的替换关系产生，不能用连接名称或随机变化的兼容 daemon ID 代替。经过 Docker API 代理的连接应使用 Docker 模式；不能绕过 Portainer 对 libpod 的访问限制。
 
-主要代码：[Podman 单容器更新](../../backend/src/releasetracker/executors/podman.py#L131)、[lineage 校验](../../backend/src/releasetracker/executors/podman.py#L294)。
+主要代码：[Podman 单容器更新](../backend/src/releasetracker/executors/podman.py#L131)、[lineage 校验](../backend/src/releasetracker/executors/podman.py#L294)。
 
 **6. Docker Compose，Docker SDK 路径**
 
@@ -199,7 +199,7 @@ flowchart TD
 
 重要差异：此路径基于运行中容器配置，用 SDK 重建；它不会像 SSH Compose 那样修改磁盘上的 compose.yaml。外部继续用原 Compose 文件部署时，声明与运行配置是否一致需要单独核对。
 
-主要代码：[Compose 分组调度](../../backend/src/releasetracker/executor_scheduler_grouped_runtime_compose.py#L220)、[Docker 分组 SDK 更新](../../backend/src/releasetracker/executors/docker.py#L48)。
+主要代码：[Compose 分组调度](../backend/src/releasetracker/executor_scheduler_grouped_runtime_compose.py#L220)、[Docker 分组 SDK 更新](../backend/src/releasetracker/executors/docker.py#L48)。
 
 **7. Podman Compose，原生 Pod 路径**
 
@@ -225,7 +225,7 @@ flowchart TD
 
 它与 Docker Compose 的支持范围不同，不能把两者描述为完全相同的服务重建。Pod 关系、成员、副本及网络都必须纳入快照和恢复核验。
 
-主要代码：[Podman 分组计划与写入](../../backend/src/releasetracker/executors/podman_compose.py#L23)、[共用调度](../../backend/src/releasetracker/executor_scheduler_grouped_runtime_compose.py#L250)。
+主要代码：[Podman 分组计划与写入](../backend/src/releasetracker/executors/podman_compose.py#L23)、[共用调度](../backend/src/releasetracker/executor_scheduler_grouped_runtime_compose.py#L250)。
 
 **8. Portainer standalone Stack**
 
@@ -251,7 +251,7 @@ Stack API 可能重建未升级服务，所以 skipped 服务也要核对归属�
 
 额外待验：此调度分支未像 Docker / Podman Compose 那样显式在“任何绑定失败”时清空整个 pending_updates。公共准入能否覆盖所有服务失败路径，需要用多服务隔离场景确认，不能仅凭 API 成功判断整组成功。
 
-主要代码：[Stack 调度](../../backend/src/releasetracker/executor_scheduler_grouped_runtime_portainer.py#L239)、[Stack API 更新](../../backend/src/releasetracker/executors/portainer.py#L277)、[替换容器归属与登记](../../backend/src/releasetracker/services/deployment_readiness_probes.py#L530)。
+主要代码：[Stack 调度](../backend/src/releasetracker/executor_scheduler_grouped_runtime_portainer.py#L239)、[Stack API 更新](../backend/src/releasetracker/executors/portainer.py#L277)、[替换容器归属与登记](../backend/src/releasetracker/services/deployment_readiness_probes.py#L530)。
 
 **9. Kubernetes workload**
 
@@ -278,7 +278,7 @@ flowchart TD
 
 镜像已改写不等于更新成功。OnDelete、分区更新等不能假装已全部滚动完成。对明确可重试的镜像拉取问题存在有限延长期，但每次要重读证据，不沿用旧 Pod 状态。Pod 的暂时摘要缺失可进入证据重试，不能静默清除真实漂移。
 
-主要代码：[workload 调度](../../backend/src/releasetracker/executor_scheduler_grouped_runtime_kubernetes.py#L218)、[带并发条件的 patch](../../backend/src/releasetracker/executors/kubernetes.py#L296)、[原生 rollout 与镜像核验](../../backend/src/releasetracker/services/deployment_readiness_probes.py#L275)。
+主要代码：[workload 调度](../backend/src/releasetracker/executor_scheduler_grouped_runtime_kubernetes.py#L218)、[带并发条件的 patch](../backend/src/releasetracker/executors/kubernetes.py#L296)、[原生 rollout 与镜像核验](../backend/src/releasetracker/services/deployment_readiness_probes.py#L275)。
 
 **10. Helm Release**
 
@@ -312,7 +312,7 @@ P6：当前 Helm 审批 / 基线的配置投影只覆盖 chart_name、chart_vers
 
 线上实证：authentik `2241` 的部署结果 succeeded、观察 healthy / completed，执行器已保存 revision 34；基线却在 120 次后 review_required / evidence_exhausted，managed_targets.last_task_id 仍为 1501。具体是哪份制品证据或读取失败尚未复现，不能写成已修复。
 
-主要代码：[Helm 调度与回执回写](../../backend/src/releasetracker/executor_scheduler_grouped_runtime_helm.py#L155)、[单一事实入口](../../backend/src/releasetracker/executors/kubernetes.py#L414)、[归档验证与升级](../../backend/src/releasetracker/executors/kubernetes.py#L645)、[Helm 基线投影范围](../../backend/src/releasetracker/services/recovery_diff.py#L87)。
+主要代码：[Helm 调度与回执回写](../backend/src/releasetracker/executor_scheduler_grouped_runtime_helm.py#L155)、[单一事实入口](../backend/src/releasetracker/executors/kubernetes.py#L414)、[归档验证与升级](../backend/src/releasetracker/executors/kubernetes.py#L645)、[Helm 基线投影范围](../backend/src/releasetracker/services/recovery_diff.py#L87)。
 
 **11. SSH Compose**
 
@@ -339,7 +339,7 @@ flowchart TD
 
 只允许本次 run 的快照豁免，不接受其他锁定快照。远端命令返回说明命令停止，不代表服务就绪。运行回执不明确时不能自动重放 up。与 SDK Compose 的关键差别是：这里确实会修改受管声明文件或 override。
 
-主要代码：[SSH 调度](../../backend/src/releasetracker/executor_scheduler_ssh.py#L69)、[远端暂存与写入](../../backend/src/releasetracker/services/ssh_compose_deploy.py#L340)。
+主要代码：[SSH 调度](../backend/src/releasetracker/executor_scheduler_ssh.py#L69)、[远端暂存与写入](../backend/src/releasetracker/services/ssh_compose_deploy.py#L340)。
 
 **12. 公共就绪、基线与失败恢复**
 
@@ -385,7 +385,7 @@ flowchart TD
 - 重新核验基线只读，不重新部署，也不能补造旧审批证据。
 - P3 的关键问题是“写入许可已记录”和“破坏性操作真正开始”目前共用一个标记，因此上图的失败分流存在保守误判。
 
-主要代码：[guard 与 handoff](../../backend/src/releasetracker/services/deploy_tasks.py#L621)、[失败分流](../../backend/src/releasetracker/services/deploy_tasks.py#L695)、[就绪收尾](../../backend/src/releasetracker/services/deployment_readiness.py#L625)、[独立基线重试](../../backend/src/releasetracker/services/deploy_tasks.py#L248)、[基线结果校验](../../backend/src/releasetracker/storage/sqlite_deployment_admission.py#L655)。
+主要代码：[guard 与 handoff](../backend/src/releasetracker/services/deploy_tasks.py#L621)、[失败分流](../backend/src/releasetracker/services/deploy_tasks.py#L695)、[就绪收尾](../backend/src/releasetracker/services/deployment_readiness.py#L625)、[独立基线重试](../backend/src/releasetracker/services/deploy_tasks.py#L248)、[基线结果校验](../backend/src/releasetracker/storage/sqlite_deployment_admission.py#L655)。
 
 **13. 门禁范围不是每种执行器都已隔离**
 
@@ -399,7 +399,7 @@ flowchart TD
 
 默认部署 / 恢复共享并发为 1，可配置到 3；提高并发不会消除 `*` 与资源重叠问题。仅基线待审核的成功任务不会像旧 OpenBao 故障那样重新制造有效全局观察门禁；真正 needs_attention 的不确定写入仍会阻挡。
 
-主要代码：[范围解析](../../backend/src/releasetracker/services/deployment_readiness.py#L61)、[UID 范围](../../backend/src/releasetracker/services/deployment_readiness_probes.py#L866)、[队列锁和并发](../../backend/src/releasetracker/storage/sqlite_tasks.py#L414)。
+主要代码：[范围解析](../backend/src/releasetracker/services/deployment_readiness.py#L61)、[UID 范围](../backend/src/releasetracker/services/deployment_readiness_probes.py#L866)、[队列锁和并发](../backend/src/releasetracker/storage/sqlite_tasks.py#L414)。
 
 **14. 当前问题、证据等级与建议顺序**
 
