@@ -667,6 +667,12 @@ async def _probe_ssh(storage, executor, verification):
     )
 
 
+def _repository(reference):
+    """Drop a tag, keeping registry ports: host:5000/team/app:1.0 -> host:5000/team/app."""
+    name, _, last = reference.rpartition("/")
+    return f"{name}/{last.split(':', 1)[0]}" if name else last.split(":", 1)[0]
+
+
 @runtime_adapter_scope
 async def _probe_deployment(storage, scheduler, executor, verification: dict) -> dict:
     """One read-only attempt; caller owns deadline, retry, durability and HTTP checks."""
@@ -771,11 +777,20 @@ async def _probe_deployment(storage, scheduler, executor, verification: dict) ->
                             "type"
                         ) == "Recreate":
                             interruption_risk = True
+                pins = {
+                    name: f"{_repository(images[name])}@{digest}"
+                    for name, digest in (verification.get("target_digests") or {}).items()
+                    if isinstance(images.get(name), str) and "@" not in images[name]
+                }
                 if (
                     status == "healthy"
                     and current["kind"] == "kubernetes_workload"
-                    and any(
-                        isinstance(image, str) and "@sha256:" in image for image in images.values()
+                    and (
+                        pins
+                        or any(
+                            isinstance(image, str) and "@sha256:" in image
+                            for image in images.values()
+                        )
                     )
                 ):
                     from .kubernetes_pod_diagnostics import verify_pod_digests
@@ -791,8 +806,13 @@ async def _probe_deployment(storage, scheduler, executor, verification: dict) ->
                         resolve_digest=lambda image, actual: verify_running_manifest(
                             storage, executor, image, actual
                         ),
+                        pins=pins,
                     )
-                    if digest_status != "confirmed":
+                    if digest_status == "superseded" and pins:
+                        # A completed tag rollout running another build is a known
+                        # failed delivery, not an uncertain write.
+                        status, message = "unhealthy", "image_digest_mismatch"
+                    elif digest_status != "confirmed" and not pins:
                         status = "superseded" if digest_status == "superseded" else "unknown"
                         message = (
                             "image_digest_mismatch"

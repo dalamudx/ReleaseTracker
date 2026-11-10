@@ -55,6 +55,16 @@ def scope_conflict_sql(left, right, *, mutation_keys=False):
     )
 
 
+def uncertain_write_sql(alias):
+    """needs_attention fences only while a runtime write may have started.
+
+    Admission/preparation is read-only (no attempt, no mutation marker), so a
+    stalled or refused admission must not hold a mutation domain forever.
+    Legacy rows without a marker stay fenced once an attempt began.
+    """
+    return f"COALESCE(json_extract({alias}.result,'$.mutation_started'),{alias}.attempts>0)=1"
+
+
 def docker_scope(info, version=None):
     from ..executors.docker_identity import ID, PODMAN_COMPAT_PREFIX
     from .ssh_compose_ownership import _key

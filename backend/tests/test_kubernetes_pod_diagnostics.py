@@ -231,6 +231,56 @@ async def test_tagged_images_need_no_additional_digest_rbac():
 
 
 @pytest.mark.asyncio
+async def test_tag_rollout_is_verified_against_admitted_digest():
+    from unittest.mock import AsyncMock
+
+    from releasetracker.services.deployment_readiness import _target_digests
+    from releasetracker.services.deployment_readiness_probes import _repository
+
+    assert _repository("reg.example/team/app:1.1.17") == "reg.example/team/app"
+    assert _repository("host:5000/team/app:1") == "host:5000/team/app"
+    assert _repository("host:5000/team/app") == "host:5000/team/app"
+    admitted = "sha256:" + "e" * 64
+    task = {
+        "payload": {
+            "targets": [{"source_id": 24, "channel": "stable", "target": ["1.1.17", admitted]}],
+            "policy_bindings": [
+                {"service": "app", "tracker_source_id": 24, "channel_name": "stable"}
+            ],
+        }
+    }
+    assert _target_digests(task) == {"app": admitted}
+    now = datetime.now(timezone.utc)
+    tag = "reg.example/team/app:1.1.17"
+    adapter = adapter_fixture()
+    running = pod(now, image=tag)
+    status = running.status.container_statuses[0]
+    status.name, status.ready = "app", True
+    # Live shape: the tag rollout started an older build of the same tag.
+    status.image_id = "docker-pullable://reg.example/team/app@sha256:" + "9" * 64
+    adapter._get_core_api.return_value.list_namespaced_pod.return_value.items = [running]
+    workload = {
+        "kind": "StatefulSet",
+        "metadata": {"uid": "controller"},
+        "spec": {"replicas": 1, "selector": {"match_labels": {"app": "test"}}},
+    }
+    resolve = AsyncMock(return_value="superseded")
+    pins = {"app": f"reg.example/team/app@{admitted}"}
+    result = await verify_pod_digests(
+        adapter, "test", workload, {"app": tag}, now.timestamp(), resolve, pins=pins
+    )
+    assert result == "superseded"
+    resolve.assert_awaited_once_with(pins["app"], "sha256:" + "9" * 64)
+    status.image_id = f"docker-pullable://reg.example/team/app@{admitted}"
+    assert (
+        await verify_pod_digests(
+            adapter, "test", workload, {"app": tag}, now.timestamp(), resolve, pins=pins
+        )
+        == "confirmed"
+    )
+
+
+@pytest.mark.asyncio
 async def test_deployment_evidence_requires_owned_replicaset_chain():
     now = datetime.now(timezone.utc)
     adapter = adapter_fixture()

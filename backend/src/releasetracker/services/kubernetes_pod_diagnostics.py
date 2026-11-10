@@ -222,18 +222,19 @@ async def pod_stability_fingerprint(adapter, namespace, workload, images, submit
 
 
 async def verify_pod_digests(
-    adapter, namespace, workload, images, submitted_at, resolve_digest=None
+    adapter, namespace, workload, images, submitted_at, resolve_digest=None, pins=None
 ):
     """Manifest ImageID must match the pin or its cryptographically verified child.
 
     A mismatch alone is UNKNOWN: an OCI index and its platform manifest differ.
     Config IDs are not manifest evidence. Proven graph exclusion is superseded.
     """
-    pinned = {
-        name: ref.rsplit("@", 1)[1].lower()
+    refs = {
+        name: ref
         for name, ref in images.items()
         if isinstance(ref, str) and re.search(r"@sha256:[0-9a-fA-F]{64}$", ref)
-    }
+    } | (pins or {})
+    pinned = {name: ref.rsplit("@", 1)[1].lower() for name, ref in refs.items()}
     if not pinned:
         return "confirmed"
     count = desired_pod_count(workload)
@@ -261,7 +262,7 @@ async def verify_pod_digests(
                     return "unknown"
                 actual = match.group(1).lower()
                 if actual != digest:
-                    key = (images[name], actual)
+                    key = (refs[name], actual)
                     if key not in cache:
                         cache[key] = await resolve_digest(*key) if resolve_digest else "unknown"
                     if cache[key] != "confirmed":

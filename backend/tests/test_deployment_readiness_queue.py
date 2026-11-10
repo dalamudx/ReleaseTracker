@@ -689,7 +689,7 @@ async def test_pull_error_changes_to_terminal_at_deadline(storage, monkeypatch):
     assert probe.await_count == 2
 
 
-async def test_pull_identity_change_at_deadline_never_extends(storage, monkeypatch):
+async def test_identity_change_at_deadline_keeps_observing_frozen_deployment(storage, monkeypatch):
     from releasetracker.services.deploy_tasks import DeployTasks
 
     _, _, observer, probe, now, task, _ = await kube_pull_observation(storage, monkeypatch)
@@ -697,9 +697,11 @@ async def test_pull_identity_change_at_deadline_never_extends(storage, monkeypat
     probe.reset_mock()
     monkeypatch.setattr(DeployTasks, "identity", AsyncMock(return_value="different-configuration"))
     now[0] += 31
+    probe.return_value = {"outcome": "healthy", "services": []}
     await observe(storage, observer, task["id"])
-    assert probe.await_count == 0
-    assert (await storage.tasks.get(task["id"]))["state"] == "needs_attention"
+    # A later edit never turns a finished write into an operator-only fence.
+    assert probe.await_count == 1
+    assert (await storage.tasks.get(task["id"]))["state"] == "succeeded"
 
 
 async def test_pull_grace_expires_even_after_restart(storage, monkeypatch):
@@ -832,16 +834,16 @@ async def test_waiting_observation_blocks_delete_until_terminal(storage, monkeyp
     assert await storage.delete_executor_config(executor.id)
 
 
-async def test_observer_rejects_changed_target_before_remote_probe(storage, monkeypatch):
-    executor, _, observer, probe, _, task, _ = await setup(storage, monkeypatch)
+async def test_config_edit_during_readiness_observes_frozen_deployment(storage, monkeypatch):
+    executor, _, observer, probe, _, task, _ = await setup(storage, monkeypatch, stable=0)
     db = await storage._get_connection()
     await db.execute(
         "UPDATE executors SET name='Changed example target' WHERE id=?", (executor.id,)
     )
     await db.commit()
     await observe(storage, observer, task["id"])
-    probe.assert_not_awaited()
-    assert (await storage.tasks.get(task["id"]))["state"] == "needs_attention"
+    probe.assert_awaited()
+    assert (await storage.tasks.get(task["id"]))["state"] == "succeeded"
 
 
 async def test_failed_finalization_is_resumed_without_probe_or_deployment(storage, monkeypatch):

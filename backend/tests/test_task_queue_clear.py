@@ -82,6 +82,8 @@ async def test_clear_api_preserves_attempts_and_protected_deployment(storage, au
     await enqueue(storage, kind="deploy", key="next")
     async with storage.tasks.transaction() as db:
         await db.execute("UPDATE tasks SET resource_key='protected' WHERE dedupe_key='next'")
+        # Only a possibly-started runtime write fences later deployments.
+        await db.execute("UPDATE tasks SET attempts=1 WHERE dedupe_key='protected'")
     assert await storage.tasks.claim("deploy") is None
 
 

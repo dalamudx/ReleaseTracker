@@ -536,7 +536,8 @@ async def test_manual_resolution_distinguishes_retention_and_execution_locks(
         payload={"executor_id": executor_id},
         trigger_mode="manual",
     )
-    assert await storage.tasks.claim("deploy") is None
+    # Read-only admission stalls never fence; only a possibly-started write does.
+    assert bool(await storage.tasks.blockers(next_task)) is mutation_started
     response = authed_client.post(
         f"/api/tasks/{stalled['id']}/resolve",
         json={"remote_stopped": True, "state_verified": True},
@@ -554,7 +555,8 @@ async def test_manual_resolution_distinguishes_retention_and_execution_locks(
         assert (await storage.tasks.claim("deploy"))["id"] == next_task["id"]
     else:
         assert done["state"] == "needs_attention"
-        assert await storage.tasks.claim("deploy") is None
+        # The unresolved stall keeps its record, not a queue-wide fence.
+        assert bool(await storage.tasks.claim("deploy")) is not mutation_started
 
 
 async def test_migrated_exhausted_attempt_budget_finishes_without_remote_io(storage):

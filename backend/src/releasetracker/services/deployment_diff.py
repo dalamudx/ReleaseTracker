@@ -85,7 +85,21 @@ async def _portainer_overrides(adapter, target_ref, inspected, native, service):
     config = result["config"]
     config.pop("Image", None)
     if config.get("Hostname") in {inspected["Id"], inspected["Id"][:12]}:
-        config.pop("Hostname", None)
+        generated = config.pop("Hostname")
+        # Podman mirrors the generated hostname into Env; it changes on every recreate.
+        environment = service.get("environment") or {}
+        declared = (
+            environment
+            if isinstance(environment, dict)
+            else {v.split("=", 1)[0] for v in environment if isinstance(v, str)}
+        )
+        env = config.get("Env")
+        if (
+            isinstance(env, dict)
+            and "HOSTNAME" not in declared
+            and env.get("HOSTNAME") == generated
+        ):
+            env.pop("HOSTNAME")
     inherited = {
         "Env": "environment",
         "Cmd": "command",

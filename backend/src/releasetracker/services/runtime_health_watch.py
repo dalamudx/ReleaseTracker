@@ -13,6 +13,7 @@ import os
 import time
 
 from .deployment_readiness_probes import probe_deployment
+from .mutation_resource_domains import uncertain_write_sql
 from .release_notification_outbox import enqueue_system_alert
 
 logger = logging.getLogger(__name__)
@@ -100,8 +101,8 @@ class RuntimeHealthWatch:
         db = await self.storage._get_connection()
         conflict = await (
             await db.execute(
-                """SELECT 1 FROM tasks t LEFT JOIN deployment_observations o ON o.task_id=t.id
-               WHERE t.kind IN ('deploy','recover') AND t.state IN ('running','needs_attention')
+                f"""SELECT 1 FROM tasks t LEFT JOIN deployment_observations o ON o.task_id=t.id
+               WHERE t.kind IN ('deploy','recover') AND (t.state='running' OR t.state='needs_attention' AND {uncertain_write_sql('t')})
                AND (json_extract(t.payload,'$.executor_id')=? OR ?='*'
                  OR t.resource_key='deployment-mutations' OR t.resource_key=?
                  OR (o.state IN ('waiting','finalizing','blocked')

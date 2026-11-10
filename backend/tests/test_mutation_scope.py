@@ -18,6 +18,8 @@ async def block(storage, executor, scope):
     await enqueue(storage, executor, scope)
     task = await storage.tasks.claim("deploy")
     assert task
+    # Only an execution attempt can leave an uncertain runtime write behind.
+    assert await storage.tasks.start_attempt(task)
     assert await storage.tasks.finish(task, "needs_attention")
     return task
 
@@ -235,3 +237,39 @@ async def test_scope_update_is_lease_fenced(storage):
             task,
             "deployment-mutations:cluster:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         )
+
+
+async def test_stalled_admission_never_fences_other_targets(storage):
+    # Live shape: automatic deploy whose read-only admission evidence stalled
+    # under a global scope, never reaching an attempt or a runtime write.
+    await enqueue(storage, 9, "deployment-mutations")
+    stalled = await storage.tasks.claim("deploy")
+    assert await storage.tasks.finish(
+        stalled,
+        "needs_attention",
+        code="admission_evidence_stalled",
+        result={"admission_evidence_failures": 119},
+    )
+    queued = await enqueue(
+        storage,
+        3,
+        "deployment-mutations:cluster:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    assert await storage.tasks.blockers(await storage.tasks.get(queued["id"])) == []
+    claimed = await storage.tasks.claim("deploy")
+    assert claimed["id"] == queued["id"]
+    assert await storage.tasks.bind_mutation_scope(claimed, claimed["resource_key"])
+
+
+async def test_unstarted_execution_does_not_fence_but_started_write_does(storage):
+    await enqueue(storage, 1, "deployment-mutations")
+    task = await storage.tasks.claim("deploy")
+    assert await storage.tasks.start_attempt(task)
+    assert await storage.tasks.finish(task, "needs_attention", result={"mutation_started": False})
+    await enqueue(storage, 2, "deployment-mutations")
+    second = await storage.tasks.claim("deploy")
+    assert second
+    assert await storage.tasks.start_attempt(second)
+    assert await storage.tasks.finish(second, "needs_attention", result={"mutation_started": True})
+    await enqueue(storage, 3, "deployment-mutations")
+    assert await storage.tasks.claim("deploy") is None

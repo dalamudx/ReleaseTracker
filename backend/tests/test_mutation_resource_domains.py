@@ -330,7 +330,9 @@ async def test_proven_independence_preserves_capacity_and_default_serialization(
 async def test_uncertain_mutations_block_deploy_but_preserve_recovery_path(storage):
     first = await queue_task(storage, ENGINE_A, 11)
     db = await storage._get_connection()
-    await db.execute("UPDATE tasks SET state='needs_attention' WHERE id=?", (first["id"],))
+    await db.execute(
+        "UPDATE tasks SET state='needs_attention',attempts=1 WHERE id=?", (first["id"],)
+    )
     await db.commit()
     deploy = await queue_task(storage, ENGINE_A, 22)
     assert await storage.tasks.blockers(deploy)

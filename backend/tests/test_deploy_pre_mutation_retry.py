@@ -161,8 +161,37 @@ async def test_unreachable_target_stops_waiting_after_patience(storage, monkeypa
         ("needs_attention", "admission_evidence_stalled"),
     ]
     assert current["attempts"] == 0 and calls == []
-    # The operator now owns this target; automatic work stops instead of looping.
-    assert (await storage.get_executor_desired_state(executor_id)).pending is False
+    # Nothing was written, so the target stays pending without looping new tasks.
+    assert (await storage.get_executor_desired_state(executor_id)).pending is True
+    await handler.dispatch_pending()
+    assert await storage.tasks.claim("deploy") is None
+    # Operator resolution releases the stall; the same target is retried fresh.
+    async with storage.tasks.transaction() as db:
+        await db.execute(
+            "UPDATE tasks SET state='failed',error_code='operator_reconciled' WHERE id=?",
+            (current["id"],),
+        )
+    handler._collect_admission_evidence = AsyncMock(
+        return_value=TargetEvidence(
+            "runtime", "target", {"kind": "container"}, (), "container_config"
+        )
+    )
+    retry = await dispatch_and_run(storage, handler, queue)
+    assert retry["id"] != current["id"] and calls
+
+
+async def test_existing_trigger_skips_remote_scope_probe(storage, monkeypatch):
+    from releasetracker.services import deploy_tasks
+
+    _, handler, _, _ = await setup(storage, monkeypatch)
+    probe = AsyncMock(return_value="deployment-mutations")
+    monkeypatch.setattr(deploy_tasks, "mutation_resource_key", probe)
+    for _ in range(3):
+        async with storage.tasks.transaction() as db:
+            await db.execute("UPDATE executor_desired_state SET next_eligible_at=NULL")
+        await handler.dispatch_pending()
+    assert probe.await_count == 1
+    assert len(await storage.tasks.list(state="queued")) == 1
 
 
 async def test_manual_failure_is_not_retried(storage, monkeypatch):

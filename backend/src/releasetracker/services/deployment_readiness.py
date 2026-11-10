@@ -64,6 +64,20 @@ async def resource_scope(storage, executor, scheduler=None):
     return await resolve(storage, executor, scheduler)
 
 
+def _target_digests(task):
+    """Service -> admitted image digest, so tag rollouts can prove what they run."""
+    targets = {
+        (t.get("source_id"), t.get("channel")): (t.get("target") or [None, None])[1]
+        for t in task["payload"].get("targets") or []
+    }
+    digests = {}
+    for binding in task["payload"].get("policy_bindings") or []:
+        digest = targets.get((binding.get("tracker_source_id"), binding.get("channel_name")))
+        if binding.get("service") and isinstance(digest, str) and digest.startswith("sha256:"):
+            digests[binding["service"]] = digest
+    return digests
+
+
 class DeploymentReadiness:
     def __init__(self, storage, scheduler, scheduler_host, *, probe=None, clock=time.time):
         self.storage = storage
@@ -122,6 +136,7 @@ class DeploymentReadiness:
             "to_version": finalization.get("to_version"),
             "readiness_context": diagnostics.get("readiness_context", {}),
             "update_duration_seconds": update_seconds,
+            "target_digests": _target_digests(task),
         }
         result = {
             "outcome": "pending",
@@ -209,17 +224,14 @@ class DeploymentReadiness:
         if not row or row["state"] not in {"completed", "blocked"} or row["outcome"] == "healthy":
             raise ValueError("Only finished unsuccessful readiness observations can be rechecked")
         executor = await self.storage.get_executor_config(row["executor_id"])
-        if (
-            executor is None
-            or await DeployTasks(self.storage, self.scheduler).identity(executor)
-            != original_task["payload"]["config_identity"]
-        ):
-            raise ValueError("Target configuration changed; cannot recheck the original deployment")
+        if executor is None:
+            raise ValueError("Executor no longer exists; cannot recheck the original deployment")
         payload = {
             "executor_id": executor.id,
             "action": "readiness_recheck",
             "observation_task_id": original_task["id"],
-            "config_identity": original_task["payload"]["config_identity"],
+            # The recheck replays the frozen deployment config; this only guards the queue.
+            "config_identity": await DeployTasks(self.storage, self.scheduler).identity(executor),
             "health_check": await snapshot_readiness_profile(self.storage, executor),
         }
         task = await self.storage.tasks.enqueue(
@@ -408,21 +420,9 @@ class DeploymentReadiness:
         verification = json.loads(row["verification"])
         profile = executor.health_check.model_dump(mode="json")
         task = await self.storage.tasks.get(row["task_id"])
-        current = await self.storage.get_executor_config(executor.id)
-        from .deploy_tasks import DeployTasks
-
-        identity_changed = (
-            current is None
-            or await DeployTasks(self.storage, self.scheduler).identity(current)
-            != task["payload"]["config_identity"]
-        )
-        if identity_changed:
-            result = {
-                "outcome": "superseded",
-                "services": [],
-                "message": "Executor configuration changed during readiness observation",
-            }
-        elif now >= row["deadline"]:
+        # Readiness belongs to the frozen deployment (row executor_config). Later
+        # edits only affect future work; newer writes are fenced by conflicts().
+        if now >= row["deadline"]:
             previous = json.loads(row["result"] or "{}")
             if (
                 previous.get("outcome") == "pending"

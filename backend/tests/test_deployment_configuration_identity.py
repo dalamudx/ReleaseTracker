@@ -63,6 +63,8 @@ async def test_portainer_identity_separates_new_image_defaults_from_runtime_over
             },
         }
         config["Env"].append("APP_MODE=production")
+        # Podman mirrors the generated hostname into Env (live openbao shape).
+        config["Env"].append(f"HOSTNAME={identifier[:12]}")
         native = {
             "service": "app",
             "config": _normalize(config),

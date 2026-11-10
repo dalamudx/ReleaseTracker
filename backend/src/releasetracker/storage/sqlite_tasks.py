@@ -8,7 +8,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from ..services.mutation_resource_domains import scope_conflict_sql
+from ..services.mutation_resource_domains import scope_conflict_sql, uncertain_write_sql
 
 FETCH_RETRY_SETTING = "system.fetch_retry_count"
 DEFAULT_FETCH_RETRIES = 3
@@ -238,6 +238,18 @@ class TaskStore:
             await (await db.execute("SELECT * FROM tasks WHERE id=?", (task_id,))).fetchone()
         )
 
+    async def by_trigger(self, trigger_key):
+        """The task enqueue() would return for this trigger, without enqueueing."""
+        db = await self.storage._get_connection()
+        row = await (
+            await db.execute(
+                """SELECT t.* FROM tasks t JOIN task_triggers g ON g.task_id=t.id
+                   WHERE g.trigger_key=? AND t.state!='superseded'""",
+                (trigger_key,),
+            )
+        ).fetchone()
+        return decode(row) if row else None
+
     async def clear_finished(self, *, settled_before=None, read_tasks=None):
         """Hide settled rows while retaining audit data and trigger deduplication.
 
@@ -352,7 +364,7 @@ class TaskStore:
                 await db.execute(
                     f"""SELECT 1 FROM tasks WHERE (
                          (state='running' AND owner IS NOT NULL) OR
-                         (state='needs_attention' AND ?='deploy'))
+                         (state='needs_attention' AND ?='deploy' AND {uncertain_write_sql('tasks')}))
                        AND kind IN ('deploy','recover') AND id!=? AND (
                          {scope_conflict_sql('resource_key', '?', mutation_keys=True)} OR
                          json_extract(payload,'$.executor_id')=?
@@ -389,7 +401,7 @@ class TaskStore:
                  CASE WHEN o.state IN ('waiting','finalizing','blocked') THEN 'readiness' ELSE 'mutation' END reason
                FROM tasks t LEFT JOIN deployment_observations o ON o.task_id=t.id
                WHERE t.id!=? AND t.kind IN ('deploy','recover') AND (
-                 ((t.state='running' AND t.owner IS NOT NULL OR t.state='needs_attention' AND ?='deploy') AND
+                 ((t.state='running' AND t.owner IS NOT NULL OR t.state='needs_attention' AND ?='deploy' AND {uncertain_write_sql('t')}) AND
                    ({scope_conflict_sql('t.resource_key', '?', mutation_keys=True)}
                     OR json_extract(t.payload,'$.executor_id')=?)) OR
                  ((o.state IN ('waiting','finalizing') OR o.state='blocked' AND t.state='needs_attention' AND ?='deploy') AND
@@ -437,7 +449,7 @@ class TaskStore:
                        (active.kind IN ('deploy','recover') AND t.kind IN ('deploy','recover')
                         AND (?=1 OR {scope_conflict_sql('active.resource_key', 't.resource_key', mutation_keys=True)} OR
                              json_extract(active.payload,'$.executor_id')=json_extract(t.payload,'$.executor_id')))))
-                     OR (active.state='needs_attention' AND t.kind='deploy'
+                     OR (active.state='needs_attention' AND t.kind='deploy' AND {uncertain_write_sql('active')}
                        AND active.kind IN ('deploy','recover') AND (
                          {scope_conflict_sql('active.resource_key', 't.resource_key', mutation_keys=True)} OR
                          json_extract(active.payload,'$.executor_id')=json_extract(t.payload,'$.executor_id')

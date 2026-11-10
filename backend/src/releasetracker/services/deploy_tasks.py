@@ -45,6 +45,14 @@ def _already_current(executor, evidence, task=None) -> bool:
     return task is not None and targets_verified(task, evidence)
 
 
+def _may_have_written(task) -> bool:
+    """Same rule as uncertain_write_sql: no marker means written once an attempt began."""
+    result = task.get("result") or {}
+    if "mutation_started" in result:
+        return bool(result["mutation_started"])
+    return task.get("attempts", 0) > 0
+
+
 class DeployTasks:
     def __init__(self, storage, scheduler):
         self.storage = storage
@@ -65,7 +73,14 @@ class DeployTasks:
         value = {
             "executor": executor_payload,
             "connection": connection.model_dump(mode="json") if connection else None,
-            "sources": [source.model_dump(mode="json") if source else None for source in sources],
+            "sources": [
+                (
+                    source.model_dump(mode="json", exclude={"created_at", "updated_at"})
+                    if source
+                    else None
+                )
+                for source in sources
+            ],
         }
         return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
@@ -379,6 +394,9 @@ class DeployTasks:
             base_key = f"desired:{executor_id}:{desired_revision}:{identity}"
             retries = await self._pre_mutation_failures(base_key)
             trigger_key = base_key if retries == 0 else f"{base_key}:retry{retries}"
+            existing = await self.storage.tasks.by_trigger(trigger_key)
+            if existing is not None:
+                return {"task_id": existing["id"], "status": existing["state"]}
         from ..versioning import SELECTION_RULES_VERSION
 
         payload = {
@@ -418,7 +436,7 @@ class DeployTasks:
                 """SELECT COUNT(DISTINCT t.id) FROM tasks t JOIN task_triggers g ON g.task_id=t.id
                    WHERE (g.trigger_key=? OR g.trigger_key LIKE ? ESCAPE '\\')
                      AND t.kind='deploy' AND t.state='failed'
-                     AND json_extract(t.result,'$.mutation_started')=0""",
+                     AND COALESCE(json_extract(t.result,'$.mutation_started'),t.attempts>0)=0""",
                 (
                     base_key,
                     base_key.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -435,11 +453,7 @@ class DeployTasks:
         task for the same desired revision rather than a second attempt.
         """
         payload = task["payload"]
-        if (
-            payload.get("manual", True)
-            or task["state"] != "failed"
-            or (task.get("result") or {}).get("mutation_started") is not False
-        ):
+        if payload.get("manual", True) or task["state"] != "failed" or _may_have_written(task):
             return False
         base_key = f"desired:{payload['executor_id']}:{payload['desired_revision']}:{payload['config_identity']}"
         failures = await self._pre_mutation_failures(base_key)
@@ -751,6 +765,10 @@ class DeployTasks:
 
             await settle_fulfilled_requests(self.storage, task)
         revision = task["payload"].get("desired_revision")
+        if revision and task["state"] == "needs_attention" and not _may_have_written(task):
+            # Nothing was written: keep the target pending. The existing trigger
+            # holds it until an operator resolves the task, which yields a retry.
+            return
         if revision and await self._schedule_pre_mutation_retry(task):
             return
         if revision:
