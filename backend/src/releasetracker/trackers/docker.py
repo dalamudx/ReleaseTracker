@@ -36,7 +36,8 @@ _DEFAULT_REGISTRY = "registry-1.docker.io"
 _REGISTRY_MAX_REDIRECTS = 5
 _REGISTRY_PUSH_TIME_BUDGET_SECONDS = 5.0
 _REGISTRY_PUSH_TIME_REQUEST_LIMIT = 10
-_REGISTRY_MAX_TAG_PAGES = 100
+_REGISTRY_TAG_PAGE_SIZE = 1000
+_REGISTRY_MAX_TAG_PAGES = 1000
 # Matches both two-part (x.y) and three-part (x.y.z) numeric version tags,
 # with an optional suffix separated by '.' or '-'.
 # Group 1: major, Group 2: minor, Group 3: patch (optional), Group 4: suffix (optional)
@@ -345,7 +346,7 @@ class DockerTracker(BaseTracker):
 
     async def _fetch_tags(self, client: httpx.AsyncClient, bearer_token: str | None) -> list[str]:
         """Fetch all tags for an image"""
-        url = f"{self._registry_url()}/v2/{self.image}/tags/list"
+        url = f"{self._registry_url()}/v2/{self.image}/tags/list?n={_REGISTRY_TAG_PAGE_SIZE}"
         headers = self._get_auth_header(bearer_token)
         tags = []
 

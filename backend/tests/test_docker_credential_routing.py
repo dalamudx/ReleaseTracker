@@ -147,7 +147,9 @@ async def test_docker_allows_same_origin_metadata_redirect_with_credentials():
             httpx.Response(
                 307,
                 headers={"Location": "/v2/org/image/tags/list?canonical=1"},
-                request=httpx.Request("GET", "https://registry.example/v2/org/image/tags/list"),
+                request=httpx.Request(
+                    "GET", "https://registry.example/v2/org/image/tags/list?n=1000"
+                ),
             ),
             httpx.Response(
                 200,
@@ -163,7 +165,7 @@ async def test_docker_allows_same_origin_metadata_redirect_with_credentials():
     assert client.calls == [
         (
             "GET",
-            "https://registry.example/v2/org/image/tags/list",
+            "https://registry.example/v2/org/image/tags/list?n=1000",
             {"Authorization": "Basic dXNlcjpzZWNyZXQ="},
         ),
         (
@@ -185,7 +187,9 @@ async def test_docker_resolves_relative_pagination_from_current_page():
                 200,
                 json={"tags": ["v1"]},
                 headers={"Link": '<?last=v1>; rel="next"'},
-                request=httpx.Request("GET", "https://registry.example/v2/org/image/tags/list"),
+                request=httpx.Request(
+                    "GET", "https://registry.example/v2/org/image/tags/list?n=1000"
+                ),
             ),
             httpx.Response(
                 200,
@@ -199,7 +203,7 @@ async def test_docker_resolves_relative_pagination_from_current_page():
 
     assert await tracker._fetch_tags(client, None) == ["v1", "v2"]
     assert [call[1] for call in client.calls] == [
-        "https://registry.example/v2/org/image/tags/list",
+        "https://registry.example/v2/org/image/tags/list?n=1000",
         "https://registry.example/v2/org/image/tags/list?last=v1",
     ]
 
@@ -213,7 +217,9 @@ async def test_docker_rejects_pagination_loop():
                 200,
                 json={"tags": ["v1"]},
                 headers={"Link": '<?last=v1>; rel="next"'},
-                request=httpx.Request("GET", "https://registry.example/v2/org/image/tags/list"),
+                request=httpx.Request(
+                    "GET", "https://registry.example/v2/org/image/tags/list?n=1000"
+                ),
             ),
             httpx.Response(
                 200,
@@ -229,7 +235,7 @@ async def test_docker_rejects_pagination_loop():
     with pytest.raises(ValueError, match="pagination loop"):
         await tracker._fetch_tags(client, None)
     assert [call[1] for call in client.calls] == [
-        "https://registry.example/v2/org/image/tags/list",
+        "https://registry.example/v2/org/image/tags/list?n=1000",
         "https://registry.example/v2/org/image/tags/list?last=v1",
     ]
 
@@ -318,7 +324,9 @@ async def test_docker_pagination_page_limit_is_enforced(monkeypatch):
                 200,
                 json={"tags": ["v1"]},
                 headers={"Link": '<?page=2>; rel="next"'},
-                request=httpx.Request("GET", "https://registry.example/v2/org/image/tags/list"),
+                request=httpx.Request(
+                    "GET", "https://registry.example/v2/org/image/tags/list?n=1000"
+                ),
             ),
             httpx.Response(
                 200,
@@ -334,7 +342,7 @@ async def test_docker_pagination_page_limit_is_enforced(monkeypatch):
     with pytest.raises(ValueError, match="pagination exceeded limit"):
         await tracker._fetch_tags(client, None)
     assert [call[1] for call in client.calls] == [
-        "https://registry.example/v2/org/image/tags/list",
+        "https://registry.example/v2/org/image/tags/list?n=1000",
         "https://registry.example/v2/org/image/tags/list?page=2",
     ]
 
