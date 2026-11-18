@@ -1,12 +1,12 @@
 import { expect, test } from "@playwright/test"
 
 for (const width of [390, 1280]) {
-    test(`three task categories and processing default at ${width}px`, async ({ page }, testInfo) => {
+    test(`task type and state filters default to all at ${width}px`, async ({ page }, testInfo) => {
         await page.setViewportSize({ width, height: 900 })
         await page.addInitScript(() => { localStorage.setItem("language", "zh"); document.cookie = "releasetracker-csrf=fixture; path=/" })
         const states = ["queued", "awaiting_approval", "running", "retry_wait", "succeeded", "no_change", "skipped", "cancelled", "superseded", "failed", "needs_attention"]
         const base = { kind: "fetch", attempts: 0, max_retries: 3, due_at: 1789705000, created_at: 1789704900, updated_at: 1789705000, error_code: null, result: {}, target: {} }
-        const rows = states.map((state, i) => ({ ...base, id: 100 + i, state, target_label: `sample-${state}` }))
+        const rows = states.map((state, i) => ({ ...base, kind: i % 2 ? "deploy" : "fetch", id: 100 + i, state, target_label: `sample-${state}` }))
         const groups: Record<string, string[]> = { processing: states.slice(0, 4), completed: states.slice(4, 9), failed: states.slice(9) }
         const requests: string[] = []
         await page.route(url => url.pathname.startsWith("/api/"), async route => {
@@ -17,7 +17,8 @@ for (const width of [390, 1280]) {
             if (url.pathname === "/api/tasks") {
                 const category = url.searchParams.get("category")
                 if (category) requests.push(category)
-                const filtered = rows.filter(row => !category || groups[category].includes(row.state))
+                const kind = url.searchParams.get("kind")
+                const filtered = rows.filter(row => (!category || groups[category].includes(row.state)) && (!kind || row.kind === kind))
                 const offset = Number(url.searchParams.get("offset") ?? 0)
                 data = filtered.slice(offset, offset + Number(url.searchParams.get("limit") ?? 50))
                 headers["X-Total-Count"] = String(filtered.length)
@@ -26,9 +27,20 @@ for (const width of [390, 1280]) {
         })
         await page.goto("/tasks")
         const filter = page.getByRole("combobox", { name: "筛选任务", exact: true })
-        await expect(filter).toHaveText("处理中")
+        await expect(filter).toHaveText("全部状态")
+        const kind = page.getByRole("combobox", { name: "筛选任务类型" })
+        await expect(kind).toHaveText("全部类型")
         await expect(page.getByText("sample-awaiting_approval", { exact: true })).toBeVisible()
+        await expect(page.getByText("sample-failed", { exact: true })).toBeVisible()
+        await kind.click()
+        await page.getByRole("option", { name: "版本更新", exact: true }).click()
+        await expect(page.getByText("sample-queued", { exact: true })).toHaveCount(0)
+        await filter.click()
+        await page.getByRole("option", { name: "处理中", exact: true }).click()
+        await expect(page.getByText("sample-retry_wait", { exact: true })).toBeVisible()
         await expect(page.getByText("sample-failed", { exact: true })).toHaveCount(0)
+        await kind.click()
+        await page.getByRole("option", { name: "全部类型", exact: true }).click()
         await filter.click()
         await expect(page.getByRole("option")).toHaveText(["全部状态", "处理中", "已完成", "失败"])
         await page.getByRole("option", { name: "失败", exact: true }).click()
@@ -53,7 +65,7 @@ for (const width of [390, 1280]) {
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
         await page.screenshot({ path: testInfo.outputPath("task-categories.png") })
         await page.reload()
-        await expect(filter).toHaveText("处理中")
+        await expect(filter).toHaveText("全部状态")
     })
 }
 

@@ -19,7 +19,7 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 function createTask(id: number, state: QueueTask["state"], target_label: string): QueueTask {
     return {
         id,
-        kind: "fetch",
+        kind: "deploy",
         state,
         target_label,
         attempts: 1,
@@ -320,8 +320,8 @@ describe("TaskNotificationPopover", () => {
         expect(screen.getByText("查看全部任务")).toBeVisible()
     })
 
-    it("displays empty state when no recent tasks exist", async () => {
-        vi.mocked(api.getTasks).mockResolvedValue([])
+    it("displays the empty state when only fetch tasks exist", async () => {
+        vi.mocked(api.getTasks).mockResolvedValue([{ ...createTask(1, "failed", "hidden-fetch"), kind: "fetch" }])
 
         renderPopover()
 

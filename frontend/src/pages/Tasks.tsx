@@ -573,7 +573,8 @@ export default function TasksPage() {
         enabled: linkedTaskId !== null,
         refetchInterval: 5000,
     })
-    const [state, setState] = useState<string>("processing")
+    const [state, setState] = useState("all")
+    const [kind, setKind] = useState("all")
     const [search, setSearch] = useState("")
     const [debouncedSearch, setDebouncedSearch] = useState("")
     const [page, setPage] = useState(1)
@@ -598,16 +599,20 @@ export default function TasksPage() {
     })
     const skip = (page - 1) * pageSize
     const tasks = useQuery({
-        queryKey: ["tasks", "page", { state, skip, limit: pageSize, search: debouncedSearch }],
+        queryKey: ["tasks", "page", { state, kind, skip, limit: pageSize, search: debouncedSearch }],
         queryFn: () => api.getTaskPage({
             category: state === "all" ? undefined : state,
+            kind: kind === "all" ? undefined : kind,
             offset: skip,
             limit: pageSize,
             search: debouncedSearch || undefined,
         }),
         refetchInterval: 5000,
         // Keep the current rows while the next page loads instead of flashing a spinner.
-        placeholderData: (previous, query) => (query?.queryKey[2] as { state?: string })?.state === state ? previous : undefined,
+        placeholderData: (previous, query) => {
+            const filters = query?.queryKey[2] as { state?: string; kind?: string } | undefined
+            return filters?.state === state && filters.kind === kind ? previous : undefined
+        },
     })
 
     const pageTasks = tasks.data?.items ?? []
@@ -660,6 +665,16 @@ export default function TasksPage() {
                         </InputGroup>
                     </div>
 
+                    <Select value={kind} onValueChange={(value) => { setKind(value); setPage(1) }}>
+                        <SelectTrigger className="h-9 min-w-0 w-full sm:w-40 sm:flex-none" aria-label={t("tasks.filterKind")}>
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">{t("tasks.allKinds")}</SelectItem>
+                            <SelectItem value="fetch">{t("tasks.kind.fetch")}</SelectItem>
+                            <SelectItem value="deploy">{t("tasks.versionUpdate")}</SelectItem>
+                        </SelectContent>
+                    </Select>
                     <Select
                         value={state}
                         onValueChange={(value) => {

@@ -14,6 +14,7 @@ async def test_categories_partition_states_and_paginate_on_server(storage, authe
         for state in states:
             task = await enqueue(
                 storage,
+                kind="deploy" if state == "failed" else "fetch",
                 resource_key=f"tracker:{state}",
                 dedupe_key=state,
                 target_label=f"sample-{state}",
@@ -41,6 +42,13 @@ async def test_categories_partition_states_and_paginate_on_server(storage, authe
         assert {row["state"] for row in rows + rest} == set(states)
         assert await storage.tasks.count(category=category, search="sample-") == len(states)
         assert await storage.tasks.count(category=category, search="absent") == 0
+    for kind in ("deploy", "fetch"):
+        response = authed_client.get(
+            "/api/tasks", params={"kind": kind, "category": "failed", "include_total": True}
+        )
+        rows = response.json()
+        assert len(rows) == int(response.headers["x-total-count"]) == 1
+        assert all(row["kind"] == kind for row in rows)
     # Existing exact-state queries and unfiltered notification requests stay compatible.
     assert len(authed_client.get("/api/tasks").json()) == len(seen)
     assert (await storage.tasks.list(state="awaiting_approval"))[0]["approval_pending"]

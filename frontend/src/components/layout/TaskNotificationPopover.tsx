@@ -28,7 +28,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { isClearableNotification, isDismissedNotification, isUnreadTask, useTaskNotificationRead } from "@/hooks/use-task-notification-read"
-import { getAllTaskNotifications, TASK_NOTIFICATION_PAGE_SIZE } from "@/lib/task-notifications"
+import { getAllTaskNotifications, isNotificationTask, TASK_NOTIFICATION_PAGE_SIZE } from "@/lib/task-notifications"
 
 function getKindIcon(kind: QueueTask["kind"]) {
     switch (kind) {
@@ -109,7 +109,7 @@ export function TaskNotificationPopover() {
         for (const task of tasksQuery.data ?? []) byId.set(task.id, task)
         return [...byId.values()].sort((a, b) => b.id - a.id)
     }, [tasksQuery.data, olderTasks])
-    const tasks = useMemo(() => loadedTasks.filter(task => !isDismissedNotification(task, dismissed)), [loadedTasks, dismissed])
+    const tasks = useMemo(() => loadedTasks.filter(task => isNotificationTask(task) && !isDismissedNotification(task, dismissed)), [loadedTasks, dismissed])
     const recentTasks = tasks.slice(0, visibleCount)
     const hasOlder = !olderExhausted && (tasksQuery.data?.length ?? 0) >= TASK_NOTIFICATION_PAGE_SIZE
     const loadMore = useMutation({
@@ -235,7 +235,7 @@ export function TaskNotificationPopover() {
                         <div role="alert" className="px-3 py-8 text-center text-xs text-destructive">
                             {t("tasks.loadFailed")}
                         </div>
-                    ) : recentTasks.length === 0 ? (
+                    ) : recentTasks.length === 0 && !hasOlder ? (
                         <div className="py-8 text-center text-xs text-muted-foreground">
                             {t("tasks.noRecentTasks")}
                         </div>

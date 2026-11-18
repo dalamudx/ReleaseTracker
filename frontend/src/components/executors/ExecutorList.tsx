@@ -283,7 +283,7 @@ export function ExecutorList({
                                     </TableCell>
 
                                     {/* Status column — compact badge + mode. */}
-                                    <TableCell className="hidden py-3 align-top sm:table-cell">
+                                    <TableCell className="hidden py-3 sm:table-cell">
                                         <div className="space-y-1">
                                             <div className="flex flex-wrap items-center gap-1.5">
                                                 {hasError ? (
@@ -319,7 +319,7 @@ export function ExecutorList({
                                     </TableCell>
 
                                     {/* Last-run timestamp. */}
-                                    <TableCell className="hidden py-3 align-top text-xs text-muted-foreground lg:table-cell">
+                                    <TableCell className="hidden py-3 text-xs text-muted-foreground lg:table-cell">
                                         {lastRunAt ? (
                                             <span
                                                 className="whitespace-nowrap tabular-nums"

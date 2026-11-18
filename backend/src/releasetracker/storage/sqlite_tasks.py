@@ -276,7 +276,7 @@ class TaskStore:
             return cursor.rowcount
 
     @staticmethod
-    def _visible_filter(*, before=None, state=None, search=None, category=None):
+    def _visible_filter(*, before=None, state=None, search=None, category=None, kind=None):
         """Shared WHERE clause so the page rows and the total use identical filters."""
         effective_state = "CASE WHEN approval_pending=1 AND state='queued' THEN 'awaiting_approval' ELSE state END"
         query = (search or "").strip().lower() or None
@@ -288,6 +288,9 @@ class TaskStore:
             " OR instr(lower(coalesce(error_code, '')), ?) > 0 OR instr(CAST(id AS TEXT), ?) > 0)"
         )
         params = (before, before, state, state, query, *([query] * 6))
+        if kind is not None:
+            clause += " AND kind=?"
+            params += (kind,)
         if category is not None:
             values = TASK_CATEGORIES[category]
             clause += f" AND {effective_state} IN ({','.join('?' for _ in values)})"
@@ -295,11 +298,11 @@ class TaskStore:
         return clause, params
 
     async def list(
-        self, *, limit=50, before=None, state=None, offset=0, search=None, category=None
+        self, *, limit=50, before=None, state=None, offset=0, search=None, category=None, kind=None
     ):
         db = await self.storage._get_connection()
         clause, params = self._visible_filter(
-            before=before, state=state, search=search, category=category
+            before=before, state=state, search=search, category=category, kind=kind
         )
         rows = await (
             await db.execute(
@@ -309,10 +312,10 @@ class TaskStore:
         ).fetchall()
         return [decode(row) for row in rows]
 
-    async def count(self, *, before=None, state=None, search=None, category=None):
+    async def count(self, *, before=None, state=None, search=None, category=None, kind=None):
         db = await self.storage._get_connection()
         clause, params = self._visible_filter(
-            before=before, state=state, search=search, category=category
+            before=before, state=state, search=search, category=category, kind=kind
         )
         row = await (
             await db.execute(f"SELECT COUNT(*) FROM tasks WHERE {clause}", params)

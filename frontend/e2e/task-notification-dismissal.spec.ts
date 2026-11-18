@@ -7,7 +7,7 @@ for (const [language, width] of [["zh", 390], ["en", 1280]] as const) {
             document.cookie = "releasetracker-csrf=isolated-fixture; path=/"
             localStorage.setItem("language", language)
         }, language)
-        const base = { kind: "fetch", attempts: 1, max_retries: 3, created_at: 1789704900, updated_at: 1789705000, due_at: 1789705000, result: {}, target: {}, error_code: null }
+        const base = { kind: "deploy", attempts: 1, max_retries: 3, created_at: 1789704900, updated_at: 1789705000, due_at: 1789705000, result: {}, target: {}, error_code: null }
         const tasks = [
             { ...base, id: 7, state: "succeeded", target_label: "recent-result-7" },
             { ...base, id: 6, state: "failed", target_label: "recent-result-6" },
@@ -16,6 +16,7 @@ for (const [language, width] of [["zh", 390], ["en", 1280]] as const) {
             { ...base, id: 3, state: "running", target_label: "protected-running" },
             { ...base, id: 2, state: "succeeded", target_label: "older-unseen-2" },
             { ...base, id: 1, state: "succeeded", target_label: "older-unseen-1" },
+            { ...base, id: 8, kind: "fetch", state: "failed", target_label: "hidden-fetch" },
         ]
         const queueWrites: string[] = []
         const errors: string[] = []
@@ -35,6 +36,7 @@ for (const [language, width] of [["zh", 390], ["en", 1280]] as const) {
         await bell.click()
         const popup = page.locator('[data-slot="popover-content"]')
         await expect(popup.getByText("recent-result-7", { exact: true })).toBeVisible()
+        await expect(popup.getByText("hidden-fetch", { exact: true })).toHaveCount(0)
         await expect(popup.getByText("older-unseen-2", { exact: true })).toBeVisible()
         const clear = popup.getByRole("button", { name: language === "zh" ? "清理最近任务" : "Clear recent tasks", exact: true })
         await expect(clear).toBeEnabled()

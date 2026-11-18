@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 
 [manifest]
@@ -1057,7 +1057,7 @@ wheels = [
 
 [[package]]
 name = "releasetracker"
-version = "1.1.17"
+version = "1.1.18"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
