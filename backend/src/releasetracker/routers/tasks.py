@@ -63,12 +63,20 @@ async def list_tasks(
     # for the total, so the 5 s notification poll does not pay for a COUNT scan.
     if include_total:
         response.headers["X-Total-Count"] = str(
-            await storage.tasks.count(before=before, state=state, search=search, category=category, kind=kind)
+            await storage.tasks.count(
+                before=before, state=state, search=search, category=category, kind=kind
+            )
         )
     return [
         public_task(task)
         for task in await storage.tasks.list(
-            limit=limit, before=before, state=state, offset=offset, search=search, category=category, kind=kind
+            limit=limit,
+            before=before,
+            state=state,
+            offset=offset,
+            search=search,
+            category=category,
+            kind=kind,
         )
     ]
 

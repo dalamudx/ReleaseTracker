@@ -84,7 +84,8 @@ jobs:
   e2e:
     # Runs beside lint/unit tests instead of after them; it is the longest frontend path.
     name: Browser E2E
-    runs-on: ubuntu-latest
+    # Playwright 1.58 provides Chromium and system dependencies for Ubuntu 24.04.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd

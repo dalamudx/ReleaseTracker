@@ -96,8 +96,11 @@ async def test_unorderable_tags_remain_in_history_without_target(storage):
 )
 async def test_channel_regex_notice(storage, tags, include, exclude, reason):
     channel = ReleaseChannel(
-        release_channel_key="stable", name="stable", type="release",
-        include_pattern=include, exclude_pattern=exclude,
+        release_channel_key="stable",
+        name="stable",
+        type="release",
+        include_pattern=include,
+        exclude_pattern=exclude,
     )
     tracker, source = await setup(storage, channels=[channel])
     await selection.save_candidates(storage, source, [release(tag) for tag in tags], commit=True)

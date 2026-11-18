@@ -44,7 +44,8 @@ for (const width of [1280, 390]) {
         await page.getByRole("button", {name: "任务动态", exact: true}).click()
         const popover = page.locator('[data-slot="popover-content"]')
         await expect(popover.getByText("finished-job", {exact: true})).toHaveCount(0)
-        await expect(popover.getByText("active-job", {exact: true})).toBeVisible()
+        await expect(popover.getByText("protected-job", {exact: true})).toBeVisible()
+        await expect(popover.getByText("active-job", {exact: true})).toHaveCount(0)
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
         expect(errors).toEqual([])
     })
@@ -54,7 +55,7 @@ for (const width of [1280, 390]) {
         await page.addInitScript(() => document.cookie = "releasetracker-csrf=fixture-csrf; path=/")
         const errors: string[] = []
         page.on("pageerror", error => errors.push(error.message))
-        const task = { id: 18, kind: "fetch", state: "running", target_label: "header-smoke", attempts: 1, max_retries: 3, due_at: 1789705000, created_at: 1789704900, updated_at: 1789705000, error_code: null, result: {}, target: { tracker_name: "header-smoke" }, attempt_history: [], triggers: [{ trigger_mode: "webhook", created_at: 1789704900 }] }
+        const task = { id: 18, kind: "deploy", state: "running", target_label: "header-smoke", attempts: 1, max_retries: 3, due_at: 1789705000, created_at: 1789704900, updated_at: 1789705000, error_code: null, result: {}, target: { tracker_name: "header-smoke" }, attempt_history: [], triggers: [{ trigger_mode: "webhook", created_at: 1789704900 }] }
         await page.route(url => new URL(url).pathname.startsWith("/api/"), async route => {
             const path = new URL(route.request().url()).pathname
             let data: unknown = {}
