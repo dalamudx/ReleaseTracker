@@ -512,6 +512,7 @@ class ExecutorNotificationOutbox:
                     else None
                 )
                 notifier = build_notifier(
+                    settings_store=self.storage,
                     notifier_type=item.type,
                     name=item.name,
                     url=item.url,

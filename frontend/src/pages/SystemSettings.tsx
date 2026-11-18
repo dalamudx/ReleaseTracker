@@ -1,6 +1,6 @@
 import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type RefObject } from "react"
 import { READINESS_FIELDS } from "@/lib/readiness"
-import { Activity, AlertTriangle, Archive, Clock3, Database, Globe, KeyRound, Layers, Link2, RotateCcw, RotateCw, Save, Settings2, Tag, Zap } from "lucide-react"
+import { Activity, AlertTriangle, Archive, Clock3, Database, Globe, KeyRound, Layers, Link2, Network, Plus, RotateCcw, RotateCw, Save, Settings2, Tag, Trash2, Zap } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { useTranslation } from "react-i18next"
@@ -66,6 +66,7 @@ export const SYSTEM_BASE_URL_SETTING_KEY = "system.base_url"
 export const SYSTEM_RELEASE_HISTORY_RETENTION_COUNT_SETTING_KEY = "system.release_history_retention_count"
 export const SYSTEM_EXECUTOR_SNAPSHOT_RETENTION_COUNT_SETTING_KEY = "system.executor_snapshot_retention_count"
 export const SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY = "system.oci_registry_redirects_enabled"
+const WEBHOOK_FAKE_IP_SETTING = "system.webhook_fake_ip_cidrs"
 export const SYSTEM_BACKUP_RETENTION_SETTING_KEY = "system.backup_retention"
 export const SYSTEM_BACKUP_INTERVAL_HOURS_SETTING_KEY = "system.backup_interval_hours"
 
@@ -941,6 +942,14 @@ export function SystemSettingsPage() {
         const value = settings.find((item) => item.key === SYSTEM_BASE_URL_SETTING_KEY)?.value
         return typeof value === "string" ? value.trim() : ""
     }, [settings])
+    const [fakeIpDraft, setFakeIpDraft] = useState<string[] | null>(null)
+    const [fakeIpError, setFakeIpError] = useState(false)
+    const savedCidrs = settings.find((item) => item.key === WEBHOOK_FAKE_IP_SETTING)?.value ?? ""
+    const fakeIpCidrs = fakeIpDraft ?? (typeof savedCidrs === "string" && savedCidrs ? savedCidrs.split("\n") : [])
+    const editCidrs = (values: string[]) => {
+        setFakeIpError(false)
+        setFakeIpDraft(values)
+    }
     const currentOciRegistryRedirectsEnabled = useMemo(() => {
         const value = settings.find(
             (item) => item.key === SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY,
@@ -1070,6 +1079,15 @@ export function SystemSettingsPage() {
         }
 
         try {
+            if (fakeIpDraft !== null) {
+                try {
+                    await updateSetting.mutateAsync({ key: WEBHOOK_FAKE_IP_SETTING, value: fakeIpDraft.map((cidr) => cidr.trim()).filter(Boolean).join("\n") })
+                } catch (error) {
+                    if ((error as { response?: { status?: number } })?.response?.status !== 400) throw error
+                    setFakeIpError(true)
+                    return
+                }
+            }
             // Backup changes share an operation lock: save sequentially, and only
             // dirty keys. Unrelated global options keep their existing batching.
             if (backupRetentionDraft !== null && String(parsedBackupRetention) !== currentBackupRetention) {
@@ -1117,6 +1135,7 @@ export function SystemSettingsPage() {
             setLogLevelDraft(null)
             setBaseUrlDraft(null)
             setOciRegistryRedirectsEnabledDraft(null)
+            setFakeIpDraft(null)
             setReleaseHistoryCountDraft(null)
             setSnapshotHistoryCountDraft(null)
             setBackupRetentionDraft(null)
@@ -1269,6 +1288,31 @@ export function SystemSettingsPage() {
                                     baseUrl={baseUrl}
                                     onBaseUrlChange={setBaseUrlDraft}
                                 />
+                                <fieldset className="min-w-0 space-y-2 py-4" aria-describedby="fake-ip-help">
+                                    <legend className="float-left flex w-full items-center gap-3 text-sm font-semibold">
+                                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                                            <Network className="h-4 w-4" aria-hidden="true" />
+                                        </span>
+                                        {t("systemSettings.global.fakeIp.title")}
+                                    </legend>
+                                    <p id="fake-ip-help" className="clear-both text-xs text-muted-foreground">{t("systemSettings.global.fakeIp.help")}</p>
+                                    {fakeIpCidrs.map((cidr, index) => (
+                                        <div key={index} className="flex items-center gap-2">
+                                            <Input aria-label={`CIDR ${index + 1}`} placeholder="198.18.0.0/15" value={cidr}
+                                                onChange={(event) => editCidrs(fakeIpCidrs.map((value, i) => i === index ? event.target.value : value))} />
+                                            <Button type="button" variant="ghost" size="sm" aria-label={`${t("systemSettings.global.fakeIp.remove")} ${cidr || index + 1}`}
+                                                onClick={() => editCidrs(fakeIpCidrs.filter((_, i) => i !== index))}>
+                                                <Trash2 className="h-4 w-4" aria-hidden="true" />
+                                                {t("systemSettings.global.fakeIp.remove")}
+                                            </Button>
+                                        </div>
+                                    ))}
+                                    {fakeIpError && <p role="alert" className="text-xs text-destructive">{t("systemSettings.global.fakeIp.invalid")}</p>}
+                                    <Button type="button" variant="outline" size="sm" onClick={() => editCidrs([...fakeIpCidrs, ""])}>
+                                        <Plus className="h-4 w-4" aria-hidden="true" />
+                                        {t("systemSettings.global.fakeIp.add")}
+                                    </Button>
+                                </fieldset>
                                 <TimezoneSettingItem
                                     timezone={timezone}
                                     timezoneOptions={timezoneOptions}

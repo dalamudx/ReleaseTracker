@@ -27,6 +27,7 @@ def build_notifier(
     template: dict | None = None,
     detail_url: str | None = None,
     timezone: str | None = None,
+    settings_store=None,
 ) -> BaseNotifier:
     common = {
         "name": name,
@@ -36,6 +37,7 @@ def build_notifier(
         "template": template if template is not None else builtin(),
         "detail_url": detail_url,
         "timezone": timezone,
+        "settings_store": settings_store,
     }
     if notifier_type == "webhook":
         return WebhookNotifier(**common)

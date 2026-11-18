@@ -14,14 +14,14 @@
       "title": "系统备份保留份数",
       "scopeBadge": "系统全量灾备",
       "label": "保留最近备份数量",
-      "description": "保存在数据目录 backups 下的整机灾备 ZIP 归档保留份数（1–100）。新备份成功并校验通过后自动清理旧归档。",
+      "description": "新备份校验通过后，自动清理 backups 目录中超出保留份数的归档（1–100 份）。",
       "invalid": "请输入 1 到 100 之间的整数。"
     },
     "backupInterval": {
       "title": "系统自动备份周期",
       "scopeBadge": "定时任务",
       "label": "自动备份周期（小时）",
-      "description": "系统全量灾备归档的自动执行周期（小时）。0 为关闭自动备份（仅手动创建）；常见如 24（每天）、168（每周），最大 8760（1 年）。",
+      "description": "24 小时为每天，168 小时为每周，最长 8760 小时。设为 0 时仅手动备份。",
       "invalid": "请输入 0 到 8760 之间的整数（0 为关闭）。"
     },
     "backup": {
@@ -43,7 +43,7 @@
     "timezone": {
       "title": "时区",
       "label": "系统时区",
-      "description": "执行器维护窗口和统计图表统一使用这里配置的 IANA 时区，例如 Asia/Shanghai。"
+      "description": "维护窗口和统计图表使用此时区。"
     },
     "logLevel": {
       "title": "日志级别",
@@ -54,7 +54,7 @@
       "title": "发布渠道版本历史",
       "scopeBadge": "发布渠道",
       "label": "每个发布渠道保留版本数",
-      "description": "各发布渠道从上游发现的新版本抓取记录。每个渠道保留最新 N 条；每天 02:00 或维护窗口结束后自动清理。",
+      "description": "每个渠道保留最近的版本。旧记录在每天 02:00 或维护窗口结束后清理。",
       "invalid": "请输入 1 到 1000 之间的整数。",
       "cleanupSuccess": "版本历史清理完成，已删除 {{count}} 条记录。"
     },
@@ -62,7 +62,7 @@
       "title": "执行器运行态快照",
       "scopeBadge": "执行器",
       "label": "每个执行器保留快照数",
-      "description": "各执行器在部署前后捕获的容器实际运行配置与镜像标签。每个执行器保留最新 N 次快照；生成新快照后自动裁剪超出部分。",
+      "description": "快照记录部署前后的运行配置和镜像标签。保存新快照时清理旧快照。",
       "invalid": "请输入 1 到 1000 之间的整数。",
       "cleanupSuccess": "快照历史清理完成，已删除 {{count}} 个快照。"
     },
@@ -70,12 +70,18 @@
       "cleanNow": "立即清理",
       "cleaning": "清理中..."
     },
+    "fakeIp": {
+      "title": "受信任的 IP 网段",
+      "help": "支持 IPv4 和 IPv6（CIDR），留空则使用默认规则。",
+      "add": "添加网段", "remove": "移除网段",
+      "invalid": "网段格式有误，或包含受保护地址。"
+    },
     "ociRegistryRedirects": {
       "title": "OCI 镜像仓库跳转",
       "label": "启用镜像仓库跳转兼容",
-      "description": "仅在你的镜像仓库需要通过跳转访问标签、manifest、token 或 blob 时开启。",
-      "enabledHint": "跳转兼容已启用，后续开始的容器源检查会使用该策略。",
-      "disabledHint": "跳转支持已关闭。镜像仓库返回跳转时会在跟随前被拒绝。"
+      "description": "镜像仓库需要重定向时开启。",
+      "enabledHint": "下次容器来源检查时跟随跳转。",
+      "disabledHint": "遇到跳转时拒绝请求。"
     },
     "sections": {
       "basic": {

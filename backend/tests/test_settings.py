@@ -347,6 +347,24 @@ async def test_base_url_setting_rejects_invalid_values(authed_client, value):
     assert response.status_code == 400, response.text
 
 
+def test_webhook_fake_ip_cidrs_settings(authed_client):
+    key = "system.webhook_fake_ip_cidrs"
+
+    def stored():
+        return next(s["value"] for s in authed_client.get("/api/settings").json() if s["key"] == key)
+
+    assert stored() == ""
+    cidrs = "198.18.0.0/24\nfd12::/48"
+    for value, expected in [(cidrs + "\n198.18.0.0/24", cidrs), ("", "")]:
+        response = authed_client.post("/api/settings", json={"key": key, "value": value})
+        assert response.status_code == 200
+        assert stored() == expected
+        for invalid in ("example.com", "198.18.0.1/24", "127.0.0.0/8", "fd00:ec2::/64", "0.0.0.0/0"):
+            response = authed_client.post("/api/settings", json={"key": key, "value": invalid})
+            assert response.status_code == 400
+            assert stored() == expected
+
+
 @pytest.mark.asyncio
 async def test_runtime_setting_helpers_fall_back_to_defaults(storage):
     assert await storage.get_system_timezone() == DEFAULT_SYSTEM_TIMEZONE

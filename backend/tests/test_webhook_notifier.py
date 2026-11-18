@@ -127,13 +127,14 @@ async def test_webhook_delivery_uses_shared_outbound_client(monkeypatch):
             "POST",
             "https://hooks.example/events",
             {
+                "fake_ip_cidrs": (),
                 "json_body": {
                     "event": "new_release",
                     "message": "[new_release] Notification received",
                     "content": "[new_release] Notification received",
                     "text": "[new_release] Notification received",
                     "data": {"ok": True},
-                }
+                },
             },
         )
     ]

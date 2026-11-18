@@ -161,6 +161,7 @@ class DeploymentAdmissionNotificationOutbox:
             else:
                 system_tz = await self.storage.get_system_timezone()
                 notifier = build_notifier(
+                    settings_store=self.storage,
                     notifier_type=item.type,
                     name=item.name,
                     url=item.url,

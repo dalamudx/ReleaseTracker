@@ -13,6 +13,7 @@ Manage instance configuration under **System Settings**. Changes apply immediate
 | BASE URL | Empty; non-empty values must be canonical absolute HTTPS URLs | Notification links, frontend base path, OIDC callbacks and repository webhook endpoints; include any sub-path |
 | Time zone | `UTC`; valid IANA zone such as `Asia/Shanghai` | Date display, maintenance windows and times in notification messages |
 | Log level | `INFO`; `DEBUG/INFO/WARNING/ERROR` | Backend log verbosity |
+| Trusted IP ranges | Empty by default. Add IPv4 or IPv6 CIDRs individually. | Use the pool routed by your fake-IP proxy, e.g. `198.18.0.0/15`. HTTPS notifications accept DNS answers in these ranges and verify the certificate against the original hostname. Clear and save to restore the default rules. |
 | OCI registry redirects | Disabled | Enable only when a registry serves content through redirects; redirects still pass security checks |
 | Readiness defaults | See [Health checks](../guides/health-and-rollback.md#health-checks) | Used when an executor does not override them |
 | Release channel history | 20; 1–1000 | Version records kept per release channel |

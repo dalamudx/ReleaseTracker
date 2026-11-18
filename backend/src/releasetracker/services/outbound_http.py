@@ -22,6 +22,8 @@ ALLOWED_OUTBOUND_PORTS: dict[str, frozenset[int]] = {
     "https": frozenset({443, 8443, 9443}),
 }
 DEFAULT_MAX_RESPONSE_BYTES = 65_536
+WEBHOOK_FAKE_IP_SETTING = "system.webhook_fake_ip_cidrs"
+IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
 _MAX_HEADER_BYTES = 32_768
 _MAX_HEADER_LINE_BYTES = 8_192
 _HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
@@ -42,6 +44,29 @@ _METADATA_HOSTNAMES = frozenset(
         "instance-data.ec2.internal",
     }
 )
+
+
+def parse_fake_ip_cidrs(value: str) -> tuple[IPNetwork, ...]:
+    protected = (
+        "0.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "240.0.0.0/4",
+        "::/96", "::ffff:0:0/96", "64:ff9b::/96", "64:ff9b:1::/48", "2002::/16",
+        "fe80::/10", "ff00::/8",
+    )
+    networks = []
+    for entry in value.splitlines():
+        entry = entry.strip()
+        if not entry:
+            continue
+        if "/" not in entry or "%" in entry:
+            raise ValueError("Enter a network in CIDR notation")
+        network = ipaddress.ip_network(entry)
+        if any(network.overlaps(ipaddress.ip_network(p)) for p in protected) or any(
+            address in network for address in _METADATA_ADDRESSES
+        ):
+            raise ValueError("CIDR overlaps a protected destination")
+        if network not in networks:
+            networks.append(network)
+    return tuple(networks)
 
 
 class OutboundHTTPError(RuntimeError):
@@ -125,10 +150,13 @@ class OutboundHTTPClient:
         json_body: Any | None = None,
         verify_tls: bool = True,
         max_response_bytes: int | None = None,
+        fake_ip_cidrs: tuple[IPNetwork, ...] = (),
     ) -> OutboundResponse:
         try:
             async with asyncio.timeout(self.timeouts.total):
-                destination = await validate_outbound_url(url)
+                destination = await validate_outbound_url(
+                    url, fake_ip_cidrs=fake_ip_cidrs if verify_tls else ()
+                )
                 return await self._request_validated(
                     method=method,
                     destination=destination,
@@ -240,7 +268,9 @@ class OutboundHTTPClient:
             raise OutboundConnectError("connection to validated destination failed") from exc
 
 
-async def validate_outbound_url(url: str) -> _ValidatedDestination:
+async def validate_outbound_url(
+    url: str, *, fake_ip_cidrs: tuple[IPNetwork, ...] = ()
+) -> _ValidatedDestination:
     """Validate a URL, all DNS answers, and return a connection-pinned destination."""
     if not isinstance(url, str) or not url or len(url) > 4_096:
         raise OutboundURLRejected("outbound URL is missing or too long")
@@ -275,7 +305,9 @@ async def validate_outbound_url(url: str) -> _ValidatedDestination:
     if effective_port not in ALLOWED_OUTBOUND_PORTS[scheme]:
         raise OutboundURLRejected("outbound URL port is not allowed")
 
-    addresses = await _resolve_public_addresses(hostname, effective_port)
+    if scheme != "https" or not re.fullmatch(r"(?:[a-z0-9-]+\.)+[a-z][a-z0-9-]*", hostname):
+        fake_ip_cidrs = ()
+    addresses = await _resolve_public_addresses(hostname, effective_port, fake_ip_cidrs)
     path = quote(parsed.path or "/", safe="/%:@!$&'()*+,;=-._~")
     query = quote(parsed.query, safe="=&?/:@!$'()*+,;%-._~")
     request_target = f"{path}?{query}" if query else path
@@ -294,7 +326,9 @@ async def validate_outbound_url(url: str) -> _ValidatedDestination:
     )
 
 
-async def _resolve_public_addresses(hostname: str, port: int) -> tuple[str, ...]:
+async def _resolve_public_addresses(
+    hostname: str, port: int, fake_ip_cidrs: tuple[IPNetwork, ...]
+) -> tuple[str, ...]:
     try:
         infos = await asyncio.get_running_loop().getaddrinfo(
             hostname,
@@ -312,7 +346,9 @@ async def _resolve_public_addresses(hostname: str, port: int) -> tuple[str, ...]
             address = ipaddress.ip_address(raw_address)
         except ValueError as exc:
             raise OutboundDNSFailure("outbound DNS returned an invalid address") from exc
-        if not _is_allowed_address(address):
+        if not _is_allowed_address(address) and not (
+            any(address in network for network in fake_ip_cidrs)
+        ):
             raise OutboundURLRejected("outbound destination resolves to a prohibited address")
         normalized = str(address)
         if normalized not in addresses:

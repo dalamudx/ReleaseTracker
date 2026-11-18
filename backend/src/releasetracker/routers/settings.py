@@ -32,6 +32,7 @@ from ..storage.sqlite import (
 )
 from ..dependencies import get_current_admin_user, get_system_key_manager
 from ..services.secure_urls import require_canonical_https_base_url
+from ..services.outbound_http import WEBHOOK_FAKE_IP_SETTING, parse_fake_ip_cidrs
 from ..services.system_keys import SystemKeyManager, rotate_encryption_key, rotate_jwt_secret
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -161,6 +162,11 @@ async def _build_security_keys_status(
 def _normalize_setting_value(key: str, value: str) -> str:
     normalized_value = str(value).strip()
 
+    if key == WEBHOOK_FAKE_IP_SETTING:
+        try:
+            return "\n".join(map(str, parse_fake_ip_cidrs(value)))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
     if key in BACKUP_DEFAULTS:
         try:
             return normalize_backup_setting(key, value)
@@ -410,6 +416,7 @@ async def get_settings(
     for key, default in BACKUP_DEFAULTS.items():
         settings.setdefault(key, (default, None))
     settings.setdefault(FETCH_RETRY_SETTING, (str(DEFAULT_FETCH_RETRIES), None))
+    settings.setdefault(WEBHOOK_FAKE_IP_SETTING, ("", None))
     for field, default in READINESS_DEFAULTS.items():
         settings.setdefault(f"system.{field}", (str(default), None))
     oci_redirects_setting = settings.get(SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY)

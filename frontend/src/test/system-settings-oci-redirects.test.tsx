@@ -104,6 +104,16 @@ describe("SystemSettingsPage OCI registry redirects", () => {
     rotateJwtSecretMock.mockReset()
   })
 
+  it("adds, edits and removes fake-IP ranges before saving", async () => {
+    const key = "system.webhook_fake_ip_cidrs"
+    renderPage([{ key, value: "198.18.0.0/24\n198.19.0.0/24" }])
+    fireEvent.click(screen.getByRole("button", { name: "systemSettings.global.fakeIp.remove 198.19.0.0/24" }))
+    fireEvent.click(screen.getByRole("button", { name: "systemSettings.global.fakeIp.add" }))
+    fireEvent.change(screen.getByLabelText("CIDR 2"), { target: { value: "fd12::/48" } })
+    expect(updateSettingMock).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }))
+    await waitFor(() => expect(updateSettingMock).toHaveBeenCalledWith({ key, value: "198.18.0.0/24\nfd12::/48" }))
+  })
   it("loads persisted backup options, rejects invalid input and saves dirty keys sequentially", async () => {
     renderPage([{key:"system.backup_retention",value:"9"},{key:"system.backup_interval_hours",value:"24"}])
     expect(screen.getByLabelText("systemSettings.global.backupRetention.label")).toHaveValue(9)

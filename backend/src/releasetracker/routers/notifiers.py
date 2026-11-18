@@ -166,6 +166,7 @@ async def test_notifier(
 
     system_tz = await storage.get_system_timezone()
     delivered = await build_notifier(
+        settings_store=storage,
         notifier_type=notifier.type,
         name=notifier.name,
         url=notifier.url,

@@ -147,7 +147,7 @@ async def test_outbound_client_rejects_redirect_without_following(monkeypatch):
         addresses=("93.184.216.34",),
     )
 
-    async def fake_validate(url: str):
+    async def fake_validate(url: str, **kwargs):
         del url
         return destination
 
@@ -189,7 +189,7 @@ async def test_outbound_client_caps_streamed_response_body(monkeypatch):
         addresses=("93.184.216.34",),
     )
 
-    async def fake_validate(url: str):
+    async def fake_validate(url: str, **kwargs):
         del url
         return destination
 
@@ -224,7 +224,7 @@ async def test_outbound_client_enforces_read_timeout(monkeypatch):
         addresses=("93.184.216.34",),
     )
 
-    async def fake_validate(url: str):
+    async def fake_validate(url: str, **kwargs):
         del url
         return destination
 
@@ -244,3 +244,53 @@ async def test_outbound_client_enforces_read_timeout(monkeypatch):
         await client.request("GET", "http://service.example/slow")
 
     assert writer.closed is True
+
+
+@pytest.mark.asyncio
+async def test_discord_webhook_uses_trusted_fake_ip(monkeypatch):
+    from releasetracker.notifiers.webhook import WebhookNotifier
+
+    from unittest.mock import AsyncMock
+
+    store = AsyncMock()
+    store.get_setting.side_effect = ["fd12:3456::/48\n198.18.0.0/24", ""]
+    await _set_dns_answers(monkeypatch, "198.18.0.24")
+    writer = _MemoryWriter()
+
+    async def connect(*, host, port, ssl, server_hostname, **kwargs):
+        assert (host, port, server_hostname) == ("198.18.0.24", 443, "discord.com")
+        assert ssl.check_hostname
+        reader = asyncio.StreamReader()
+        reader.feed_data(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+        reader.feed_eof()
+        return reader, writer
+
+    monkeypatch.setattr(asyncio, "open_connection", connect)
+    notifier = WebhookNotifier("discord", "https://discord.com/api/webhooks/test", settings_store=store)
+    assert await notifier.send_payload({"content": "test"})
+    assert b"Host: discord.com\r\n" in writer.request
+    assert not await notifier.send_payload({"content": "test"})
+    store.get_setting.assert_awaited_with(outbound_http.WEBHOOK_FAKE_IP_SETTING)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("cidrs", "url", "verify_tls", "extra_answer"),
+    [
+        ("", "https://discord.com", True, None),
+        ("198.19.0.0/24", "https://discord.com", True, None),
+        ("198.18.0.0/24", "https://198.18.0.24", True, None),
+        ("198.18.0.0/24", "http://discord.com", True, None),
+        ("198.18.0.0/24", "https://discord.com", False, None),
+        ("198.18.0.0/24", "https://discord.com", True, "10.0.0.8"),
+    ],
+)
+async def test_fake_ip_exception_scope(monkeypatch, cidrs, url, verify_tls, extra_answer):
+    answers = ["198.18.0.24"]
+    if extra_answer:
+        answers.append(extra_answer)
+    await _set_dns_answers(monkeypatch, *answers)
+    with pytest.raises(OutboundURLRejected, match="prohibited address"):
+        await OutboundHTTPClient().request(
+            "POST", url, fake_ip_cidrs=outbound_http.parse_fake_ip_cidrs(cidrs), verify_tls=verify_tls
+        )

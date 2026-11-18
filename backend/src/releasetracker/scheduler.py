@@ -182,6 +182,7 @@ class ReleaseScheduler(
                 if n.enabled and n.type in SUPPORTED_NOTIFIER_TYPES:
                     self.notifiers.append(
                         build_notifier(
+                            settings_store=self.storage,
                             notifier_type=n.type,
                             name=n.name,
                             url=n.url,

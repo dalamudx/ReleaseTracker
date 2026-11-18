@@ -14,14 +14,14 @@
       "title": "Instance Backup Retention",
       "scopeBadge": "Full Backup",
       "label": "Recent backups to keep",
-      "description": "Number of full-system ZIP archives to keep in the backups directory (1–100). Older archives are automatically pruned after a new backup succeeds and passes validation.",
+      "description": "After a new backup passes verification, older archives in the backups directory are pruned to the selected limit (1–100).",
       "invalid": "Enter an integer from 1 to 100."
     },
     "backupInterval": {
       "title": "Automatic Backup Interval",
       "scopeBadge": "Schedule",
       "label": "Automatic backup interval (hours)",
-      "description": "Scheduled interval in hours for automatic full-system disaster recovery backups. Set to 0 to disable automatic backups (manual backups remain available); common intervals include 24 (daily), 168 (weekly), up to 8760 hours (1 year).",
+      "description": "Use 24 hours for daily backups or 168 for weekly backups. The maximum is 8760 hours. Set to 0 for manual backups only.",
       "invalid": "Enter an integer from 0 to 8760 (0 to disable)."
     },
     "backup": {
@@ -43,7 +43,7 @@
     "timezone": {
       "title": "Global timezone",
       "label": "System timezone",
-      "description": "Executor maintenance windows and statistics charts use this IANA timezone, for example Asia/Shanghai."
+      "description": "Maintenance windows and charts use this timezone."
     },
     "logLevel": {
       "title": "Log level",
@@ -54,7 +54,7 @@
       "title": "Tracker Release History",
       "scopeBadge": "Trackers",
       "label": "Versions per release channel",
-      "description": "Historical release versions discovered by trackers from upstream sources. Keeps the latest N versions per channel; cleaned up daily at 02:00 or after maintenance windows.",
+      "description": "Each channel keeps its latest versions. Older records are pruned daily at 02:00 or after a maintenance window.",
       "invalid": "Enter an integer from 1 to 1000.",
       "cleanupSuccess": "Release history cleanup completed. Deleted {{count}} records."
     },
@@ -62,7 +62,7 @@
       "title": "Executor Runtime Snapshots",
       "scopeBadge": "Executors",
       "label": "Snapshots per executor",
-      "description": "Actual runtime configurations and image tags captured before/after executor rollouts. Keeps the latest N snapshots per executor; older snapshots pruned as new ones are saved.",
+      "description": "Snapshots record runtime settings and image tags before and after deployment. Older snapshots are pruned when a new one is saved.",
       "invalid": "Enter an integer from 1 to 1000.",
       "cleanupSuccess": "Snapshot history cleanup completed. Deleted {{count}} snapshots."
     },
@@ -70,12 +70,18 @@
       "cleanNow": "Clean now",
       "cleaning": "Cleaning..."
     },
+    "fakeIp": {
+      "title": "Trusted IP ranges",
+      "help": "Use IPv4 or IPv6 CIDRs. Leave empty to use the default rules.",
+      "add": "Add range", "remove": "Remove range",
+      "invalid": "Invalid CIDR or range includes a protected address."
+    },
     "ociRegistryRedirects": {
       "title": "OCI registry redirects",
       "label": "Enable registry redirect compatibility",
-      "description": "Keep this disabled unless your registry requires redirects for tag, manifest, token, or blob access.",
-      "enabledHint": "Redirect compatibility is enabled for newly started container source checks.",
-      "disabledHint": "Redirect support is disabled. Registry redirects will be rejected before following them."
+      "description": "Enable if your registry requires redirects.",
+      "enabledHint": "New container source checks follow redirects.",
+      "disabledHint": "Requests that receive a redirect are rejected."
     },
     "sections": {
       "basic": {
