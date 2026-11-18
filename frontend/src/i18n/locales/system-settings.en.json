@@ -12,17 +12,29 @@
   "global": {
     "backupRetention": {
       "title": "Instance Backup Retention",
-      "scopeBadge": "Full Backup",
       "label": "Recent backups to keep",
-      "description": "After a new backup passes verification, older archives in the backups directory are pruned to the selected limit (1–100).",
+      "description": "Keep the latest 1–100 backups. Older archives are pruned after a new backup passes validation.",
       "invalid": "Enter an integer from 1 to 100."
     },
     "backupInterval": {
       "title": "Automatic Backup Interval",
-      "scopeBadge": "Schedule",
       "label": "Automatic backup interval (hours)",
       "description": "Use 24 hours for daily backups or 168 for weekly backups. The maximum is 8760 hours. Set to 0 for manual backups only.",
       "invalid": "Enter an integer from 0 to 8760 (0 to disable)."
+    },
+    "onlineRestore": {
+      "title": "Online restore",
+      "label": "Allow in-place restore",
+      "description": "Available only to administrators on POSIX systems. Restart the service after changing this setting."
+    },
+    "preMigrationBackup": {
+      "title": "Backup before schema migrations",
+      "label": "Archive data before migrating",
+      "description": "Disable only if another tool has already backed up both the database and system keys."
+    },
+    "policies": {
+      "invalid": "Check the highlighted policy values.",
+      "rangeInvalid": "Enter an integer from {{min}} to {{max}}."
     },
     "backup": {
       "title": "Instance Backup Policy",
@@ -32,11 +44,10 @@
       "invalid": "Check backup settings: retention 1–100, interval 0–8760."
     },
     "title": "Global Settings",
-    "description": "These settings apply to the whole application.",
     "baseUrl": {
-      "title": "BASE URL",
-      "label": "Public app URL",
-      "description": "Used for reverse proxy deployments, OIDC callbacks, and post-login redirects. Include the full subpath if the app is hosted under one.",
+      "title": "Public Base URL",
+      "label": "Public base URL",
+      "description": "Include the full path for subpath deployments.",
       "placeholder": "https://example.com/releasetracker",
       "invalid": "Enter a valid http(s) URL."
     },
@@ -45,14 +56,67 @@
       "label": "System timezone",
       "description": "Maintenance windows and charts use this timezone."
     },
+    "queue": {
+      "title": "Concurrency & Scheduling",
+      "description": "Decide how much deployment and recovery work runs at once and how often queued work is polled.",
+      "mutationConcurrency": {
+        "title": "Shared deploy and recovery concurrency",
+        "label": "Concurrent mutations",
+        "description": "Deployments and restores share this limit."
+      },
+      "workerPollSeconds": {
+        "title": "Worker polling interval",
+        "label": "Poll interval (seconds)",
+        "description": "How often queued work is re-checked for free capacity, retries and scheduled runs."
+      }
+    },
+    "inbound": {
+      "title": "Network Configuration",
+      "description": "Trust forwarded proxy headers, allow cross-origin callers and protect the metrics endpoint.",
+      "forwardedAllowIps": {
+        "title": "Trusted reverse proxies",
+        "label": "Proxy address",
+        "description": "Peers whose forwarded scheme and client address are trusted for login throttling and secure sessions. Set * only when every peer is a proxy.",
+        "placeholder": "e.g. 10.0.0.0/8",
+        "invalid": "Enter IP addresses or CIDR ranges, or use * on its own."
+      },
+      "corsOrigins": {
+        "title": "Allowed CORS origins",
+        "label": "Origin",
+        "description": "Explicit http(s) origins allowed to call the API from a browser. Leave empty to refuse every cross-origin request.",
+        "placeholder": "https://app.example.com",
+        "invalid": "Enter a valid HTTP or HTTPS origin."
+      },
+      "metricsToken": {
+        "title": "Metrics scrape token",
+        "label": "Token",
+        "description": "Bearer token that Prometheus-style scrapers send to the metrics endpoint.",
+        "generate": "Generate token",
+        "undoRevoke": "Cancel revocation",
+        "configured": "Configured",
+        "notConfigured": "Not configured",
+        "revoke": "Revoke token",
+        "saveFailed": "Could not save the token. Try again."
+      }
+    },
     "logLevel": {
       "title": "Log level",
       "label": "Backend log level",
-      "description": "Controls backend application logging after startup."
+      "description": "The service uses this log level after startup."
+    },
+    "pullGrace": {
+      "title": "Image pull grace period",
+      "label": "Grace period (seconds)",
+      "description": "How long a new rollout observation waits for images to be pulled before it starts checking readiness. Observing records keep the deadline they started with."
+    },
+    "runtimeHealth": {
+      "title": "Deployment health inspections",
+      "label": "Inspection interval (seconds)",
+      "description": "Check readiness at this interval after deployment. Set to 0 to disable ongoing checks.",
+      "invalid": "Enter 0 to disable or an interval from 300 to 86400 seconds."
     },
     "releaseHistoryCount": {
       "title": "Tracker Release History",
-      "scopeBadge": "Trackers",
       "label": "Versions per release channel",
       "description": "Each channel keeps its latest versions. Older records are pruned daily at 02:00 or after a maintenance window.",
       "invalid": "Enter an integer from 1 to 1000.",
@@ -60,7 +124,6 @@
     },
     "snapshotHistoryCount": {
       "title": "Executor Runtime Snapshots",
-      "scopeBadge": "Executors",
       "label": "Snapshots per executor",
       "description": "Snapshots record runtime settings and image tags before and after deployment. Older snapshots are pruned when a new one is saved.",
       "invalid": "Enter an integer from 1 to 1000.",
@@ -72,31 +135,34 @@
     },
     "fakeIp": {
       "title": "Trusted IP ranges",
-      "help": "Use IPv4 or IPv6 CIDRs. Leave empty to use the default rules.",
-      "add": "Add range", "remove": "Remove range",
+      "label": "IP range",
+      "description": "Use IPv4 or IPv6 CIDRs. Leave empty to use the default rules.",
+      "placeholder": "e.g. 198.18.0.0/15",
       "invalid": "Invalid CIDR or range includes a protected address."
     },
     "ociRegistryRedirects": {
       "title": "OCI registry redirects",
       "label": "Enable registry redirect compatibility",
       "description": "Enable if your registry requires redirects.",
-      "enabledHint": "New container source checks follow redirects.",
       "disabledHint": "Requests that receive a redirect are rejected."
     },
     "sections": {
       "basic": {
-        "title": "Basic Environment",
-        "description": "Configure public application address, system timezone, and logging verbosity."
+        "title": "Basic Environment"
+      },
+      "queue": {
+        "title": "Concurrency & Scheduling"
+      },
+      "inbound": {
+        "title": "Network Configuration"
       },
       "fetchAndReadiness": {
-        "title": "Fetch & Readiness Strategy",
-        "description": "Manage image registry behavior, fetch retries, and default observer timing for executor rollouts."
+        "title": "Fetch & Readiness Strategy"
       },
       "storageAndRetention": {
         "title": "Storage & Retention",
-        "description": "Manage retention thresholds for releases and snapshots, and trigger manual cleanup.",
-        "operationalGroup": "Operational History (Database Records)",
-        "backupGroup": "Disaster Recovery Policy (Full Instance Archives)"
+        "operationalGroup": "Application history",
+        "backupGroup": "Backup policy"
       }
     }
   },

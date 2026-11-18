@@ -218,18 +218,6 @@ def verify_archive(archive, allow_older_schema=False) -> None:
         validate_archive(archive, temporary, allow_older_schema=allow_older_schema)
 
 
-def retention_tiers():
-    """Opt-in daily/weekly points in addition to the most recent N archives."""
-    try:
-        days = int(os.environ.get("RELEASETRACKER_BACKUP_DAILY_RETENTION", "0"))
-        weeks = int(os.environ.get("RELEASETRACKER_BACKUP_WEEKLY_RETENTION", "0"))
-    except ValueError as exc:
-        raise ValueError("Backup retention tiers must be integers") from exc
-    if not 0 <= days <= 90 or not 0 <= weeks <= 52:
-        raise ValueError("Backup daily retention must be 0–90 and weekly retention 0–52")
-    return days, weeks
-
-
 def archive_created_at(path):
     """Generated IDs include creation nanoseconds; copying/touching is not a backup."""
     parts = path.stem.split("-")
@@ -241,30 +229,6 @@ def archive_created_at(path):
     ):
         return int(parts[1]) / 1e9
     return path.stat().st_mtime  # Compatibility with externally named legacy archives.
-
-
-def retention_candidates(paths, retain, days, weeks, *, now=None):
-    """Keep newest per UTC calendar bucket, never count symlinks as restore points."""
-    now = time.time() if now is None else now
-    archives = sorted(
-        (p for p in paths if p.is_file() and not p.is_symlink()),
-        key=lambda p: (archive_created_at(p), p.name),
-        reverse=True,
-    )
-    keep = set(archives[:retain])
-    daily, weekly = set(), set()
-    for path in archives:
-        stamp = archive_created_at(path)
-        date = datetime.fromtimestamp(stamp, timezone.utc)
-        day, week = date.date(), date.isocalendar()[:2]
-        age = max(0, now - stamp)
-        if days and age <= days * 86400 and day not in daily:
-            keep.add(path)
-            daily.add(day)
-        if weeks and age <= weeks * 7 * 86400 and week not in weekly:
-            keep.add(path)
-            weekly.add(week)
-    return [p for p in archives if p not in keep]
 
 
 def _create_verified_archive(db_path, keys, destination):
@@ -503,7 +467,6 @@ class InstanceBackup:
             try:
                 if retain is None:
                     _, retain = await backup_options(self.storage)
-                days, weeks = retention_tiers()
                 archive = await self._create(retain=retain)
                 # No cleanup or success timestamp until ZIP, DB and keys verify.
                 self.last_success = time.time()
@@ -514,7 +477,7 @@ class InstanceBackup:
                     last_error_code=None,
                     last_failure_phase=None,
                 )
-                for old in retention_candidates(self.archives(), retain, days, weeks):
+                for old in self.archives()[retain:]:
                     if not self._downloads.get(old.name) and old.name not in self._restore_pins:
                         old.unlink()
                 return archive

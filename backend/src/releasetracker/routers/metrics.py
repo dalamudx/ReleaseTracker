@@ -1,12 +1,11 @@
 """Opt-in scrape endpoint with a dedicated read-only bearer credential."""
 
 import asyncio
-import os
-import secrets
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
+from ..services.metrics_credential import get_digest, matches
 from ..services.operational_metrics import render_metrics
 
 router = APIRouter()
@@ -14,17 +13,18 @@ router = APIRouter()
 
 @router.get("/metrics", include_in_schema=False)
 async def metrics(request: Request):
-    token = os.environ.get("RELEASETRACKER_METRICS_TOKEN", "")
-    if len(token) < 32:
-        raise HTTPException(404, "Not found")
-    supplied = request.headers.get("authorization", "")
-    if not secrets.compare_digest(supplied.encode(), f"Bearer {token}".encode()):
-        raise HTTPException(
-            401, "Invalid metrics credential", headers={"WWW-Authenticate": "Bearer"}
-        )
     storage = getattr(request.app.state, "storage", None)
     if storage is None:
         raise HTTPException(503, "Storage unavailable")
+    digest = await get_digest(storage)
+    if not digest:
+        raise HTTPException(404, "Not found")
+    authorization = request.headers.get("authorization", "")
+    scheme, _, supplied = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not matches(digest, supplied.strip()):
+        raise HTTPException(
+            401, "Invalid metrics credential", headers={"WWW-Authenticate": "Bearer"}
+        )
     # Bound expensive scrapes; the request connection is closed by middleware.
     try:
         async with asyncio.timeout(5):

@@ -26,9 +26,9 @@
     "output": "渲染后的消息",
     "previewEmpty": "选择事件并生成预览，检查当前草稿的通知效果。",
     "editorCardTitle": "模板定义与语法",
-    "editorCardDescription": "使用 Jinja 语法编写标题与正文模板，支持条件判断、循环遍历和双语文案绑定",
+    "editorCardDescription": "用 Jinja 编写标题和正文，支持条件、循环和双语文案。",
     "previewCardTitle": "实时渲染预览",
-    "previewCardDescription": "无需实际发送真实通知，选用脱敏示例数据即时核验各事件在不同语言下的排版效果",
+    "previewCardDescription": "用脱敏示例预览各事件的中英文通知，无需发送。",
     "tabEditor": "模板编辑",
     "tabTranslations": "文案字典",
     "tabVariables": "可用变量",
@@ -114,7 +114,7 @@
   "auth": {
     "login": {
       "title": "Release Tracker",
-      "subtitle": "管理和追踪您的软件发布版本",
+      "subtitle": "追踪软件发布版本",
       "username": "用户名",
       "usernamePlaceholder": "输入用户名",
       "password": "密码",
@@ -191,7 +191,7 @@
     "clear": "清除",
     "unexpectedError": "发生意外错误",
     "loadFailedTitle": "数据加载失败",
-    "loadFailedDescription": "暂时无法获取最新数据，请检查连接后重试。",
+    "loadFailedDescription": "请检查连接后重试。",
     "retry": "重试",
     "skipToContent": "跳到主要内容",
     "notFoundTitle": "页面不存在",
@@ -474,15 +474,15 @@
           "typeDescription": "显式选择发布状态；不会再根据名称推导。",
           "includePattern": "包含正则",
           "includePatternPlaceholder": "留空则包含所有版本",
-          "includePatternDescription": "只有匹配该正则的版本才会进入当前发布渠道。",
+          "includePatternDescription": "仅包含匹配此正则的版本。",
           "excludePattern": "排除正则",
           "excludePatternPlaceholder": "留空则不排除任何版本",
-          "excludePatternDescription": "即使包含正则命中，只要匹配该正则也会被当前渠道排除。"
+          "excludePatternDescription": "匹配此正则的版本一律排除。"
         }
       },
       "releaseNotes": {
         "title": "发布说明",
-        "description": "可以使用上游 Release Notes，也可以从现有仓库来源读取 changelog 文件。",
+        "description": "使用上游发布说明，或读取仓库中的更新日志。",
         "noRepositoryDescription": "自定义 Changelog 需要此追踪器包含 GitHub、GitLab 或 Gitea 来源。",
         "options": {
           "releaseNotes": "使用 Release Notes",
@@ -547,11 +547,7 @@
         "trackerChannelsTitle": "子渠道概览",
         "trackerChannelsDescription": "",
         "credential": "凭证",
-        "selectionAwaitingCheck": "{{channel}}：等待重新检查仓库，确认标签当前指向后自动成为更新目标。",
-        "selectionManifestUnconfirmed": "{{channel}}：最高版本的镜像摘要未能确认，下次检查会重试。",
-        "selectionConflict": "{{channel}}：同一版本对应不同镜像制品，请用标签规则指定要跟踪的标签。",
-        "selectionEmpty": "{{channel}}：暂无符合渠道规则的版本。",
-        "selectionUnorderable": "{{channel}}：标签已收录，但无法确定最新版本。请在渠道规则中指定数字排序字段或固定标签。",
+        "selectionRegexMismatch": "{{channel}} 渠道的标签均未通过正则筛选。",
         "selectionDiagnostics": {
           "show": "查看问题标签",
           "hide": "收起问题标签",
@@ -695,7 +691,7 @@
       },
       "both": {
         "title": "缺少必要前置资源",
-        "description": "请先添加运行时连接和追踪器后再创建执行器。"
+        "description": "先添加运行时连接和追踪器。"
       },
       "actions": {
         "runtimeConnections": "前往运行时连接",
@@ -1091,7 +1087,7 @@
     "rollback": {
       "dialog": {
         "title": "回滚执行器",
-        "description": "将 {{executor}} 恢复到所选快照。系统会新建一次执行，在回滚前先捕获一份快照，再应用目标快照。",
+        "description": "回滚任务会先保存当前快照，再将 {{executor}} 恢复到所选快照。",
         "targetLabel": "目标快照",
         "currentLabel": "上次记录的版本（非实时配置）",
         "configurationPolicy": "仅恢复受支持的配置项（不含卷数据）。执行前若环境变动需重新审核。",
@@ -1182,7 +1178,7 @@
         "containerDescription": "设置 Docker 或 Podman 的 socket 端点。",
         "kubernetesDescription": "选择集群上下文和可用命名空间。",
         "portainerDescription": "连接 Portainer，并选择此连接要使用的 endpoint。",
-        "secretDescription": "密钥字段留空时，将保留当前保存的 {{type}} 值。",
+        "secretDescription": "留空可保留现有 {{type}}。",
         "kubernetesSecrets": "密钥字段留空即可保留当前保存值。",
         "portainerSecrets": "API Key 留空即可保留当前保存值。"
       },
@@ -1297,7 +1293,7 @@
     },
     "references": {
       "blockedTitle": "凭证正在被使用",
-      "blockedDescription": "删除此凭证前，请先移除以下引用。",
+      "blockedDescription": "先移除以下引用，再删除凭证。",
       "runtimeConnections": "运行时连接",
       "trackerSources": "追踪器来源",
       "trackers": "旧版追踪器"
@@ -1459,7 +1455,7 @@
     "timezone": {
       "title": "全局时区",
       "label": "系统时区",
-      "description": "执行器维护窗口统一使用这里配置的 IANA 时区，例如 Asia/Shanghai。"
+      "description": "维护窗口使用此 IANA 时区，例如 Asia/Shanghai。"
     },
     "notifications": {
       "title": "通知",

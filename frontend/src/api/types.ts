@@ -532,6 +532,11 @@ export interface SettingItem {
     updated_at?: string
 }
 
+export interface MetricsTokenStatus {
+    configured: boolean
+    token?: string
+}
+
 export interface ReleaseHistoryCleanupResponse {
     action: "release_history_cleanup"
     retention_count: number

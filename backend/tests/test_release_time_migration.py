@@ -43,7 +43,31 @@ def _migrate_time_semantics(db_path, up_sql):
     return 0, ""
 
 
-def _make_migrate(db_path, tmp_path, monkeypatch):
+def _isolated_package(tmp_path):
+    """Copy the package so the fixed data directory lands inside the test tree."""
+    package = tmp_path / "pkg"
+    shutil.copytree(
+        Path(__file__).resolve().parents[1] / "src" / "releasetracker",
+        package / "releasetracker",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    resolved = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from releasetracker.paths import database_path; print(database_path())",
+        ],
+        env={**os.environ, "PYTHONPATH": str(package)},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    # Never let the real development database stand in for this fixture.
+    assert resolved.stdout.strip() == str(tmp_path / "data" / "releases.db"), resolved.stderr
+    return package
+
+
+def _make_migrate(tmp_path, monkeypatch):
     dbmate = shutil.which("dbmate")
     if not dbmate:
         pytest.skip("Real dbmate required to test the Makefile migration entrypoint")
@@ -60,9 +84,8 @@ def _make_migrate(db_path, tmp_path, monkeypatch):
         executable.chmod(0o755)
     monkeypatch.setenv("REAL_PYTHON", sys.executable)
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
-    monkeypatch.setenv("RELEASETRACKER_DB_PATH", str(db_path))
+    monkeypatch.setenv("PYTHONPATH", str(_isolated_package(tmp_path)))
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.delenv("RELEASETRACKER_PRE_MIGRATION_BACKUP", raising=False)
     monkeypatch.setenv("DBMATE_NO_DUMP_SCHEMA", "1")
     monkeypatch.setenv("DBMATE_SCHEMA_FILE", str(tmp_path / "schema.sql"))
     result = subprocess.run(
@@ -220,8 +243,14 @@ async def test_populated_time_migration_preserves_identities_and_audit(
     keys = system_key_manager.secrets_path.read_bytes()
     (tmp_path / "system-secrets.json").write_bytes(keys)
     if driver == "make":
-        code, message = _make_migrate(legacy_path, tmp_path, monkeypatch)
-        archives = list((tmp_path / "backups").glob("*.zip"))
+        # Entrypoints share one fixed data directory; give the isolated copy this fixture.
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        shutil.copy2(legacy_path, data_dir / "releases.db")
+        (data_dir / "system-secrets.json").write_bytes(keys)
+        code, message = _make_migrate(tmp_path, monkeypatch)
+        shutil.copy2(data_dir / "releases.db", legacy_path)
+        archives = list((data_dir / "backups").glob("*.zip"))
         assert len(archives) == 1
         with zipfile.ZipFile(archives[0]) as archive:
             assert archive.read("system-secrets.json") == keys
@@ -318,10 +347,14 @@ def test_make_migration_stops_if_safety_backup_cannot_be_created(tmp_path, monke
         db.execute("INSERT INTO marker VALUES ('must remain untouched')")
         db.commit()
         before = list(db.iterdump())
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    shutil.copy2(db_path, data_dir / "releases.db")
     # No key file: the shared entrypoint must stop before running dbmate.
-    code, message = _make_migrate(db_path, tmp_path, monkeypatch)
+    code, message = _make_migrate(tmp_path, monkeypatch)
     assert code != 0
     assert "system-secrets.json is missing; refusing to migrate" in message
-    with sqlite3.connect(db_path) as db:
+    with sqlite3.connect(data_dir / "releases.db") as db:
         assert list(db.iterdump()) == before
-    assert not list((tmp_path / "backups").glob("*.zip"))
+    assert list((tmp_path / "data").glob("*.db")) == [data_dir / "releases.db"]
+    assert not list((data_dir / "backups").glob("*.zip"))

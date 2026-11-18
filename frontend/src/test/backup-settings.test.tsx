@@ -44,18 +44,20 @@ describe("instance backup controls", () => {
         expect(submit).toBeEnabled()
         fireEvent.click(submit)
         expect(await screen.findByText(name)).toBeVisible()
+        const uploadHeading = screen.getByRole("heading", { name: "上传恢复" })
+        expect(screen.getByRole("list").compareDocumentPosition(uploadHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
         expect(backupApi.import).toHaveBeenCalledTimes(2)
         expect(backupApi.import).toHaveBeenLastCalledWith(file, expect.any(Function))
         expect(backupApi.restore).not.toHaveBeenCalled()
         expect(submit).toBeDisabled()
     })
-    it("shows actual retention tiers and storage usage and requires explicit deletion", async () => {
+    it("shows storage usage and requires explicit deletion", async () => {
         const first={name:"releasetracker-1-deadbeef.zip",size:1048576,created_at:1}
         const second={name:"releasetracker-2-deadbeef.zip",size:1048576,created_at:2}
-        vi.mocked(backupApi.list).mockResolvedValue({items:[first,second],interval_hours:24,retention:7,daily_retention:14,weekly_retention:4,total_size:2097152,running:false})
+        vi.mocked(backupApi.list).mockResolvedValue({items:[first,second],interval_hours:24,retention:7,total_size:2097152,running:false})
         vi.mocked(backupApi.delete).mockResolvedValue({deleted:first.name})
         view()
-        expect(await screen.findByText("额外保留最近 14 天每天的最新备份（UTC）")).toBeInTheDocument()
+        expect(await screen.findByText("每 24 小时自动备份")).toBeVisible()
         expect(screen.getByText("当前 2 份归档，占用 2.0 MB")).toBeInTheDocument()
         fireEvent.click(screen.getByRole("button",{name:`删除 ${first.name}`}))
         expect(backupApi.delete).not.toHaveBeenCalled()

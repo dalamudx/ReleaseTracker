@@ -15,7 +15,6 @@ from ..services.instance_backup import (
     BackupManagementError,
     archive_created_at,
     backup_options,
-    retention_tiers,
 )
 
 status_router = APIRouter(prefix="/api/backups", tags=["backups"])
@@ -64,7 +63,6 @@ async def list_backups(request: Request):
     hours, retain = await backup_options(backup.storage)
     status = await backup.status()
     latest = backup.latest_archive_time()
-    days, weeks = retention_tiers()
     items = [entry(path) for path in backup.archives()]
     for item in items:
         item["in_use"] = (
@@ -74,8 +72,6 @@ async def list_backups(request: Request):
         "directory": str(backup.directory),
         "interval_hours": hours,
         "retention": retain,
-        "daily_retention": days,
-        "weekly_retention": weeks,
         "total_size": sum(item["size"] for item in items),
         "minimum_local_archives": 1,
         "running": backup.lock.locked(),

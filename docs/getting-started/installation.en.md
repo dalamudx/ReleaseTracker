@@ -89,25 +89,15 @@ livenessProbe:
   timeoutSeconds: 3
 ```
 
-## Optional environment variables {#environment}
+## Global settings {#environment}
 
-Most configuration happens in the UI. These variables tune the deployment and apply at startup:
+In **Settings**, configure the public base URL (including any deployment subpath), worker polling, deployment and recovery concurrency, image pull grace, runtime inspections, backups, trusted proxies, CORS origins and the metrics token. New instances use the defaults shown in the form. Before increasing concurrency, back up the instance and check resource usage.
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `RELEASETRACKER_DB_PATH` | `data/releases.db` | Database path; the key file and `backups` directory live beside it automatically |
-| `RELEASETRACKER_CORS_ORIGINS` | Empty (same-origin only) | Comma-separated explicit HTTP(S) origins; `*` is not allowed |
-| `RELEASETRACKER_WORKER_POLL_SECONDS` | `2` | Background task poll interval (1–60); higher values save idle resources but delay deployments, notifications, etc. |
-| `RELEASETRACKER_DEPLOYMENT_CONCURRENCY` | `1` | Concurrency slots shared by deployments and restores (1–3); the same target or executor still runs serially |
-| `RELEASETRACKER_READINESS_PULL_GRACE_SECONDS` | `1800` | Kubernetes image pull grace, see [Health checks](../guides/health-and-rollback.md#image-pull) |
-| `RELEASETRACKER_RUNTIME_HEALTH_INTERVAL_SECONDS` | `0` | Post-deployment monitoring, see [Read-only monitoring](../guides/health-and-rollback.md#runtime-watch) |
-| `RELEASETRACKER_METRICS_TOKEN` | Empty | Enables `/metrics`, see [Metrics](../operations/backup-and-upgrade.md#metrics) |
-
-For backup variables see [Online backup](../operations/backup-and-upgrade.md#online-backup). Back up and watch resource usage before raising concurrency; it does not add multi-instance support.
+For an existing installation, stop the old service and verify a backup of its database and system secrets. Mount the original data at `/app/backend/data` with the database named `releases.db`, then remove `RELEASETRACKER_DB_PATH`. Run `python -m releasetracker.cli import-legacy-settings` with the old policy environment and the new release before serving traffic. This imports settings once, preserves saved values, and lets you remove the old declarations after validation. Set the public base URL explicitly if required for public links or OIDC. See [Backup and upgrade](../operations/backup-and-upgrade.md).
 
 ## Sign-in and session security {#security}
 
-- Sign-in is limited to 10 failed requests per minute per client address (100 per minute globally); on `429` retry after `Retry-After`. Behind a proxy, configure Uvicorn's trusted proxy addresses so clients can be told apart.
+- Sign-in is limited to 10 failed requests per minute per client address (100 per minute globally). On `429`, retry after `Retry-After`. Behind a proxy, enter its address in the global trusted proxies setting to identify individual clients.
 - Browser sessions use HttpOnly cookies with CSRF protection; under HTTPS they use `Secure` and the `__Host-` prefix, so production needs a correct BASE URL and trusted proxy configuration.
 - CLI/API clients keep using `/api/auth/token` and Bearer tokens without cookies.
 

@@ -20,6 +20,19 @@ from .online_restore_files import RestoreFiles, atomic_copy, digest, prepare_arc
 logger = logging.getLogger(__name__)
 
 
+def recover_interrupted_restore(db_path):
+    """Restore the original files after an interrupted switch; no saved flag involved."""
+    files = RestoreFiles(db_path)
+    if not files.root.exists():
+        return False
+    files.acquire()
+    try:
+        files.recover()
+    finally:
+        files.release()
+    return True
+
+
 class RestoreError(ValueError):
     def __init__(self, code, status=409):
         super().__init__(code)

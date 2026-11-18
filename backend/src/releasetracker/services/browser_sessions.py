@@ -59,7 +59,9 @@ async def require_browser_request(request, storage):
     origin = request.headers.get("origin")
     if origin:
         # An Origin has no path, even when ASGI root_path is a deployment prefix.
-        allowed = {f"{request.url.scheme}://{request.url.netloc}", *cors_origins()}
+        policy = request.scope.get("inbound_policy")
+        origins = policy.cors_origins if policy is not None else cors_origins(request.app)
+        allowed = {f"{request.url.scheme}://{request.url.netloc}", *origins}
         public = await storage.get_system_base_url()
         if public:
             parsed = urlsplit(public)

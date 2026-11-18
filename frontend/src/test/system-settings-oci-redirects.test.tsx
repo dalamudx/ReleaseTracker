@@ -76,6 +76,8 @@ vi.mock("@/hooks/queries", () => ({
       },
     },
   }),
+  useMetricsTokenStatus: () => ({ data: { configured: false } }),
+  useSetMetricsToken: () => ({ isPending: false, mutateAsync: vi.fn() }),
   useSettings: () => ({ data: settingsState.items }),
   useUpdateSetting: () => ({
     isPending: false,
@@ -107,9 +109,11 @@ describe("SystemSettingsPage OCI registry redirects", () => {
   it("adds, edits and removes fake-IP ranges before saving", async () => {
     const key = "system.webhook_fake_ip_cidrs"
     renderPage([{ key, value: "198.18.0.0/24\n198.19.0.0/24" }])
-    fireEvent.click(screen.getByRole("button", { name: "systemSettings.global.fakeIp.remove 198.19.0.0/24" }))
-    fireEvent.click(screen.getByRole("button", { name: "systemSettings.global.fakeIp.add" }))
-    fireEvent.change(screen.getByLabelText("CIDR 2"), { target: { value: "fd12::/48" } })
+    const input = screen.getByLabelText("systemSettings.global.fakeIp.label")
+    expect(document.getElementById("section-inbound")).toContainElement(input)
+    fireEvent.click(screen.getByRole("button", { name: "common.delete 198.19.0.0/24" }))
+    fireEvent.change(input, { target: { value: "fd12::/48" } })
+    fireEvent.click(screen.getAllByRole("button", { name: "common.add" }).find(button => !button.hasAttribute("disabled"))!)
     expect(updateSettingMock).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole("button", { name: "common.save" }))
     await waitFor(() => expect(updateSettingMock).toHaveBeenCalledWith({ key, value: "198.18.0.0/24\nfd12::/48" }))

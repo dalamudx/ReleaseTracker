@@ -16,7 +16,7 @@ def test_restore_review_cli_requires_confirmation_and_preserves_revoked_tasks(
 ):
 
     db_path = tmp_path / "releases.db"
-    monkeypatch.setenv("RELEASETRACKER_DB_PATH", str(db_path))
+    monkeypatch.setattr(cli.paths, "database_path", lambda: db_path)
     with sqlite3.connect(db_path) as db:
         db.execute("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT)")
         db.execute("INSERT INTO settings VALUES('restore.review_required','{}')")
@@ -37,7 +37,7 @@ def test_restore_review_cli_requires_confirmation_and_preserves_revoked_tasks(
 def test_audit_database_is_read_only_and_rejects_orphans(tmp_path, monkeypatch):
 
     db_path = tmp_path / "releases.db"
-    monkeypatch.setenv("RELEASETRACKER_DB_PATH", str(db_path))
+    monkeypatch.setattr(cli.paths, "database_path", lambda: db_path)
     with sqlite3.connect(db_path) as db:
         db.execute("CREATE TABLE parents(id INTEGER PRIMARY KEY)")
         db.execute(
@@ -74,7 +74,7 @@ async def test_interactive_admin_reset_uses_local_data_and_revokes_marker(tmp_pa
     await storage.close()
 
     answers = iter(["new-operator-password", "new-operator-password"])
-    monkeypatch.setenv("RELEASETRACKER_DB_PATH", str(data_dir / "releases.db"))
+    monkeypatch.setattr(cli.paths, "database_path", lambda: data_dir / "releases.db")
     monkeypatch.setattr(cli.getpass, "getpass", lambda _prompt: next(answers))
 
     await cli._reset_admin_password()

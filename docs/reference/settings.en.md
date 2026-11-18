@@ -10,7 +10,7 @@ Manage instance configuration under **System Settings**. Changes apply immediate
 
 | Setting | Default / range | Effect |
 | --- | --- | --- |
-| BASE URL | Empty; non-empty values must be canonical absolute HTTPS URLs | Notification links, frontend base path, OIDC callbacks and repository webhook endpoints; include any sub-path |
+| Public Base URL | Empty by default. Use a canonical absolute HTTPS URL | Used for notification links, the frontend base path, OIDC callbacks and repository webhooks. Include the deployment subpath |
 | Time zone | `UTC`; valid IANA zone such as `Asia/Shanghai` | Date display, maintenance windows and times in notification messages |
 | Log level | `INFO`; `DEBUG/INFO/WARNING/ERROR` | Backend log verbosity |
 | Trusted IP ranges | Empty by default. Add IPv4 or IPv6 CIDRs individually. | Use the pool routed by your fake-IP proxy, e.g. `198.18.0.0/15`. HTTPS notifications accept DNS answers in these ranges and verify the certificate against the original hostname. Clear and save to restore the default rules. |
@@ -20,6 +20,14 @@ Manage instance configuration under **System Settings**. Changes apply immediate
 | Executor runtime snapshots | 10; 1–1000 | Snapshots kept per executor; locked or claimed snapshots are protected, so the actual count may be higher |
 | Backup retention | 7; 1–100 | Full backups kept in the data directory's `backups` folder |
 | Automatic backup interval | 0 (off); 0–8760 hours | Interval for automatic full backups, see [Online backup](../operations/backup-and-upgrade.md#online-backup) |
+| Deployment and recovery concurrency | 1 (1–3) | Both operations share slots. Running operations finish after a reduction |
+| Worker polling interval | 2 seconds (1–60) | Time between checks for new work |
+| Image pull grace | 1800 seconds (0–3600) | Applies to new Kubernetes readiness observations |
+| Runtime health inspection interval | 0 (off) or 300–86400 seconds | Read-only checks after deployment |
+| Online restore and pre-migration backup | Online restore enabled on POSIX, pre-migration backup enabled | Controls browser-based restore and backups before migration |
+| CORS origins | Empty | Explicit HTTP(S) origins allowed to make cross-origin requests |
+| Trusted inbound proxies | `127.0.0.1` | Trust these peers for forwarded client addresses and schemes. `*` trusts every peer |
+| Metrics token | Unconfigured | Set, rotate or revoke the dedicated `/metrics` credential |
 
 **Clean now** trims release history or snapshots to the current limit; release history is also pruned daily at 02:00 or after a maintenance window ends. Check which records you need before lowering limits; pruning is not a backup. See [Reverse proxy and sub-paths](../operations/reverse-proxy.md) for proxies and [Backup, upgrade and keys](../operations/backup-and-upgrade.md#keys) for key rotation.
 

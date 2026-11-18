@@ -79,6 +79,9 @@ class FakeSchedulerHost:
     def remove_job(self, namespace, job_id):
         pass
 
+    async def apply_policy(self, storage):
+        del storage
+
     async def start(self):
         self.start_called = True
         if self.schedulers:
@@ -139,7 +142,6 @@ async def test_lifespan_starts_without_identity_drift_repair(
     monkeypatch, storage, backup_hours, watch_seconds
 ):
     # Scheduling is now configured in the global settings database.
-    monkeypatch.setenv("RELEASETRACKER_RUNTIME_HEALTH_INTERVAL_SECONDS", str(watch_seconds))
     database_path = storage.db_path
     fake_storage_holder = {}
     fake_auth_holder = {}
@@ -153,6 +155,8 @@ async def test_lifespan_starts_without_identity_drift_repair(
         storage.system_key_manager = system_key_manager
 
         async def get_setting(key):
+            if key == "system.runtime_health_interval_seconds":
+                return str(watch_seconds)
             return str(backup_hours) if key == "system.backup_interval_hours" else None
 
         storage.get_setting = get_setting
@@ -279,12 +283,14 @@ def test_static_frontend_rejects_paths_outside_static_root(tmp_path):
             assert response.status_code == 200
             assert response.text == "<html>ReleaseTracker</html>"
 
-        api_response = client.get("/api/not-found")
-        assert api_response.status_code == 404
-        assert api_response.json() == {"detail": "Not found"}
+        for path in ("/api/not-found", "/metrics"):
+            response = client.get(path)
+            assert response.status_code == 404
+            assert response.json() == {"detail": "Not found"}
 
 
-def test_static_frontend_uses_configured_base_url_for_runtime_assets(tmp_path):
+def test_static_frontend_uses_configured_base_url_for_runtime_assets(tmp_path, monkeypatch):
+    monkeypatch.setenv("FRONTEND_URL", "https://obsolete.example")
     static_root = tmp_path / "static"
     (static_root / "assets").mkdir(parents=True)
     (static_root / "index.html").write_text(

@@ -9,12 +9,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import time
 from datetime import datetime
 
 from ..config import ExecutorConfig
 from ..executors.adapter_lifetime import runtime_adapter_scope
+from .instance_policy import read_integer_policy
 from .mutation_scope import mutation_resource_key
 from ..executor_scheduler_run_lifecycle import ExecutorRunOutcome
 
@@ -36,12 +36,9 @@ PROBE_REASONS = frozenset(
 )
 
 
-def readiness_grace_seconds():
-    try:
-        value = int(os.environ.get("RELEASETRACKER_READINESS_PULL_GRACE_SECONDS", "1800"))
-    except ValueError:
-        value = 1800
-    return value if 0 <= value <= 3600 else 1800
+async def readiness_grace_seconds(storage):
+    """New observations use the saved grace; stored deadlines keep their own."""
+    return await read_integer_policy(storage, "system.readiness_pull_grace_seconds")
 
 
 async def snapshot_readiness_profile(storage, executor):
@@ -125,7 +122,7 @@ class DeploymentReadiness:
             target = {"capture_error": True}
         verification = {
             "baseline": baseline,
-            "pull_grace_seconds": readiness_grace_seconds(),
+            "pull_grace_seconds": await readiness_grace_seconds(self.storage),
             "submitted_at": now,
             "observe_pod_stability": True,
             "target": target,

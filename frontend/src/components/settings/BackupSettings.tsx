@@ -98,8 +98,6 @@ export function BackupSettings() {
                 <CardDescription className="text-xs">{t("description")}</CardDescription>
             </CardHeader>
             <CardContent className="flex min-w-0 flex-col gap-6 pt-6">
-                <OnlineRestoreProgress />
-                <p className="text-sm text-warning">{t("sensitive")}</p>
                 {query.data?.restore_review_required && <section className="flex flex-col gap-2 rounded-md border p-3 text-sm">
                     <p>{t("restoreReviewWarning")}</p>
                     <AlertDialog><AlertDialogTrigger asChild><Button variant="outline" disabled={review.isPending}>{t("restoreReview")}</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{t("restoreReview")}</AlertDialogTitle><AlertDialogDescription>{t("restoreReviewWarning")}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>{t("common.cancel",{ns:"translation"})}</AlertDialogCancel><AlertDialogAction className="h-auto min-h-11 whitespace-normal" disabled={review.isPending} onClick={() => review.mutate()}>{t("restoreReviewConfirm")}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
@@ -121,16 +119,11 @@ export function BackupSettings() {
                     </div>
                 ) : null}
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex flex-col gap-1 text-sm text-muted-foreground">
-                        {query.data ? <>
-                            {query.data.directory && <p className="break-all">{t("directory", { path: query.data.directory })}</p>}
-                            <p>{query.data.interval_hours ? t("schedule", { hours: query.data.interval_hours }) : t("manualOnly")}</p>
-                            <p>{t("retention", { count: query.data.retention })}</p>
-                            {!!query.data.daily_retention && <p>{t("dailyRetention", { count: query.data.daily_retention })}</p>}
-                            {!!query.data.weekly_retention && <p>{t("weeklyRetention", { count: query.data.weekly_retention })}</p>}
-                            <p>{t("usage", { count: query.data.items.length, size: ((query.data.total_size ?? query.data.items.reduce((sum, item) => sum + item.size, 0)) / 1024 / 1024).toFixed(1) })}</p>
-                            <p>{t("minimumLocal")}</p>
-                        </> : null}
+                    <div className="min-w-0 space-y-1 text-sm">
+                        {query.data && <>
+                            <p className="font-medium tabular-nums">{t("usage", { count: query.data.items.length, size: ((query.data.total_size ?? query.data.items.reduce((sum, item) => sum + item.size, 0)) / 1024 / 1024).toFixed(1) })}</p>
+                            <p className="text-muted-foreground">{query.data.interval_hours ? t("schedule", { hours: query.data.interval_hours }) : t("manualOnly")}</p>
+                        </>}
                     </div>
                     <AlertDialog open={confirming} onOpenChange={open => { if (!create.isPending) setConfirming(open) }}>
                         <AlertDialogTrigger asChild>
@@ -151,22 +144,6 @@ export function BackupSettings() {
                         </AlertDialogContent>
                     </AlertDialog>
                 </div>
-                <form className="flex min-w-0 flex-col gap-3 border-t pt-4" onSubmit={event => {
-                    event.preventDefault()
-                    if (archive) { setUploadPercent(0); upload.mutate(archive) }
-                }}>
-                    <Label htmlFor={uploadId}>{t("importFile")}</Label>
-                    <p id={`${uploadId}-hint`} className="text-sm text-muted-foreground">{t("importDescription")}</p>
-                    <div className="flex min-w-0 flex-col items-stretch gap-2 sm:flex-row sm:items-center">
-                        <Input ref={uploadInput} id={uploadId} type="file" accept=".zip,application/zip" className="min-w-0 flex-1" aria-describedby={`${uploadId}-hint`} disabled={upload.isPending || create.isPending || remove.isPending || query.data?.running || query.isPending || query.isError} onChange={event => { setArchive(event.target.files?.[0] ?? null); upload.reset() }} />
-                        <Button type="submit" variant="outline" disabled={!archive || upload.isPending || create.isPending || remove.isPending || query.data?.running || query.isPending || query.isError}>
-                            {upload.isPending ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Upload className="size-4" aria-hidden="true" />}
-                            {upload.isPending ? t(uploadPercent < 100 ? "importUploading" : "importValidating", { percent: uploadPercent }) : t("import")}
-                        </Button>
-                    </div>
-                    {upload.isPending && <p role="status" className="text-sm text-muted-foreground">{t(uploadPercent < 100 ? "importUploading" : "importValidating", { percent: uploadPercent })}</p>}
-                    {upload.isError && <p role="alert" className="text-sm text-destructive">{t(importErrorKey)}</p>}
-                </form>
                 {query.isPending ? <p role="status">{t("common.loading", { ns: "translation" })}</p> : query.isError ? (
                     <div className="flex flex-wrap items-center gap-3">
                         <p role="alert" className="text-sm text-destructive">{t("loadFailed")}</p>
@@ -175,29 +152,51 @@ export function BackupSettings() {
                 ) : !query.data?.items.length ? <p className="text-sm text-muted-foreground">{t("empty")}</p> : (
                     <ul className="flex min-w-0 flex-col divide-y">
                         {query.data.items.map(item => (
-                            <li key={item.name} className="flex min-w-0 flex-wrap items-center justify-between gap-3 py-3">
-                                <div className="flex min-w-0 flex-col gap-1">
-                                    <p className="break-all font-mono text-xs">{item.name}</p>
-                                    <p className="text-sm text-muted-foreground tabular-nums">{new Date(item.created_at * 1000).toLocaleString(i18n.language)} · {(item.size / 1024 / 1024).toFixed(1)} MB</p>
+                            <li key={item.name} className="grid min-w-0 gap-2 py-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                                <div className="min-w-0 space-y-1">
+                                    <p className="text-sm font-medium tabular-nums">{new Date(item.created_at * 1000).toLocaleString(i18n.language)} · {(item.size / 1024 / 1024).toFixed(1)} MB</p>
+                                    <p className="break-all font-mono text-xs text-muted-foreground">{item.name}</p>
                                 </div>
-                                <div className="flex flex-wrap items-center gap-2">
-                                <Button variant="outline" size="sm" disabled={upload.isPending || !!receipt || download.isPending || query.data?.running || remove.isPending} aria-label={`${t("download")} ${item.name}`} onClick={() => download.mutate(item.name)}>
-                                    {download.isPending && download.variables === item.name ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Download className="size-4" aria-hidden="true" />}
-                                    {t("download")}
-                                </Button>
-                                <Button variant="outline" size="sm" disabled={upload.isPending || !!receipt || remove.isPending || create.isPending || query.data?.running || item.in_use || query.data.items.length <= (query.data.minimum_local_archives ?? 1) || (download.isPending && download.variables === item.name)} aria-label={`${t("delete")} ${item.name}`} onClick={() => { setDeleting(item.name); setDeleteError(null) }}>
-                                    <Trash2 className="size-4" aria-hidden="true" />{t("delete")}
-                                </Button>
-                                {query.data?.online_restore_available && <Button variant="outline" size="sm" disabled={upload.isPending || !!receipt || query.data.running || create.isPending || remove.isPending || download.isPending || item.in_use} aria-label={`${t("onlineRestore")} ${item.name}`} onClick={() => setRestoring(item.name)}>{t("onlineRestore")}</Button>}
+                                <div className="flex flex-wrap items-center gap-1">
+                                    <Button variant="outline" size="sm" disabled={upload.isPending || download.isPending || query.data?.running || remove.isPending} aria-label={`${t("download")} ${item.name}`} onClick={() => download.mutate(item.name)}>
+                                        {download.isPending && download.variables === item.name ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Download className="size-4" aria-hidden="true" />}
+                                        {t("download")}
+                                    </Button>
+                                    {query.data?.online_restore_available && <Button variant="ghost" size="sm" disabled={upload.isPending || query.data.running || create.isPending || remove.isPending || download.isPending || item.in_use} aria-label={`${t("onlineRestore")} ${item.name}`} onClick={() => setRestoring(item.name)}>{t("onlineRestore")}</Button>}
+                                    <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" disabled={upload.isPending || remove.isPending || create.isPending || query.data?.running || item.in_use || query.data.items.length <= (query.data.minimum_local_archives ?? 1) || (download.isPending && download.variables === item.name)} aria-label={`${t("delete")} ${item.name}`} title={t("delete")} onClick={() => { setDeleting(item.name); setDeleteError(null) }}>
+                                        <Trash2 className="size-4" aria-hidden="true" />
+                                    </Button>
                                 </div>
                             </li>
                         ))}
                     </ul>
                 )}
                 {restoring && <BackupRestoreDialog key={restoring} name={restoring} onClose={() => setRestoring(null)} />}
-                {query.data?.safety_backup && <section className="flex flex-col gap-2 rounded-md border p-3 text-sm"><h3 className="font-medium">{t("restoreSafetyTitle")}</h3><p>{t("restoreSafetyRetention")}</p><Button variant="outline" size="sm" disabled={!!receipt || download.isPending} onClick={async () => {
-                    try { const blob = await backupApi.downloadSafety(); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href=url; link.download="before-online-restore.zip"; link.click(); setTimeout(() => URL.revokeObjectURL(url),1000) } catch { toast.error(t("downloadFailed")) }
-                }}>{t("restoreSafetyDownload")}</Button></section>}
+                <form className="flex min-w-0 flex-col gap-3 border-t pt-4" onSubmit={event => {
+                    event.preventDefault()
+                    if (archive) { setUploadPercent(0); upload.mutate(archive) }
+                }}>
+                    <h3 className="font-medium">{t("uploadRestoreTitle")}</h3>
+                    <Label className="sr-only" htmlFor={uploadId}>{t("importFile")}</Label>
+                    <p id={`${uploadId}-hint`} className="text-sm text-muted-foreground">{t("importDescription")}</p>
+                    <div className="flex min-w-0 flex-col items-start gap-3">
+                        <div className="relative max-w-full">
+                            <Input ref={uploadInput} id={uploadId} type="file" accept=".zip,application/zip"
+                                className="peer absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0 file:cursor-pointer"
+                                aria-describedby={`${uploadId}-hint ${uploadId}-name`}
+                                disabled={upload.isPending || create.isPending || remove.isPending || query.data?.running || query.isPending || query.isError}
+                                onChange={event => { setArchive(event.target.files?.[0] ?? null); upload.reset() }} />
+                            <span aria-hidden="true" className="inline-flex min-h-9 items-center rounded-md border border-input px-3 text-sm font-medium peer-hover:bg-muted peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-disabled:opacity-50">{t("chooseZip")}</span>
+                        </div>
+                        <span id={`${uploadId}-name`} aria-live="polite" className="max-w-full break-all text-sm text-muted-foreground empty:sr-only">{archive?.name}</span>
+                        <Button type="submit" variant="outline" disabled={!archive || upload.isPending || create.isPending || remove.isPending || query.data?.running || query.isPending || query.isError}>
+                            {upload.isPending ? <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Upload className="size-4" aria-hidden="true" />}
+                            {upload.isPending ? t(uploadPercent < 100 ? "importUploading" : "importValidating", { percent: uploadPercent }) : t("import")}
+                        </Button>
+                    </div>
+                    {upload.isPending && <p role="status" className="sr-only">{t(uploadPercent < 100 ? "importUploading" : "importValidating", { percent: uploadPercent })}</p>}
+                    {upload.isError && <p role="alert" className="text-sm text-destructive">{t(importErrorKey)}</p>}
+                </form>
                 <AlertDialog open={deleting !== null} onOpenChange={open => { if (!open && !remove.isPending) { setDeleting(null); setDeleteError(null) } }}>
                     <AlertDialogContent>
                         <AlertDialogHeader>
@@ -218,13 +217,11 @@ export function BackupSettings() {
                         </AlertDialogFooter>
                     </AlertDialogContent>
                 </AlertDialog>
-                <section aria-labelledby="backup-restore-title" className="flex flex-col gap-2">
-                    <h3 id="backup-restore-title" className="font-medium">{t("restoreTitle")}</h3>
-                    <p className="text-sm text-muted-foreground">{t("restoreDescription")}</p>
-                    <p className="text-sm text-muted-foreground">{t("onlineRestoreExplanation")}</p>
-                    <code className="break-all rounded-md bg-muted p-3 text-xs">python -m releasetracker.cli restore-backup BACKUP.zip --destination /restore/new-data --confirm-stopped</code>
-                    <p className="text-sm text-muted-foreground">{t("configuration")}</p>
-                </section>
+                <details className="border-t pt-4 text-sm">
+                    <summary className="cursor-pointer font-medium">{t("restoreTitle")}</summary>
+                    <p className="my-2 text-muted-foreground">{t("restoreDescription")}</p>
+                    <code className="block break-all rounded-md bg-muted p-3 text-xs">python -m releasetracker.cli restore-backup BACKUP.zip --destination /restore/new-data --confirm-stopped</code>
+                </details>
             </CardContent>
         </Card>
     )

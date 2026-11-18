@@ -10,7 +10,7 @@ for(const language of ["zh","en"])for(const width of [320,1280]){
    const send=(data:unknown,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(data)})
    if(path==="/api/auth/me")return send({id:1,username:"isolated-admin",is_admin:true})
    if(path==="/api/settings/security-keys")return send({jwt_secret:{configured:true,fingerprint:"fixture",active_sessions:1},encryption_key:{configured:true,fingerprint:"fixture",undecryptable_count:0,inventory:{credentials_token:0,credentials_secrets:0,oauth_provider_client_secret:0,runtime_connection_secrets:0}}})
-   if(path==="/api/backups")return send({items,retention:7,interval_hours:24,daily_retention:14,weekly_retention:4,total_size:items.length*1048576,running:false,minimum_local_archives:1})
+   if(path==="/api/backups")return send({items,retention:7,interval_hours:24,total_size:items.length*1048576,running:false,minimum_local_archives:1})
    if(path===`/api/backups/${first}` && req.method()==="DELETE"){
     expect(req.postDataJSON()).toEqual({confirm_name:first});deletes++
     if(fail){fail=false;return send({detail:"backup_in_use"},409)}

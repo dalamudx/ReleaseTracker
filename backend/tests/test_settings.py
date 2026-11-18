@@ -351,7 +351,9 @@ def test_webhook_fake_ip_cidrs_settings(authed_client):
     key = "system.webhook_fake_ip_cidrs"
 
     def stored():
-        return next(s["value"] for s in authed_client.get("/api/settings").json() if s["key"] == key)
+        return next(
+            s["value"] for s in authed_client.get("/api/settings").json() if s["key"] == key
+        )
 
     assert stored() == ""
     cidrs = "198.18.0.0/24\nfd12::/48"
@@ -359,7 +361,13 @@ def test_webhook_fake_ip_cidrs_settings(authed_client):
         response = authed_client.post("/api/settings", json={"key": key, "value": value})
         assert response.status_code == 200
         assert stored() == expected
-        for invalid in ("example.com", "198.18.0.1/24", "127.0.0.0/8", "fd00:ec2::/64", "0.0.0.0/0"):
+        for invalid in (
+            "example.com",
+            "198.18.0.1/24",
+            "127.0.0.0/8",
+            "fd00:ec2::/64",
+            "0.0.0.0/0",
+        ):
             response = authed_client.post("/api/settings", json={"key": key, "value": invalid})
             assert response.status_code == 400
             assert stored() == expected
@@ -479,3 +487,41 @@ async def test_oci_redirect_setting_update_refreshes_cached_container_tracker(
     assert isinstance(deleted_setting_tracker, DockerTracker)
     assert deleted_setting_tracker is not refreshed_tracker
     assert deleted_setting_tracker.allow_registry_redirects is False
+
+
+@pytest.mark.asyncio
+async def test_operational_policy_saves_and_deletes_reach_live_consumers(authed_client, storage):
+    from unittest.mock import MagicMock
+
+    from releasetracker.scheduler_host import SchedulerHost
+    from releasetracker.services.runtime_health_watch import RuntimeHealthWatch
+    from releasetracker.services.task_queue import TaskQueue
+
+    host = SchedulerHost()
+    queue = TaskQueue(storage.tasks, host)
+    watch = RuntimeHealthWatch(storage, MagicMock(), MagicMock(), host)
+    authed_client.app.state.scheduler_host = host
+    authed_client.app.state.task_queue = queue
+    authed_client.app.state.runtime_health_watch = watch
+
+    def save(key, value):
+        response = authed_client.post("/api/settings", json={"key": key, "value": value})
+        assert response.status_code == 200, response.text
+
+    save("system.mutation_concurrency", "3")
+    assert queue.mutation_capacity == 3
+    assert queue.capacity["deploy"] == queue.capacity["recover"] == 3
+
+    save("system.worker_poll_seconds", "7")
+    assert host.worker_poll_seconds == 7
+
+    save("system.runtime_health_interval_seconds", "600")
+    assert watch.interval == 600
+
+    delete_response = authed_client.delete("/api/settings/system.runtime_health_interval_seconds")
+    assert delete_response.status_code == 200, delete_response.text
+    assert watch.interval == 0
+
+    delete_response = authed_client.delete("/api/settings/system.mutation_concurrency")
+    assert delete_response.status_code == 200, delete_response.text
+    assert queue.mutation_capacity == 1

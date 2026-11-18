@@ -26,9 +26,9 @@
     "output": "Rendered message",
     "previewEmpty": "Choose an event and render a preview to inspect the current draft.",
     "editorCardTitle": "Template Definition & Syntax",
-    "editorCardDescription": "Compose title and body templates with Jinja syntax, supporting conditionals, loops, and bilingual dictionary binding.",
+    "editorCardDescription": "Write titles and messages in Jinja with conditions, loops and bilingual text.",
     "previewCardTitle": "Live Render Preview",
-    "previewCardDescription": "Inspect formatting across events and languages using synthetic payloads without sending real notifications.",
+    "previewCardDescription": "Preview each event in both languages with redacted sample data. No notification is sent.",
     "tabEditor": "Template Editor",
     "tabTranslations": "Translations",
     "tabVariables": "Available Variables",
@@ -114,7 +114,7 @@
   "auth": {
     "login": {
       "title": "Release Tracker",
-      "subtitle": "Manage and track your software releases",
+      "subtitle": "Track software releases",
       "username": "Username",
       "usernamePlaceholder": "Enter username",
       "password": "Password",
@@ -190,7 +190,7 @@
     "never": "Never",
     "unexpectedError": "An unexpected error occurred",
     "loadFailedTitle": "Data could not be loaded",
-    "loadFailedDescription": "The latest data is unavailable. Check the connection and try again.",
+    "loadFailedDescription": "Check your connection and try again.",
     "retry": "Try again",
     "skipToContent": "Skip to main content",
     "notFoundTitle": "Page not found",
@@ -474,15 +474,15 @@
           "typeDescription": "Choose the release status explicitly; it won’t be inferred from the name.",
           "includePattern": "Include regex",
           "includePatternPlaceholder": "Leave empty to include all versions",
-          "includePatternDescription": "Only versions matching this regex can enter the selected release channel.",
+          "includePatternDescription": "Include only versions that match this pattern.",
           "excludePattern": "Exclude regex",
           "excludePatternPlaceholder": "Leave empty to exclude none",
-          "excludePatternDescription": "Versions matching this regex are blocked even if the include regex matches."
+          "excludePatternDescription": "Exclude matching versions even if the include rule matches."
         }
       },
       "releaseNotes": {
         "title": "Release notes",
-        "description": "Use release notes from the provider, or read changelog files from an existing repository source.",
+        "description": "Use upstream release notes or a changelog from a repository source.",
         "noRepositoryDescription": "Custom Changelog requires a GitHub, GitLab, or Gitea source on this tracker.",
         "options": {
           "releaseNotes": "Use Release Notes",
@@ -547,11 +547,7 @@
         "trackerChannelsTitle": "Child channel overview",
         "trackerChannelsDescription": "",
         "credential": "Credential",
-        "selectionAwaitingCheck": "{{channel}}: waiting for a registry check; the target is confirmed automatically once the tag is verified.",
-        "selectionManifestUnconfirmed": "{{channel}}: the highest version's image digest could not be confirmed; the next check retries.",
-        "selectionConflict": "{{channel}}: one version points to different image artifacts; use a tag rule to choose which tag to track.",
-        "selectionEmpty": "{{channel}}: no version matches this channel.",
-        "selectionUnorderable": "{{channel}}: tags are recorded but cannot be ordered. Specify numeric fields or pin a tag in the channel rule.",
+        "selectionRegexMismatch": "No tags pass the regex filter for {{channel}}.",
         "selectionDiagnostics": {
           "show": "Show problem tags",
           "hide": "Hide problem tags",
@@ -695,7 +691,7 @@
       },
       "both": {
         "title": "Create the prerequisites before adding executors",
-        "description": "Add a runtime connection and a tracker before creating an executor."
+        "description": "Add a runtime connection and a tracker first."
       },
       "actions": {
         "runtimeConnections": "Open Runtime Connections",
@@ -1091,7 +1087,7 @@
     "rollback": {
       "dialog": {
         "title": "Rollback executor",
-        "description": "Restore {{executor}} to the selected snapshot. This will create a new run that captures a pre-rollback snapshot and then applies the target snapshot.",
+        "description": "A new rollback run saves a snapshot before restoring {{executor}} to the selected snapshot.",
         "targetLabel": "Target snapshot",
         "currentLabel": "Last recorded version (not live configuration)",
         "configurationPolicy": "Only settings supported by snapshot recovery are compared; application data is excluded. Confirming applies the + configuration and may overwrite current changes. Configuration changes before execution stop recovery and require a new review.",
@@ -1182,7 +1178,7 @@
         "containerDescription": "Set the Docker or Podman socket endpoint.",
         "kubernetesDescription": "Choose a cluster context and the namespaces this connection can use.",
         "portainerDescription": "Connect to Portainer and choose the endpoint this connection should use.",
-        "secretDescription": "Leave a secret field blank to keep the current saved value for {{type}}.",
+        "secretDescription": "Leave blank to keep the current {{type}}.",
         "kubernetesSecrets": "Leave secret fields blank to keep the current saved values.",
         "portainerSecrets": "Leave the API key blank to keep the current saved value."
       },
@@ -1297,7 +1293,7 @@
     },
     "references": {
       "blockedTitle": "Credential is in use",
-      "blockedDescription": "Remove these references before deleting this credential.",
+      "blockedDescription": "Remove these references before deleting the credential.",
       "runtimeConnections": "Runtime connections",
       "trackerSources": "Tracker sources",
       "trackers": "Legacy trackers"
@@ -1454,7 +1450,7 @@
     "timezone": {
       "title": "Global timezone",
       "label": "System timezone",
-      "description": "Executor maintenance windows use this IANA timezone, for example Asia/Shanghai."
+      "description": "Maintenance windows use this IANA timezone, for example Asia/Shanghai."
     },
     "notifications": {
       "title": "Notifications",

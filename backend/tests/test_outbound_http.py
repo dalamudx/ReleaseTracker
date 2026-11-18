@@ -266,7 +266,9 @@ async def test_discord_webhook_uses_trusted_fake_ip(monkeypatch):
         return reader, writer
 
     monkeypatch.setattr(asyncio, "open_connection", connect)
-    notifier = WebhookNotifier("discord", "https://discord.com/api/webhooks/test", settings_store=store)
+    notifier = WebhookNotifier(
+        "discord", "https://discord.com/api/webhooks/test", settings_store=store
+    )
     assert await notifier.send_payload({"content": "test"})
     assert b"Host: discord.com\r\n" in writer.request
     assert not await notifier.send_payload({"content": "test"})
@@ -292,5 +294,8 @@ async def test_fake_ip_exception_scope(monkeypatch, cidrs, url, verify_tls, extr
     await _set_dns_answers(monkeypatch, *answers)
     with pytest.raises(OutboundURLRejected, match="prohibited address"):
         await OutboundHTTPClient().request(
-            "POST", url, fake_ip_cidrs=outbound_http.parse_fake_ip_cidrs(cidrs), verify_tls=verify_tls
+            "POST",
+            url,
+            fake_ip_cidrs=outbound_http.parse_fake_ip_cidrs(cidrs),
+            verify_tls=verify_tls,
         )

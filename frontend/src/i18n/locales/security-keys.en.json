@@ -1,6 +1,6 @@
 {
   "title": "Security keys",
-  "description": "Manage application-owned session and encryption keys. Raw key values are never displayed.",
+  "description": "Session and encryption key values are hidden.",
   "rotate": "Rotate",
   "generate": "Generate on server",
   "manual": "Manual value",
@@ -23,10 +23,10 @@
   },
   "jwt": {
     "title": "Session key",
-    "description": "Signs access and refresh tokens. Rotating it immediately invalidates all current sessions.",
+    "description": "Signs access and refresh tokens. Rotation immediately ends all sessions.",
     "activeSessions": "Active sessions: {{count}}",
     "rotateTitle": "Rotate session key",
-    "rotateDescription": "Use a generated secret or provide a strong manual value.",
+    "rotateDescription": "Generate a key on the server or enter a strong key.",
     "warning": "All users, including you, will be logged out immediately after rotation.",
     "manualLabel": "New session key",
     "rotated": "Session key rotated. Invalidated sessions: {{count}}"

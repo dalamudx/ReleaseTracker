@@ -91,6 +91,7 @@ If the previous executor was deleted and local history proves an approved write 
 
 Before running, check the target version, image policy and service bindings. Afterwards inspect status, target versions and per-service diagnostics in execution history and the **Task queue**, then check application availability.
 
+- Tune task queue concurrency and polling in [global settings](../reference/settings.md#global): deployment and recovery share one limit, a reduction only limits new claims and never interrupts running work, and a saved poll interval applies immediately.
 - Enable Immediate or Maintenance Window only after a successful manual run.
 - If a task shows that its execution state needs confirmation, verify the actual runtime state before unblocking it.
 - A write timeout does not mean nothing changed; see [Update timeout](../reference/troubleshooting.md#update-timeout). For validation and recovery see [Health checks and rollback](health-and-rollback.md).

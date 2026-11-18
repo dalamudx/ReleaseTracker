@@ -18,14 +18,20 @@ title: 备份、升级与密钥
 - **保留份数**（默认 7）：手动、自动和恢复前安全备份共用，新备份校验通过后才清理旧归档。
 - **自动备份周期**（默认 0 关闭）：按最新归档时间续算，重启不重置；无归档或已逾期时约 5 分钟后补做。
 
-旧版本的备份目录、份数和间隔环境变量已不再读取，升级后请在全局配置中重新设置。以下环境变量仍然有效：
+旧版本的备份目录、份数和间隔环境变量已不再读取，升级后请在全局配置中重新设置。以下策略同样只由持久化设置控制：
 
-| 环境变量 | 默认值 | 含义 |
+| 设置项 | 默认值 | 含义 |
 | --- | --- | --- |
-| `RELEASETRACKER_BACKUP_DAILY_RETENTION` | `0` | 最近 0–90 天每天额外保留最新一份（UTC） |
-| `RELEASETRACKER_BACKUP_WEEKLY_RETENTION` | `0` | 最近 0–52 周每周额外保留最新一份（UTC） |
-| `RELEASETRACKER_ONLINE_RESTORE` | POSIX 为 `1`，其他平台 `0` | 是否启用[页面在线恢复](#managed-restore-assessment) |
-| `RELEASETRACKER_PRE_MIGRATION_BACKUP` | `1` | 迁移前自动备份，见[入口命令](#entry-commands) |
+| `system.online_restore` | POSIX 为 `true`，其他平台 `false` | 是否启用[页面在线恢复](#managed-restore-assessment)；保存后重启服务生效，非 POSIX 平台不能启用 |
+| `system.pre_migration_backup` | `true` | 迁移前自动备份，见[入口命令](#entry-commands)；在该命令下次执行时生效 |
+
+升级时可一次性导入旧的 `RELEASETRACKER_ONLINE_RESTORE` 和 `RELEASETRACKER_PRE_MIGRATION_BACKUP` 取值：
+
+```bash
+docker compose run --rm releasetracker import-legacy-settings
+```
+
+导入是显式且可重复执行的：只补写尚未保存的设置项，已保存的值（包括显式 `false` 和 `0`）保持不变；非法取值整体放弃，不写入任何设置。导入后删除这些旧变量并重启服务，之后只读取持久化设置。
 
 新归档先写入临时目录，重新核对校验和、SQLite 完整性和凭证解密后才出现在列表中；失败时不动已有归档。系统每天校验最新一份归档。备份页显示最近成功时间、连续失败次数与原因，超过两个周期没有成功备份时显示“已过期”。定时备份失败、归档损坏或曾有的归档全部丢失时，向订阅“任务处理异常”的通知渠道发送去重告警。
 
@@ -48,12 +54,23 @@ title: 备份、升级与密钥
 1. **预检**：严格校验归档（大小、SHA256、SQLite 与关系一致性、schema 版本、密钥解密），展示时间点、应用版本和指纹。计划 10 分钟内有效，期间归档被锁定。
 2. **确认**：输入完整文件名并确认数据将被替换。存在进行中的部署/恢复、下载或待人工处理的任务时拒绝恢复。
 3. **维护排空**：新的写请求返回 503，等待在途请求和后台任务结束；超时则放弃切换，数据保持不变。
-4. **切换**：先保存一份当前数据的“恢复前安全副本”，再替换数据库与密钥并重建服务。失败会回退到原数据；进程中途退出时，下次启动会先自动还原（`migrate-and-serve` 入口已包含此步骤）。
+4. **切换**：先保存一份当前数据的“恢复前安全副本”，再替换数据库与密钥并重建服务。失败会回退到原数据；进程中途退出时，下次启动会先自动还原，无论在线恢复当前是否启用。
 5. **重新登录并复核**：使用备份内的账号登录。旧会话、待执行任务、审批和待发通知已撤销，自动调度与通知保持暂停；核对现场后点击 **复核恢复状态** 恢复新操作，旧操作不会重放。
 
-“恢复前安全副本”可在备份页下载，不计入常规保留，下次恢复时被替换，建议异机保存。需预留归档、暂存库和原数据的磁盘空间。
+在备份列表下方的 **上传恢复** 区域选择 ZIP 并点击 **在线导入**。校验通过后，从列表中找到导入的归档，点击 **在线恢复** 并确认。切换前自动生成的安全副本独立于常规保留策略，下次恢复时会被替换。
 
-限制：仅支持 Linux/POSIX 文件系统；同一数据目录只能有一个应用进程（通过文件锁保证），需要多 worker 时设 `RELEASETRACKER_ONLINE_RESTORE=0` 禁用此功能；数据库和密钥不能是符号链接。只恢复可信且版本匹配的归档，不支持上传。应用无法启动或跨版本恢复时使用[命令行恢复](#restore)。
+限制：仅支持 Linux/POSIX 文件系统；同一数据目录只能有一个应用进程（通过文件锁保证），需要多 worker 时在全局配置关闭 **在线恢复** 并重启服务（非 POSIX 平台始终关闭）；数据库和密钥不能是符号链接。即使在关闭状态下，启动仍会先还原被中断的恢复过程。只恢复可信且版本匹配的归档，上传的归档需先通过导入校验。应用无法启动或跨版本恢复时使用[命令行恢复](#restore)。
+
+## 从自定义数据路径迁移 {#custom-path}
+
+旧版本可用 `RELEASETRACKER_DB_PATH` 指定数据库位置。该变量已移除：服务、CLI、备份和 dbmate 只使用固定的 `backend/data`（容器内 `/app/backend/data`），密钥文件和 `backups` 目录位于同一目录。
+
+1. 停止旧服务，确认数据库与 `system-secrets.json` 的备份可用，并记下原数据挂载点。
+2. 关闭所有数据库连接，保留原库旁的 `-wal` 文件。将命令中的路径替换为原数据库的实际路径，运行 `sqlite3 'file:/path/to/original.db?mode=rw' 'PRAGMA wal_checkpoint(TRUNCATE);'`。只有命令成功且结果的第一列为 `0` 时才继续。把完成检查点的数据库复制到空的固定数据目录，命名为 `releases.db`，再复制配对的 `system-secrets.json` 和 `backups` 目录。保留原文件以便回退。
+3. 确认固定目录中的数据库与密钥来自原实例，再移除 `RELEASETRACKER_DB_PATH`。只要该变量仍指向其他路径，服务和迁移就会拒绝启动。
+4. 启动新版本，验证登录、追踪器和备份列表。
+
+回退：停止服务，恢复原镜像与原挂载即可回到旧数据；新的固定目录保留不动。
 
 ## 停机整目录备份 {#backup}
 
@@ -116,15 +133,15 @@ python -m releasetracker.cli restore-backup /backups/BACKUP.zip \
   --destination /restore/new-data --confirm-stopped
 ```
 
-校验覆盖 ZIP 大小、SHA256、SQLite 与关系完整性、迁移版本和密钥解密。SHA256 只能发现损坏，不能证明来源可信，不要恢复不可信的 ZIP。将新目录挂载到数据路径（自定义 `RELEASETRACKER_DB_PATH` 时指向新目录中的 `releases.db`），保留旧卷。
+校验覆盖 ZIP 大小、SHA256、SQLite 与关系完整性、迁移版本和密钥解密。SHA256 只能发现损坏，不能证明来源可信，不要恢复不可信的 ZIP。将新目录挂载到固定数据路径（容器内 `/app/backend/data`），保留旧卷。
 
-恢复后需要重新登录；旧的待执行任务、审批和待发通知被撤销，自动调度与通知暂停。核对远端版本和执行器配置后，在备份页点击 **复核恢复状态**，或对新数据库执行：
+恢复后需要重新登录；旧的待执行任务、审批和待发通知被撤销，自动调度与通知暂停。核对远端版本和执行器配置后，在备份页点击 **复核恢复状态**，或对新数据执行（先挂载到固定数据路径，CLI 与服务的数据库位置一致）：
 
 ```bash
 # 只读检查，报告关系问题，不自动修复
-RELEASETRACKER_DB_PATH=/restore/new-data/releases.db python -m releasetracker.cli audit-database
+python -m releasetracker.cli audit-database
 # 解除新操作的门禁，完成后重启服务
-RELEASETRACKER_DB_PATH=/restore/new-data/releases.db python -m releasetracker.cli acknowledge-restore --confirm-reviewed
+python -m releasetracker.cli acknowledge-restore --confirm-reviewed
 ```
 
 仍需执行的旧目标应重新发起，旧任务不会重放。
@@ -145,8 +162,9 @@ RELEASETRACKER_DB_PATH=/restore/new-data/releases.db python -m releasetracker.cl
 | `migrate-and-serve` | 先迁移再启动，安装和升级推荐 |
 | `migrate` | 只迁移；执行前停止其他实例 |
 | `serve` | 只启动；要求 schema 已就绪 |
+| `import-legacy-settings` | 一次性导入旧策略变量；数据库和密钥必须已存在，缺失时报错退出 |
 
-存在待执行迁移时，`migrate` / `migrate-and-serve` 会先在备份目录生成 `reason: pre_migration` 归档，失败则中止迁移。该归档只能用升级前的镜像恢复，并参与保留轮换，需要长期保存时及时下载；已有其他备份机制时可设 `RELEASETRACKER_PRE_MIGRATION_BACKUP=0` 关闭。数据库 schema 由 dbmate 管理，不要手工改表；相关错误见[启动与迁移排障](../reference/troubleshooting.md#startup)。
+存在待执行迁移时，`migrate` / `migrate-and-serve` 会先在备份目录生成 `reason: pre_migration` 归档，失败则中止迁移。该归档只能用升级前的镜像恢复，并参与保留轮换，需要长期保存时及时下载；已有其他备份机制时可在全局配置关闭 **迁移前备份**（`system.pre_migration_backup=false`），该设置在下一次迁移命令执行时生效。数据库 schema 由 dbmate 管理，不要手工改表；相关错误见[启动与迁移排障](../reference/troubleshooting.md#startup)。
 
 `make dbmate-migrate` 也复用上述入口，在迁移前备份数据库及密钥。时间语义迁移 `20261012000001` 会在**同一事务**中按既有白名单自动清理已删除父记录遗留的 `CASCADE` / `SET NULL` 关系，然后重建表；无需提前手动执行 `prune-orphans`。此次迁移的安全归档保留**清理前原始记录**，不会提前清理备份副本。清理统计写入设置 `internal.release_time_pruned_orphans`，任务队列不变；未知外键损坏或部署观察关系异常会导致整次迁移（含清理）回滚。执行前仍须停止其他写库实例。直接调用 dbmate 时，应自行先备份数据库及密钥；含孤儿记录的原样安全归档须离线处理后才能通过普通恢复校验。
 
@@ -164,7 +182,7 @@ python -m releasetracker.cli audit-database
 
 ## 监控指标 {#metrics}
 
-设置至少 32 字符的随机 `RELEASETRACKER_METRICS_TOKEN` 后开放 `GET /metrics`（未设置时返回 404）。请求须携带 `Authorization: Bearer <token>`，登录令牌不能代替；该令牌只能读取指标。建议通过内网地址每 60 秒抓取：
+在**全局配置 → 网络配置**中生成 16 位令牌，点击“保存”后即可使用 `GET /metrics`。管理员可随时返回此页复制令牌。请求使用 `Authorization: Bearer <token>`。撤销令牌并保存后，接口返回 404。建议通过内网地址每 60 秒抓取一次。
 
 ```yaml
 scrape_configs:

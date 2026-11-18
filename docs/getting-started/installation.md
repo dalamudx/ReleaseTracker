@@ -89,25 +89,15 @@ livenessProbe:
   timeoutSeconds: 3
 ```
 
-## 可选环境变量 {#environment}
+## 全局配置 {#environment}
 
-大部分配置在界面中完成，以下变量用于部署层面的调整，启动时生效：
+在**全局配置**中设置公开基础 URL（含部署子路径）、后台轮询间隔、部署与恢复并发、镜像拉取宽限、运行态巡检、备份策略、可信代理、CORS 来源和监控令牌。新实例使用表单中的默认值。调高并发前先备份实例并检查资源占用。
 
-| 变量 | 默认值 | 作用 |
-| --- | --- | --- |
-| `RELEASETRACKER_DB_PATH` | `data/releases.db` | 数据库路径；密钥文件和 `backups` 目录自动位于其同目录 |
-| `RELEASETRACKER_CORS_ORIGINS` | 空（仅同源） | 逗号分隔的完整 HTTP(S) 来源，不可使用 `*` |
-| `RELEASETRACKER_WORKER_POLL_SECONDS` | `2` | 后台任务轮询间隔（1–60）；调大可降低空闲占用，但会增加部署、通知等延迟 |
-| `RELEASETRACKER_DEPLOYMENT_CONCURRENCY` | `1` | 部署与恢复共享的并发名额（1–3）；同一目标或同一执行器仍串行 |
-| `RELEASETRACKER_READINESS_PULL_GRACE_SECONDS` | `1800` | Kubernetes 镜像拉取宽限，见[健康检查](../guides/health-and-rollback.md#image-pull) |
-| `RELEASETRACKER_RUNTIME_HEALTH_INTERVAL_SECONDS` | `0` | 部署后巡检，见[只读巡检](../guides/health-and-rollback.md#runtime-watch) |
-| `RELEASETRACKER_METRICS_TOKEN` | 空 | 开启 `/metrics`，见[监控指标](../operations/backup-and-upgrade.md#metrics) |
-
-备份相关变量见[在线备份](../operations/backup-and-upgrade.md#online-backup)。调高并发前先完成备份并观察资源占用，并发设置不会带来多实例支持。
+升级已有实例时，先停止旧服务，验证数据库和系统密钥的备份。将原数据挂载到 `/app/backend/data`，数据库文件名为 `releases.db`。确认数据就位后移除 `RELEASETRACKER_DB_PATH`。在对外提供服务前，使用新版本并保留原策略环境变量运行 `python -m releasetracker.cli import-legacy-settings`。命令仅导入一次，并保留已保存的配置。验证后可移除旧变量。使用公开链接或 OIDC 时请填写公开基础 URL。详见[备份与升级](../operations/backup-and-upgrade.md)。
 
 ## 登录与会话安全 {#security}
 
-- 登录接口按客户端地址限制为每分钟 10 次失败请求（全局每分钟 100 次），返回 `429` 时按 `Retry-After` 重试。经代理部署时为 Uvicorn 配置可信代理地址，否则无法区分客户端。
+- 登录接口按客户端地址限制为每分钟 10 次失败请求（全局每分钟 100 次），返回 `429` 时按 `Retry-After` 重试。经代理部署时，在全局配置中填写可信代理地址，以便识别客户端。
 - 浏览器会话使用 HttpOnly Cookie 和 CSRF 校验；HTTPS 下启用 `Secure` 与 `__Host-` 前缀，因此生产环境需要正确的 BASE URL 和可信代理配置。
 - CLI/API 继续使用 `/api/auth/token` 与 Bearer 令牌，不依赖 Cookie。
 

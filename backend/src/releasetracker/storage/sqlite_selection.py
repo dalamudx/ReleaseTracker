@@ -7,6 +7,7 @@ import json
 import re
 from datetime import datetime
 
+from .sqlite_release_queries import matches_channel_patterns
 from ..models import Release, ReleaseAliasReference, ReleaseChannel
 from ..versioning import (
     SELECTION_RULES_VERSION,
@@ -395,6 +396,9 @@ async def refresh_selections(storage, tracker, *, commit=True):
 
                 issue = None if pinned_alias(channel) else ordering_issue(ranked, channel)
                 state, reason = ("empty", issue) if issue else ("conflict", ARTIFACT_CONFLICT)
+            elif (channel.include_pattern or channel.exclude_pattern) and candidates:
+                if not any(matches_channel_patterns(storage, r, channel) for r in candidates):
+                    reason = "no_matching_tag"
             if winner is not None:
                 state, reason = "ready", None
                 if source.source_type == "container" and (

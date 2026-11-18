@@ -8,9 +8,11 @@ import pytest
 from releasetracker import paths
 from releasetracker.services.backup_configuration import pre_migration_directory
 
+# These tests assert the real fixed location, so the data-dir sandbox is off.
+pytestmark = pytest.mark.real_data_paths
 
-def test_default_paths_live_under_backend_data(monkeypatch):
-    monkeypatch.delenv(paths.DB_PATH_ENV, raising=False)
+
+def test_default_paths_live_under_backend_data():
     assert paths.database_path() == paths.backend_dir() / "data" / "releases.db"
     assert paths.system_secrets_path() == paths.backend_dir() / "data" / "system-secrets.json"
     assert paths.database_path().relative_to(paths.backend_dir()) == Path("data/releases.db")
@@ -19,20 +21,57 @@ def test_default_paths_live_under_backend_data(monkeypatch):
     )
 
 
-def test_db_path_env_matches_entrypoint_and_keeps_keys_beside_database(monkeypatch, tmp_path):
-    db_path = tmp_path / "state" / "rt.db"
-    monkeypatch.setenv(paths.DB_PATH_ENV, f"  {db_path}  ")
-    assert paths.database_path() == db_path
-    assert paths.system_secrets_path() == db_path.parent / "system-secrets.json"
+def test_retired_path_overrides_are_ignored(monkeypatch, tmp_path):
+    # Server, CLI, backups and dbmate all follow the fixed location.
+    monkeypatch.setenv("RELEASETRACKER_DB_PATH", f"  {tmp_path / 'state' / 'rt.db'}  ")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite://{tmp_path / 'state' / 'rt.db'}")
+    assert paths.database_path() == paths.backend_dir() / "data" / "releases.db"
+    assert paths.system_secrets_path() == paths.backend_dir() / "data" / "system-secrets.json"
 
 
-@pytest.mark.parametrize("configured", [None, "custom/state.db"])
-def test_entrypoint_migration_uses_app_database_path(monkeypatch, tmp_path, configured):
-    db_path = tmp_path / configured if configured else None
-    if db_path:
-        monkeypatch.setenv(paths.DB_PATH_ENV, f"  {db_path}  ")
-    else:
-        monkeypatch.delenv(paths.DB_PATH_ENV, raising=False)
+@pytest.mark.parametrize("mounted", [True, False])
+def test_retired_override_refuses_silent_empty_database(monkeypatch, tmp_path, mounted):
+    legacy = tmp_path / "custom" / "rt.db"
+    if mounted:
+        legacy.parent.mkdir()
+        legacy.write_text("original")
+    monkeypatch.setenv("RELEASETRACKER_DB_PATH", str(legacy))
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path / "data")
+    # A declared custom location blocks a fresh bootstrap even when unmounted.
+    with pytest.raises(RuntimeError, match="retired") as error:
+        paths.reject_legacy_database_override()
+    assert ("not mounted" if not mounted else "holds a database") in str(error.value)
+    assert not (tmp_path / "data" / "releases.db").exists()
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "releases.db").write_text("another database")
+    with pytest.raises(RuntimeError, match="retired"):
+        paths.reject_legacy_database_override()
+    monkeypatch.delenv("RELEASETRACKER_DB_PATH")
+    paths.reject_legacy_database_override()
+
+
+@pytest.mark.parametrize("declared", ["data/releases.db", "./data/../data/releases.db"])
+def test_relative_override_naming_the_fixed_file_is_allowed(monkeypatch, declared):
+    monkeypatch.setenv("RELEASETRACKER_DB_PATH", declared)
+    monkeypatch.chdir(paths.backend_dir())
+    assert paths.legacy_database_path() is None
+    paths.reject_legacy_database_override()
+
+
+def test_relative_override_outside_backend_blocks_empty_bootstrap(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(paths, "backend_dir", lambda: tmp_path / "backend")
+    monkeypatch.setenv("RELEASETRACKER_DB_PATH", "data/releases.db")
+    legacy = tmp_path / "data" / "releases.db"
+    legacy.parent.mkdir()
+    legacy.touch()
+
+    assert paths.legacy_database_path() == legacy
+    with pytest.raises(RuntimeError, match="still holds a database"):
+        paths.reject_legacy_database_override()
+
+
+def test_entrypoint_migration_uses_app_database_path(monkeypatch, tmp_path):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("REAL_PYTHON", sys.executable)
     monkeypatch.setenv("MIGRATION_ARGS", str(tmp_path / "migration-args"))

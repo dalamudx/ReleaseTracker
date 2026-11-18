@@ -21,6 +21,8 @@ vi.mock("@/hooks/queries", () => ({
     },
   }),
   useUpdateSetting: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  useMetricsTokenStatus: () => ({ data: { configured: false } }),
+  useSetMetricsToken: () => ({ isPending: false, mutateAsync: vi.fn() }),
   useCleanupReleaseHistory: () => ({ isPending: false, mutateAsync: vi.fn() }),
   useCleanupSnapshotHistory: () => ({ isPending: false, mutateAsync: vi.fn() }),
   useRotateJwtSecret: () => ({ isPending: false, mutateAsync: vi.fn() }),

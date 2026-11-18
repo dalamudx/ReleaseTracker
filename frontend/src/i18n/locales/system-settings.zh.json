@@ -12,17 +12,29 @@
   "global": {
     "backupRetention": {
       "title": "系统备份保留份数",
-      "scopeBadge": "系统全量灾备",
       "label": "保留最近备份数量",
-      "description": "新备份校验通过后，自动清理 backups 目录中超出保留份数的归档（1–100 份）。",
+      "description": "保留最近 1–100 份备份。新备份校验通过后清理旧归档。",
       "invalid": "请输入 1 到 100 之间的整数。"
     },
     "backupInterval": {
       "title": "系统自动备份周期",
-      "scopeBadge": "定时任务",
       "label": "自动备份周期（小时）",
       "description": "24 小时为每天，168 小时为每周，最长 8760 小时。设为 0 时仅手动备份。",
       "invalid": "请输入 0 到 8760 之间的整数（0 为关闭）。"
+    },
+    "onlineRestore": {
+      "title": "在线恢复",
+      "label": "允许原地恢复",
+      "description": "仅限管理员在 POSIX 平台使用。更改此设置后需重启服务。"
+    },
+    "preMigrationBackup": {
+      "title": "迁移前备份",
+      "label": "迁移前归档数据",
+      "description": "仅当其他工具已备份数据库和系统密钥时，才可关闭此项。"
+    },
+    "policies": {
+      "invalid": "请检查标红的策略取值。",
+      "rangeInvalid": "请输入 {{min}} 到 {{max}} 之间的整数。"
     },
     "backup": {
       "title": "实例备份策略",
@@ -32,11 +44,10 @@
       "invalid": "请检查备份配置：保留数 1–100，间隔 0–8760。"
     },
     "title": "全局设置",
-    "description": "这些配置会影响整个应用。",
     "baseUrl": {
-      "title": "BASE URL",
-      "label": "应用公开访问地址",
-      "description": "用于反向代理、OIDC 回调和登录完成跳转；如果部署在子路径下，请包含完整子路径。",
+      "title": "公开基础 URL",
+      "label": "公开基础 URL",
+      "description": "部署在子路径时需包含完整路径。",
       "placeholder": "https://example.com/releasetracker",
       "invalid": "请输入有效的 http(s) 地址。"
     },
@@ -45,14 +56,67 @@
       "label": "系统时区",
       "description": "维护窗口和统计图表使用此时区。"
     },
+    "queue": {
+      "title": "并发与调度",
+      "description": "决定同时运行的部署与恢复任务数量，以及队列工作进程的轮询频率。",
+      "mutationConcurrency": {
+        "title": "共享部署与恢复并发",
+        "label": "同时变更数量",
+        "description": "部署与恢复共用此上限。"
+      },
+      "workerPollSeconds": {
+        "title": "工作进程轮询周期",
+        "label": "轮询间隔（秒）",
+        "description": "队列任务重新检查空闲名额、重试和定时运行的频率。"
+      }
+    },
+    "inbound": {
+      "title": "网络配置",
+      "description": "信任代理转发的请求头、允许跨域调用，并保护指标端点。",
+      "forwardedAllowIps": {
+        "title": "可信反向代理",
+        "label": "代理地址",
+        "description": "这些对端转发的协议与客户端地址会被信任，用于登录限流与安全会话判定。仅当所有对端都是代理时才设为 *。",
+        "placeholder": "例如 10.0.0.0/8",
+        "invalid": "请输入 IP 地址、CIDR 网段，或单独使用 *。"
+      },
+      "corsOrigins": {
+        "title": "允许的 CORS 来源",
+        "label": "来源地址",
+        "description": "允许浏览器跨域调用 API 的明确 http(s) 来源。留空表示拒绝所有跨域请求。",
+        "placeholder": "https://app.example.com",
+        "invalid": "请输入有效的 HTTP 或 HTTPS 来源地址。"
+      },
+      "metricsToken": {
+        "title": "指标抓取令牌",
+        "label": "令牌",
+        "description": "Prometheus 类抓取程序访问指标端点时发送的 Bearer 令牌。",
+        "generate": "生成令牌",
+        "undoRevoke": "取消撤销",
+        "configured": "已配置",
+        "notConfigured": "未配置",
+        "revoke": "撤销令牌",
+        "saveFailed": "令牌保存失败，请重试。"
+      }
+    },
     "logLevel": {
       "title": "日志级别",
       "label": "后端日志级别",
-      "description": "控制应用启动后的后端日志输出级别。"
+      "description": "服务启动后使用此日志级别。"
+    },
+    "pullGrace": {
+      "title": "镜像拉取宽限期",
+      "label": "宽限期（秒）",
+      "description": "新的部署观察在开始检查就绪前等待镜像拉取的最长时间。已开始的观察记录保留原截止时间。"
+    },
+    "runtimeHealth": {
+      "title": "部署后就绪巡检",
+      "label": "巡检间隔（秒）",
+      "description": "部署后按此间隔检查就绪状态。设为 0 可关闭持续巡检。",
+      "invalid": "请输入 0（关闭）或 300 到 86400 秒之间的间隔。"
     },
     "releaseHistoryCount": {
       "title": "发布渠道版本历史",
-      "scopeBadge": "发布渠道",
       "label": "每个发布渠道保留版本数",
       "description": "每个渠道保留最近的版本。旧记录在每天 02:00 或维护窗口结束后清理。",
       "invalid": "请输入 1 到 1000 之间的整数。",
@@ -60,7 +124,6 @@
     },
     "snapshotHistoryCount": {
       "title": "执行器运行态快照",
-      "scopeBadge": "执行器",
       "label": "每个执行器保留快照数",
       "description": "快照记录部署前后的运行配置和镜像标签。保存新快照时清理旧快照。",
       "invalid": "请输入 1 到 1000 之间的整数。",
@@ -72,31 +135,34 @@
     },
     "fakeIp": {
       "title": "受信任的 IP 网段",
-      "help": "支持 IPv4 和 IPv6（CIDR），留空则使用默认规则。",
-      "add": "添加网段", "remove": "移除网段",
+      "label": "IP 网段",
+      "description": "支持 IPv4 和 IPv6（CIDR），留空则使用默认规则。",
+      "placeholder": "例如 198.18.0.0/15",
       "invalid": "网段格式有误，或包含受保护地址。"
     },
     "ociRegistryRedirects": {
       "title": "OCI 镜像仓库跳转",
       "label": "启用镜像仓库跳转兼容",
       "description": "镜像仓库需要重定向时开启。",
-      "enabledHint": "下次容器来源检查时跟随跳转。",
       "disabledHint": "遇到跳转时拒绝请求。"
     },
     "sections": {
       "basic": {
-        "title": "基础运行环境",
-        "description": "配置系统访问地址、时区及后端日志输出级别。"
+        "title": "基础运行环境"
+      },
+      "queue": {
+        "title": "并发与调度"
+      },
+      "inbound": {
+        "title": "网络配置"
       },
       "fetchAndReadiness": {
-        "title": "版本抓取与就绪策略",
-        "description": "控制镜像拉取容错、网络策略及执行器更新后的就绪观察默认参数。"
+        "title": "版本抓取与就绪策略"
       },
       "storageAndRetention": {
         "title": "存储与历史保留",
-        "description": "配置发布版本与执行器快照的保留策略，并支持手动清理历史数据。",
-        "operationalGroup": "业务数据历史（数据库表记录）",
-        "backupGroup": "系统全量灾备策略（整机 ZIP 归档）"
+        "operationalGroup": "业务历史",
+        "backupGroup": "备份策略"
       }
     }
   },

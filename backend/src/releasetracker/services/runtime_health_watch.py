@@ -9,26 +9,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import time
 
 from .deployment_readiness_probes import probe_deployment
+from .instance_policy import read_integer_policy
 from .mutation_resource_domains import uncertain_write_sql
 from .release_notification_outbox import enqueue_system_alert
 
 logger = logging.getLogger(__name__)
 STATE_PREFIX = "runtime_health."
+WATCH_INTERVAL_KEY = "system.runtime_health_interval_seconds"
 OUTCOMES = frozenset({"healthy", "pending", "unhealthy", "unknown", "superseded"})
-
-
-def watch_interval():
-    try:
-        value = int(os.environ.get("RELEASETRACKER_RUNTIME_HEALTH_INTERVAL_SECONDS", "0"))
-    except ValueError as exc:
-        raise ValueError("Invalid runtime health interval") from exc
-    if value != 0 and not 300 <= value <= 86400:
-        raise ValueError("Runtime health interval must be 0 or 300–86400 seconds")
-    return value
 
 
 class RuntimeHealthWatch:
@@ -39,13 +30,25 @@ class RuntimeHealthWatch:
         self.host = host
         self.clock = clock
         self.probe = probe or probe_deployment
-        self.interval = watch_interval()
+        self.interval = 0  # apply_policy adopts the saved inspection interval.
         self.worker = None
         self.stopping = False
 
-    async def initialize(self):
-        if self.interval and self.host:
+    async def apply_policy(self, storage):
+        """Start, pause or stop the watch for the saved inspection interval."""
+        interval = await read_integer_policy(storage, WATCH_INTERVAL_KEY)
+        self.interval = interval if interval == 0 or interval >= 300 else 0
+        if not self.host:
+            return
+        if self.interval:
             self.host.add_interval_job("runtime_health", "tick", self.tick, seconds=60)
+            return
+        self.host.remove_job("runtime_health", "tick")
+        if self.worker and not self.worker.done():
+            self.worker.cancel()
+
+    async def initialize(self):
+        await self.apply_policy(self.storage)
 
     async def tick(self):
         if not self.interval or self.stopping or self.worker and not self.worker.done():

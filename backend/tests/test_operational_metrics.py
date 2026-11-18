@@ -50,11 +50,13 @@ async def test_metrics_measure_attempt_duration_and_bounded_errors(storage):
     assert "private-error-with-url" not in text
 
 
-def test_metrics_require_dedicated_credential(client, monkeypatch):
-    monkeypatch.delenv("RELEASETRACKER_METRICS_TOKEN", raising=False)
+@pytest.mark.asyncio
+async def test_metrics_require_dedicated_credential(client, storage):
+    from releasetracker.services.metrics_credential import save_token
+
     assert client.get("/metrics").status_code == 404
     token = "m" * 48
-    monkeypatch.setenv("RELEASETRACKER_METRICS_TOKEN", token)
+    await save_token(storage, token)
     assert client.get("/metrics").status_code == 401
     assert client.get("/metrics", headers={"Authorization": "Bearer wrong"}).status_code == 401
     response = client.get("/metrics", headers={"Authorization": f"Bearer {token}"})

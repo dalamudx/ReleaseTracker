@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from pathlib import Path
 import sqlite3
 import threading
@@ -144,8 +145,12 @@ async def test_valid_checksum_but_wrong_key_is_rejected(storage, system_key_mana
 
 
 @pytest.mark.asyncio
-async def test_cli_inspects_and_restores_valid_archive(storage, system_key_manager, tmp_path):
+async def test_cli_inspects_and_restores_valid_archive(
+    storage, system_key_manager, tmp_path, monkeypatch
+):
     archive = await backup.InstanceBackup(storage, system_key_manager).create()
+    monkeypatch.setenv("RELEASETRACKER_DB_PATH", str(tmp_path / "old-mount" / "releases.db"))
+    monkeypatch.setattr(cli.paths, "data_dir", lambda: tmp_path / "unmounted")
     assert await asyncio.to_thread(cli.main, ["inspect-backup", str(archive)]) == 0
     assert (
         await asyncio.to_thread(
@@ -352,36 +357,33 @@ def test_archive_creation_order_survives_copy_or_corrupt_file_mtime_changes(tmp_
     os.utime(older, (1900000000, 1900000000))
     os.utime(newer, (1800000000, 1800000000))
     assert backup.archive_created_at(older) == 1700000000
-    assert backup.retention_candidates([older, newer], 1, 0, 0) == [older]
     service = backup.InstanceBackup(
         type("Storage", (), {"db_path": str(tmp_path / "db")})(), None, directory=tmp_path
     )
+    assert service.archives() == [newer, older]
     assert service.latest_archive_time() == 1700000900
 
 
-def test_retention_tiers_keep_recent_and_utc_daily_weekly_points(tmp_path):
-    import os
+@pytest.mark.asyncio
+async def test_migration_backup_and_restore_follow_saved_settings(storage):
+    from releasetracker.services import backup_configuration as configuration
 
-    now = 1800000000
-    paths = []
-    for index, age in enumerate([0, 100, 86400, 2 * 86400, 8 * 86400, 16 * 86400, 40 * 86400]):
-        path = tmp_path / f"releasetracker-{index}-abc.zip"
-        path.write_text("test")
-        os.utime(path, (now - age, now - age))
-        paths.append(path)
-    deleted = backup.retention_candidates(paths, 1, 3, 4, now=now)
-    assert paths[0] not in deleted
-    assert paths[1] in deleted  # same day's older backup
-    assert paths[2] not in deleted and paths[3] not in deleted
-    assert paths[4] not in deleted and paths[5] not in deleted
-    assert paths[6] in deleted
-    assert backup.retention_candidates(paths, 1, 0, 0, now=now) == paths[1:]
+    db_path = Path(storage.db_path)
+    assert configuration.pre_migration_backup_enabled(db_path)  # No preference yet.
+    assert configuration.online_restore_enabled(db_path) is (os.name == "posix")
+    await storage.set_setting("system.pre_migration_backup", "false")
+    assert not configuration.pre_migration_backup_enabled(db_path)
+    await storage.set_setting("system.online_restore", "false")
+    assert not configuration.online_restore_enabled(db_path)
+    await storage.set_setting("system.pre_migration_backup", "true")
+    await storage.set_setting("system.online_restore", "true")
+    assert configuration.pre_migration_backup_enabled(db_path)
+    assert configuration.online_restore_enabled(db_path) is (os.name == "posix")
 
-
-def test_invalid_retention_tiers_rejected(monkeypatch):
-    monkeypatch.setenv("RELEASETRACKER_BACKUP_DAILY_RETENTION", "91")
-    with pytest.raises(ValueError):
-        backup.retention_tiers()
+    unreadable = Path(storage.db_path).parent / "broken.db"
+    unreadable.write_bytes(b"not a database")
+    # An older or unreadable database keeps the pre-migration restore point.
+    assert configuration.pre_migration_backup_enabled(unreadable)
 
 
 @pytest.mark.asyncio

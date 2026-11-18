@@ -84,6 +84,27 @@ async def test_unorderable_tags_remain_in_history_without_target(storage):
     assert snapshot["state"] != "ready"
 
 
+@pytest.mark.parametrize(
+    "tags,include,exclude,reason",
+    [
+        ([], "^v", None, "no_eligible_version"),
+        (["latest"], "^v", None, "no_matching_tag"),
+        (["latest"], None, "latest", "no_matching_tag"),
+        (["1.0-rc.1"], "^1", None, "no_eligible_version"),
+        (["latest", "1.0"], "^1", None, None),
+    ],
+)
+async def test_channel_regex_notice(storage, tags, include, exclude, reason):
+    channel = ReleaseChannel(
+        release_channel_key="stable", name="stable", type="release",
+        include_pattern=include, exclude_pattern=exclude,
+    )
+    tracker, source = await setup(storage, channels=[channel])
+    await selection.save_candidates(storage, source, [release(tag) for tag in tags], commit=True)
+    await selection.refresh_selections(storage, tracker)
+    assert (await selection.snapshots(storage, tracker.id))[0]["reason"] == reason
+
+
 @pytest.mark.asyncio
 async def test_preview_uses_selection_rules_and_exclude_precedence():
     from releasetracker.routers.trackers import VersionPreviewPayload, preview_version_order

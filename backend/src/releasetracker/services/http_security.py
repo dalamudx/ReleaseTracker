@@ -1,13 +1,15 @@
 """Bounded single-instance HTTP admission controls; no credentials are retained."""
 
 import math
-import os
 import time
 from collections import deque
-from urllib.parse import urlsplit
+from typing import Any
 
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+from .inbound_policy import inbound_policy, load_policy
 
 
 class SecurityHeadersMiddleware:
@@ -118,45 +120,82 @@ class LoginRateLimitMiddleware:
         await self.app(scope, receive, send)
 
 
-def cors_origins():
-    origins = []
-    for value in os.environ.get("RELEASETRACKER_CORS_ORIGINS", "").split(","):
-        value = value.strip().rstrip("/")
-        if not value:
-            continue
-        parsed = urlsplit(value)
+def cors_origins(app: Any) -> tuple[str, ...]:
+    """Origins from the saved policy, shared with the browser session checks."""
+    return inbound_policy(app).cors_origins
+
+
+class TrustedProxyMiddleware:
+    """Apply the saved trusted-proxy policy to the peer address and scheme.
+
+    The ASGI peer stays authoritative for untrusted callers; forwarded headers are
+    interpreted by the server library only for peers the saved policy lists. The
+    resolved values land before rate limiting, CORS and cookie decisions because
+    this middleware runs outside them.
+    """
+
+    def __init__(self, app):
+        self.app = app
+        self._trusted: tuple[str, ...] | None = None
+        self._delegate = ProxyHeadersMiddleware(app, trusted_hosts=[])
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in {"http", "websocket"}:
+            return await self.app(scope, receive, send)
+        application = scope["app"]
+        policy = inbound_policy(application)
+        storage = getattr(application.state, "storage", None)
+        # Online restore owns an exclusive process lock. Other workers share only SQLite.
         if (
-            parsed.scheme not in {"http", "https"}
-            or not parsed.hostname
-            or "*" in value
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.path
-            or parsed.query
-            or parsed.fragment
+            storage is not None
+            and getattr(application.state, "online_restore", None) is None
+            and any(
+                name in {b"origin", b"x-forwarded-for", b"x-forwarded-proto"}
+                for name, _ in scope["headers"]
+            )
         ):
-            raise ValueError("RELEASETRACKER_CORS_ORIGINS must contain explicit HTTP(S) origins")
-        # Validate malformed/non-numeric ports eagerly at startup.
-        _ = parsed.port
-        origins.append(value)
-    return origins
+            try:
+                policy = await load_policy(storage)
+            finally:
+                # Preflight and rate-limited requests can bypass the route cleanup.
+                await storage.close_current_task_connection()
+        scope["inbound_policy"] = policy
+        trusted = policy.trusted_proxies
+        if trusted != self._trusted:
+            self._trusted = trusted
+            self._delegate = ProxyHeadersMiddleware(self.app, trusted_hosts=list(trusted))
+        return await self._delegate(scope, receive, send)
+
+
+class PolicyCORSMiddleware:
+    def __init__(self, app, **options):
+        self.app = app
+        self.options = options
+        self.origins = None
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        origins = scope["inbound_policy"].cors_origins
+        if origins != self.origins:
+            self.delegate = CORSMiddleware(self.app, allow_origins=origins, **self.options)
+            self.origins = origins
+        return await self.delegate(scope, receive, send)
 
 
 def configure_http_security(app):
     app.add_middleware(LoginRateLimitMiddleware)
+    app.add_middleware(
+        PolicyCORSMiddleware,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "X-CSRF-Token",
+            "X-ReleaseTracker-Browser",
+        ],
+        expose_headers=["X-Total-Count"],
+    )
+    app.add_middleware(TrustedProxyMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
-    origins = cors_origins()
-    if origins:
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=origins,
-            allow_credentials=True,
-            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-            allow_headers=[
-                "Authorization",
-                "Content-Type",
-                "X-CSRF-Token",
-                "X-ReleaseTracker-Browser",
-            ],
-            expose_headers=["X-Total-Count"],
-        )

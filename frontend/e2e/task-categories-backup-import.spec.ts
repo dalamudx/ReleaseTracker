@@ -92,6 +92,13 @@ for (const language of ["zh", "en"]) for (const width of [320, 1280]) {
         const upload = page.getByRole("button", { name: label, exact: true })
         await expect(upload).toBeDisabled()
         await page.getByLabel(fileLabel, { exact: true }).setInputFiles({ name: "local.zip", mimeType: "application/zip", buffer: Buffer.from("isolated-upload") })
+        const selected = page.getByText("local.zip", { exact: true })
+        await expect(selected).toBeVisible()
+        const verticalGap = await selected.evaluate(filename => {
+            const submit = filename.closest("form")!.querySelector('button[type="submit"]')!
+            return submit.getBoundingClientRect().top - filename.getBoundingClientRect().bottom
+        })
+        expect(verticalGap).toBeGreaterThanOrEqual(0)
         await upload.click()
         await expect(page.getByRole("alert")).toContainText(language === "zh" ? "归档损坏" : "damaged")
         await upload.click()

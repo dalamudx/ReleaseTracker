@@ -3,7 +3,7 @@
 import logging
 from typing import Literal, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from typing import Annotated
 from zoneinfo import ZoneInfo
@@ -32,10 +32,17 @@ from ..storage.sqlite import (
 )
 from ..dependencies import get_current_admin_user, get_system_key_manager
 from ..services.secure_urls import require_canonical_https_base_url
+from ..services.instance_policy import IMPORT_MARKER, POLICY_DEFAULTS, normalize_policy
+from ..services.inbound_policy import load_policy
+from ..services.metrics_credential import METRICS_TOKEN_SETTING_KEY, read_token, save_token
 from ..services.outbound_http import WEBHOOK_FAKE_IP_SETTING, parse_fake_ip_cidrs
 from ..services.system_keys import SystemKeyManager, rotate_encryption_key, rotate_jwt_secret
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+
+# Credentials never travel through the generic key/value routes.
+RESERVED_SETTING_KEYS = RESERVED_AUTH_SETTING_KEYS | {IMPORT_MARKER, METRICS_TOKEN_SETTING_KEY}
+REMOVED_BACKUP_SETTINGS = {"system.backup_daily_retention", "system.backup_weekly_retention"}
 
 
 class SettingItem(BaseModel):
@@ -103,6 +110,11 @@ class EncryptionKeyRotationResponse(BaseModel):
     undecryptable_count: int
 
 
+class MetricsTokenState(BaseModel):
+    configured: bool
+    token: str | None = None
+
+
 def get_storage(request: Request):
     storage = getattr(request.app.state, "storage", None)
     if not storage:
@@ -139,6 +151,21 @@ async def _refresh_cached_container_redirect_settings(request: Request) -> None:
         await refresh_redirect_settings()
 
 
+async def _refresh_instance_policy(request: Request, key: str) -> None:
+    storage = get_storage(request)
+    if key in {"system.cors_origins", "system.forwarded_allow_ips"}:
+        request.app.state.inbound_policy = await load_policy(storage)
+        return
+    service_name = {
+        "system.worker_poll_seconds": "scheduler_host",
+        "system.mutation_concurrency": "task_queue",
+        "system.runtime_health_interval_seconds": "runtime_health_watch",
+    }.get(key)
+    service = getattr(request.app.state, service_name, None) if service_name else None
+    if service is not None:
+        await service.apply_policy(storage)
+
+
 async def _build_security_keys_status(
     storage: SQLiteStorage,
     key_manager: SystemKeyManager,
@@ -160,6 +187,11 @@ async def _build_security_keys_status(
 
 
 def _normalize_setting_value(key: str, value: str) -> str:
+    if key in POLICY_DEFAULTS:
+        try:
+            return normalize_policy(key, value)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
     normalized_value = str(value).strip()
 
     if key == WEBHOOK_FAKE_IP_SETTING:
@@ -283,6 +315,51 @@ def _normalize_setting_value(key: str, value: str) -> str:
         )
 
     return str(retention_count)
+
+
+@router.get(
+    "/metrics-token",
+    response_model=MetricsTokenState,
+    response_model_exclude_none=True,
+    dependencies=[Depends(get_current_admin_user)],
+)
+async def get_metrics_token_state(
+    request: Request,
+    response: Response,
+    current_user: Annotated[User, Depends(get_current_admin_user)],
+):
+    response.headers["Cache-Control"] = "no-store"
+    configured, token = await read_token(get_storage(request))
+    return MetricsTokenState(configured=configured, token=token)
+
+
+@router.put(
+    "/metrics-token",
+    response_model=MetricsTokenState,
+    response_model_exclude_none=True,
+    dependencies=[Depends(get_current_admin_user)],
+)
+async def update_metrics_token(
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_admin_user)],
+):
+    """Set or rotate the scrape credential; an empty token revokes it.
+
+    The body is read by hand because FastAPI's request validation echoes rejected
+    input in its error details, which would disclose a submitted credential.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = None
+    token = payload.get("token") if isinstance(payload, dict) else None
+    if not isinstance(token, str):
+        raise HTTPException(status_code=400, detail="Metrics token must be a string")
+    try:
+        configured = await save_token(get_storage(request), token)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    return MetricsTokenState(configured=configured)
 
 
 @router.get(
@@ -413,6 +490,8 @@ async def get_settings(
         key: (value, updated_at)
         for key, (value, updated_at) in (await storage.get_all_settings_with_updated_at()).items()
     }
+    for key, default in POLICY_DEFAULTS.items():
+        settings.setdefault(key, (default, None))
     for key, default in BACKUP_DEFAULTS.items():
         settings.setdefault(key, (default, None))
     settings.setdefault(FETCH_RETRY_SETTING, (str(DEFAULT_FETCH_RETRIES), None))
@@ -431,7 +510,7 @@ async def get_settings(
     return [
         SettingItem(key=key, value=value, updated_at=updated_at)
         for key, (value, updated_at) in settings.items()
-        if key not in RESERVED_AUTH_SETTING_KEYS
+        if key not in RESERVED_SETTING_KEYS and key not in REMOVED_BACKUP_SETTINGS
     ]
 
 
@@ -443,7 +522,9 @@ async def update_setting(
 ):
     """Update system settings"""
     storage: SQLiteStorage = get_storage(request)
-    if setting.key in RESERVED_AUTH_SETTING_KEYS:
+    if setting.key in REMOVED_BACKUP_SETTINGS:
+        raise HTTPException(status_code=400, detail="This backup setting has been removed")
+    if setting.key in RESERVED_SETTING_KEYS:
         raise HTTPException(status_code=403, detail="Reserved authentication setting")
 
     setting.value = _normalize_setting_value(setting.key, setting.value)
@@ -455,6 +536,8 @@ async def update_setting(
         logging.getLogger().setLevel(getattr(logging, setting.value))
     if setting.key == SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY:
         await _refresh_cached_container_redirect_settings(request)
+    if setting.key in POLICY_DEFAULTS:
+        await _refresh_instance_policy(request, setting.key)
     return setting
 
 
@@ -464,7 +547,7 @@ async def delete_setting(
 ):
     """Delete a system setting"""
     storage: SQLiteStorage = get_storage(request)
-    if key in RESERVED_AUTH_SETTING_KEYS:
+    if key in RESERVED_SETTING_KEYS:
         raise HTTPException(status_code=403, detail="Reserved authentication setting")
     if key in BACKUP_DEFAULTS:
         await _update_backup_setting(request, key, None)
@@ -472,4 +555,6 @@ async def delete_setting(
         await storage.delete_setting(key)
     if key == SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY:
         await _refresh_cached_container_redirect_settings(request)
+    if key in POLICY_DEFAULTS:
+        await _refresh_instance_policy(request, key)
     return {"message": "Setting deleted"}

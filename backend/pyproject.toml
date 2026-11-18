@@ -61,6 +61,7 @@ target-version = "py312"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+markers = ["real_data_paths: assert the real fixed data location instead of the sandbox"]
 timeout = 30
 timeout_method = "thread"
 faulthandler_timeout = 20

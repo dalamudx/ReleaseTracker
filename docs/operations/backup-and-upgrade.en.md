@@ -18,14 +18,20 @@ Archives are stored automatically in `backups` under the data directory (`/app/b
 - **Retention** (default 7): shared by manual, automatic and pre-restore safety backups; old archives are pruned only after a new backup passes verification.
 - **Automatic interval** (default 0, off): continues from the latest archive and survives restarts; with no archive or when overdue, a backup runs after about 5 minutes.
 
-Older environment variables for the backup directory, retention and interval are no longer read; set them again in global configuration after upgrading. These environment variables still apply:
+Environment variables for the backup directory, retention and interval are no longer read; set them again in global configuration after upgrading. These policies are saved settings too:
 
-| Environment variable | Default | Meaning |
+| Setting | Default | Meaning |
 | --- | --- | --- |
-| `RELEASETRACKER_BACKUP_DAILY_RETENTION` | `0` | Additionally keep the newest backup per day for the last 0–90 days (UTC) |
-| `RELEASETRACKER_BACKUP_WEEKLY_RETENTION` | `0` | Additionally keep the newest backup per ISO week for the last 0–52 weeks (UTC) |
-| `RELEASETRACKER_ONLINE_RESTORE` | `1` on POSIX, `0` elsewhere | Enables [in-app online restore](#managed-restore-assessment) |
-| `RELEASETRACKER_PRE_MIGRATION_BACKUP` | `1` | Backup before migrations, see [Entry commands](#entry-commands) |
+| `system.online_restore` | `true` on POSIX, `false` elsewhere | Enables [in-app online restore](#managed-restore-assessment); a restart applies a change, and non-POSIX platforms cannot enable it |
+| `system.pre_migration_backup` | `true` | Backup before migrations, see [Entry commands](#entry-commands); applies to the next migration command |
+
+During an upgrade, import the former `RELEASETRACKER_ONLINE_RESTORE` and `RELEASETRACKER_PRE_MIGRATION_BACKUP` values once:
+
+```bash
+docker compose run --rm releasetracker import-legacy-settings
+```
+
+The import is explicit and repeatable: it only adds settings that were never saved, keeps existing values (including an explicit `false` or `0`), and rejects the whole input on an invalid value. Delete the old variables afterwards and restart; only saved settings are read from then on.
 
 New archives are written to a temporary directory and appear in the list only after checksum, SQLite integrity and credential decryption are re-verified; failures never touch existing archives. The newest archive is re-verified daily. The backup page shows the last success time, consecutive failures and reason, and marks backups as stale after two intervals without success. Scheduled backup failures, corrupted archives, or losing all previously existing archives send a deduplicated alert to notifiers subscribed to "Task processing error".
 
@@ -48,12 +54,23 @@ Run it from **Backups → selected archive → Online restore** without stopping
 1. **Preflight**: the archive is strictly verified (size, SHA256, SQLite and relational consistency, schema version, key decryption) and its time, application version and fingerprint are shown. The plan is valid for 10 minutes and locks the archive.
 2. **Confirm**: type the full file name and acknowledge that data will be replaced. Restore is refused while deployments/restores, downloads or tasks needing attention are active.
 3. **Drain**: new writes return 503 while in-flight requests and background work finish; on timeout the switch is abandoned and data stays unchanged.
-4. **Switch**: a "pre-restore safety copy" of the current data is saved first, then database and keys are replaced and services rebuilt. Failures revert to the original data; if the process exits midway, the next start restores it automatically (`migrate-and-serve` includes this step).
+4. **Switch**: a "pre-restore safety copy" of the current data is saved first, then database and keys are replaced and services rebuilt. Failures revert to the original data; if the process exits midway, the next start restores it automatically, whether or not online restore is currently enabled.
 5. **Sign in again and review**: use the account from the backup. Old sessions, pending tasks, approvals and queued notifications are revoked, and scheduling and notifications stay paused; after checking the environment click **Review restore state** to resume new operations. Old operations are never replayed.
 
-The pre-restore safety copy can be downloaded from the backup page, is outside normal retention, and is replaced by the next restore; keep it off-host. Reserve disk space for the archive, a staging database and the original data.
+Under **Restore from an uploaded backup** below the backup list, select a ZIP file and choose **Online import**. Once validated, select **Restore online** on its list entry and confirm. The automatic pre-restore safety copy is kept outside normal retention until the next restore replaces it.
 
-Limits: Linux/POSIX file systems only; one application process per data directory (enforced by a file lock), so set `RELEASETRACKER_ONLINE_RESTORE=0` if you need multiple workers; database and keys must not be symlinks. Only trusted archives of the matching version can be restored, and uploads are not supported. Use [command-line restore](#restore) when the app cannot start or across versions.
+Limits: Linux/POSIX file systems only; one application process per data directory (enforced by a file lock), so turn off **Online restore** in global configuration and restart if you need multiple workers (always off on non-POSIX platforms); database and keys must not be symlinks. Startup recovers an interrupted restore even while the feature is off. Only trusted archives of the matching version can be restored, and uploaded archives must first pass import validation. Use [command-line restore](#restore) when the app cannot start or across versions.
+
+## Migrating from a custom data path {#custom-path}
+
+Older releases used `RELEASETRACKER_DB_PATH` to choose the database file. That variable is removed: the service, CLI, backups and dbmate all use `backend/data` (`/app/backend/data` in the container), with the key file and `backups` beside the database.
+
+1. Stop the old service, verify a usable backup of the database and `system-secrets.json`, and note the original data mount.
+2. Close all database connections and leave any `-wal` file beside the original database. Substitute its actual path in `sqlite3 'file:/path/to/original.db?mode=rw' 'PRAGMA wal_checkpoint(TRUNCATE);'`. Continue only if the command succeeds and the first result column is `0`. Copy the checkpointed database into an empty fixed data directory as `releases.db`. Copy the matching `system-secrets.json` and `backups` directory alongside it and keep the originals for rollback.
+3. Verify that the database and keys in the fixed directory belong to the original instance, then unset `RELEASETRACKER_DB_PATH`. The service and migration commands reject a variable that points elsewhere.
+4. Start the new release and verify sign-in, trackers and the backup list.
+
+Rollback: stop the service and restore the previous image and mount; the new fixed directory is left untouched.
 
 ## Offline directory backup {#backup}
 
@@ -116,15 +133,15 @@ python -m releasetracker.cli restore-backup /backups/BACKUP.zip \
   --destination /restore/new-data --confirm-stopped
 ```
 
-Verification covers ZIP size, SHA256, SQLite and relational integrity, migration version and key decryption. SHA256 detects corruption but does not prove origin; never restore untrusted ZIPs. Mount the new directory at the data path (with a custom `RELEASETRACKER_DB_PATH`, point it at `releases.db` in the new directory) and keep the old volume.
+Verification covers ZIP size, SHA256, SQLite and relational integrity, migration version and key decryption. SHA256 detects corruption but does not prove origin; never restore untrusted ZIPs. Mount the new directory at the fixed data path (`/app/backend/data` in the container) and keep the old volume.
 
-After restoring you must sign in again; old pending tasks, approvals and queued notifications are revoked and scheduling and notifications are paused. After checking remote versions and executor configuration, click **Review restore state** on the backup page, or run against the new database:
+After restoring you must sign in again; old pending tasks, approvals and queued notifications are revoked and scheduling and notifications are paused. After checking remote versions and executor configuration, click **Review restore state** on the backup page, or mount the new data at the fixed data path and run (the CLI targets the same database as the service):
 
 ```bash
 # Read-only check; reports relational problems without fixing them
-RELEASETRACKER_DB_PATH=/restore/new-data/releases.db python -m releasetracker.cli audit-database
+python -m releasetracker.cli audit-database
 # Lift the gate for new operations, then restart the service
-RELEASETRACKER_DB_PATH=/restore/new-data/releases.db python -m releasetracker.cli acknowledge-restore --confirm-reviewed
+python -m releasetracker.cli acknowledge-restore --confirm-reviewed
 ```
 
 Re-trigger any old targets that still need work; old tasks are never replayed.
@@ -145,8 +162,9 @@ Use **System Settings → Security Keys** and take a backup before and after. If
 | `migrate-and-serve` | Migrate, then start; recommended for install and upgrade |
 | `migrate` | Migrate only; stop other instances first |
 | `serve` | Start only; requires an up-to-date schema |
+| `import-legacy-settings` | One-time import of retired policy variables; refuses to run when the database or keys are missing |
 
-When migrations are pending, `migrate` / `migrate-and-serve` first write a `reason: pre_migration` archive to the backup directory and abort if that fails. The archive can only be restored with the pre-upgrade image and counts toward retention, so download it if you need it long term; set `RELEASETRACKER_PRE_MIGRATION_BACKUP=0` if another backup mechanism is in place. The schema is managed by dbmate; never edit tables manually. See [Startup and migration troubleshooting](../reference/troubleshooting.md#startup).
+When migrations are pending, `migrate` / `migrate-and-serve` first write a `reason: pre_migration` archive to the backup directory and abort if that fails. The archive can only be restored with the pre-upgrade image and counts toward retention, so download it if you need it long term; turn off **Pre-migration backup** in global configuration (`system.pre_migration_backup=false`) if another backup mechanism is in place; the next migration command applies it. The schema is managed by dbmate; never edit tables manually. See [Startup and migration troubleshooting](../reference/troubleshooting.md#startup).
 
 `make dbmate-migrate` uses the same entrypoint to back up the database and keys first. Time-semantics migration `20261012000001` automatically repairs known missing-parent `CASCADE` / `SET NULL` relations using the existing allowlist **in the same transaction** as the table rebuild; a separate `prune-orphans` command is not required. Its safety archive retains the **original, unpruned rows**. Counts are recorded in `internal.release_time_pruned_orphans`; the task queue is unchanged. Unknown foreign-key corruption or inconsistent deployment observations roll back the entire migration, including cleanup. Stop other database writers first. Direct dbmate callers must back up the database and keys themselves; an unmodified safety archive containing orphans requires offline repair before it can pass normal restore validation.
 
@@ -164,7 +182,7 @@ A copy of the unmodified database and keys (`reason: pre_orphan_cleanup`) is sav
 
 ## Metrics {#metrics}
 
-Set a random `RELEASETRACKER_METRICS_TOKEN` of at least 32 characters to expose `GET /metrics` (404 otherwise). Requests need `Authorization: Bearer <token>`; login tokens do not work, and this token can only read metrics. Scrape every 60 seconds over an internal address:
+Under **Global Settings → Network Configuration**, generate a 16-character token and select **Save** to enable `GET /metrics`. Administrators can return to this page to copy the token. Send `Authorization: Bearer <token>` with each request. Revoking the token and saving makes the endpoint return 404. Scrape every 60 seconds over an internal address.
 
 ```yaml
 scrape_configs:

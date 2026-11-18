@@ -191,8 +191,8 @@ async def oidc_callback(
         raise HTTPException(status_code=500, detail="OIDC authentication failed")
 
     # Tokens travel only in HttpOnly cookies, never in the redirect URL.
-    frontend_url = await _get_public_base_url(storage)
-    response = RedirectResponse(url=f"{frontend_url}/#oidc=success")
+    public_base_url = await _get_public_base_url(storage)
+    response = RedirectResponse(url=f"{public_base_url}/#oidc=success")
     await set_session_cookies(response, request, storage, token_pair)
     _clear_browser_binding_cookie(response)
     return response

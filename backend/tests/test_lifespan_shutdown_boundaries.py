@@ -41,6 +41,7 @@ def isolated_app(monkeypatch):
             close=AsyncMock(side_effect=close),
             add_interval_job=Mock(),
             register=Mock(),
+            apply_policy=AsyncMock(),
             ensure_admin_user=AsyncMock(),
         )
     storage = services["storage"]
@@ -87,7 +88,6 @@ def isolated_app(monkeypatch):
     monkeypatch.setattr(
         main.executor_trigger, "reconcile_desired_states", AsyncMock(return_value=(0, 0))
     )
-    monkeypatch.setattr(main, "retention_tiers", lambda: None)
     monkeypatch.setattr(main.LogConfig, "setup_logging", lambda **kw: None)
     return FastAPI(), services, closed
 

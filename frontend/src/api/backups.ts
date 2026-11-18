@@ -5,8 +5,6 @@ export interface InstanceBackupList {
     directory?: string
     interval_hours: number
     retention: number
-    daily_retention?: number
-    weekly_retention?: number
     total_size?: number
     minimum_local_archives?: number
     restore_review_required?: boolean

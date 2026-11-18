@@ -541,7 +541,8 @@ async def test_concurrent_refresh_reuse_allows_only_one_success(auth_service, st
 
 
 @pytest.mark.asyncio
-async def test_oidc_authorize_uses_configured_base_url(client, storage):
+async def test_oidc_authorize_uses_configured_base_url(client, storage, monkeypatch):
+    monkeypatch.setenv("FRONTEND_URL", "https://obsolete.example")
     provider = await storage.save_oauth_provider(
         OIDCProvider(
             name="Mock",
@@ -576,7 +577,10 @@ async def test_oidc_authorize_uses_configured_base_url(client, storage):
 
 
 @pytest.mark.asyncio
-async def test_oidc_authorize_rejects_missing_base_url_without_host_fallback(client, storage):
+async def test_oidc_authorize_rejects_missing_base_url_without_host_fallback(
+    client, storage, monkeypatch
+):
+    monkeypatch.setenv("FRONTEND_URL", "https://obsolete.example")
     await storage.save_oauth_provider(
         OIDCProvider(
             name="Mock",

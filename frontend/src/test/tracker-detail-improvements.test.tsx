@@ -161,7 +161,7 @@ describe("TrackerDetail layout improvements", () => {
     expect(screen.getByTitle(/2026/)).toBeInTheDocument()
   })
 
-  it("explains each channel selection reason and offers a check for recoverable states", () => {
+  it("only reports channels whose tags all fail their regex filter", () => {
     const original = queries.current.data
     queries.current.data = {
       ...original,
@@ -169,22 +169,17 @@ describe("TrackerDetail layout improvements", () => {
         { tracker_source_id: 2, channel_key: "a", channel_name: "stable", state: "pending", reason: "awaiting_check", revision: "r1" },
         { tracker_source_id: 2, channel_key: "b", channel_name: "beta", state: "pending", reason: "manifest_unconfirmed", revision: "r2" },
         { tracker_source_id: 2, channel_key: "c", channel_name: "rc", state: "conflict", reason: "artifact_conflict", revision: "r3" },
+        { tracker_source_id: 2, channel_key: "d", channel_name: "stable", state: "empty", reason: "unorderable_version" },
+        { tracker_source_id: 2, channel_key: "e", channel_name: "stable", state: "empty", reason: "incomparable_versions" },
+        { tracker_source_id: 2, channel_key: "f", channel_name: "stable", state: "empty", reason: "no_eligible_version" },
+        { tracker_source_id: 2, channel_key: "g", channel_name: "stable", state: "empty", reason: "no_matching_tag" },
       ],
     } as typeof original
     const onCheck = vi.fn()
     try {
       render(<TrackerDetail trackerName="test-tracker" refreshKey={0} onCheck={onCheck} />)
       const notices = screen.getAllByRole("status").map((node) => node.textContent)
-      expect(notices).toEqual([
-        expect.stringContaining("trackers.aggregate.detail.selectionAwaitingCheck"),
-        expect.stringContaining("trackers.aggregate.detail.selectionManifestUnconfirmed"),
-        "trackers.aggregate.detail.selectionConflict",
-      ])
-      expect(notices.join(" ")).not.toContain("selectionPending")
-      const checkButtons = screen.getAllByRole("button", { name: /trackers.aggregate.detail.checkNow/ })
-      expect(checkButtons).toHaveLength(2)
-      fireEvent.click(checkButtons[0])
-      expect(onCheck).toHaveBeenCalledWith("test-tracker")
+      expect(notices).toEqual(["trackers.aggregate.detail.selectionRegexMismatch"])
     } finally {
       queries.current.data = original
     }

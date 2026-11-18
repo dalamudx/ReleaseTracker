@@ -36,14 +36,14 @@ Neither reverts a completed update; a changed or unobservable target goes to man
 
 When new Pods of a Kubernetes Deployment fail to pull an image for a recoverable reason (timeouts, transient disconnects, registry 5xx), the readiness deadline is followed by a read-only grace period: rechecks every 30–120 s, no redeployment, no extra attempts, and restarts do not reset the deadline. If the Pods become ready, the original task turns successful and keeps the delay evidence; otherwise it fails as a timeout. Definite faults such as missing images, authentication failures, CrashLoopBackOff or OOM end immediately.
 
-- `RELEASETRACKER_READINESS_PULL_GRACE_SECONDS`: default 1800, range 0–3600, 0 disables; applies to new tasks after a restart.
+- Tune the grace period with "Image pull grace period" in [global settings](../reference/settings.md#global): default 1800, range 0–3600, 0 disables. A save applies to new readiness observations, while tasks already recorded keep the deadline saved with them.
 - Deployments only; not StatefulSets, DaemonSets, Helm or other runtimes.
 - Failed tasks are not replayed automatically; trigger a read-only readiness recheck from the task page.
 - With the `Recreate` strategy an unavailable image causes an outage; the grace period is not an availability guarantee, so keep cluster alerting.
 
 ## Read-only post-deployment monitoring {#runtime-watch}
 
-With `RELEASETRACKER_RUNTIME_HEALTH_INTERVAL_SECONDS` set (300–86400 s; default `0` disables), targets whose latest successful deployment passed readiness verification are checked periodically and read-only, including configured HTTP/TCP probes. Three consecutive unhealthy results, drift, unreadable targets or repeated Pod restarts send one deduplicated alert to notifiers subscribed to "Task processing error".
+With "Deployment health inspections" set in [global settings](../reference/settings.md#global) (300–86400 s; default `0` disables), targets whose latest successful deployment passed readiness verification are checked periodically and read-only, including configured HTTP/TCP probes. A save starts or stops the watch at the new interval and a restart keeps the saved value. Three consecutive unhealthy results, drift, unreadable targets or repeated Pod restarts send one deduplicated alert to notifiers subscribed to "Task processing error".
 
 At most 16 due targets are checked per minute, so the interval is a minimum, not a real-time guarantee; targets being updated, awaiting readiness or needing attention are skipped. Monitoring never deploys, rolls back or rewrites history, and does not replace cluster or application monitoring.
 

@@ -167,7 +167,7 @@ async def test_final_window_guard_blocks_only_unstarted_automatic_mutations(stor
 async def successful_watch(storage, monkeypatch):
     from releasetracker.services.runtime_health_watch import RuntimeHealthWatch
 
-    monkeypatch.setenv("RELEASETRACKER_RUNTIME_HEALTH_INTERVAL_SECONDS", "300")
+    await storage.set_setting("system.runtime_health_interval_seconds", "300")
     executor, scheduler, observer, _, now, task, run_id = await setup(
         storage, monkeypatch, stable=0
     )
@@ -176,6 +176,7 @@ async def successful_watch(storage, monkeypatch):
         return_value={"outcome": "unhealthy", "services": [{"message": "private secret url"}]}
     )
     watch = RuntimeHealthWatch(storage, scheduler, observer, clock=lambda: now[0], probe=probe)
+    await watch.apply_policy(storage)
     return executor, scheduler, watch, probe, now, task, run_id
 
 
@@ -368,6 +369,29 @@ async def test_observer_tick_does_not_wait_on_io(storage, monkeypatch):
     assert (await storage.tasks.get(task["id"]))["state"] == "running"
     gate.set()
     await observer.shutdown()
+
+
+async def test_new_observations_use_saved_pull_grace_and_keep_stored_deadlines(
+    storage, monkeypatch
+):
+    import json
+
+    await storage.set_setting("system.readiness_pull_grace_seconds", "600")
+    _, _, _, _, _, task, _ = await setup(storage, monkeypatch)
+
+    async def saved_grace(task_id):
+        db = await storage._get_connection()
+        row = await (
+            await db.execute(
+                "SELECT verification FROM deployment_observations WHERE task_id=?", (task_id,)
+            )
+        ).fetchone()
+        return json.loads(row["verification"])["pull_grace_seconds"]
+
+    assert await saved_grace(task["id"]) == 600
+
+    await storage.set_setting("system.readiness_pull_grace_seconds", "0")
+    assert await saved_grace(task["id"]) == 600
 
 
 async def test_health_policy_snapshot_not_changed_by_system_defaults(storage, monkeypatch):

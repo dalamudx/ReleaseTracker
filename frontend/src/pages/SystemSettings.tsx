@@ -1,8 +1,7 @@
-import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type RefObject } from "react"
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react"
 import { READINESS_FIELDS } from "@/lib/readiness"
-import { Activity, AlertTriangle, Archive, Clock3, Database, Globe, KeyRound, Layers, Link2, Network, Plus, RotateCcw, RotateCw, Save, Settings2, Tag, Trash2, Zap } from "lucide-react"
+import { Activity, AlertTriangle, Archive, Clock3, Database, Globe, KeyRound, Layers, Link2, Network, RotateCcw, RotateCw, Save, Settings2, Tag, X, Zap } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
 import { useTranslation } from "react-i18next"
 import { appPath } from "@/lib/base-path"
 import { toast } from "sonner"
@@ -48,11 +47,20 @@ import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { QueryClientContext } from "@tanstack/react-query"
 import {
+    formatPolicyList,
+    INSTANCE_POLICY_DEFAULTS,
+    INSTANCE_POLICY_INTEGER_BOUNDS,
+    INSTANCE_POLICY_SETTING_KEYS,
+    isValidPolicyInteger,
+} from "@/lib/instance-policy"
+import {
     useCleanupReleaseHistory,
     useCleanupSnapshotHistory,
+    useMetricsTokenStatus,
     useRotateEncryptionKey,
     useRotateJwtSecret,
     useSecurityKeys,
+    useSetMetricsToken,
     useSettings,
     useUpdateSetting,
 } from "@/hooks/queries"
@@ -74,6 +82,7 @@ const DEFAULT_BACKUP_RETENTION = "7"
 const DEFAULT_BACKUP_INTERVAL_HOURS = "0"
 const MIN_BACKUP_RETENTION = 1
 const MAX_BACKUP_RETENTION = 100
+// Mirrors the backend's printable-ASCII length contract for the scrape credential.
 const MIN_BACKUP_INTERVAL_HOURS = 0
 const MAX_BACKUP_INTERVAL_HOURS = 8760
 
@@ -222,14 +231,9 @@ function ReleaseHistoryCountSettingItem({
                     <Tag className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 space-y-1">
-                    <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-semibold text-foreground">
-                            {t("systemSettings.global.releaseHistoryCount.title")}
-                        </h3>
-                        <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">
-                            {t("systemSettings.global.releaseHistoryCount.scopeBadge")}
-                        </Badge>
-                    </div>
+                    <h3 className="text-sm font-semibold text-foreground">
+                        {t("systemSettings.global.releaseHistoryCount.title")}
+                    </h3>
                     <p className="text-sm leading-relaxed text-muted-foreground">
                         {t("systemSettings.global.releaseHistoryCount.description")}
                     </p>
@@ -285,14 +289,9 @@ function SnapshotHistoryCountSettingItem({
                     <Layers className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 space-y-1">
-                    <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-semibold text-foreground">
-                            {t("systemSettings.global.snapshotHistoryCount.title")}
-                        </h3>
-                        <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">
-                            {t("systemSettings.global.snapshotHistoryCount.scopeBadge")}
-                        </Badge>
-                    </div>
+                    <h3 className="text-sm font-semibold text-foreground">
+                        {t("systemSettings.global.snapshotHistoryCount.title")}
+                    </h3>
                     <p className="text-sm leading-relaxed text-muted-foreground">
                         {t("systemSettings.global.snapshotHistoryCount.description")}
                     </p>
@@ -346,14 +345,9 @@ function BackupRetentionSettingItem({
                     <Archive className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 space-y-1">
-                    <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-semibold text-foreground">
-                            {t("systemSettings.global.backupRetention.title")}
-                        </h3>
-                        <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">
-                            {t("systemSettings.global.backupRetention.scopeBadge")}
-                        </Badge>
-                    </div>
+                    <h3 className="text-sm font-semibold text-foreground">
+                        {t("systemSettings.global.backupRetention.title")}
+                    </h3>
                     <p className="text-sm leading-relaxed text-muted-foreground">
                         {t("systemSettings.global.backupRetention.description")}
                     </p>
@@ -400,14 +394,9 @@ function BackupIntervalSettingItem({
                     <Clock3 className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 space-y-1">
-                    <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-semibold text-foreground">
-                            {t("systemSettings.global.backupInterval.title")}
-                        </h3>
-                        <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">
-                            {t("systemSettings.global.backupInterval.scopeBadge")}
-                        </Badge>
-                    </div>
+                    <h3 className="text-sm font-semibold text-foreground">
+                        {t("systemSettings.global.backupInterval.title")}
+                    </h3>
                     <p className="text-sm leading-relaxed text-muted-foreground">
                         {t("systemSettings.global.backupInterval.description")}
                     </p>
@@ -436,51 +425,6 @@ function BackupIntervalSettingItem({
     )
 }
 
-function OciRegistryRedirectsSettingItem({
-    enabled,
-    onEnabledChange,
-}: {
-    enabled: boolean
-    onEnabledChange: (value: boolean) => void
-}) {
-    const { t } = useTranslation()
-
-    return (
-        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] md:items-start">
-            <div className="flex min-w-0 gap-3">
-                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                    <Zap className="h-4 w-4" />
-                </div>
-                <div className="min-w-0 space-y-1">
-                    <h3 className="text-sm font-semibold text-foreground">
-                        {t("systemSettings.global.ociRegistryRedirects.title")}
-                    </h3>
-                    <p className="text-sm leading-relaxed text-muted-foreground">
-                        {t("systemSettings.global.ociRegistryRedirects.description")}
-                    </p>
-                </div>
-            </div>
-            <div className="min-w-0 space-y-2">
-                <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
-                    <Label className="min-w-0 cursor-pointer text-sm font-medium" htmlFor="oci-registry-redirects-enabled">
-                        {t("systemSettings.global.ociRegistryRedirects.label")}
-                    </Label>
-                    <Switch
-                        id="oci-registry-redirects-enabled"
-                        checked={enabled}
-                        onCheckedChange={onEnabledChange}
-                        aria-describedby="oci-registry-redirects-help"
-                    />
-                </div>
-                <p id="oci-registry-redirects-help" className="text-xs leading-relaxed text-muted-foreground">
-                    {enabled
-                        ? t("systemSettings.global.ociRegistryRedirects.enabledHint")
-                        : t("systemSettings.global.ociRegistryRedirects.disabledHint")}
-                </p>
-            </div>
-        </div>
-    )
-}
 
 function FetchRetryCountSettingItem({
     retryCount,
@@ -772,6 +716,234 @@ function RotateSecurityKeyDialog({
     )
 }
 
+function PolicySettingRow({
+    icon: Icon,
+    title,
+    description,
+    children,
+}: {
+    icon: LucideIcon
+    title: string
+    description: string
+    children: ReactNode
+}) {
+    return (
+        <div className="grid gap-4 py-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] md:items-start">
+            <div className="flex min-w-0 gap-3">
+                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <Icon className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 space-y-1">
+                    <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+                    <p className="text-sm leading-relaxed text-muted-foreground">{description}</p>
+                </div>
+            </div>
+            <div className="min-w-0 space-y-2">{children}</div>
+        </div>
+    )
+}
+
+function PolicyIntegerSettingItem({
+    settingKey,
+    copyPath,
+    id,
+    icon,
+    value,
+    onChange,
+}: {
+    settingKey: string
+    copyPath: string
+    id: string
+    icon: LucideIcon
+    value: string
+    onChange: (value: string) => void
+}) {
+    const { t } = useTranslation()
+    const [min, max] = INSTANCE_POLICY_INTEGER_BOUNDS[settingKey] ?? [0, 0]
+    const invalid = !isValidPolicyInteger(settingKey, value)
+    const invalidMessage = settingKey === INSTANCE_POLICY_SETTING_KEYS.runtimeHealthIntervalSeconds
+        ? t(`systemSettings.global.${copyPath}.invalid`)
+        : t("systemSettings.global.policies.rangeInvalid", { min, max })
+
+    return (
+        <PolicySettingRow icon={icon} title={t(`systemSettings.global.${copyPath}.title`)} description={t(`systemSettings.global.${copyPath}.description`)}>
+            <Label className="text-sm font-medium" htmlFor={id}>
+                {t(`systemSettings.global.${copyPath}.label`)}
+            </Label>
+            <Input
+                id={id}
+                type="number"
+                min={min}
+                max={max}
+                step={1}
+                value={value}
+                aria-invalid={invalid}
+                onChange={(event) => onChange(event.target.value)}
+                className="min-w-0"
+            />
+            {invalid ? (
+                <p role="alert" className="text-xs text-destructive">
+                    {invalidMessage}
+                </p>
+            ) : null}
+        </PolicySettingRow>
+    )
+}
+
+function PolicyListSettingItem({
+    copyPath,
+    id,
+    icon,
+    value,
+    invalid,
+    onChange,
+}: {
+    copyPath: string
+    id: string
+    icon: LucideIcon
+    value: string
+    invalid: boolean
+    onChange: (value: string) => void
+}) {
+    const { t } = useTranslation()
+    const [entry, setEntry] = useState("")
+    const inputRef = useRef<HTMLInputElement>(null)
+    const items = formatPolicyList(value).split("\n").filter(Boolean)
+    function add(text: string) {
+        const additions = formatPolicyList(text).split("\n").filter(Boolean)
+        if (!additions.length) return
+        onChange([...new Set([...items, ...additions])].join("\n"))
+        setEntry("")
+        inputRef.current?.focus()
+    }
+    return (
+        <PolicySettingRow icon={icon} title={t(`systemSettings.global.${copyPath}.title`)} description={t(`systemSettings.global.${copyPath}.description`)}>
+            <Label className="text-sm font-medium" htmlFor={id}>
+                {t(`systemSettings.global.${copyPath}.label`)}
+            </Label>
+            <div className="flex items-center gap-2">
+                <Input id={id} ref={inputRef} value={entry} autoComplete="off" spellCheck={false}
+                    placeholder={t(`systemSettings.global.${copyPath}.placeholder`)}
+                    aria-invalid={invalid} aria-describedby={invalid ? `${id}-error` : undefined}
+                    className="min-w-0 flex-1 font-mono text-xs" onChange={event => setEntry(event.target.value)}
+                    onKeyDown={event => {
+                        if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                            event.preventDefault()
+                            add(entry)
+                        }
+                    }}
+                    onPaste={event => {
+                        const text = event.clipboardData.getData("text")
+                        if (!entry && text.includes("\n")) {
+                            event.preventDefault()
+                            add(text)
+                        }
+                    }} />
+                <Button type="button" variant="outline" size="sm" disabled={!entry.trim()} onClick={() => add(entry)}>
+                    {t("common.add")}
+                </Button>
+            </div>
+            {items.length > 0 && (
+                <ul className="flex min-w-0 flex-wrap gap-1.5">
+                    {items.map(item => (
+                        <li key={item} className="inline-flex max-w-full items-center gap-1 rounded-md border bg-muted/40 pl-2">
+                            <span className="min-w-0 break-all font-mono text-xs">{item}</span>
+                            <Button type="button" variant="ghost" size="icon-xs" aria-label={`${t("common.delete")} ${item}`}
+                                onClick={() => { onChange(items.filter(value => value !== item).join("\n")); inputRef.current?.focus() }}>
+                                <X aria-hidden="true" />
+                            </Button>
+                        </li>
+                    ))}
+                </ul>
+            )}
+            {invalid ? (
+                <p id={`${id}-error`} role="alert" className="text-xs text-destructive">
+                    {t(`systemSettings.global.${copyPath}.invalid`)}
+                </p>
+            ) : null}
+        </PolicySettingRow>
+    )
+}
+
+function PolicySwitchSettingItem({
+    copyPath, id, icon, checked, onChange, hint,
+}: {
+    copyPath: string
+    id: string
+    icon: LucideIcon
+    checked: boolean
+    onChange: (checked: boolean) => void
+    hint?: string
+}) {
+    const { t } = useTranslation()
+    return (
+        <PolicySettingRow icon={icon} title={t(`systemSettings.global.${copyPath}.title`)} description={t(`systemSettings.global.${copyPath}.description`)}>
+            <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
+                <Label className="min-w-0 cursor-pointer text-sm font-medium" htmlFor={id}>{t(`systemSettings.global.${copyPath}.label`)}</Label>
+                <Switch id={id} checked={checked} onCheckedChange={onChange} aria-describedby={hint ? `${id}-hint` : undefined} />
+            </div>
+            {hint && <p id={`${id}-hint`} className="text-xs leading-relaxed text-muted-foreground">{hint}</p>}
+        </PolicySettingRow>
+    )
+}
+
+function MetricsTokenSettingItem({
+    configured,
+    draft,
+    error,
+    isPending,
+    onDraftChange,
+    revoke,
+    onRevokeChange,
+}: {
+    configured: boolean | undefined
+    draft: string
+    error: string | null
+    isPending: boolean
+    onDraftChange: (value: string) => void
+    revoke: boolean
+    onRevokeChange: (value: boolean) => void
+}) {
+    const { t } = useTranslation()
+
+    return (
+        <PolicySettingRow
+            icon={KeyRound}
+            title={t("systemSettings.global.inbound.metricsToken.title")}
+            description={t("systemSettings.global.inbound.metricsToken.description")}
+        >
+            <div className="flex items-center gap-2">
+                <Button type="button" variant="outline" size="sm" disabled={isPending || revoke} onClick={() => {
+                    const bytes = crypto.getRandomValues(new Uint8Array(12))
+                    onDraftChange(btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_"))
+                }}>
+                    {t("systemSettings.global.inbound.metricsToken.generate")}
+                </Button>
+                {configured && (
+                    <Button type="button" size="sm" variant="outline" disabled={isPending} onClick={() => onRevokeChange(!revoke)}>
+                        {t(revoke ? "systemSettings.global.inbound.metricsToken.undoRevoke" : "systemSettings.global.inbound.metricsToken.revoke")}
+                    </Button>
+                )}
+            </div>
+            {draft && (
+                <div className="space-y-1">
+                    <Label htmlFor="system-metrics-token">{t("systemSettings.global.inbound.metricsToken.label")}</Label>
+                    <Input id="system-metrics-token" readOnly value={draft} autoComplete="off" spellCheck={false}
+                        onFocus={event => event.currentTarget.select()} className="font-mono text-xs" />
+                </div>
+            )}
+            {error ? (
+                <p role="alert" className="text-xs text-destructive">
+                    {error}
+                </p>
+            ) : null}
+            <p className="text-xs text-muted-foreground">
+                {t(configured ? "systemSettings.global.inbound.metricsToken.configured" : "systemSettings.global.inbound.metricsToken.notConfigured")}
+            </p>
+        </PolicySettingRow>
+    )
+}
+
 type SettingsSection = {
     id: string
     icon: LucideIcon
@@ -942,11 +1114,11 @@ export function SystemSettingsPage() {
         const value = settings.find((item) => item.key === SYSTEM_BASE_URL_SETTING_KEY)?.value
         return typeof value === "string" ? value.trim() : ""
     }, [settings])
-    const [fakeIpDraft, setFakeIpDraft] = useState<string[] | null>(null)
+    const [fakeIpDraft, setFakeIpDraft] = useState<string | null>(null)
     const [fakeIpError, setFakeIpError] = useState(false)
     const savedCidrs = settings.find((item) => item.key === WEBHOOK_FAKE_IP_SETTING)?.value ?? ""
-    const fakeIpCidrs = fakeIpDraft ?? (typeof savedCidrs === "string" && savedCidrs ? savedCidrs.split("\n") : [])
-    const editCidrs = (values: string[]) => {
+    const fakeIpCidrs = fakeIpDraft ?? (typeof savedCidrs === "string" ? savedCidrs : "")
+    const editCidrs = (values: string) => {
         setFakeIpError(false)
         setFakeIpDraft(values)
     }
@@ -995,6 +1167,25 @@ export function SystemSettingsPage() {
 
     const [backupRetentionDraft, setBackupRetentionDraft] = useState<string | null>(null)
     const [backupIntervalHoursDraft, setBackupIntervalHoursDraft] = useState<string | null>(null)
+
+    const [policyDrafts, setPolicyDrafts] = useState<Record<string, string>>({})
+    const [policyListErrors, setPolicyListErrors] = useState<Record<string, boolean>>({})
+    const savedPolicyValue = (key: string) => {
+        const value = settings.find((item) => item.key === key)?.value
+        return value === undefined || value === null ? INSTANCE_POLICY_DEFAULTS[key] ?? "" : String(value)
+    }
+    const policyValue = (key: string) => policyDrafts[key] ?? savedPolicyValue(key)
+    const editPolicy = (key: string, value: string) => {
+        setPolicyListErrors((current) => ({ ...current, [key]: false }))
+        setPolicyDrafts((current) => ({ ...current, [key]: value }))
+    }
+
+    const { data: metricsTokenStatus } = useMetricsTokenStatus()
+    const setMetricsToken = useSetMetricsToken()
+    const [metricsTokenDraft, setMetricsTokenDraft] = useState("")
+    const [revokeMetricsToken, setRevokeMetricsToken] = useState(false)
+    const [savingGlobal, setSavingGlobal] = useState(false)
+    const [metricsTokenError, setMetricsTokenError] = useState<string | null>(null)
 
     const backupRetention = backupRetentionDraft ?? currentBackupRetention
     const backupIntervalHours = backupIntervalHoursDraft ?? currentBackupIntervalHours
@@ -1077,11 +1268,18 @@ export function SystemSettingsPage() {
             toast.error(t("systemSettings.global.baseUrl.invalid"))
             return
         }
+        if (Object.keys(INSTANCE_POLICY_INTEGER_BOUNDS).some((key) => !isValidPolicyInteger(key, policyValue(key)))) {
+            toast.error(t("systemSettings.global.policies.invalid"))
+            return
+        }
 
+        if (savingGlobal) return
+        const token = revokeMetricsToken ? "" : metricsTokenDraft
+        setSavingGlobal(true)
         try {
             if (fakeIpDraft !== null) {
                 try {
-                    await updateSetting.mutateAsync({ key: WEBHOOK_FAKE_IP_SETTING, value: fakeIpDraft.map((cidr) => cidr.trim()).filter(Boolean).join("\n") })
+                    await updateSetting.mutateAsync({ key: WEBHOOK_FAKE_IP_SETTING, value: fakeIpDraft })
                 } catch (error) {
                     if ((error as { response?: { status?: number } })?.response?.status !== 400) throw error
                     setFakeIpError(true)
@@ -1101,6 +1299,23 @@ export function SystemSettingsPage() {
                     key: SYSTEM_BACKUP_INTERVAL_HOURS_SETTING_KEY,
                     value: String(parsedBackupIntervalHours),
                 })
+            }
+            // Policy lists reject whole entries; surface the field instead of a generic error.
+            for (const key of [INSTANCE_POLICY_SETTING_KEYS.corsOrigins, INSTANCE_POLICY_SETTING_KEYS.forwardedAllowIps]) {
+                const formatted = formatPolicyList(policyValue(key))
+                if (formatted === formatPolicyList(savedPolicyValue(key))) continue
+                try {
+                    await updateSetting.mutateAsync({ key, value: formatted })
+                } catch (error) {
+                    if ((error as { response?: { status?: number } })?.response?.status !== 400) throw error
+                    setPolicyListErrors((current) => ({ ...current, [key]: true }))
+                    return
+                }
+            }
+            for (const [key, draft] of Object.entries(policyDrafts)) {
+                if (key === INSTANCE_POLICY_SETTING_KEYS.corsOrigins || key === INSTANCE_POLICY_SETTING_KEYS.forwardedAllowIps) continue
+                const value = draft.trim()
+                if (value !== savedPolicyValue(key)) await updateSetting.mutateAsync({ key, value })
             }
             await Promise.all([
                 ...READINESS_FIELDS.map((field) => updateSetting.mutateAsync({ key: `system.${field.key}`, value: readinessValue(field) })),
@@ -1140,12 +1355,30 @@ export function SystemSettingsPage() {
             setSnapshotHistoryCountDraft(null)
             setBackupRetentionDraft(null)
             setBackupIntervalHoursDraft(null)
+            setPolicyDrafts({})
+            setPolicyListErrors({})
+            if (token || revokeMetricsToken) {
+                try {
+                    await setMetricsToken.mutateAsync(token)
+                } catch {
+                    const message = t("systemSettings.global.inbound.metricsToken.saveFailed")
+                    setMetricsTokenError(message)
+                    toast.error(message)
+                    return
+                }
+                setMetricsTokenDraft("")
+                setRevokeMetricsToken(false)
+                setMetricsTokenError(null)
+            }
             toast.success(t("common.saved"))
         } catch (error) {
             console.error("Failed to save global settings", error)
             toast.error(t("common.unexpectedError"))
+        } finally {
+            setSavingGlobal(false)
         }
     }
+
 
     const handleCleanupReleaseHistory = async () => {
         try {
@@ -1233,9 +1466,19 @@ export function SystemSettingsPage() {
                 label: t("systemSettings.global.sections.basic.title"),
             },
             {
+                id: "section-queue",
+                icon: Activity,
+                label: t("systemSettings.global.sections.queue.title"),
+            },
+            {
                 id: "section-fetch-readiness",
                 icon: Zap,
                 label: t("systemSettings.global.sections.fetchAndReadiness.title"),
+            },
+            {
+                id: "section-inbound",
+                icon: Network,
+                label: t("systemSettings.global.sections.inbound.title"),
             },
             {
                 id: "section-storage-retention",
@@ -1271,16 +1514,13 @@ export function SystemSettingsPage() {
                 className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto pr-1 pb-10"
             >
                 {/* Section 1: 基础运行环境 */}
-                <div id="section-basic" className="scroll-mt-6">
+                <fieldset disabled={savingGlobal} id="section-basic" className="scroll-mt-6">
                     <Card className="border-border/60 bg-card/80 shadow-xs">
                         <CardHeader className="border-b border-border/40 pb-4">
                             <CardTitle className="flex items-center gap-2 text-base font-semibold">
                                 <Globe className="h-4 w-4 text-primary" />
                                 {t("systemSettings.global.sections.basic.title")}
                             </CardTitle>
-                            <CardDescription className="text-xs">
-                                {t("systemSettings.global.sections.basic.description")}
-                            </CardDescription>
                         </CardHeader>
                         <CardContent className="pt-2">
                             <div className="divide-y divide-border/60">
@@ -1288,31 +1528,6 @@ export function SystemSettingsPage() {
                                     baseUrl={baseUrl}
                                     onBaseUrlChange={setBaseUrlDraft}
                                 />
-                                <fieldset className="min-w-0 space-y-2 py-4" aria-describedby="fake-ip-help">
-                                    <legend className="float-left flex w-full items-center gap-3 text-sm font-semibold">
-                                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                                            <Network className="h-4 w-4" aria-hidden="true" />
-                                        </span>
-                                        {t("systemSettings.global.fakeIp.title")}
-                                    </legend>
-                                    <p id="fake-ip-help" className="clear-both text-xs text-muted-foreground">{t("systemSettings.global.fakeIp.help")}</p>
-                                    {fakeIpCidrs.map((cidr, index) => (
-                                        <div key={index} className="flex items-center gap-2">
-                                            <Input aria-label={`CIDR ${index + 1}`} placeholder="198.18.0.0/15" value={cidr}
-                                                onChange={(event) => editCidrs(fakeIpCidrs.map((value, i) => i === index ? event.target.value : value))} />
-                                            <Button type="button" variant="ghost" size="sm" aria-label={`${t("systemSettings.global.fakeIp.remove")} ${cidr || index + 1}`}
-                                                onClick={() => editCidrs(fakeIpCidrs.filter((_, i) => i !== index))}>
-                                                <Trash2 className="h-4 w-4" aria-hidden="true" />
-                                                {t("systemSettings.global.fakeIp.remove")}
-                                            </Button>
-                                        </div>
-                                    ))}
-                                    {fakeIpError && <p role="alert" className="text-xs text-destructive">{t("systemSettings.global.fakeIp.invalid")}</p>}
-                                    <Button type="button" variant="outline" size="sm" onClick={() => editCidrs([...fakeIpCidrs, ""])}>
-                                        <Plus className="h-4 w-4" aria-hidden="true" />
-                                        {t("systemSettings.global.fakeIp.add")}
-                                    </Button>
-                                </fieldset>
                                 <TimezoneSettingItem
                                     timezone={timezone}
                                     timezoneOptions={timezoneOptions}
@@ -1325,25 +1540,58 @@ export function SystemSettingsPage() {
                             </div>
                         </CardContent>
                     </Card>
-                </div>
+                </fieldset>
 
-                {/* Section 2: 版本抓取与就绪策略 */}
-                <div id="section-fetch-readiness" className="scroll-mt-6">
+                {/* Section 2: 并发与调度 */}
+                <fieldset disabled={savingGlobal} id="section-queue" className="scroll-mt-6">
+                    <Card className="border-border/60 bg-card/80 shadow-xs">
+                        <CardHeader className="border-b border-border/40 pb-4">
+                            <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                                <Activity className="h-4 w-4 text-primary" />
+                                {t("systemSettings.global.sections.queue.title")}
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="pt-2">
+                            <div className="divide-y divide-border/60">
+                                <PolicyIntegerSettingItem
+                                    settingKey={INSTANCE_POLICY_SETTING_KEYS.mutationConcurrency}
+                                    copyPath="queue.mutationConcurrency"
+                                    id="system-mutation-concurrency"
+                                    icon={Layers}
+                                    value={policyValue(INSTANCE_POLICY_SETTING_KEYS.mutationConcurrency)}
+                                    onChange={(value) => editPolicy(INSTANCE_POLICY_SETTING_KEYS.mutationConcurrency, value)}
+                                />
+                                <PolicyIntegerSettingItem
+                                    settingKey={INSTANCE_POLICY_SETTING_KEYS.workerPollSeconds}
+                                    copyPath="queue.workerPollSeconds"
+                                    id="system-worker-poll-seconds"
+                                    icon={Clock3}
+                                    value={policyValue(INSTANCE_POLICY_SETTING_KEYS.workerPollSeconds)}
+                                    onChange={(value) => editPolicy(INSTANCE_POLICY_SETTING_KEYS.workerPollSeconds, value)}
+                                />
+                            </div>
+                        </CardContent>
+                    </Card>
+                </fieldset>
+
+                {/* Section 3: 版本抓取与就绪策略 */}
+                <fieldset disabled={savingGlobal} id="section-fetch-readiness" className="scroll-mt-6">
                     <Card className="border-border/60 bg-card/80 shadow-xs">
                         <CardHeader className="border-b border-border/40 pb-4">
                             <CardTitle className="flex items-center gap-2 text-base font-semibold">
                                 <Zap className="h-4 w-4 text-primary" />
                                 {t("systemSettings.global.sections.fetchAndReadiness.title")}
                             </CardTitle>
-                            <CardDescription className="text-xs">
-                                {t("systemSettings.global.sections.fetchAndReadiness.description")}
-                            </CardDescription>
                         </CardHeader>
                         <CardContent className="pt-2">
                             <div className="divide-y divide-border/60">
-                                <OciRegistryRedirectsSettingItem
-                                    enabled={ociRegistryRedirectsEnabled}
-                                    onEnabledChange={setOciRegistryRedirectsEnabledDraft}
+                                <PolicySwitchSettingItem
+                                    copyPath="ociRegistryRedirects"
+                                    id="oci-registry-redirects-enabled"
+                                    icon={Zap}
+                                    checked={ociRegistryRedirectsEnabled}
+                                    onChange={setOciRegistryRedirectsEnabledDraft}
+                                    hint={ociRegistryRedirectsEnabled ? undefined : t("systemSettings.global.ociRegistryRedirects.disabledHint")}
                                 />
                                 <FetchRetryCountSettingItem
                                     retryCount={retryCount}
@@ -1357,22 +1605,84 @@ export function SystemSettingsPage() {
                                         setReadinessDraft((current) => ({ ...current, [key]: value }))
                                     }
                                 />
+                                <PolicyIntegerSettingItem
+                                    settingKey={INSTANCE_POLICY_SETTING_KEYS.readinessPullGraceSeconds}
+                                    copyPath="pullGrace"
+                                    id="system-readiness-pull-grace"
+                                    icon={Clock3}
+                                    value={policyValue(INSTANCE_POLICY_SETTING_KEYS.readinessPullGraceSeconds)}
+                                    onChange={(value) => editPolicy(INSTANCE_POLICY_SETTING_KEYS.readinessPullGraceSeconds, value)}
+                                />
+                                <PolicyIntegerSettingItem
+                                    settingKey={INSTANCE_POLICY_SETTING_KEYS.runtimeHealthIntervalSeconds}
+                                    copyPath="runtimeHealth"
+                                    id="system-runtime-health-interval"
+                                    icon={Activity}
+                                    value={policyValue(INSTANCE_POLICY_SETTING_KEYS.runtimeHealthIntervalSeconds)}
+                                    onChange={(value) => editPolicy(INSTANCE_POLICY_SETTING_KEYS.runtimeHealthIntervalSeconds, value)}
+                                />
                             </div>
                         </CardContent>
                     </Card>
-                </div>
+                </fieldset>
 
-                {/* Section 3: 存储与历史保留 */}
-                <div id="section-storage-retention" className="scroll-mt-6">
+                {/* Section 4: 网络配置 */}
+                <fieldset disabled={savingGlobal} id="section-inbound" className="scroll-mt-6">
+                    <Card className="border-border/60 bg-card/80 shadow-xs">
+                        <CardHeader className="border-b border-border/40 pb-4">
+                            <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                                <Network className="h-4 w-4 text-primary" />
+                                {t("systemSettings.global.sections.inbound.title")}
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="pt-2">
+                            <div className="divide-y divide-border/60">
+                                <PolicyListSettingItem
+                                    copyPath="inbound.forwardedAllowIps"
+                                    id="system-forwarded-allow-ips"
+                                    icon={Network}
+                                    value={policyValue(INSTANCE_POLICY_SETTING_KEYS.forwardedAllowIps)}
+                                    invalid={policyListErrors[INSTANCE_POLICY_SETTING_KEYS.forwardedAllowIps] === true}
+                                    onChange={(value) => editPolicy(INSTANCE_POLICY_SETTING_KEYS.forwardedAllowIps, value)}
+                                />
+                                <PolicyListSettingItem
+                                    copyPath="inbound.corsOrigins"
+                                    id="system-cors-origins"
+                                    icon={Globe}
+                                    value={policyValue(INSTANCE_POLICY_SETTING_KEYS.corsOrigins)}
+                                    invalid={policyListErrors[INSTANCE_POLICY_SETTING_KEYS.corsOrigins] === true}
+                                    onChange={(value) => editPolicy(INSTANCE_POLICY_SETTING_KEYS.corsOrigins, value)}
+                                />
+                                <PolicyListSettingItem
+                                    copyPath="fakeIp"
+                                    id="system-fake-ip-cidrs"
+                                    icon={Network}
+                                    value={fakeIpCidrs}
+                                    invalid={fakeIpError}
+                                    onChange={editCidrs}
+                                />
+                                <MetricsTokenSettingItem
+                                    configured={metricsTokenStatus?.configured}
+                                    draft={metricsTokenDraft || metricsTokenStatus?.token || ""}
+                                    error={metricsTokenError}
+                                    isPending={savingGlobal}
+                                    revoke={revokeMetricsToken}
+                                    onDraftChange={value => { setMetricsTokenDraft(value); setMetricsTokenError(null) }}
+                                    onRevokeChange={value => { setRevokeMetricsToken(value); setMetricsTokenError(null) }}
+                                />
+                            </div>
+                        </CardContent>
+                    </Card>
+                </fieldset>
+
+                {/* Section 5: 存储与历史保留 */}
+                <fieldset disabled={savingGlobal} id="section-storage-retention" className="scroll-mt-6">
                     <Card className="border-border/60 bg-card/80 shadow-xs">
                         <CardHeader className="border-b border-border/40 pb-4">
                             <CardTitle className="flex items-center gap-2 text-base font-semibold">
                                 <Archive className="h-4 w-4 text-primary" />
                                 {t("systemSettings.global.sections.storageAndRetention.title")}
                             </CardTitle>
-                            <CardDescription className="text-xs">
-                                {t("systemSettings.global.sections.storageAndRetention.description")}
-                            </CardDescription>
                         </CardHeader>
                         <CardContent className="pt-4">
                             <div className="space-y-6">
@@ -1417,30 +1727,35 @@ export function SystemSettingsPage() {
                                             onIntervalDraftChange={setBackupIntervalHoursDraft}
                                             isValid={isValidBackupIntervalHours}
                                         />
+                                        <PolicySwitchSettingItem
+                                            copyPath="onlineRestore"
+                                            id="system-online-restore"
+                                            icon={RotateCcw}
+                                            checked={policyValue(INSTANCE_POLICY_SETTING_KEYS.onlineRestore) === "true"}
+                                            onChange={(checked) => editPolicy(INSTANCE_POLICY_SETTING_KEYS.onlineRestore, checked ? "true" : "false")}
+                                        />
+                                        <PolicySwitchSettingItem
+                                            copyPath="preMigrationBackup"
+                                            id="system-pre-migration-backup"
+                                            icon={Database}
+                                            checked={policyValue(INSTANCE_POLICY_SETTING_KEYS.preMigrationBackup) === "true"}
+                                            onChange={(checked) => editPolicy(INSTANCE_POLICY_SETTING_KEYS.preMigrationBackup, checked ? "true" : "false")}
+                                        />
                                     </div>
                                 </div>
                             </div>
                         </CardContent>
                     </Card>
-                </div>
+                </fieldset>
 
-                {/* 底部保存条 (常规全局设置) */}
-                <div className="sticky bottom-0 z-10 flex items-center justify-between rounded-xl border border-border/70 bg-background p-3.5 shadow-md">
-                    <p className="text-xs text-muted-foreground">
-                        {t("systemSettings.global.description")}
-                    </p>
-                    <Button
-                        type="button"
-                        onClick={handleSaveGlobalSettings}
-                        disabled={updateSetting.isPending}
-                        className="shadow-xs"
-                    >
-                        <Save className="mr-2 h-4 w-4" />
+                <div className="sticky bottom-3 z-10 ml-auto w-fit rounded-xl border border-border/60 bg-card p-2 shadow-sm">
+                    <Button type="button" onClick={handleSaveGlobalSettings} disabled={savingGlobal}>
+                        <Save aria-hidden="true" />
                         {t("common.save")}
                     </Button>
                 </div>
 
-                {/* Section 4: 安全密钥 */}
+                {/* Section 6: 安全密钥 */}
                 <div id="section-security" className="scroll-mt-6">
                     <Card className="border-border/60 bg-card/80 shadow-xs">
                         <CardHeader>
@@ -1493,7 +1808,7 @@ export function SystemSettingsPage() {
                     </Card>
                 </div>
 
-                {/* Section 5: OIDC 身份提供商 */}
+                {/* Section 7: OIDC 身份提供商 */}
                 <div id="section-oidc" className="scroll-mt-6">
                     <Card className="border-border/60 bg-card/80 shadow-xs">
                         <CardHeader className="border-b border-border/40 pb-4">
@@ -1511,7 +1826,7 @@ export function SystemSettingsPage() {
                     </Card>
                 </div>
 
-                {/* Section 6: 系统全量灾备还原 */}
+                {/* Section 8: 系统全量灾备还原 */}
                 <div id="section-backups" className="scroll-mt-6">
                     <SafeBackupSettings />
                 </div>

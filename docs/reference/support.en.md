@@ -14,7 +14,7 @@ This page lists what the regular execution flow offers to users. For configurati
 | Official image | `linux/amd64`; the container runs as root by default |
 | Administration | One administrator; no registration, RBAC or tenant isolation |
 | OIDC | One provider bound to the one administrator identity |
-| Cross-origin | Same-origin only by default; add explicit origins with `RELEASETRACKER_CORS_ORIGINS`. CORS does not replace authentication or HTTPS |
+| Cross-origin | Same-origin by default. Add explicit CORS origins in global settings to enable cross-origin access. Authentication and HTTPS still apply |
 
 ## Runtime targets {#runtimes}
 

@@ -33,8 +33,7 @@ from releasetracker.services.shutdown import shutdown_services
         "admission_outbox",
     ],
 )
-async def test_constructed_component_can_close_before_initialize(kind, monkeypatch):
-    monkeypatch.setenv("RELEASETRACKER_RUNTIME_HEALTH_INTERVAL_SECONDS", "0")
+async def test_constructed_component_can_close_before_initialize(kind):
     host, storage = SchedulerHost(), SimpleNamespace()
     scheduler = ExecutorScheduler(storage, scheduler_host=host)
     constructors = {

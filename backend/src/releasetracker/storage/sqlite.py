@@ -403,6 +403,16 @@ class SQLiteStorage:
         }
         undecryptable_count = 0
 
+        from ..services.metrics_credential import METRICS_TOKEN_SETTING_KEY
+
+        metrics_record = await self.get_setting(METRICS_TOKEN_SETTING_KEY) or ""
+        encrypted = metrics_record.partition(":")[2]
+        if encrypted:
+            inventory["metrics_token"] = 1
+            try:
+                self.fernet.decrypt(encrypted.encode())
+            except InvalidToken:
+                undecryptable_count += 1
         cursor = await db.execute("SELECT token, secrets FROM credentials")
         for row in await cursor.fetchall():
             if row["token"]:
@@ -576,6 +586,17 @@ class SQLiteStorage:
 
         try:
             await db.execute("BEGIN IMMEDIATE")
+            from ..services.metrics_credential import METRICS_TOKEN_SETTING_KEY
+
+            record = await self.get_setting(METRICS_TOKEN_SETTING_KEY) or ""
+            digest, _, encrypted = record.partition(":")
+            if encrypted:
+                rotated = new_fernet.encrypt(old_fernet.decrypt(encrypted.encode())).decode()
+                await db.execute(
+                    "UPDATE settings SET value = ? WHERE key = ?",
+                    (f"{digest}:{rotated}", METRICS_TOKEN_SETTING_KEY),
+                )
+                stats["inventory"]["metrics_token"] = stats["rotated"]["metrics_token"] = 1
             await db.executemany(
                 "UPDATE credentials SET token = ?, secrets = ? WHERE id = ?",
                 credential_updates,

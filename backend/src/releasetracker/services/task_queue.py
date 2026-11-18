@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import random
 import ssl
 import time
@@ -14,6 +13,7 @@ from email.utils import parsedate_to_datetime
 
 import httpx
 
+from .instance_policy import POLICY_DEFAULTS, read_integer_policy
 from .registry_errors import RegistryTagListError, RegistryAuthenticationError
 
 from .outbound_http import (
@@ -26,6 +26,7 @@ from .outbound_http import (
 )
 
 logger = logging.getLogger(__name__)
+MUTATION_CONCURRENCY_KEY = "system.mutation_concurrency"
 
 
 @dataclass
@@ -124,9 +125,8 @@ class TaskQueue:
         self.store = store
         self.scheduler_host = scheduler_host
         self.handlers = {}
-        self.mutation_capacity = int(os.environ.get("RELEASETRACKER_MUTATION_CONCURRENCY", "1"))
-        if not 1 <= self.mutation_capacity <= 3:
-            raise ValueError("Mutation concurrency must be between 1 and 3")
+        # apply_policy adopts the saved limit before dispatch starts.
+        self.mutation_capacity = int(POLICY_DEFAULTS[MUTATION_CONCURRENCY_KEY])
         self.capacity = {
             "fetch": 3,
             "deploy": self.mutation_capacity,
@@ -138,6 +138,15 @@ class TaskQueue:
 
     def register(self, kind, handler):
         self.handlers[kind] = handler
+
+    async def apply_policy(self, storage):
+        """Apply a saved limit change; running mutations drain under the old cap."""
+        capacity = await read_integer_policy(storage, MUTATION_CONCURRENCY_KEY)
+        if capacity == self.mutation_capacity:
+            return
+        self.mutation_capacity = capacity
+        self.capacity["deploy"] = capacity
+        self.capacity["recover"] = capacity
 
     async def initialize(self):
         await self.store.recover(startup=True)

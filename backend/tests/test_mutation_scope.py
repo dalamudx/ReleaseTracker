@@ -172,12 +172,12 @@ async def test_parallel_same_executor_cannot_change_domains(storage):
     assert await storage.tasks.claim("recover", mutation_capacity=2) is None
 
 
-async def test_dispatch_really_runs_independent_mutations_in_parallel(storage, monkeypatch):
+async def test_dispatch_really_runs_independent_mutations_in_parallel(storage):
     import asyncio
     from unittest.mock import AsyncMock, MagicMock
     from releasetracker.services.task_queue import TaskQueue, TaskResult
 
-    monkeypatch.setenv("RELEASETRACKER_MUTATION_CONCURRENCY", "2")
+    await storage.set_setting("system.mutation_concurrency", "2")
     started = set()
     both = asyncio.Event()
     release = asyncio.Event()
@@ -191,6 +191,7 @@ async def test_dispatch_really_runs_independent_mutations_in_parallel(storage, m
 
     handler = MagicMock(prepare=AsyncMock(return_value=None), execute=execute)
     queue = TaskQueue(storage.tasks, MagicMock())
+    await queue.apply_policy(storage)
     queue.register("deploy", handler)
     queue.register("recover", handler)
     await enqueue(
@@ -214,6 +215,67 @@ async def test_dispatch_really_runs_independent_mutations_in_parallel(storage, m
         await asyncio.wait_for(both.wait(), timeout=2)
         assert len(queue.workers) == 2
         assert len(await storage.tasks.list(state="queued")) == 1
+    finally:
+        release.set()
+        await queue.shutdown()
+
+
+async def test_saved_mutation_concurrency_bounds_shared_deploy_and_recover_capacity(storage):
+    from unittest.mock import MagicMock
+    from releasetracker.services.task_queue import TaskQueue
+
+    queue = TaskQueue(storage.tasks, MagicMock())
+    assert queue.capacity == {"fetch": 3, "deploy": 1, "recover": 1}
+
+    await storage.set_setting("system.mutation_concurrency", "3")
+    await queue.apply_policy(storage)
+    assert queue.mutation_capacity == 3
+    assert queue.capacity == {"fetch": 3, "deploy": 3, "recover": 3}
+
+    await storage.set_setting("system.mutation_concurrency", "1")
+    await queue.apply_policy(storage)
+    assert queue.mutation_capacity == 1
+    assert queue.capacity == {"fetch": 3, "deploy": 1, "recover": 1}
+
+
+async def test_live_concurrency_reduction_keeps_running_mutations_and_limits_new_claims(storage):
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+    from releasetracker.services.task_queue import TaskQueue, TaskResult
+
+    await storage.set_setting("system.mutation_concurrency", "2")
+    started = set()
+    release = asyncio.Event()
+
+    async def execute(task):
+        started.add(task["id"])
+        await release.wait()
+        return TaskResult()
+
+    handler = MagicMock(prepare=AsyncMock(return_value=None), execute=execute)
+    queue = TaskQueue(storage.tasks, MagicMock())
+    await queue.apply_policy(storage)
+    queue.register("deploy", handler)
+    for index, letter in enumerate("abc", start=1):
+        await enqueue(storage, index, f"deployment-mutations:cluster:{letter * 64}")
+    try:
+        await queue.tick()
+        assert len(queue.workers) == 2
+
+        await storage.set_setting("system.mutation_concurrency", "1")
+        await queue.apply_policy(storage)
+        await queue.tick()
+        # Running mutations are never reclaimed; only new claims honour the cap.
+        assert len(queue.workers) == 2
+        assert len(await storage.tasks.list(state="queued")) == 1
+
+        release.set()
+        await asyncio.gather(
+            *(worker for _, worker in queue.workers.values()), return_exceptions=True
+        )
+        await asyncio.sleep(0)
+        await queue.tick()
+        assert len(queue.workers) == 1
     finally:
         release.set()
         await queue.shutdown()

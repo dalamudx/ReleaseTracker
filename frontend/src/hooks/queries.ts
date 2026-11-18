@@ -75,6 +75,7 @@ export const queryKeys = {
   // Settings
   settings: ["settings"] as const,
   securityKeys: ["settings", "security-keys"] as const,
+  metricsToken: ["settings", "metrics-token"] as const,
 
   // Runtime Connections
   runtimeConnections: (params?: { skip?: number; limit?: number; search?: string }) =>
@@ -430,6 +431,23 @@ export function useCleanupSnapshotHistory() {
       queryClient.invalidateQueries({ queryKey: queryKeys.settings })
       queryClient.invalidateQueries({ queryKey: ["executors"] })
     },
+  })
+}
+
+export function useMetricsTokenStatus() {
+  return useQuery({
+    queryKey: queryKeys.metricsToken,
+    queryFn: () => api.getMetricsTokenStatus(),
+    staleTime: 0,
+    gcTime: 0,
+  })
+}
+
+export function useSetMetricsToken() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (token: string) => api.setMetricsToken(token),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.metricsToken }),
   })
 }
 

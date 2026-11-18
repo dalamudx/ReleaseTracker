@@ -168,10 +168,7 @@ async def test_backup_management_api_confirmation_auth_and_policy(
 ):
     service, paths = await archives(storage, system_key_manager)
     monkeypatch.setattr(app.state, "instance_backup", service, raising=False)
-    monkeypatch.setenv("RELEASETRACKER_BACKUP_DAILY_RETENTION", "14")
-    monkeypatch.setenv("RELEASETRACKER_BACKUP_WEEKLY_RETENTION", "4")
     inventory = authed_client.get("/api/backups").json()
-    assert inventory["daily_retention"] == 14 and inventory["weekly_retention"] == 4
     assert inventory["total_size"] == sum(path.stat().st_size for path in paths)
     name = paths[0].name
     assert (

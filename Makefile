@@ -22,7 +22,7 @@ install: ## Install all dependencies (backend and frontend)
 
 run-backend: ## Run the backend service
 	@echo "🚀 Starting backend service..."
-	cd backend && $(UV) run uvicorn releasetracker.main:app --host 0.0.0.0 --port 8000 --reload
+	cd backend && $(UV) run uvicorn releasetracker.main:app --host 0.0.0.0 --port 8000 --reload --no-proxy-headers
 
 run-frontend: ## Wait for backend readiness, then run the frontend service
 	@echo "🚀 Starting frontend service..."

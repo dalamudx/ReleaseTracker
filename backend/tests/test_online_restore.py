@@ -7,6 +7,7 @@ from fastapi import FastAPI
 import httpx
 import pytest
 
+from releasetracker import main
 from releasetracker.main import runtime_lifespan, StorageConnectionCleanupMiddleware
 from releasetracker.routers import auth, backups
 from releasetracker.scheduler_host import SchedulerHost
@@ -64,7 +65,9 @@ async def test_real_runtime_restore_reloads_keys_sessions_and_requires_review(
     storage, system_key_manager, monkeypatch
 ):
     archive, archived_key, live_key = await seed(storage, system_key_manager)
-    monkeypatch.setenv("RELEASETRACKER_DB_PATH", storage.db_path)
+    # The embedded app must use this fixture, not the shipped fixed data location.
+    monkeypatch.setattr(main, "database_path", lambda: storage.db_path)
+    monkeypatch.setattr(main, "system_secrets_path", lambda: system_key_manager.secrets_path)
     app = application()  # Default persisted interval is zero; seed has closed fixture storage.
     controller = await open_controller(app, runtime_lifespan, storage.db_path)
     try:
@@ -120,6 +123,7 @@ async def test_real_runtime_restore_reloads_keys_sessions_and_requires_review(
             response = await client.get("/api/backups/restore-safety/current/download")
             assert response.status_code == 200 and response.content[:2] == b"PK"
             assert not controller._downloads
+
     finally:
         await controller.close()
 

@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
-import { ArrowLeft, BookOpen, ChevronDown, Clock, Copy, Edit, Inbox, Loader2, Play, TriangleAlert } from "lucide-react"
+import { ArrowLeft, BookOpen, ChevronDown, Copy, Edit, Inbox, Loader2, Play } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
@@ -47,7 +47,6 @@ import {
 } from "@/components/ui/collapsible"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { getArtifactReleaseTimes, getTrackerChannelConfigEntries, getTrackerChannelConfigValueLabel } from "./trackerDetailHelpers"
-import { ChannelSelectionDiagnostics } from "./ChannelSelectionDiagnostics"
 
 function getTrackerChannelTypeLabel(
     channelType: string | null | undefined,
@@ -99,18 +98,6 @@ interface TrackerDetailProps {
     onBackToList?: () => void
 }
 
-type ChannelSelectionNotice = { key: string; Icon: typeof Clock; warning: boolean; checkable: boolean }
-
-// Reason codes come from the backend; only "awaiting_check" resolves on its own after a check.
-function getChannelSelectionNotice(selection: { state: string; reason: string | null }): ChannelSelectionNotice {
-    if (selection.state === "conflict") return { key: "selectionConflict", Icon: TriangleAlert, warning: true, checkable: false }
-    if (selection.reason === "unorderable_version" || selection.reason === "incomparable_versions") return { key: "selectionUnorderable", Icon: TriangleAlert, warning: true, checkable: false }
-    if (selection.state === "empty") return { key: "selectionEmpty", Icon: Inbox, warning: false, checkable: false }
-    if (selection.reason === "manifest_unconfirmed") {
-        return { key: "selectionManifestUnconfirmed", Icon: TriangleAlert, warning: true, checkable: true }
-    }
-    return { key: "selectionAwaitingCheck", Icon: Clock, warning: false, checkable: true }
-}
 
 function normalizeArtifactDigest(digest: string): string {
     return /^[0-9a-f]{64}$/i.test(digest) ? `sha256:${digest}` : digest
@@ -458,45 +445,11 @@ export function TrackerDetail({
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="p-3.5 pt-0">
-                    {trackerCurrentView?.channel_selections?.filter((selection) => selection.state !== "ready").map((selection) => {
-                        const notice = getChannelSelectionNotice(selection)
-                        return (
-                            <div
-                                key={`${selection.tracker_source_id}:${selection.channel_key}`}
-                                role="status"
-                                className={cn(
-                                    "mb-2 flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-xs",
-                                    notice.warning
-                                        ? "border-warning/30 bg-warning/10 text-warning"
-                                        : "border-border/60 bg-muted/40 text-muted-foreground",
-                                )}
-                            >
-                                <notice.Icon className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-                                <div className="min-w-0 flex-1">
-                                    <p className="break-words leading-relaxed">
-                                        {t(`trackers.aggregate.detail.${notice.key}`, { channel: selection.channel_name })}
-                                    </p>
-                                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-                                        {notice.checkable && onCheck && (
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                className="h-6 shrink-0 px-2 text-xs text-foreground"
-                                                onClick={() => onCheck(tracker.name)}
-                                                disabled={checking}
-                                            >
-                                                {checking ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Play className="mr-1 h-3 w-3 text-primary" />}
-                                                <span>{t("trackers.aggregate.detail.checkNow")}</span>
-                                            </Button>
-                                        )}
-                                        {(selection.reason === "unorderable_version" || selection.reason === "incomparable_versions") && (
-                                            <ChannelSelectionDiagnostics trackerName={tracker.name} sourceId={selection.tracker_source_id} channelKey={selection.channel_key} revision={selection.revision} />
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                        )
-                    })}
+                    {trackerCurrentView?.channel_selections?.filter(selection => selection.state === "empty" && selection.reason === "no_matching_tag").map(selection => (
+                        <p key={`${selection.tracker_source_id}:${selection.channel_key}`} role="status" className="mb-2 text-xs text-muted-foreground">
+                            {t("trackers.aggregate.detail.selectionRegexMismatch", { channel: selection.channel_name })}
+                        </p>
+                    ))}
                     {versionViewMatrixModel.rows.length === 0 ? (
                         <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/60 py-8 text-center">
                             <span className="text-xs text-muted-foreground">

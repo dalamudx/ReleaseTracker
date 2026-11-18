@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from helpers.executor_runtime import create_runtime_connection, save_docker_tracker_config
@@ -83,9 +85,16 @@ async def test_release_and_executor_schedulers_share_one_scheduler_host(storage)
     await scheduler_host.shutdown()
 
 
-def test_worker_poll_setting_only_changes_short_worker_intervals(monkeypatch):
-    monkeypatch.setenv("RELEASETRACKER_WORKER_POLL_SECONDS", "5")
+def policy_storage(values: dict[str, str | None]) -> MagicMock:
+    storage = MagicMock()
+    storage.get_setting = AsyncMock(side_effect=values.get)
+    return storage
+
+
+@pytest.mark.asyncio
+async def test_saved_worker_poll_interval_applies_to_new_short_worker_jobs():
     host = SchedulerHost()
+    await host.apply_policy(policy_storage({"system.worker_poll_seconds": "5"}))
 
     async def tick():
         pass
@@ -105,11 +114,37 @@ def test_worker_poll_setting_only_changes_short_worker_intervals(monkeypatch):
     assert host.get_job("tracker", "check").trigger.interval.total_seconds() == 2
 
 
-@pytest.mark.parametrize("value", ["0", "61", "nan", "2.5", ""])
-def test_worker_poll_setting_rejects_invalid_values(monkeypatch, value):
-    monkeypatch.setenv("RELEASETRACKER_WORKER_POLL_SECONDS", value)
-    with pytest.raises(ValueError, match="RELEASETRACKER_WORKER_POLL_SECONDS"):
-        SchedulerHost()
+@pytest.mark.asyncio
+async def test_live_worker_poll_increase_and_decrease_reschedule_registered_jobs():
+    host = SchedulerHost()
+
+    async def tick():
+        pass
+
+    host.add_interval_job("tasks", "dispatch", tick, seconds=2)
+    host.add_interval_job("tracker", "check", tick, seconds=2)
+    host.add_interval_job("repository_webhooks", "cleanup", tick, seconds=86400)
+
+    await host.apply_policy(policy_storage({"system.worker_poll_seconds": "5"}))
+    assert host.worker_poll_seconds == 5
+    assert host.get_job("tasks", "dispatch").trigger.interval.total_seconds() == 5
+    assert host.get_job("repository_webhooks", "cleanup").trigger.interval.total_seconds() == 86400
+    host.add_interval_job("readiness", "observe", tick, seconds=2)
+    assert host.get_job("readiness", "observe").trigger.interval.total_seconds() == 5
+
+    await host.apply_policy(policy_storage({"system.worker_poll_seconds": "1"}))
+    assert host.worker_poll_seconds == 1
+    assert host.get_job("tasks", "dispatch").trigger.interval.total_seconds() == 1
+    assert host.get_job("readiness", "observe").trigger.interval.total_seconds() == 1
+    assert host.get_job("tracker", "check").trigger.interval.total_seconds() == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [None, "", "0", "61", "nan", "2.5"])
+async def test_invalid_saved_worker_poll_interval_keeps_the_default(value):
+    host = SchedulerHost()
+    await host.apply_policy(policy_storage({"system.worker_poll_seconds": value}))
+    assert host.worker_poll_seconds == 2
 
 
 @pytest.mark.asyncio
@@ -146,6 +181,5 @@ async def test_pause_drains_submitted_jobs_without_cancelling_them():
     assert skipped
 
 
-def test_worker_poll_setting_preserves_default(monkeypatch):
-    monkeypatch.delenv("RELEASETRACKER_WORKER_POLL_SECONDS", raising=False)
+def test_worker_poll_setting_preserves_default():
     assert SchedulerHost().worker_poll_seconds == 2

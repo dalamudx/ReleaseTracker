@@ -396,7 +396,6 @@ def _release_matches_channel(
     channel_source_type: str | None = None,
 ) -> bool:
     from ..config import Channel
-    import re
 
     if isinstance(channel, dict):
         channel = Channel(**channel)
@@ -406,6 +405,12 @@ def _release_matches_channel(
             return False
         if channel.type == "prerelease" and not release.prerelease:
             return False
+
+    return matches_channel_patterns(storage_cls, release, channel)
+
+
+def matches_channel_patterns(storage_cls, release, channel) -> bool:
+    import re
 
     from ..tag_ordering import compile_pattern
 

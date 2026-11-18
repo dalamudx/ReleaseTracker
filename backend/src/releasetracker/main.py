@@ -8,7 +8,6 @@ from html import escape
 from pathlib import Path
 from urllib.parse import urlsplit
 import logging
-import os
 import re
 import secrets
 
@@ -32,9 +31,11 @@ from .storage import sqlite_selection
 from .storage.sqlite import SQLiteStorage
 from .storage.sqlite_retention import prune_fetch_runs
 from .logger import LogConfig
-from .paths import database_path, system_secrets_path
+from .paths import database_path, reject_legacy_database_override, system_secrets_path
 from .services.http_security import configure_http_security
-from .services.instance_backup import InstanceBackup, retention_tiers
+from .services.inbound_policy import load_policy
+from .services.backup_configuration import online_restore_enabled
+from .services.instance_backup import InstanceBackup
 from .routers import backups, metrics, browser_auth
 from .routers import (
     auth,
@@ -51,7 +52,10 @@ from .routers import runtime_connections, ssh_connections, ssh_compose
 from .routers import executors, tasks
 from .services.task_queue import TaskQueue
 from .services.shutdown import shutdown_services
-from .services.online_restore import RestoreMaintenanceMiddleware
+from .services.online_restore import (
+    RestoreMaintenanceMiddleware,
+    recover_interrupted_restore,
+)
 from .services.fetch_tasks import FetchTasks
 from .services.deploy_tasks import DeployTasks
 from .services.recovery_tasks import RecoveryTasks
@@ -122,6 +126,8 @@ async def runtime_lifespan(app: FastAPI):
         # Bind to app.state
         app.state.storage = storage
         app.state.system_key_manager = system_key_manager
+        # Saved policy, not the server's own rewrite, interprets forwarded headers.
+        app.state.inbound_policy = await load_policy(storage)
         # app.state.config = app_config # REMOVED
 
         # Ensure an admin user exists
@@ -150,7 +156,7 @@ async def runtime_lifespan(app: FastAPI):
         # Initialize schedulers
         scheduler_host = SchedulerHost()
         owned_closers["scheduler_host"] = scheduler_host.shutdown
-        retention_tiers()  # Reject invalid retention before starting background work.
+        await scheduler_host.apply_policy(storage)
         instance_backup = InstanceBackup(storage, system_key_manager)
         await instance_backup.load_configuration()
         app.state.instance_backup = instance_backup
@@ -230,6 +236,7 @@ async def runtime_lifespan(app: FastAPI):
         )
         owned_closers["runtime_health"] = runtime_health_watch.shutdown
         task_queue = TaskQueue(storage.tasks, scheduler_host)
+        await task_queue.apply_policy(storage)
         owned_closers["task_queue"] = task_queue.shutdown
         fetch_tasks = FetchTasks(storage, scheduler)
         deploy_tasks = DeployTasks(storage, executor_scheduler)
@@ -246,6 +253,7 @@ async def runtime_lifespan(app: FastAPI):
 
         # Bind schedulers to app.state
         app.state.scheduler_host = scheduler_host
+        app.state.runtime_health_watch = runtime_health_watch
         app.state.scheduler = scheduler
         app.state.executor_scheduler = executor_scheduler
         app.state.repository_webhook_scheduler = repository_webhook_scheduler
@@ -298,8 +306,16 @@ async def runtime_lifespan(app: FastAPI):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # A retired custom path must be moved before anything creates an empty database.
+    reject_legacy_database_override()
+    # Recover any interrupted switch first, even when the feature is now off:
+    # the restored original database also supplies the saved policy below.
+    await asyncio.to_thread(recover_interrupted_restore, database_path())
     # Small embedded/test applications retain the original lifecycle. The
-    # shipped app explicitly owns its data directory and enables reloading.
+    # shipped app leaves the flag unset and follows the saved policy, which is
+    # read at startup: saving it needs a service restart to take effect.
+    if getattr(app.state, "enable_online_restore", None) is None:
+        app.state.enable_online_restore = online_restore_enabled(database_path())
     if not getattr(app.state, "enable_online_restore", False):
         async with runtime_lifespan(app):
             yield
@@ -334,12 +350,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-online_restore_option = os.environ.get(
-    "RELEASETRACKER_ONLINE_RESTORE", "1" if os.name == "posix" else "0"
-).strip()
-if online_restore_option not in {"0", "1"}:
-    raise ValueError("RELEASETRACKER_ONLINE_RESTORE must be 0 or 1")
-app.state.enable_online_restore = online_restore_option == "1"
+# None follows the saved policy at startup; embedded apps set True/False directly.
+app.state.enable_online_restore = None
 app.add_middleware(StorageConnectionCleanupMiddleware)
 app.add_middleware(RestoreMaintenanceMiddleware)
 configure_http_security(app)
@@ -429,7 +441,7 @@ def configure_static_frontend(application: FastAPI, static_root: Path) -> None:
     async def static_aware_404_handler(request: Request, exc):
         del exc
         request_path = request.url.path
-        if request_path.startswith("/api") or request_path.startswith("/auth/oidc"):
+        if request_path == "/metrics" or request_path.startswith(("/api", "/auth/oidc")):
             return JSONResponse(status_code=404, content={"detail": "Not found"})
 
         static_file = _resolve_static_file(static_root, request_path)

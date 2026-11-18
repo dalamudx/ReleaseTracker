@@ -6,11 +6,12 @@ import argparse
 import asyncio
 import getpass
 import json
+import os
 import sqlite3
 import tempfile
 import zipfile
 
-from .paths import database_path, system_secrets_path
+from . import paths
 from .services.auth import AuthService
 from .services.system_keys import SystemKeyManager
 from .storage.sqlite import SQLiteStorage
@@ -22,15 +23,31 @@ async def _reset_admin_password() -> None:
     if password != confirmation:
         raise ValueError("Administrator passwords do not match")
 
-    key_manager = SystemKeyManager(system_secrets_path())
+    key_manager = SystemKeyManager(paths.system_secrets_path())
     await key_manager.initialize()
-    storage = SQLiteStorage(str(database_path()), system_key_manager=key_manager)
+    storage = SQLiteStorage(str(paths.database_path()), system_key_manager=key_manager)
     try:
         await storage.initialize()
         auth_service = AuthService(storage, key_manager)
         await auth_service.reset_admin_password(password)
     finally:
         await storage.close()
+
+
+async def _import_legacy_settings() -> int:
+    import aiosqlite
+
+    from .services.legacy_settings import import_legacy_settings
+
+    db_path, keys_path = paths.database_path(), paths.system_secrets_path()
+    if not db_path.is_file():
+        raise ValueError(f"{db_path} is missing; start or migrate the service before importing")
+    if not keys_path.is_file():
+        raise ValueError(
+            f"{keys_path} is missing; point the data directory at the existing installation"
+        )
+    async with aiosqlite.connect(db_path.resolve().as_uri() + "?mode=rw", uri=True) as db:
+        return await import_legacy_settings(db)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,6 +65,10 @@ def main(argv: list[str] | None = None) -> int:
     subcommands.add_parser(
         "pre-migration-backup",
         help="back up the database and keys if dbmate migrations are pending",
+    )
+    subcommands.add_parser(
+        "import-legacy-settings",
+        help="import retired policy environment variables once into saved settings",
     )
     subcommands.add_parser(
         "recover-online-restore",
@@ -79,13 +100,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        # Retired override: never create a fresh database beside an existing custom one.
+        if args.command not in {"inspect-backup", "restore-backup"}:
+            paths.reject_legacy_database_override()
         if args.command == "prune-orphans":
             from contextlib import closing
             from .services.database_orphans import prune_orphans
             from .services.database_integrity import validate_relations
             from .services.instance_backup import _create_archive, _validate_keys
 
-            db_path = database_path()
+            db_path = paths.database_path()
             if args.dry_run:
                 with closing(sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)) as source:
                     with closing(sqlite3.connect(":memory:")) as copy:
@@ -97,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError(
                     "Stop the application, then pass --confirm-stopped; use --dry-run to preview"
                 )
-            keys = system_secrets_path().read_bytes()
+            keys = paths.system_secrets_path().read_bytes()
             _validate_keys(keys)
             archive = _create_archive(
                 db_path,
@@ -121,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "audit-database":
             from .services.database_integrity import validate_relations
 
-            with sqlite3.connect(database_path().as_uri() + "?mode=ro", uri=True) as db:
+            with sqlite3.connect(paths.database_path().as_uri() + "?mode=ro", uri=True) as db:
                 violations = db.execute("PRAGMA foreign_key_check").fetchmany(50)
                 for table, rowid, parent, key in violations:
                     print(
@@ -135,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError(
                     "Review remote state and executor configuration, then pass --confirm-reviewed"
                 )
-            db_path = database_path()
+            db_path = paths.database_path()
             with sqlite3.connect(db_path.as_uri() + "?mode=rw", uri=True) as db:
                 db.execute("DELETE FROM settings WHERE key='restore.review_required'")
                 db.commit()
@@ -161,42 +185,43 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(manifest, indent=2))
             return 0
         if args.command == "recover-online-restore":
-            from .services.online_restore_files import RestoreFiles
+            from .services.online_restore import recover_interrupted_restore
 
-            files = RestoreFiles(database_path())
-            if not files.root.exists():
+            if not recover_interrupted_restore(paths.database_path()):
                 return 0
-            files.acquire()
-            try:
-                files.recover()
-            finally:
-                files.release()
             print("Interrupted online restore checked before startup.")
             return 0
         if args.command == "pre-migration-backup":
-            import os
-
-            from .paths import backend_dir
+            from .services.backup_configuration import (
+                pre_migration_backup_enabled,
+                pre_migration_directory,
+            )
             from .services.instance_backup import pre_migration_backup
 
-            if os.environ.get("RELEASETRACKER_PRE_MIGRATION_BACKUP", "1").strip() == "0":
-                print("Pre-migration backup disabled by RELEASETRACKER_PRE_MIGRATION_BACKUP=0")
+            db_path = paths.database_path()
+            if not pre_migration_backup_enabled(db_path):
+                print("Pre-migration backup disabled by system.pre_migration_backup=false")
                 return 0
-            db_path = database_path()
-            from .services.backup_configuration import pre_migration_directory
-
-            directory = pre_migration_directory(db_path)
-            migrations = (
-                os.environ.get("DBMATE_MIGRATIONS_DIR") or backend_dir() / "dbmate" / "migrations"
+            migrations = os.environ.get("DBMATE_MIGRATIONS_DIR") or (
+                paths.backend_dir() / "dbmate" / "migrations"
             )
-            archive = pre_migration_backup(db_path, system_secrets_path(), directory, migrations)
+            archive = pre_migration_backup(
+                db_path,
+                paths.system_secrets_path(),
+                pre_migration_directory(db_path),
+                migrations,
+            )
             print(f"Pre-migration backup: {archive}" if archive else "No pending migrations")
+            return 0
+        if args.command == "import-legacy-settings":
+            imported = asyncio.run(_import_legacy_settings())
+            print(f"Imported {imported} legacy policy settings; previously saved values win.")
             return 0
         if args.command == "reset-admin-password":
             asyncio.run(_reset_admin_password())
             print("Administrator password reset complete; existing sessions were revoked.")
             return 0
-    except (ValueError, OSError, KeyError, sqlite3.Error, zipfile.BadZipFile) as exc:
+    except (ValueError, RuntimeError, OSError, KeyError, sqlite3.Error, zipfile.BadZipFile) as exc:
         parser.exit(1, f"error: {exc}\n")
     return 1
 

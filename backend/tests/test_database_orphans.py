@@ -144,8 +144,8 @@ async def test_cli_dry_run_and_backed_up_cleanup(
     from releasetracker import cli
 
     await legacy_orphans(storage)
-    monkeypatch.setattr(cli, "database_path", lambda: Path(storage.db_path).resolve())
-    monkeypatch.setattr(cli, "system_secrets_path", lambda: system_key_manager.secrets_path)
+    monkeypatch.setattr(cli.paths, "database_path", lambda: Path(storage.db_path).resolve())
+    monkeypatch.setattr(cli.paths, "system_secrets_path", lambda: system_key_manager.secrets_path)
     assert cli.main(["prune-orphans", "--dry-run"]) == 0
     assert '"dry_run": true' in capsys.readouterr().out
     with closing(sqlite3.connect(storage.db_path)) as db:

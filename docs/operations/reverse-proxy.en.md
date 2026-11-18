@@ -6,6 +6,8 @@ title: Reverse proxy and sub-paths
 
 These Nginx examples assume the proxy shares the application's host, the application listens on `127.0.0.1:8000`, and the certificate files already exist. A containerized proxy must use the application service name on a shared network, not the proxy container's own loopback address.
 
+In global settings, enter the IP address or subnet of the proxy that connects to the application. This lets sign-in rate limiting identify the client and HTTPS sessions set secure cookies. Include `--no-proxy-headers` in custom Uvicorn commands so the application handles forwarded headers using the saved proxy list.
+
 ## Root deployment {#root}
 
 For `https://releases.example.com`, preserve the original request path:

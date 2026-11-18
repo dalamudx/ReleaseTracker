@@ -105,7 +105,7 @@ async def test_pre_migration_recovery_restores_pair_before_schema_access(
         files.keys.write_bytes(b"new keys")
     finally:
         files.release()
-    monkeypatch.setenv("RELEASETRACKER_DB_PATH", storage.db_path)
+    monkeypatch.setattr(cli.paths, "database_path", lambda: Path(storage.db_path))
     assert cli.main(["recover-online-restore"]) == 0
     with sqlite3.connect(storage.db_path) as db:
         assert (
@@ -190,3 +190,52 @@ async def test_plan_pin_and_cancel_lifecycle(storage, system_key_manager):
         assert not archive.exists()
     finally:
         await controller.close()
+
+
+@pytest.mark.asyncio
+async def test_disabled_online_restore_still_recovers_interrupted_journal(
+    storage, system_key_manager, monkeypatch
+):
+    from contextlib import asynccontextmanager
+
+    from fastapi import FastAPI
+
+    from releasetracker import main
+
+    await seed(storage, system_key_manager)
+    with sqlite3.connect(storage.db_path) as db:
+        db.execute(
+            "INSERT OR REPLACE INTO settings(key, value, updated_at) "
+            "VALUES('system.online_restore', 'false', '2026-01-01T00:00:00')"
+        )
+        db.commit()
+    files = RestoreFiles(storage.db_path)
+    files.acquire()
+    try:
+        files.recover()
+        files.save_original()
+        oldkeys = files.keys.read_bytes()
+        files.persist({"state": "running", "phase": "switching", "original_saved": True})
+        files.db.write_bytes(b"partial database")
+        files.keys.write_bytes(b"new keys")
+    finally:
+        files.release()
+
+    monkeypatch.setattr(main, "database_path", lambda: Path(storage.db_path))
+    monkeypatch.setattr(main, "system_secrets_path", lambda: system_key_manager.secrets_path)
+
+    @asynccontextmanager
+    async def runtime(_app):
+        yield
+
+    monkeypatch.setattr(main, "runtime_lifespan", runtime)
+    app = FastAPI()
+    async with main.lifespan(app):
+        pass
+    assert app.state.enable_online_restore is False
+    with sqlite3.connect(storage.db_path) as db:
+        assert (
+            db.execute("SELECT value FROM settings WHERE key='online-marker'").fetchone()[0]
+            == "live"
+        )
+    assert files.keys.read_bytes() == oldkeys

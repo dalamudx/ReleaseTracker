@@ -7,6 +7,7 @@ from typing import Any, cast
 from fastapi.testclient import TestClient
 from db_helpers import clone_sqlite_database, initialize_storage_with_schema
 
+from releasetracker import paths
 from releasetracker.main import app
 from releasetracker.storage.sqlite import SQLiteStorage
 from releasetracker.dependencies import get_executor_scheduler, get_scheduler
@@ -48,6 +49,13 @@ async def _authenticate_test_client(client, auth_service: AuthService, user: Use
         )
     )
     client.headers["Authorization"] = f"Bearer {access_token}"
+
+
+@pytest.fixture(autouse=True)
+def isolated_data_directory(tmp_path, request, monkeypatch):
+    """The fixed data location must never point at the checkout during tests."""
+    if request.node.get_closest_marker("real_data_paths") is None:
+        monkeypatch.setattr(paths, "data_dir", lambda: tmp_path / "data")
 
 
 @pytest_asyncio.fixture(scope="function")

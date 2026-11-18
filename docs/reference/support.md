@@ -14,7 +14,7 @@ title: 支持范围
 | 官方镜像 | `linux/amd64`；容器默认以 root 运行 |
 | 管理权限 | 单一管理员，无注册、RBAC 和租户隔离 |
 | OIDC | 一个提供商、一个管理员身份绑定 |
-| 跨域 | 默认仅允许同源；可用 `RELEASETRACKER_CORS_ORIGINS` 增加明确来源，CORS 不能替代认证和 HTTPS |
+| 跨域 | 默认仅允许同源。在全局配置中添加完整的 CORS 来源可开启跨域访问。仍需使用认证和 HTTPS |
 
 ## 运行时目标 {#runtimes}
 

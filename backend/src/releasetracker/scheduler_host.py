@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-import os
 import asyncio
 import inspect
 from functools import wraps
@@ -11,6 +10,20 @@ from typing import Any, Callable
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.schedulers.base import SchedulerNotRunningError
+
+from .services.instance_policy import read_integer_policy
+
+DEFAULT_WORKER_POLL_SECONDS = 2
+# Namespaces whose dispatch ticks follow the configured worker poll interval.
+SHORT_WORKER_NAMESPACES = frozenset(
+    {
+        "tasks",
+        "readiness",
+        "executor_notifications",
+        "deployment_admission_notifications",
+        "repository_webhooks",
+    }
+)
 
 
 class SchedulerHost:
@@ -20,16 +33,19 @@ class SchedulerHost:
         self._scheduler = scheduler or AsyncIOScheduler()
         self._accepting = True
         self._active: set[asyncio.Task] = set()
-        try:
-            self.worker_poll_seconds = int(
-                os.environ.get("RELEASETRACKER_WORKER_POLL_SECONDS", "2")
-            )
-        except ValueError as exc:
-            raise ValueError(
-                "RELEASETRACKER_WORKER_POLL_SECONDS must be an integer from 1 to 60"
-            ) from exc
-        if not 1 <= self.worker_poll_seconds <= 60:
-            raise ValueError("RELEASETRACKER_WORKER_POLL_SECONDS must be an integer from 1 to 60")
+        self.worker_poll_seconds = DEFAULT_WORKER_POLL_SECONDS
+        self._poll_jobs: set[str] = set()
+
+    async def apply_policy(self, storage) -> None:
+        """Follow the saved worker poll interval for new and registered short jobs."""
+        seconds = await read_integer_policy(storage, "system.worker_poll_seconds")
+        if seconds == self.worker_poll_seconds:
+            return
+        self.worker_poll_seconds = seconds
+        for job_id in self._poll_jobs:
+            job = self._scheduler.get_job(job_id)
+            if job is not None:
+                job.reschedule(trigger="interval", seconds=seconds)
 
     @property
     def scheduler(self) -> AsyncIOScheduler:
@@ -48,6 +64,7 @@ class SchedulerHost:
         job_id = self.namespaced_job_id(namespace, key)
         if self._scheduler.get_job(job_id):
             self._scheduler.remove_job(job_id)
+        self._poll_jobs.discard(job_id)
 
     def remove_jobs_by_namespace(self, namespace: str) -> None:
         prefix = f"{namespace.strip()}_"
@@ -69,14 +86,11 @@ class SchedulerHost:
         """``next_run_time`` lets callers resume from persisted history instead of
         restarting a full interval every time the process starts."""
         job_id = self.namespaced_job_id(namespace, key)
-        if seconds == 2 and namespace.strip() in {
-            "tasks",
-            "readiness",
-            "executor_notifications",
-            "deployment_admission_notifications",
-            "repository_webhooks",
-        }:
+        if seconds == DEFAULT_WORKER_POLL_SECONDS and namespace.strip() in SHORT_WORKER_NAMESPACES:
             seconds = self.worker_poll_seconds
+            self._poll_jobs.add(job_id)
+        else:
+            self._poll_jobs.discard(job_id)
         self._scheduler.add_job(
             self._tracked(func),
             "interval",
