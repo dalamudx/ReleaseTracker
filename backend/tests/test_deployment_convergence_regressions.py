@@ -203,8 +203,7 @@ async def test_approval_api_uses_window_only_for_automatic_work(
     )
     scheduler = SimpleNamespace(
         _refresh_system_timezone=AsyncMock(),
-        _within_maintenance_window=lambda w: inside,
-        _seconds_until_next_maintenance_window=lambda w: 17 * 3600,
+        _seconds_until_next_maintenance_window=lambda w: 0 if inside else 17 * 3600,
     )
     response = await approve_deployment(
         queued["id"],

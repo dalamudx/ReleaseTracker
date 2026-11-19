@@ -1,5 +1,7 @@
 """Desired deployment work follows coordinates, not selection bookkeeping."""
 
+import time
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -9,6 +11,7 @@ import releasetracker.executor_trigger as trigger
 import releasetracker.services.deploy_tasks as deploy_tasks_module
 from releasetracker import versioning
 from releasetracker.config import ExecutorConfig
+from releasetracker.executor_scheduler import ExecutorScheduler
 from releasetracker.services.deploy_tasks import DeployTasks, _already_current
 from releasetracker.versioning import SELECTION_RULES_VERSION
 
@@ -192,9 +195,16 @@ async def test_empty_review_without_frozen_artifact_proof_does_not_skip(mode, li
     assert _already_current(executor, review(truncated=True)) is False
 
 
-@pytest.mark.parametrize("current,expected", [(True, "no_change"), (False, "deferred")])
+@pytest.mark.parametrize(
+    "current,crosses_open,expected",
+    [
+        (True, False, "already_current"),
+        (False, False, "maintenance_window"),
+        (False, True, "target_awaiting_readiness"),
+    ],
+)
 async def test_no_op_work_settles_before_waiting_for_the_window(
-    storage, monkeypatch, current, expected
+    storage, monkeypatch, current, crosses_open, expected
 ):
     window = {
         "timezone": "UTC",
@@ -207,11 +217,8 @@ async def test_no_op_work_settles_before_waiting_for_the_window(
     )
     await _publish(storage, executor_id, monkeypatch, _target())
     revision = (await storage.get_executor_desired_state(executor_id)).desired_state_revision
-    scheduler = SimpleNamespace(
-        _refresh_system_timezone=AsyncMock(),
-        _within_maintenance_window=lambda _window: False,
-        _seconds_until_next_maintenance_window=lambda _window: 3600,
-    )
+    now = datetime.fromisoformat("2026-11-19T01:59:59.176+00:00")
+    scheduler = ExecutorScheduler(storage, now_provider=lambda: now)
     deploy = DeployTasks(storage, scheduler)
     executor = await storage.get_executor_config(executor_id)
     task = {
@@ -223,14 +230,52 @@ async def test_no_op_work_settles_before_waiting_for_the_window(
             "selection_revision": SELECTION_RULES_VERSION,
         }
     }
-    monkeypatch.setattr(deploy, "_collect_admission_evidence", AsyncMock(return_value=object()))
+
+    async def inspect_target(*_args):
+        nonlocal now
+        if crosses_open:
+            now = now.replace(hour=2, minute=0, second=0)
+        return object()
+
+    bind = AsyncMock(return_value=False)
+    monkeypatch.setattr(storage.tasks, "bind_mutation_scope", bind)
+    monkeypatch.setattr(
+        deploy_tasks_module, "mutation_resource_key", AsyncMock(return_value="test")
+    )
+    monkeypatch.setattr(deploy, "_collect_admission_evidence", inspect_target)
     monkeypatch.setattr(deploy_tasks_module, "_already_current", lambda _e, _ev, _task: current)
 
     outcome = await deploy.prepare(task)
-    if expected == "no_change":
-        assert (outcome.state, outcome.code) == ("no_change", "already_current")
-    else:
-        assert outcome.code == "maintenance_window"
+    assert outcome.code == expected
+    assert bind.await_count == int(crosses_open)
+
+
+@pytest.mark.parametrize(
+    "hour,approval_pending,should_wake", [(2, False, True), (1, False, False), (2, True, False)]
+)
+async def test_dispatch_rechecks_persisted_window_wait(
+    storage, monkeypatch, hour, approval_pending, should_wake
+):
+    executor_id = await _executor(
+        storage,
+        update_mode="maintenance_window",
+        maintenance_window={"start_time": "02:00", "end_time": "05:00"},
+    )
+    await _publish(storage, executor_id, monkeypatch, _target())
+    revision = (await storage.get_executor_desired_state(executor_id)).desired_state_revision
+    scheduler = ExecutorScheduler(storage, now_provider=lambda: datetime(2026, 11, 19, hour, 1))
+    deploy = DeployTasks(storage, scheduler)
+    receipt = await deploy.enqueue(executor_id, manual=False, desired_revision=revision)
+    future = time.time() + 86400
+    async with storage.tasks.transaction() as db:
+        await db.execute(
+            "UPDATE tasks SET error_code='maintenance_window',due_at=?,approval_pending=? WHERE id=?",
+            (future, approval_pending, receipt["task_id"]),
+        )
+    assert await deploy.dispatch_pending() == 1
+    task = await storage.tasks.get(receipt["task_id"])
+    assert (task["due_at"] <= time.time()) == should_wake
+    assert task["attempts"] == 0
 
 
 async def test_changed_target_stages_admission_once(storage, monkeypatch):

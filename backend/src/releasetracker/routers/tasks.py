@@ -274,13 +274,10 @@ async def approve_deployment(
         and executor.update_mode == "maintenance_window"
     ):
         await scheduler._refresh_system_timezone()
-        if not scheduler._within_maintenance_window(executor.maintenance_window):
+        delay = scheduler._seconds_until_next_maintenance_window(executor.maintenance_window)
+        if delay:
             # The approval covers the next execution opportunity, not the wait before it.
-            not_before = (
-                time.time()
-                + scheduler._seconds_until_next_maintenance_window(executor.maintenance_window)
-                + 1
-            )
+            not_before = time.time() + delay
     try:
         plan = await admission_store.approve(
             task_id, body.plan_id, body.fingerprint, actor.username, not_before=not_before

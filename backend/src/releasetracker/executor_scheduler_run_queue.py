@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from math import ceil
 
 from .config import ExecutorConfig, MaintenanceWindowConfig
 from .executor_scheduler_maintenance import _parse_time
@@ -247,29 +247,27 @@ class ExecutorSchedulerRunQueue:
             return _DESIRED_STATE_MAINTENANCE_WINDOW_RETRY_SECONDS
 
         start_time = _parse_time(window.start_time)
-        if start_time is None or _parse_time(window.end_time) is None:
+        end_time = _parse_time(window.end_time)
+        if start_time is None or end_time is None:
             return _DESIRED_STATE_MAINTENANCE_WINDOW_RETRY_SECONDS
 
-        now = self._now_provider()
-        try:
-            tz = ZoneInfo(self._system_timezone)
-        except Exception:
-            tz = ZoneInfo("UTC")
+        now = self._localized_now()
+        allowed_days = window.days_of_week or range(7)
+        current_time = now.time()
+        if now.weekday() in allowed_days:
+            if start_time <= end_time:
+                if start_time <= current_time <= end_time:
+                    return 0
+            elif current_time >= start_time or current_time <= end_time:
+                return 0
 
-        localized_now = now.astimezone(tz) if now.tzinfo else now.replace(tzinfo=tz)
-        allowed_days = set(window.days_of_week) if window.days_of_week else set(range(7))
-
-        for day_offset in range(15):
-            candidate_date = (localized_now + timedelta(days=day_offset)).date()
-            candidate_start = datetime.combine(candidate_date, start_time, tzinfo=tz)
-            if candidate_start.weekday() not in allowed_days:
+        for day_offset in range(8):
+            date = now.date() + timedelta(days=day_offset)
+            if date.weekday() not in allowed_days:
                 continue
-            if candidate_start <= localized_now:
-                continue
-
-            seconds = int((candidate_start - localized_now).total_seconds())
-            if seconds > 0:
-                return seconds
+            opening = datetime.combine(date, start_time, tzinfo=now.tzinfo)
+            if opening > now:
+                return ceil(opening.timestamp() - now.timestamp())
 
         return _DESIRED_STATE_MAINTENANCE_WINDOW_RETRY_SECONDS
 
@@ -296,18 +294,12 @@ class ExecutorSchedulerRunQueue:
             return
         if executor_config.update_mode == "maintenance_window":
             await self._refresh_system_timezone()
-        if (
-            executor_config.update_mode == "maintenance_window"
-            and not self._within_maintenance_window(executor_config.maintenance_window)
-        ):
-            await self._defer_claimed_desired_state(
-                executor_id=executor_id,
-                claimed_by=claimed_by,
-                seconds=self._seconds_until_next_maintenance_window(
-                    executor_config.maintenance_window,
-                ),
-            )
-            return
+            delay = self._seconds_until_next_maintenance_window(executor_config.maintenance_window)
+            if delay:
+                await self._defer_claimed_desired_state(
+                    executor_id=executor_id, claimed_by=claimed_by, seconds=delay
+                )
+                return
         if not await self._try_acquire_executor_run(executor_id):
             await self._defer_claimed_desired_state(
                 executor_id=executor_id,

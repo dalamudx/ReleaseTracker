@@ -42,6 +42,26 @@ from releasetracker.models import (
 )
 
 
+@pytest.mark.parametrize(
+    "clock,seconds",
+    [
+        ("01:59:59.176", 1),
+        ("02:00:00", 0),
+        ("02:00:00.176", 0),
+        ("04:59:59", 0),
+        ("05:00:00", 0),
+        ("05:00:00.001", 21 * 3600),
+    ],
+)
+def test_window_wait_never_wakes_before_opening(clock, seconds):
+    now = datetime.fromisoformat(f"2026-11-19T{clock}+08:00")
+    scheduler = ExecutorScheduler(None, now_provider=lambda: now)
+    scheduler._system_timezone = "Asia/Shanghai"
+    window = MaintenanceWindowConfig(start_time="02:00", end_time="05:00")
+    assert scheduler._seconds_until_next_maintenance_window(window) == seconds
+    assert scheduler._within_maintenance_window(window) == (seconds == 0)
+
+
 class FakeAdapter(MutableFakeRuntimeAdapter):
     def __init__(
         self,

@@ -8,7 +8,6 @@ import hashlib
 import json
 from datetime import datetime
 from typing import Any, Callable, Coroutine
-from zoneinfo import ZoneInfo
 
 from .config import (
     ExecutorConfig,
@@ -35,7 +34,6 @@ from .executor_scheduler_run_lifecycle import (
     ExecutorSchedulerRunLifecycle,
 )
 from .executor_scheduler_maintenance import (
-    _parse_time,
     ExecutorSchedulerMaintenance,
 )
 from .executor_scheduler_run_queue import (
@@ -695,24 +693,4 @@ class ExecutorScheduler(
         return self._manage_runtime_adapter(adapter)
 
     def _within_maintenance_window(self, window: MaintenanceWindowConfig | None) -> bool:
-        if not window:
-            return False
-        now = self._now_provider()
-        try:
-            tz = ZoneInfo(self._system_timezone)
-        except Exception:
-            tz = ZoneInfo("UTC")
-        localized = now.astimezone(tz) if now.tzinfo else now.replace(tzinfo=tz)
-
-        if window.days_of_week and localized.weekday() not in window.days_of_week:
-            return False
-
-        start_time = _parse_time(window.start_time)
-        end_time = _parse_time(window.end_time)
-        if start_time is None or end_time is None:
-            return False
-
-        current_time = localized.time()
-        if start_time <= end_time:
-            return start_time <= current_time <= end_time
-        return current_time >= start_time or current_time <= end_time
+        return self._seconds_until_next_maintenance_window(window) == 0

@@ -489,6 +489,21 @@ class DeployTasks:
                 # A restart may have finished an interrupted task before this handler
                 # could acknowledge its desired revision. Never enqueue it again.
                 task = await self.storage.tasks.get(receipt["task_id"])
+                if (
+                    task["state"] == "queued"
+                    and task["error_code"] == "maintenance_window"
+                    and task["due_at"] > time.time()
+                    and executor.update_mode == "maintenance_window"
+                ):
+                    await self.scheduler._refresh_system_timezone()
+                    if self.scheduler._within_maintenance_window(executor.maintenance_window):
+                        # Repair a stale window deadline on the existing task before normal admission.
+                        async with self.storage.tasks.transaction() as db:
+                            await db.execute(
+                                "UPDATE tasks SET due_at=? WHERE id=? AND state='queued' "
+                                "AND approval_pending=0 AND error_code='maintenance_window' AND due_at=?",
+                                (time.time(), task["id"], task["due_at"]),
+                            )
                 await self.finished(task)
                 await self._defer_dispatch(state, 30)
             except ValueError:
@@ -540,13 +555,11 @@ class DeployTasks:
                     # leaving it queued until the window opens.
                     if await self._already_current_now(executor, task):
                         return TaskResult("no_change", "already_current")
-                    return Deferred(
-                        time.time()
-                        + self.scheduler._seconds_until_next_maintenance_window(
-                            executor.maintenance_window
-                        ),
-                        "maintenance_window",
+                    delay = self.scheduler._seconds_until_next_maintenance_window(
+                        executor.maintenance_window
                     )
+                    if delay:
+                        return Deferred(time.time() + delay, "maintenance_window")
         if not await self.storage.tasks.bind_mutation_scope(
             task, await mutation_resource_key(self.storage, self.scheduler, executor)
         ):
