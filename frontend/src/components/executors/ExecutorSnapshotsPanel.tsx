@@ -273,7 +273,7 @@ export function ExecutorSnapshotsPanel({
                                                 disabled={item.locked}
                                                 data-testid="executor-snapshot-delete"
                                             >
-                                                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                                                <Trash2 className="h-3.5 w-3.5" />
                                                 {t("executors.snapshots.actions.delete")}
                                             </Button>
                                             {executor.runtime_type === "ssh" ? (item.locked && <SSHRecoveryActions executorId={executor.id!} executorName={executor.name} snapshotId={item.id} onSuccess={() => { void refetchSnapshots() }} />) : <Button
@@ -282,7 +282,7 @@ export function ExecutorSnapshotsPanel({
                                                 onClick={() => setRollbackSnapshot(item)}
                                                 data-testid="executor-snapshot-rollback"
                                             >
-                                                <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                                                <RotateCcw className="h-3.5 w-3.5" />
                                                 {t("executors.snapshots.actions.rollback")}
                                             </Button>}
                                         </div>

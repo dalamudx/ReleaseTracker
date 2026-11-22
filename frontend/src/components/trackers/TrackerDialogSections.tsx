@@ -150,7 +150,7 @@ export function TrackerDialogTrackerChannelsSection({
                     <CardTitle>{t("trackers.aggregate.trackerChannels.title")}</CardTitle>
                 </div>
                 <Button type="button" variant="outline" onClick={onAddSource}>
-                    <Plus className="mr-2 h-4 w-4" />
+                    <Plus className="h-4 w-4" />
                     {t("trackers.aggregate.trackerChannels.add")}
                 </Button>
             </CardHeader>
@@ -300,7 +300,7 @@ export function TrackerDialogTrackerChannelsSection({
                                         onClick={() => onAddReleaseChannel(index)}
                                         disabled={releaseChannels.length >= RELEASE_CHANNEL_PRESETS.length}
                                     >
-                                        <Plus className="mr-2 h-4 w-4" />
+                                        <Plus className="h-4 w-4" />
                                         {t("trackers.aggregate.releaseChannels.add")}
                                     </Button>
                                 </div>
@@ -578,7 +578,7 @@ function TrackerDialogReleaseChannelPanel({
                         className="-ml-2 h-auto px-2 py-1 text-left"
                         onClick={() => onToggleReleaseChannelExpanded(releaseChannelIdentity)}
                     >
-                        {isReleaseChannelExpanded ? <ChevronDown className="mr-2 h-4 w-4" /> : <ChevronRight className="mr-2 h-4 w-4" />}
+                        {isReleaseChannelExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                         <span className="text-sm font-semibold">{getReleaseChannelHeaderLabel(releaseChannel, t, sourceType)}</span>
                     </Button>
                 </div>

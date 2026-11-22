@@ -200,14 +200,14 @@ export function TrackerList({
                                                 </DropdownMenuTrigger>
                                                 <DropdownMenuContent align="end">
                                                     <DropdownMenuItem onClick={() => onEdit(tracker.name)}>
-                                                        <Edit className="mr-2 h-4 w-4" /> {t("common.edit")}
+                                                        <Edit className="h-4 w-4" /> {t("common.edit")}
                                                     </DropdownMenuItem>
                                                     <DropdownMenuSeparator />
                                                     <DropdownMenuItem
                                                         className="text-destructive focus:text-destructive"
                                                         onClick={() => onDelete(tracker.name)}
                                                     >
-                                                        <Trash2 className="mr-2 h-4 w-4" /> {t("common.delete")}
+                                                        <Trash2 className="h-4 w-4" /> {t("common.delete")}
                                                     </DropdownMenuItem>
                                                 </DropdownMenuContent>
                                             </DropdownMenu>

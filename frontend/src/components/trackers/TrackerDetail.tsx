@@ -303,9 +303,9 @@ export function TrackerDetail({
                                     disabled={checking}
                                 >
                                     {checking ? (
-                                        <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
                                     ) : (
-                                        <Play className="mr-1 h-3.5 w-3.5 text-primary" />
+                                        <Play className="h-3.5 w-3.5 text-primary" />
                                     )}
                                     <span>{t("common.check")}</span>
                                 </Button>
@@ -317,7 +317,7 @@ export function TrackerDetail({
                                     className="h-7 px-2.5 text-xs font-medium"
                                     onClick={() => onEdit(tracker.name)}
                                 >
-                                    <Edit className="mr-1 h-3.5 w-3.5" />
+                                    <Edit className="h-3.5 w-3.5" />
                                     <span>{t("common.edit")}</span>
                                 </Button>
                             )}
@@ -463,7 +463,7 @@ export function TrackerDetail({
                                     onClick={() => onCheck(tracker.name)}
                                     disabled={checking}
                                 >
-                                    <Play className="mr-1 h-3 w-3 text-primary" />
+                                    <Play className="h-3 w-3 text-primary" />
                                     <span>{t("trackers.aggregate.detail.checkNow")}</span>
                                 </Button>
                             )}

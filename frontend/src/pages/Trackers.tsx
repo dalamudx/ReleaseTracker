@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react"
-import { Plus, Search, X } from "lucide-react"
+import { Plus, RefreshCw, Search, X } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
 import { Button } from "@/components/ui/button"
@@ -96,7 +96,7 @@ export default function TrackersPage() {
     const skip = (page - 1) * pageSize
 
     // Use React Query to fetch the Trackers list with 30-second cache.
-    const { data, isLoading: loading } = useTrackers({
+    const { data, isLoading: loading, isFetching, refetch } = useTrackers({
         skip,
         limit: pageSize,
         search: search.trim() || undefined,
@@ -255,6 +255,7 @@ export default function TrackersPage() {
                                             setPage(1)
                                             setMobileDetailOpen(false)
                                         }}
+                                        aria-label={t("common.clear")}
                                         title={t("common.clear")}
                                     >
                                         <X className="h-3.5 w-3.5" />
@@ -268,14 +269,31 @@ export default function TrackersPage() {
                     <span className="hidden text-xs text-muted-foreground sm:inline-block">
                         {t("trackers.totalCount", { count: total })}
                     </span>
-                    {mobileDetailOpen && (
-                        <Button type="button" variant="outline" className="h-9 min-w-0 shrink lg:hidden" onClick={() => setMobileDetailOpen(false)}>
-                            {t("trackers.backToList")}
-                        </Button>
-                    )}
-                    <Button onClick={handleAdd} className="h-9 shadow-xs">
-                        <Plus className="mr-1.5 h-4 w-4" /> {t("trackers.addNew")}
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className={mobileDetailOpen ? "hidden h-9 w-9 lg:inline-flex" : "h-9 w-9"}
+                        disabled={isFetching}
+                        aria-label={t("common.refresh")}
+                        title={t("common.refresh")}
+                        onClick={() => {
+                            void refetch()
+                            setDetailRefreshKey((value) => value + 1)
+                        }}
+                    >
+                        <RefreshCw className={`size-4 ${isFetching ? "animate-spin" : ""}`} />
                     </Button>
+                    <div className="flex items-center gap-2">
+                        {mobileDetailOpen && (
+                            <Button type="button" variant="outline" className="h-9 min-w-0 shrink lg:hidden" onClick={() => setMobileDetailOpen(false)}>
+                                {t("trackers.backToList")}
+                            </Button>
+                        )}
+                        <Button onClick={handleAdd} className="h-9 shadow-xs">
+                            <Plus className="h-4 w-4" /> {t("trackers.addNew")}
+                        </Button>
+                    </div>
                 </div>
             </div>
 

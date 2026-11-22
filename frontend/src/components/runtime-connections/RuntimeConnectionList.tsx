@@ -190,7 +190,7 @@ export function RuntimeConnectionList({
                                             </DropdownMenuTrigger>
                                             <DropdownMenuContent align="end">
                                                 <DropdownMenuItem onClick={() => onEdit(runtimeConnection)}>
-                                                    <Edit className="mr-2 h-4 w-4" />
+                                                    <Edit className="h-4 w-4" />
                                                     {t("common.edit")}
                                                 </DropdownMenuItem>
                                                 <DropdownMenuSeparator />
@@ -198,7 +198,7 @@ export function RuntimeConnectionList({
                                                     className="text-destructive focus:text-destructive"
                                                     onClick={() => onDelete(runtimeConnection.id)}
                                                 >
-                                                    <Trash2 className="mr-2 h-4 w-4" />
+                                                    <Trash2 className="h-4 w-4" />
                                                     {t("common.delete")}
                                                 </DropdownMenuItem>
                                             </DropdownMenuContent>

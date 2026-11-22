@@ -455,7 +455,7 @@ export function TrackerDialog({ open, onOpenChange, onSuccess, trackerName }: Tr
 
                         <DialogFooter className="border-t border-border/60 bg-background/95 px-6 py-4 backdrop-blur">
                             <Button type="submit" disabled={loading}>
-                                {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                                 {loading ? t("common.saving") : t("common.save")}
                             </Button>
                         </DialogFooter>

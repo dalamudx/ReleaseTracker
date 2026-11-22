@@ -13,6 +13,11 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+} from "@/components/ui/tooltip"
+import {
     Breadcrumb,
     BreadcrumbList,
     BreadcrumbItem,
@@ -60,33 +65,44 @@ export function Header() {
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                     <TaskNotificationPopover />
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                                <Languages className="h-4 w-4" />
-                                <span className="sr-only">{t('common.switchLanguage')}</span>
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => changeLanguage('zh')}>
-                                中文
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => changeLanguage('en')}>
-                                English
-                            </DropdownMenuItem>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
+                    <Tooltip>
+                        <DropdownMenu>
+                            <TooltipTrigger asChild>
+                                <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" size="icon" className="size-8" aria-label={t('common.switchLanguage')}>
+                                        <Languages className="size-4" />
+                                        <span className="sr-only">{t('common.switchLanguage')}</span>
+                                    </Button>
+                                </DropdownMenuTrigger>
+                            </TooltipTrigger>
+                            <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => changeLanguage('zh')}>
+                                    中文
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => changeLanguage('en')}>
+                                    English
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                        <TooltipContent>{t('common.switchLanguage')}</TooltipContent>
+                    </Tooltip>
                     <ThemeCustomizer />
-                    <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
-                        <a
-                            href="https://github.com/dalamudx/ReleaseTracker"
-                            target="_blank"
-                            rel="noreferrer"
-                        >
-                            <Code2 className="h-4 w-4" />
-                            <span className="sr-only">GitHub</span>
-                        </a>
-                    </Button>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button variant="ghost" size="icon" className="size-8" asChild>
+                                <a
+                                    href="https://github.com/dalamudx/ReleaseTracker"
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    aria-label="GitHub"
+                                >
+                                    <Code2 className="size-4" />
+                                    <span className="sr-only">GitHub</span>
+                                </a>
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>GitHub</TooltipContent>
+                    </Tooltip>
                 </div>
             </div>
         </header>

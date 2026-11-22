@@ -404,4 +404,19 @@ describe("persistent task queue", () => {
         fireEvent.click(await screen.findByRole("button", { name: i18n.t("tasks.details", { id: 17 }) }))
         expect(await screen.findByText(i18n.t("tasks.helmExternalChartVersion", { approved: "2026.8.4", current: "2026.8.5" }))).toBeVisible()
     })
+    it("toggles task details when clicking the summary row outside interactive links", async () => {
+        const saved = task("succeeded", "deploy")
+        vi.mocked(api.getTasks).mockResolvedValue([saved])
+        vi.mocked(api.getTask).mockResolvedValue(saved)
+        show()
+        await screen.findByText("nginx-test")
+        const trigger = screen.getByRole("button", { name: i18n.t("tasks.details", { id: 17 }) })
+        expect(trigger).toHaveAttribute("data-state", "closed")
+
+        fireEvent.click(screen.getByTestId("task-summary-state"))
+        expect(trigger).toHaveAttribute("data-state", "open")
+
+        fireEvent.click(screen.getByTestId("task-summary-time"))
+        expect(trigger).toHaveAttribute("data-state", "closed")
+    })
 })

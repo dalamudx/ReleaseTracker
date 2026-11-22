@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { notificationTemplates } from "@/api/notification-templates"
 import { useTranslation } from "react-i18next"
-import { Edit, MoreHorizontal, Plus, Search, Send, Trash2, X } from "lucide-react"
+import { Edit, MoreHorizontal, Plus, RefreshCw, Search, Send, Trash2, X } from "lucide-react"
 import { useForm, useWatch } from "react-hook-form"
 
 import { Button } from "@/components/ui/button"
@@ -89,7 +89,7 @@ export function NotifierSettings() {
     const [pageSize, setPageSize] = usePageSize()
 
     const skip = (page - 1) * pageSize
-    const { data, isLoading: loading } = useNotifiers({
+    const { data, isLoading: loading, isFetching, refetch } = useNotifiers({
         skip,
         limit: pageSize,
         search: search.trim() || undefined,
@@ -158,6 +158,7 @@ export function NotifierSettings() {
                                             setSearch("")
                                             setPage(1)
                                         }}
+                                        aria-label={t("common.clear")}
                                         title={t("common.clear")}
                                     >
                                         <X className="h-3.5 w-3.5" />
@@ -172,13 +173,24 @@ export function NotifierSettings() {
                         {t("settings.notifications.totalCount", { count: total })}
                     </span>
                     <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-9 w-9"
+                        disabled={isFetching}
+                        aria-label={t("common.refresh")}
+                        title={t("common.refresh")}
+                        onClick={() => void refetch()}
+                    >
+                        <RefreshCw className={`size-4 ${isFetching ? "animate-spin" : ""}`} />
+                    </Button>
+                    <Button
                         onClick={() => {
                             setEditingNotifier(null)
                             setDialogOpen(true)
                         }}
                         className="h-9 shadow-xs"
                     >
-                        <Plus className="mr-1.5 h-4 w-4" />
+                        <Plus className="h-4 w-4" />
                         {t("settings.notifications.add")}
                     </Button>
                 </div>
@@ -289,11 +301,11 @@ export function NotifierSettings() {
                                                             setDialogOpen(true)
                                                         }}
                                                     >
-                                                        <Edit className="mr-2 h-4 w-4" />
+                                                        <Edit className="h-4 w-4" />
                                                         {t("common.edit")}
                                                     </DropdownMenuItem>
                                                     <DropdownMenuItem onClick={() => handleTest(notifier.id)}>
-                                                        <Send className="mr-2 h-4 w-4" />
+                                                        <Send className="h-4 w-4" />
                                                         {t("settings.notifications.dialog.test")}
                                                     </DropdownMenuItem>
                                                     <DropdownMenuSeparator />
@@ -301,7 +313,7 @@ export function NotifierSettings() {
                                                         className="text-destructive focus:text-destructive"
                                                         onClick={() => setPendingDeleteNotifierId(notifier.id)}
                                                     >
-                                                        <Trash2 className="mr-2 h-4 w-4" />
+                                                        <Trash2 className="h-4 w-4" />
                                                         {t("common.delete")}
                                                     </DropdownMenuItem>
                                                 </DropdownMenuContent>

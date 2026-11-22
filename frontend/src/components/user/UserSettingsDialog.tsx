@@ -161,7 +161,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                             </div>
                             <div className="flex justify-end pt-2">
                                 <Button type="submit" disabled={isLoading}>
-                                    {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                    {isLoading && <Loader2 className="h-4 w-4 animate-spin" />}
                                     {t('user.actions.updatePassword')}
                                 </Button>
                             </div>

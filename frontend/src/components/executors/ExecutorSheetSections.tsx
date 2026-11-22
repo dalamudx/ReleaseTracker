@@ -617,7 +617,7 @@ export function ExecutorSheetBindingSection({
                                 onClick={onAddServiceBinding}
                                 disabled={groupedServiceOptions.length === 0 || serviceBindings.length >= groupedServiceOptions.length}
                             >
-                                <Plus className="mr-2 h-4 w-4" />
+                                <Plus className="h-4 w-4" />
                                 {t("executors.binding.addServiceBinding")}
                             </Button>
                         </div>
@@ -820,7 +820,7 @@ export function ExecutorSheetTargetSection({
                             </Select>
                         ) : <div className="hidden sm:block" />}
                         <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={onDiscoverTargets} disabled={discovering || !selectedRuntimeConnection}>
-                            {discovering ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
+                            {discovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                             {t("executors.actions.discover")}
                         </Button>
                     </div>

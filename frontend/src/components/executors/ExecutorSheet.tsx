@@ -863,7 +863,7 @@ export function ExecutorSheet({
                             <SheetFooter className="border-t border-border/60 px-4 py-4 sm:px-6">
                                 <div className="flex w-full items-center justify-between gap-3">
                                     <Button type="button" variant="ghost" onClick={handleBack} disabled={step === "target"}>
-                                        <ArrowLeft className="mr-2 h-4 w-4" />
+                                        <ArrowLeft className="h-4 w-4" />
                                         {t("common.back")}
                                     </Button>
                                     <div className="flex items-center gap-2">
@@ -872,13 +872,13 @@ export function ExecutorSheet({
                                         </Button>
                                         {step === "review" ? (
                                             <Button type="button" onClick={handleExplicitSave} disabled={saving || loadingConfig || !!validationMessage}>
-                                                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                                                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                                                 {executorId === null ? t("executors.actions.create") : t("common.save")}
                                             </Button>
                                         ) : (
                                             <Button type="button" onClick={handleNext} disabled={loadingConfig || (step === "target" && runtimeType === "ssh" && !sshTargetReady)}>
                                                 {t("executors.actions.continue")}
-                                                <ArrowRight className="ml-2 h-4 w-4" />
+                                                <ArrowRight className="h-4 w-4" />
                                             </Button>
                                         )}
                                     </div>

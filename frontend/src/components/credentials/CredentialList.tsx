@@ -166,7 +166,7 @@ export function CredentialList({ credentials, loading, onEdit, onDelete }: Crede
                                             </DropdownMenuTrigger>
                                             <DropdownMenuContent align="end">
                                                 <DropdownMenuItem onClick={() => onEdit(cred)}>
-                                                    <Edit className="mr-2 h-4 w-4" />
+                                                    <Edit className="h-4 w-4" />
                                                     {t("common.edit")}
                                                 </DropdownMenuItem>
                                                 <DropdownMenuSeparator />
@@ -174,7 +174,7 @@ export function CredentialList({ credentials, loading, onEdit, onDelete }: Crede
                                                     onClick={() => onDelete(cred.id)}
                                                     className="text-destructive focus:text-destructive"
                                                 >
-                                                    <Trash2 className="mr-2 h-4 w-4" />
+                                                    <Trash2 className="h-4 w-4" />
                                                     {t("common.delete")}
                                                 </DropdownMenuItem>
                                             </DropdownMenuContent>

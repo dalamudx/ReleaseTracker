@@ -108,6 +108,7 @@ export default function RuntimeConnectionsPage() {
                                             setSearch("")
                                             setPage(1)
                                         }}
+                                        aria-label={t("common.clear")}
                                         title={t("common.clear")}
                                     >
                                         <X className="h-3.5 w-3.5" />
@@ -133,7 +134,7 @@ export default function RuntimeConnectionsPage() {
                         <span className="sr-only">{t("common.refresh")}</span>
                     </Button>
                     <Button onClick={handleAdd} className="h-9 shadow-xs">
-                        <Plus className="mr-1.5 h-4 w-4" /> {t("runtimeConnections.addNew")}
+                        <Plus className="h-4 w-4" /> {t("runtimeConnections.addNew")}
                     </Button>
                 </div>
             </div>

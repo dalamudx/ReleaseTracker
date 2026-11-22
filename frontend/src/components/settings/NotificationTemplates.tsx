@@ -203,7 +203,7 @@ export function NotificationTemplates() {
                             disabled={busy}
                             onClick={() => select({ ...query.data!.builtin, name: t('notificationTemplates.newName') })}
                         >
-                            <Plus className="mr-1.5 size-3.5" />
+                            <Plus className="size-3.5" />
                             {t('notificationTemplates.create')}
                         </Button>
                     </div>
@@ -244,7 +244,7 @@ export function NotificationTemplates() {
                     </div>
                     <div className="flex items-center gap-2">
                         <Button variant="ghost" size="sm" className="h-8 text-xs" disabled={busy} onClick={() => setPending('reset')}>
-                            <RotateCcw className="mr-1.5 size-3.5" />
+                            <RotateCcw className="size-3.5" />
                             {t('notificationTemplates.reset')}
                         </Button>
                         {current.id !== null && (
@@ -255,7 +255,7 @@ export function NotificationTemplates() {
                                 disabled={busy || Boolean(references)}
                                 onClick={() => setPending('delete')}
                             >
-                                <Trash2 className="mr-1.5 size-3.5" />
+                                <Trash2 className="size-3.5" />
                                 {t('common.delete')}
                             </Button>
                         )}

@@ -247,7 +247,14 @@ function TaskItem({ task, initiallyOpen = false }: { task: QueueTask; initiallyO
         >
             <div className="px-4 py-3">
                 <Collapsible open={open} onOpenChange={setOpen}>
-                    <div data-testid="task-summary" className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 @[760px]:grid-cols-[minmax(0,1fr)_9rem_7rem_13rem_2rem]">
+                    <div
+                        data-testid="task-summary"
+                        onClick={(event) => {
+                            if ((event.target as HTMLElement).closest("a,button")) return
+                            setOpen((current) => !current)
+                        }}
+                        className="grid min-w-0 cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 @[760px]:grid-cols-[minmax(0,1fr)_9rem_7rem_13rem_2rem]"
+                    >
                         <div className="col-start-1 row-start-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 @[760px]:flex-nowrap">
                             <Badge variant="outline" className="shrink-0 gap-1 px-2 py-0.5 text-xs font-medium">
                                 {getKindIcon(task.kind)}
@@ -549,7 +556,7 @@ function TaskItem({ task, initiallyOpen = false }: { task: QueueTask; initiallyO
                                         disabled={action.isPending}
                                         onClick={() => action.mutate("retry")}
                                     >
-                                        <RefreshCw className="size-3.5 mr-1" />
+                                        <RefreshCw className="size-3.5" />
                                         {t("tasks.retry")}
                                     </Button>
                                 )}
@@ -656,6 +663,7 @@ export default function TasksPage() {
                                             setSearch("")
                                             setPage(1)
                                         }}
+                                        aria-label={t("common.clear")}
                                         title={t("common.clear")}
                                     >
                                         <X className="size-3.5" />

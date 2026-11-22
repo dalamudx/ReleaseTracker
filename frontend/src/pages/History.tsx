@@ -210,6 +210,7 @@ export default function HistoryPage() {
                                             setSearch("")
                                             setPage(1)
                                         }}
+                                        aria-label={t("common.clear")}
                                         title={t("common.clear")}
                                     >
                                         <X className="h-3.5 w-3.5" />
@@ -458,21 +459,23 @@ export default function HistoryPage() {
                                                 <div className="flex items-center justify-end gap-0.5">
                                                     <Tooltip>
                                                         <TooltipTrigger asChild>
-                                                            <Button
-                                                                variant="ghost"
-                                                                size="icon"
-                                                                className="h-7 w-7"
-                                                                disabled={!release.body}
-                                                                onClick={() => handleViewNotes(release)}
-                                                            >
-                                                                <BookOpen className="h-3.5 w-3.5" />
-                                                                <span className="sr-only">
-                                                                    {t("dashboard.recentReleases.viewNotes")}
-                                                                </span>
-                                                            </Button>
+                                                            <span className="inline-flex">
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="icon"
+                                                                    className="size-7"
+                                                                    disabled={!release.body}
+                                                                    onClick={() => handleViewNotes(release)}
+                                                                >
+                                                                    <BookOpen className="size-3.5" />
+                                                                    <span className="sr-only">
+                                                                        {t("dashboard.recentReleases.viewNotes")}
+                                                                    </span>
+                                                                </Button>
+                                                            </span>
                                                         </TooltipTrigger>
                                                         <TooltipContent>
-                                                            {t("dashboard.recentReleases.viewNotes")}
+                                                            {t(release.body ? "dashboard.recentReleases.viewNotes" : "dashboard.releaseNotes.noNotes")}
                                                         </TooltipContent>
                                                     </Tooltip>
 

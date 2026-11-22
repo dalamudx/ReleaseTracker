@@ -216,7 +216,7 @@ export function OIDCProvidersManagement() {
                     </Button>
                     {canCreateProvider && (
                         <Button size="sm" onClick={openCreate}>
-                            <Plus className="h-4 w-4 mr-1" />
+                            <Plus className="h-4 w-4" />
                             {t('systemSettings.oidc.add')}
                         </Button>
                     )}
@@ -243,13 +243,13 @@ export function OIDCProvidersManagement() {
                     <div className="flex gap-2">
                         {!bindingStatus.bound && (
                             <Button size="sm" onClick={() => openBindingDialog("bind")}>
-                                <Link2 className="h-4 w-4 mr-1" />
+                                <Link2 className="h-4 w-4" />
                                 {t('systemSettings.oidc.bind')}
                             </Button>
                         )}
                         {bindingStatus.bound && (
                             <Button variant="outline" size="sm" onClick={() => openBindingDialog("unbind")}>
-                                <Unlink className="h-4 w-4 mr-1" />
+                                <Unlink className="h-4 w-4" />
                                 {t('systemSettings.oidc.unbind')}
                             </Button>
                         )}

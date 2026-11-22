@@ -545,7 +545,7 @@ export function ReleaseNotesModal({ release, open, onOpenChange }: ReleaseNotesM
                 <DialogFooter className="mt-2">
                     <div className="flex w-full justify-between sm:justify-end gap-2">
                         <Button variant="outline" onClick={() => window.open(release.url, '_blank')}>
-                            <ExternalLink className="mr-2 h-4 w-4" />
+                            <ExternalLink className="h-4 w-4" />
                             {t('dashboard.releaseNotes.viewSource')}
                         </Button>
                         <Button onClick={() => onOpenChange(false)}>

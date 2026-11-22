@@ -439,7 +439,7 @@ export default function ExecutorsPage() {
                         {loading ? <Spinner className="size-4" /> : <RefreshCw className="size-4" />}
                     </Button>
                     <Button className="h-9 shadow-xs" onClick={handleAdd} disabled={addDisabled}>
-                        <Plus className="mr-1.5 h-4 w-4" /> {t('executors.addNew')}
+                        <Plus className="h-4 w-4" /> {t('executors.addNew')}
                     </Button>
                 </div>
             </div>

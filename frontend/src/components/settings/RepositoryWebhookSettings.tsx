@@ -72,6 +72,11 @@ import {
     TableRow,
 } from "@/components/ui/table"
 import {
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+} from "@/components/ui/tooltip"
+import {
     useCreateRepositoryWebhook,
     useDeleteRepositoryWebhook,
     useRepositoryWebhookDeliveries,
@@ -276,7 +281,7 @@ export function RepositoryWebhookSettings() {
                         disabled={!repositorySources.some(({ source }) => !hooks.some((hook) => hook.tracker_source_id === source.id))}
                         className="h-9 shadow-xs"
                     >
-                        <Plus className="mr-1.5 size-4" />
+                        <Plus className="size-4" />
                         {t("webhooks.repository.add")}
                     </Button>
                 </div>
@@ -389,38 +394,50 @@ export function RepositoryWebhookSettings() {
                                         </Badge>
                                     </TableCell>
 
-                                    <TableCell className="py-3 align-middle text-right">
-                                        <div className="flex justify-end gap-1">
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="size-8"
-                                                aria-label={t("webhooks.repository.deliveries")}
-                                                title={t("webhooks.repository.deliveries")}
-                                                onClick={() => setDeliveryHook(hook)}
-                                            >
-                                                <History className="size-4" />
-                                            </Button>
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="size-8"
-                                                aria-label={t("common.edit")}
-                                                title={t("common.edit")}
-                                                onClick={() => openEdit(hook)}
-                                            >
-                                                <Edit className="size-4" />
-                                            </Button>
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="size-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                                aria-label={t("common.delete")}
-                                                title={t("common.delete")}
-                                                onClick={() => setPendingDeleteHook(hook)}
-                                            >
-                                                <Trash2 className="size-4" />
-                                            </Button>
+                                    <TableCell className="w-[1%] whitespace-nowrap py-3 text-right align-middle">
+                                        <div className="flex items-center justify-end gap-0.5">
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="size-7"
+                                                        aria-label={t("webhooks.repository.deliveries")}
+                                                        onClick={() => setDeliveryHook(hook)}
+                                                    >
+                                                        <History className="size-3.5" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>{t("webhooks.repository.deliveries")}</TooltipContent>
+                                            </Tooltip>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="size-7"
+                                                        aria-label={t("common.edit")}
+                                                        onClick={() => openEdit(hook)}
+                                                    >
+                                                        <Edit className="size-3.5" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>{t("common.edit")}</TooltipContent>
+                                            </Tooltip>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="size-7 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                                        aria-label={t("common.delete")}
+                                                        onClick={() => setPendingDeleteHook(hook)}
+                                                    >
+                                                        <Trash2 className="size-3.5" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>{t("common.delete")}</TooltipContent>
+                                            </Tooltip>
                                         </div>
                                     </TableCell>
                                 </TableRow>

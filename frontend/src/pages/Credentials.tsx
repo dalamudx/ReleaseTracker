@@ -255,6 +255,7 @@ export default function CredentialsPage() {
                                             setSearch("")
                                             setPage(1)
                                         }}
+                                        aria-label={t("common.clear")}
                                         title={t("common.clear")}
                                     >
                                         <X className="h-3.5 w-3.5" />
@@ -307,7 +308,7 @@ export default function CredentialsPage() {
                             className="h-9 px-2.5 text-xs text-muted-foreground hover:text-foreground"
                             title={t("credentials.filters.reset")}
                         >
-                            <FilterX className="mr-1.5 h-3.5 w-3.5" />
+                            <FilterX className="h-3.5 w-3.5" />
                             {t("credentials.filters.reset")}
                         </Button>
                     ) : null}
@@ -330,7 +331,7 @@ export default function CredentialsPage() {
                         <span className="sr-only">{t("common.refresh")}</span>
                     </Button>
                     <Button onClick={handleAdd} className="h-9 shadow-xs">
-                        <Plus className="mr-1.5 h-4 w-4" /> {t("credentials.addNew")}
+                        <Plus className="h-4 w-4" /> {t("credentials.addNew")}
                     </Button>
                 </div>
             </div>

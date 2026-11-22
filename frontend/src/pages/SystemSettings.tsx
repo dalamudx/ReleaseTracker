@@ -610,7 +610,7 @@ function SecurityKeyRow({
                     </div>
                 </div>
                 <Button type="button" variant="outline" disabled={disabled} onClick={onRotate}>
-                    <RotateCw className="mr-2 h-4 w-4" />
+                    <RotateCw className="h-4 w-4" />
                     {rotateLabel}
                 </Button>
             </div>

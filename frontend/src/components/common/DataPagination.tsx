@@ -120,32 +120,36 @@ export function DataPagination({
                 <div className="flex items-center gap-1">
                     <Tooltip>
                         <TooltipTrigger asChild>
-                            <Button
-                                variant="outline"
-                                size="icon"
-                                className="hidden h-8 w-8 sm:inline-flex"
-                                onClick={() => goToPage(1)}
-                                disabled={!canPrev}
-                            >
-                                <ChevronsLeft className="h-4 w-4" />
-                                <span className="sr-only">{t("pagination.firstPage")}</span>
-                            </Button>
+                            <span className="hidden sm:inline-flex">
+                                <Button
+                                    variant="outline"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => goToPage(1)}
+                                    disabled={!canPrev}
+                                >
+                                    <ChevronsLeft className="h-4 w-4" />
+                                    <span className="sr-only">{t("pagination.firstPage")}</span>
+                                </Button>
+                            </span>
                         </TooltipTrigger>
                         <TooltipContent>{t("pagination.firstPage")}</TooltipContent>
                     </Tooltip>
 
                     <Tooltip>
                         <TooltipTrigger asChild>
-                            <Button
-                                variant="outline"
-                                size="icon"
-                                className="h-8 w-8"
-                                onClick={() => goToPage(currentPage - 1)}
-                                disabled={!canPrev}
-                            >
-                                <ChevronLeft className="h-4 w-4" />
-                                <span className="sr-only">{t("pagination.previousPage")}</span>
-                            </Button>
+                            <span className="inline-flex">
+                                <Button
+                                    variant="outline"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => goToPage(currentPage - 1)}
+                                    disabled={!canPrev}
+                                >
+                                    <ChevronLeft className="h-4 w-4" />
+                                    <span className="sr-only">{t("pagination.previousPage")}</span>
+                                </Button>
+                            </span>
                         </TooltipTrigger>
                         <TooltipContent>{t("pagination.previousPage")}</TooltipContent>
                     </Tooltip>
@@ -158,32 +162,36 @@ export function DataPagination({
 
                     <Tooltip>
                         <TooltipTrigger asChild>
-                            <Button
-                                variant="outline"
-                                size="icon"
-                                className="h-8 w-8"
-                                onClick={() => goToPage(currentPage + 1)}
-                                disabled={!canNext}
-                            >
-                                <ChevronRight className="h-4 w-4" />
-                                <span className="sr-only">{t("pagination.nextPage")}</span>
-                            </Button>
+                            <span className="inline-flex">
+                                <Button
+                                    variant="outline"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => goToPage(currentPage + 1)}
+                                    disabled={!canNext}
+                                >
+                                    <ChevronRight className="h-4 w-4" />
+                                    <span className="sr-only">{t("pagination.nextPage")}</span>
+                                </Button>
+                            </span>
                         </TooltipTrigger>
                         <TooltipContent>{t("pagination.nextPage")}</TooltipContent>
                     </Tooltip>
 
                     <Tooltip>
                         <TooltipTrigger asChild>
-                            <Button
-                                variant="outline"
-                                size="icon"
-                                className="hidden h-8 w-8 sm:inline-flex"
-                                onClick={() => goToPage(totalPages)}
-                                disabled={!canNext}
-                            >
-                                <ChevronsRight className="h-4 w-4" />
-                                <span className="sr-only">{t("pagination.lastPage")}</span>
-                            </Button>
+                            <span className="hidden sm:inline-flex">
+                                <Button
+                                    variant="outline"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => goToPage(totalPages)}
+                                    disabled={!canNext}
+                                >
+                                    <ChevronsRight className="h-4 w-4" />
+                                    <span className="sr-only">{t("pagination.lastPage")}</span>
+                                </Button>
+                            </span>
                         </TooltipTrigger>
                         <TooltipContent>{t("pagination.lastPage")}</TooltipContent>
                     </Tooltip>

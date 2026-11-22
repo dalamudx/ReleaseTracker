@@ -97,6 +97,23 @@ for(const size of [{width:390,height:640},{width:320,height:568},{width:768,heig
   expect(errors).toEqual([])
  })
 }
+for (const width of [320, 1280]) {
+  test(`executor actions stay centered and inside their column at ${width}px`, async ({ page }) => {
+    await setup(page, width, 800)
+    await page.goto("/executors")
+    const row = page.getByTestId("executor-row").first()
+    const actions = row.locator("td").last().getByRole("button")
+    await expect(actions).toHaveCount(4)
+    const bounds = (await row.boundingBox())!
+    const cell = (await row.locator("td").last().boundingBox())!
+    for (const action of await actions.all()) {
+      const button = (await action.boundingBox())!
+      expect(Math.abs(button.y + button.height / 2 - bounds.y - bounds.height / 2)).toBeLessThan(1)
+      expect(button.x).toBeGreaterThanOrEqual(cell.x)
+      expect(button.x + button.width).toBeLessThanOrEqual(cell.x + cell.width + 1)
+    }
+  })
+}
 
 for(const language of ["zh","en"]) for(const width of [320,390]) test(`audit remaining mobile pages ${language} ${width} with nonempty data`,async({page},testInfo)=>{
  await setup(page,width,640,language);const errors:string[]=[];page.on("pageerror",e=>errors.push(e.message));const reports=[]

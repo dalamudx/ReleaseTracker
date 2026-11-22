@@ -126,7 +126,7 @@ export function ExecutorList({
                         </TableHead>
                         <TableHead className="hidden w-24 sm:table-cell">{t("executors.table.status")}</TableHead>
                         <TableHead className="hidden w-24 lg:table-cell">{t("executors.table.lastRun")}</TableHead>
-                        <TableHead className="w-28 text-right">{t("executors.table.actions")}</TableHead>
+                        <TableHead className="w-36 text-right">{t("executors.table.actions")}</TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -175,7 +175,7 @@ export function ExecutorList({
                                     }}
                                 >
                                     {/* Name column — tracker name + runtime type accent. */}
-                                    <TableCell className="relative py-3 align-top">
+                                    <TableCell className="relative py-3 align-middle">
                                         <ActiveRowMarker active={isSelected} testId="executor-selection-marker" />
                                         <div className="min-w-0 space-y-1 pl-1.5">
                                             <div className="flex items-center gap-1.5">
@@ -230,7 +230,7 @@ export function ExecutorList({
                                     </TableCell>
 
                                     {/* Target column. */}
-                                    <TableCell data-testid="executor-target-cell" className="hidden py-3 align-top md:table-cell">
+                                    <TableCell data-testid="executor-target-cell" className="hidden py-3 align-middle md:table-cell">
                                         <div className="min-w-0 space-y-0.5">
                                             <div
                                                 className="truncate text-sm font-medium text-foreground"
@@ -262,7 +262,7 @@ export function ExecutorList({
                                     </TableCell>
 
                                     {/* Tracker column (hidden on narrow screens). */}
-                                    <TableCell className="hidden py-3 align-top xl:table-cell">
+                                    <TableCell className="hidden py-3 align-middle xl:table-cell">
                                         <div className="min-w-0 space-y-0.5">
                                             <div
                                                 className="truncate text-sm text-foreground"
@@ -337,29 +337,35 @@ export function ExecutorList({
 
                                     {/* Actions. */}
                                     <TableCell
-                                        className="whitespace-nowrap py-3 text-right align-top"
+                                        className="whitespace-nowrap py-3 text-right align-middle"
                                         onClick={stopRowClick}
                                     >
                                         <div className="flex items-center justify-end gap-0.5">
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="h-7 w-7"
-                                                        disabled={!executor.enabled || !executor.id || hasError || isPending}
-                                                        aria-label={t("executors.actions.runNow")}
-                                                        onClick={(event) => {
-                                                            stopRowClick(event)
-                                                            if (executor.id) onRun(executor.id)
-                                                        }}
-                                                    >
-                                                        {isPending ? <Spinner className="size-3.5" /> : <Play className="size-3.5" />}
-                                                        <span className="sr-only">{t("executors.actions.runNow")}</span>
-                                                    </Button>
+                                                    <span className="inline-flex">
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="size-7"
+                                                            disabled={!executor.enabled || !executor.id || hasError || isPending}
+                                                            aria-label={t("executors.actions.runNow")}
+                                                            onClick={(event) => {
+                                                                stopRowClick(event)
+                                                                if (executor.id) onRun(executor.id)
+                                                            }}
+                                                        >
+                                                            {isPending ? <Spinner className="size-3.5" /> : <Play className="size-3.5" />}
+                                                            <span className="sr-only">{t("executors.actions.runNow")}</span>
+                                                        </Button>
+                                                    </span>
                                                 </TooltipTrigger>
                                                 <TooltipContent>
-                                                    {t("executors.actions.runNow")}
+                                                    {hasError
+                                                        ? t("executors.status.invalid")
+                                                        : !executor.enabled
+                                                            ? t("common.disabled")
+                                                            : t("executors.actions.runNow")}
                                                 </TooltipContent>
                                             </Tooltip>
                                             <Tooltip>
@@ -400,8 +406,8 @@ export function ExecutorList({
                                             </Tooltip>
                                             <DropdownMenu>
                                                 <DropdownMenuTrigger asChild onClick={stopRowClick}>
-                                                    <Button variant="ghost" size="icon" className="h-7 w-7">
-                                                        <MoreHorizontal className="h-3.5 w-3.5" />
+                                                    <Button variant="ghost" size="icon" className="size-7">
+                                                        <MoreHorizontal className="size-3.5" />
                                                         <span className="sr-only">{t("common.actions")}</span>
                                                     </Button>
                                                 </DropdownMenuTrigger>
@@ -414,7 +420,7 @@ export function ExecutorList({
                                                             if (executor.id) onDelete(executor.id)
                                                         }}
                                                     >
-                                                        <Trash2 className="mr-2 h-4 w-4" />
+                                                        <Trash2 className="size-4" />
                                                         {t("common.delete")}
                                                     </DropdownMenuItem>
                                                 </DropdownMenuContent>
