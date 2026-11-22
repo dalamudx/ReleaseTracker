@@ -136,7 +136,7 @@
     "fakeIp": {
       "title": "受信任的 IP 网段",
       "label": "IP 网段",
-      "description": "支持 IPv4 和 IPv6（CIDR），留空则使用默认规则。",
+      "description": "用于校验目标 IP 的出站 HTTPS 请求（通知和健康检查）。填写代理的 IPv4 或 IPv6 fake-IP 网段，留空使用默认规则。",
       "placeholder": "例如 198.18.0.0/15",
       "invalid": "网段格式有误，或包含受保护地址。"
     },

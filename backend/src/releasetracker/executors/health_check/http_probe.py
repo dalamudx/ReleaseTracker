@@ -109,6 +109,7 @@ class HTTPProbe(HealthCheckProbe):
 
         for host in hosts:
             svc_result = await self._probe_single(
+                settings_store=ctx.settings_store,
                 host=host,
                 http_cfg=http_cfg,
                 timeout_seconds=per_attempt_timeout,
@@ -144,6 +145,7 @@ class HTTPProbe(HealthCheckProbe):
         self,
         *,
         host: ProbeHost,
+        settings_store,
         http_cfg,
         timeout_seconds: int,
         expected_status_codes: list[int] | None,
@@ -177,6 +179,7 @@ class HTTPProbe(HealthCheckProbe):
                 url,
                 headers=headers,
                 verify_tls=verify,
+                settings_store=settings_store,
             )
         except OutboundTimeout:
             return ProbeAttemptResult(

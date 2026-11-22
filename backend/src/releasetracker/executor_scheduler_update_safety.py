@@ -86,6 +86,7 @@ class ExecutorSchedulerUpdateSafety:
             run_id=run_id,
             update_phase_end_at=self._now_provider(),
             baseline=baseline,
+            settings_store=self.storage,
         )
 
         try:

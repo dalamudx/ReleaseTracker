@@ -58,6 +58,7 @@ class HealthCheckContext:
     run_id: int
     update_phase_end_at: datetime
     baseline: dict[str, Any]
+    settings_store: Any = None
 
 
 @dataclass(frozen=True)

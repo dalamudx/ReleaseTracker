@@ -74,7 +74,7 @@ export const SYSTEM_BASE_URL_SETTING_KEY = "system.base_url"
 export const SYSTEM_RELEASE_HISTORY_RETENTION_COUNT_SETTING_KEY = "system.release_history_retention_count"
 export const SYSTEM_EXECUTOR_SNAPSHOT_RETENTION_COUNT_SETTING_KEY = "system.executor_snapshot_retention_count"
 export const SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY = "system.oci_registry_redirects_enabled"
-const WEBHOOK_FAKE_IP_SETTING = "system.webhook_fake_ip_cidrs"
+const FAKE_IP_SETTING = "system.webhook_fake_ip_cidrs"
 export const SYSTEM_BACKUP_RETENTION_SETTING_KEY = "system.backup_retention"
 export const SYSTEM_BACKUP_INTERVAL_HOURS_SETTING_KEY = "system.backup_interval_hours"
 
@@ -1116,7 +1116,7 @@ export function SystemSettingsPage() {
     }, [settings])
     const [fakeIpDraft, setFakeIpDraft] = useState<string | null>(null)
     const [fakeIpError, setFakeIpError] = useState(false)
-    const savedCidrs = settings.find((item) => item.key === WEBHOOK_FAKE_IP_SETTING)?.value ?? ""
+    const savedCidrs = settings.find((item) => item.key === FAKE_IP_SETTING)?.value ?? ""
     const fakeIpCidrs = fakeIpDraft ?? (typeof savedCidrs === "string" ? savedCidrs : "")
     const editCidrs = (values: string) => {
         setFakeIpError(false)
@@ -1279,7 +1279,7 @@ export function SystemSettingsPage() {
         try {
             if (fakeIpDraft !== null) {
                 try {
-                    await updateSetting.mutateAsync({ key: WEBHOOK_FAKE_IP_SETTING, value: fakeIpDraft })
+                    await updateSetting.mutateAsync({ key: FAKE_IP_SETTING, value: fakeIpDraft })
                 } catch (error) {
                     if ((error as { response?: { status?: number } })?.response?.status !== 400) throw error
                     setFakeIpError(true)

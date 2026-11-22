@@ -13,7 +13,7 @@ Manage instance configuration under **System Settings**. Changes apply immediate
 | Public Base URL | Empty by default. Use a canonical absolute HTTPS URL | Used for notification links, the frontend base path, OIDC callbacks and repository webhooks. Include the deployment subpath |
 | Time zone | `UTC`; valid IANA zone such as `Asia/Shanghai` | Date display, maintenance windows and times in notification messages |
 | Log level | `INFO`; `DEBUG/INFO/WARNING/ERROR` | Backend log verbosity |
-| Trusted IP ranges | Empty by default. Add IPv4 or IPv6 CIDRs individually. | Use the pool routed by your fake-IP proxy, e.g. `198.18.0.0/15`. HTTPS notifications accept DNS answers in these ranges and verify the certificate against the original hostname. Clear and save to restore the default rules. |
+| Trusted IP ranges | Empty by default. Add IPv4 or IPv6 CIDRs individually. | Instance-wide exception for outbound HTTPS destination checks. Notifications and HTTP health checks accept DNS answers in your proxy’s fake-IP pool (e.g. `198.18.0.0/15`) and still verify the original hostname. Clear and save to restore default checks. Release fetching, registries and runtime connections do not filter DNS answers by public IP and do not need this exception. Inbound requests are unaffected. |
 | OCI registry redirects | Disabled | Enable only when a registry serves content through redirects; redirects still pass security checks |
 | Readiness defaults | See [Health checks](../guides/health-and-rollback.md#health-checks) | Used when an executor does not override them |
 | Release channel history | 20; 1–1000 | Version records kept per release channel |

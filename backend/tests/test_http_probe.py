@@ -168,6 +168,32 @@ def _make_context(
 
 
 @pytest.mark.asyncio
+async def test_https_probe_uses_current_instance_fake_ip_ranges(monkeypatch, storage):
+    from dataclasses import replace
+    from unittest.mock import AsyncMock
+
+    from releasetracker.services.outbound_http import FAKE_IP_SETTING, OutboundHTTPClient
+
+    await storage.set_setting(FAKE_IP_SETTING, "198.18.0.0/15")
+    profile = _make_manual_profile(http={"scheme": "https", "port": 443})
+    ctx = replace(_make_context(profile, []), settings_store=storage)
+    dns = AsyncMock(return_value=[(0, 0, 0, "", ("198.18.0.10", 443))])
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", dns)
+    send = AsyncMock(return_value=OutboundResponse(200, {}, b"ok"))
+    monkeypatch.setattr(OutboundHTTPClient, "_request_validated", send)
+
+    probe = HTTPProbe(manual=True)
+    assert (await probe.attempt(ctx)).healthy
+    destination = send.await_args.kwargs["destination"]
+    assert (destination.hostname, destination.addresses) == ("manual.example", ("198.18.0.10",))
+    assert send.await_args.kwargs["verify_tls"]
+    await storage.set_setting(FAKE_IP_SETTING, "")
+    blocked = await probe.attempt(ctx)
+    assert not blocked.healthy and blocked.detail["http"][0]["outbound_policy_blocked"]
+    send.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_manual_http_probe_uses_configured_host_without_runtime_resolution(monkeypatch):
     requested_urls: list[str] = []
 

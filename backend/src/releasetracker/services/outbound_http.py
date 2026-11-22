@@ -22,7 +22,8 @@ ALLOWED_OUTBOUND_PORTS: dict[str, frozenset[int]] = {
     "https": frozenset({443, 8443, 9443}),
 }
 DEFAULT_MAX_RESPONSE_BYTES = 65_536
-WEBHOOK_FAKE_IP_SETTING = "system.webhook_fake_ip_cidrs"
+# Keep the persisted key so existing installations retain their configured ranges.
+FAKE_IP_SETTING = "system.webhook_fake_ip_cidrs"
 IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
 _MAX_HEADER_BYTES = 32_768
 _MAX_HEADER_LINE_BYTES = 8_192
@@ -159,12 +160,12 @@ class OutboundHTTPClient:
         json_body: Any | None = None,
         verify_tls: bool = True,
         max_response_bytes: int | None = None,
-        fake_ip_cidrs: tuple[IPNetwork, ...] = (),
+        settings_store=None,
     ) -> OutboundResponse:
         try:
             async with asyncio.timeout(self.timeouts.total):
                 destination = await validate_outbound_url(
-                    url, fake_ip_cidrs=fake_ip_cidrs if verify_tls else ()
+                    url, settings_store=settings_store if verify_tls else None
                 )
                 return await self._request_validated(
                     method=method,
@@ -277,9 +278,7 @@ class OutboundHTTPClient:
             raise OutboundConnectError("connection to validated destination failed") from exc
 
 
-async def validate_outbound_url(
-    url: str, *, fake_ip_cidrs: tuple[IPNetwork, ...] = ()
-) -> _ValidatedDestination:
+async def validate_outbound_url(url: str, *, settings_store=None) -> _ValidatedDestination:
     """Validate a URL, all DNS answers, and return a connection-pinned destination."""
     if not isinstance(url, str) or not url or len(url) > 4_096:
         raise OutboundURLRejected("outbound URL is missing or too long")
@@ -314,8 +313,14 @@ async def validate_outbound_url(
     if effective_port not in ALLOWED_OUTBOUND_PORTS[scheme]:
         raise OutboundURLRejected("outbound URL port is not allowed")
 
-    if scheme != "https" or not re.fullmatch(r"(?:[a-z0-9-]+\.)+[a-z][a-z0-9-]*", hostname):
-        fake_ip_cidrs = ()
+    fake_ip_cidrs = ()
+    if (
+        settings_store is not None
+        and scheme == "https"
+        and re.fullmatch(r"(?:[a-z0-9-]+\.)+[a-z][a-z0-9-]*", hostname)
+    ):
+        value = await settings_store.get_setting(FAKE_IP_SETTING)
+        fake_ip_cidrs = parse_fake_ip_cidrs(value or "")
     addresses = await _resolve_public_addresses(hostname, effective_port, fake_ip_cidrs)
     path = quote(parsed.path or "/", safe="/%:@!$&'()*+,;=-._~")
     query = quote(parsed.query, safe="=&?/:@!$'()*+,;%-._~")

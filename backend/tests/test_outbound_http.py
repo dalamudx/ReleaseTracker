@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -250,8 +251,6 @@ async def test_outbound_client_enforces_read_timeout(monkeypatch):
 async def test_discord_webhook_uses_trusted_fake_ip(monkeypatch):
     from releasetracker.notifiers.webhook import WebhookNotifier
 
-    from unittest.mock import AsyncMock
-
     store = AsyncMock()
     store.get_setting.side_effect = ["fd12:3456::/48\n198.18.0.0/24", ""]
     await _set_dns_answers(monkeypatch, "198.18.0.24")
@@ -272,7 +271,7 @@ async def test_discord_webhook_uses_trusted_fake_ip(monkeypatch):
     assert await notifier.send_payload({"content": "test"})
     assert b"Host: discord.com\r\n" in writer.request
     assert not await notifier.send_payload({"content": "test"})
-    store.get_setting.assert_awaited_with(outbound_http.WEBHOOK_FAKE_IP_SETTING)
+    store.get_setting.assert_awaited_with(outbound_http.FAKE_IP_SETTING)
 
 
 @pytest.mark.asyncio
@@ -292,10 +291,12 @@ async def test_fake_ip_exception_scope(monkeypatch, cidrs, url, verify_tls, extr
     if extra_answer:
         answers.append(extra_answer)
     await _set_dns_answers(monkeypatch, *answers)
+    store = AsyncMock()
+    store.get_setting.return_value = cidrs
     with pytest.raises(OutboundURLRejected, match="prohibited address"):
         await OutboundHTTPClient().request(
             "POST",
             url,
-            fake_ip_cidrs=outbound_http.parse_fake_ip_cidrs(cidrs),
+            settings_store=store,
             verify_tls=verify_tls,
         )

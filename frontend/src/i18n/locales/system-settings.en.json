@@ -136,7 +136,7 @@
     "fakeIp": {
       "title": "Trusted IP ranges",
       "label": "IP range",
-      "description": "Use IPv4 or IPv6 CIDRs. Leave empty to use the default rules.",
+      "description": "For outbound HTTPS requests that check resolved IPs (notifications and health checks). Enter your fake-IP proxy’s IPv4 or IPv6 CIDRs. Leave empty to use the default rules.",
       "placeholder": "e.g. 198.18.0.0/15",
       "invalid": "Invalid CIDR or range includes a protected address."
     },

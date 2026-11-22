@@ -370,6 +370,7 @@ class DeploymentReadiness:
             run_id=verification["run_id"],
             update_phase_end_at=datetime.now(),
             baseline=verification.get("baseline", {}),
+            settings_store=self.storage,
         )
         extra = await asyncio.wait_for(probe.attempt(ctx), timeout=max(0.01, remaining))
         service = {

@@ -7,8 +7,6 @@ import emoji
 
 from ..services.outbound_http import (
     OutboundHTTPClient,
-    WEBHOOK_FAKE_IP_SETTING,
-    parse_fake_ip_cidrs,
     OutboundHTTPError,
     OutboundResponse,
     OutboundRedirectRejected,
@@ -153,12 +151,8 @@ class WebhookNotifier(BaseNotifier):
         client = OutboundHTTPClient()
         for attempt in range(4):
             try:
-                networks = ()
-                if self.settings_store is not None:
-                    value = await self.settings_store.get_setting(WEBHOOK_FAKE_IP_SETTING)
-                    networks = parse_fake_ip_cidrs(value or "")
                 response = await client.request(
-                    "POST", self.url, json_body=webhook_payload, fake_ip_cidrs=networks
+                    "POST", self.url, json_body=webhook_payload, settings_store=self.settings_store
                 )
 
                 if response.status_code == 429:

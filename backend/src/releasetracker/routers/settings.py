@@ -35,7 +35,7 @@ from ..services.secure_urls import require_canonical_https_base_url
 from ..services.instance_policy import IMPORT_MARKER, POLICY_DEFAULTS, normalize_policy
 from ..services.inbound_policy import load_policy
 from ..services.metrics_credential import METRICS_TOKEN_SETTING_KEY, read_token, save_token
-from ..services.outbound_http import WEBHOOK_FAKE_IP_SETTING, parse_fake_ip_cidrs
+from ..services.outbound_http import FAKE_IP_SETTING, parse_fake_ip_cidrs
 from ..services.system_keys import SystemKeyManager, rotate_encryption_key, rotate_jwt_secret
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -194,7 +194,7 @@ def _normalize_setting_value(key: str, value: str) -> str:
             raise HTTPException(400, str(exc)) from None
     normalized_value = str(value).strip()
 
-    if key == WEBHOOK_FAKE_IP_SETTING:
+    if key == FAKE_IP_SETTING:
         try:
             return "\n".join(map(str, parse_fake_ip_cidrs(value)))
         except ValueError as exc:
@@ -495,7 +495,7 @@ async def get_settings(
     for key, default in BACKUP_DEFAULTS.items():
         settings.setdefault(key, (default, None))
     settings.setdefault(FETCH_RETRY_SETTING, (str(DEFAULT_FETCH_RETRIES), None))
-    settings.setdefault(WEBHOOK_FAKE_IP_SETTING, ("", None))
+    settings.setdefault(FAKE_IP_SETTING, ("", None))
     for field, default in READINESS_DEFAULTS.items():
         settings.setdefault(f"system.{field}", (str(default), None))
     oci_redirects_setting = settings.get(SYSTEM_OCI_REGISTRY_REDIRECTS_ENABLED_SETTING_KEY)
